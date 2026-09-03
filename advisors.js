@@ -1,3 +1,8 @@
+// Advisors page: two AI-agent chat interfaces built on the same tool-use
+// loop (createAgentChat, below) - the Sales Mentor (strategy advice, grounded
+// in real lead data via tool calls) and the Customer Voice (a simulated buyer
+// persona to pressure-test outreach messages against). Also owns the persona/
+// company-context/template settings that shape both agents' system prompts.
 import {
   getAnthropicApiKey,
   getMessageTemplates,

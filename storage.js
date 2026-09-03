@@ -1,6 +1,11 @@
-// Thin wrapper around chrome.storage.local for the two things this extension persists:
-// - "topics": the user's configured search topics
-// - "results": the deduped lead history, keyed by post URL
+// Thin wrapper around chrome.storage.local for everything this extension persists:
+// Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
+// post/job URL, with status, priority, and negative-topic-match reason), scan
+// timeframe/location settings, AI advisor settings (API key, personas,
+// templates, history), and the last bulk-status-change record (for undo).
+// Also does light self-healing migration on read - e.g. backfilling a missing
+// `status` or `irrelevantReason` on old leads - so schema changes don't need a
+// separate migration step.
 
 const TOPICS_KEY = "topics";
 const RESULTS_KEY = "results";

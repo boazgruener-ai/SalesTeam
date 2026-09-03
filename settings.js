@@ -1,3 +1,7 @@
+// Settings tab: form-bound persistence (via storage.js) for the Anthropic API
+// key, per-scenario message templates, value-add offers, company context, and
+// the AI output language - the shared configuration the Advisors and lead-
+// drafting features read from.
 import {
   getAnthropicApiKey,
   saveAnthropicApiKey,

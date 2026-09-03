@@ -1,3 +1,11 @@
+// The extension's service worker: orchestrates a full scan run (scanAllTopics)
+// across every configured Topic and Job Topic. For each one, chunks its
+// keyword list into multiple LinkedIn search URLs if needed (LinkedIn caps
+// query length), sequentially navigates a background tab to each, and waits
+// for content-script.js/jobs-content-script.js to scrape and report results -
+// every wait is wrapped in withKeepAlive() so Chrome doesn't kill this service
+// worker as idle mid-scan. Results are merged, deduped, ranked, and negative
+// topics are (re-)applied before saving.
 import {
   getTopics,
   getJobTopics,

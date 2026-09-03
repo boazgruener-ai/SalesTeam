@@ -1,3 +1,8 @@
+// Dashboard tab: the full-page view of every lead. Renders three pie charts
+// (7 days / 30 days / all time) by status, a sortable/searchable/filterable
+// leads table, and per-lead priority scoring. Also owns the "Bulk Change"
+// dialog (mass status changes with a confirmation step and one-level undo)
+// and the "Prioritize Unscored Leads" action.
 import {
   getResults,
   updateLeadStatus,

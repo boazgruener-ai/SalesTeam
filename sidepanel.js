@@ -1,3 +1,8 @@
+// The main side panel - the extension's home screen. Manages Topics, Job
+// Topics, and Negative Topics (add/edit/remove, with a live per-topic search-
+// count hint), triggers a scan (background.js) and shows its progress, lists
+// results, and provides Export/Import/backup plus the entry points to the
+// Dashboard, Advisors, Settings, and Help pages.
 import {
   getTopics,
   saveTopics,
