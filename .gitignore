@@ -16,3 +16,10 @@ Screen shots/image-1788184825115.png
 
 # Unrelated personal phone screenshot, not project content
 Screen shots/Screenshot 2026-08-31 155920.jpg
+
+# Pitch deck kept out of the public repo entirely (contact-slide email,
+# course-assignment framing) - and its generator script, since it only
+# exists to build that deck and has the same email hardcoded in it.
+SalesTeam - Pitch Deck*.pptx
+SalesTeam - Pitch Deck.pdf
+build_deck.py
