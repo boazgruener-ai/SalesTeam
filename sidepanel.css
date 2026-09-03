@@ -1,0 +1,442 @@
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  margin: 0;
+  padding: 12px;
+  color: #1a1a1a;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+
+#version-text {
+  font-size: 11px;
+  font-weight: normal;
+  color: #888;
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #555;
+  margin: 0 0 8px;
+}
+
+h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #777;
+  margin: 4px 0 6px;
+}
+
+section {
+  margin-bottom: 16px;
+}
+
+#top-nav-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+#top-nav-buttons button {
+  flex: 1;
+  padding: 7px 4px;
+  border: none;
+  border-radius: 6px;
+  background: #0a66c2;
+  color: white;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#backup-buttons-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+#backup-section .checkbox-label {
+  margin: 0;
+}
+
+/* Sized to match #top-nav-buttons' compact buttons, but deliberately NOT
+   stretched to fill the row (flex: 1) - leaves visible room for a future
+   backup-related button instead of the two growing to fill the gap. */
+#backup-buttons-row button {
+  flex: 0 0 auto;
+  min-width: 70px;
+  padding: 7px 4px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f7f7f7;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.topic-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.topic-header-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.topic-header-row input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.topic-header-row input[type="text"] {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.topic-card input[type="text"] {
+  box-sizing: border-box;
+  font-weight: 600;
+  padding: 4px;
+}
+
+.topic-card.topic-disabled {
+  opacity: 0.5;
+}
+
+.topic-card .and-keywords-label {
+  display: block;
+  font-size: 11px;
+  color: #555;
+  margin: 4px 0 2px;
+}
+
+.topic-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 60px;
+  padding: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.keyword-limit-hint {
+  color: #777;
+  font-size: 11px;
+  margin: -2px 0 6px;
+}
+
+.keyword-limit-hint-warn {
+  color: #a66a00;
+  font-weight: 600;
+}
+
+.topic-card .remove-topic-btn {
+  margin-top: 6px;
+  color: #a00;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+.topic-header-row select {
+  flex-shrink: 0;
+  padding: 3px;
+  font-size: 12px;
+}
+
+#reapply-existing-label {
+  margin: 14px 0 18px;
+  padding: 8px 10px;
+  background: #f5f5f5;
+  border-radius: 6px;
+}
+
+#scan-section label,
+#job-search-section label {
+  display: block;
+  color: #555;
+  margin-bottom: 4px;
+}
+
+#job-search-location-select,
+#job-search-timeframe-select {
+  width: 100%;
+  padding: 6px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.job-result-card {
+  border-color: #d9c08a;
+  background: #fffdf5;
+}
+
+#timeframe-select,
+#author-title-input {
+  width: 100%;
+  padding: 6px;
+  margin-bottom: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+#author-title-input {
+  min-height: 50px;
+  resize: vertical;
+}
+
+#author-title-input:disabled {
+  background: #f0f0f0;
+  color: #999;
+}
+
+.section-heading {
+  color: #0a66c2;
+  border-bottom: 2px solid #0a66c2;
+  padding-bottom: 4px;
+  margin-bottom: 10px !important;
+}
+
+#add-job-topic-btn {
+  width: 100%;
+  padding: 6px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f0f0f0;
+  color: #333;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#add-job-location-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+#add-job-location-row input {
+  flex: 1;
+  padding: 6px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+#add-job-location-btn {
+  padding: 6px 10px;
+  border: 1px solid #0a66c2;
+  border-radius: 6px;
+  background: none;
+  color: #0a66c2;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.field-hint {
+  color: #888;
+  font-size: 11px;
+  margin: 0 0 10px;
+}
+
+.field-hint code {
+  background: #f0f0f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.result-card .headline {
+  color: #555;
+  font-size: 12px;
+  margin: 2px 0 6px;
+}
+
+#add-topic-btn,
+#scan-btn {
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: #0a66c2;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#add-topic-btn {
+  background: #f0f0f0;
+  color: #333;
+}
+
+#scan-btn:disabled {
+  background: #9cbfe0;
+  cursor: default;
+}
+
+#progress-text {
+  color: #555;
+  min-height: 16px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: #444;
+  margin: 4px 0 10px;
+  cursor: pointer;
+}
+
+.checkbox-label input {
+  margin-top: 2px;
+}
+
+.result-card .job-ad-badge {
+  background: #7a4b00;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.result-card .hiring-badge {
+  background: #6a1b9a;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.result-card .freelance-badge {
+  background: #00695c;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+#results-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+#export-csv-btn {
+  background: none;
+  border: 1px solid #0a66c2;
+  color: #0a66c2;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+#clear-results-btn {
+  background: none;
+  border: none;
+  color: #a00;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+.result-card {
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.result-card .result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.result-card .author {
+  font-weight: 600;
+}
+
+.result-card .timestamp {
+  color: #888;
+  font-size: 11px;
+}
+
+.result-card .snippet {
+  margin: 6px 0;
+  color: #333;
+}
+
+.result-card .topic-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.result-card .topic-tag {
+  background: #eef4fb;
+  color: #0a66c2;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.result-card .new-badge {
+  background: #2e7d32;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.result-card a {
+  color: #0a66c2;
+  text-decoration: none;
+  margin-right: 12px;
+  font-size: 12px;
+}
+
+.empty-state {
+  color: #888;
+  font-style: italic;
+}
+
+.connection-degree {
+  background: #eef4fb;
+  color: #0a66c2;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  margin-left: 6px;
+  font-weight: 600;
+}

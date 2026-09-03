@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>SalesTeam</title>
+<link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <h1>SalesTeam <span id="version-text"></span></h1>
+
+  <div id="top-nav-buttons">
+    <button id="open-dashboard-btn" type="button">Dashboard ↗</button>
+    <button id="open-advisors-btn" type="button">Advisors ↗</button>
+    <button id="open-settings-btn" type="button">Settings ↗</button>
+    <button id="open-help-btn" type="button">Help ↗</button>
+  </div>
+
+  <section id="backup-section">
+    <div id="backup-buttons-row">
+      <button id="export-btn" type="button">Export</button>
+      <button id="import-btn" type="button">Import</button>
+      <input type="file" id="import-file-input" accept="application/json" hidden />
+    </div>
+    <label class="checkbox-label">
+      <input type="checkbox" id="export-include-api-key-checkbox" />
+      Include Anthropic API key in this export (only for deliberately sharing a spend-capped trial key with a
+      team you control — most exports should leave this off)
+    </label>
+  </section>
+
+  <section id="scan-section">
+    <h2 class="section-heading">Posts Search</h2>
+
+    <h3>Topics</h3>
+    <div id="topics-list"></div>
+    <button id="add-topic-btn" type="button">+ Add Topic</button>
+
+    <label for="timeframe-select">Posted within</label>
+    <select id="timeframe-select">
+      <option value="any">Any time</option>
+      <option value="past-24h">Past 24 hours</option>
+      <option value="past-week">Past week</option>
+      <option value="past-month" selected>Past month</option>
+    </select>
+
+    <label class="checkbox-label">
+      <input type="checkbox" id="author-title-enabled-checkbox" checked />
+      Author title contains (optional, one per line) — checked against each author's visible headline, not sent to LinkedIn
+    </label>
+    <textarea id="author-title-input" placeholder="CTO&#10;CIO&#10;VP Engineering"></textarea>
+
+    <label class="checkbox-label">
+      <input type="checkbox" id="include-job-ads-checkbox" checked />
+      Include posts with an in-post job ad (a company advertising AI roles this way is itself a signal, even if it's not a personal lead)
+    </label>
+  </section>
+
+  <section id="job-search-section">
+    <h2 class="section-heading">Job Search (Jobs vertical)</h2>
+
+    <label class="checkbox-label">
+      <input type="checkbox" id="job-search-enabled-checkbox" />
+      Enable Job Search — searches LinkedIn Jobs listings, in addition to Posts
+    </label>
+
+    <label class="checkbox-label">
+      <input type="checkbox" id="job-search-use-post-topics-checkbox" checked />
+      Also use my Post topics' keywords for Job Search
+    </label>
+
+    <label for="job-topics-list">Job-specific topics (optional, in addition to Post topics above)</label>
+    <div id="job-topics-list"></div>
+    <button id="add-job-topic-btn" type="button">+ Add Job Topic</button>
+
+    <label for="job-search-location-select">Location</label>
+    <select id="job-search-location-select"></select>
+    <div id="add-job-location-row">
+      <input type="text" id="new-job-location-name" placeholder="Name (e.g. Geneva)" />
+      <input type="text" id="new-job-location-geoid" placeholder="geoId (e.g. 90009888)" />
+      <button id="add-job-location-btn" type="button">+ Add</button>
+    </div>
+    <p class="field-hint">
+      A geoId is a LinkedIn-internal location code, not free text. To find one: on linkedin.com/jobs, pick that
+      location from the Location filter, then copy the <code>geoId=</code> value from the address bar.
+    </p>
+
+    <label for="job-search-timeframe-select">Date posted (Jobs — independent from Posts, since job ads go stale much faster)</label>
+    <select id="job-search-timeframe-select">
+      <option value="any">Any time</option>
+      <option value="past-24h">Past 24 hours</option>
+      <option value="past-week">Past week</option>
+      <option value="past-month" selected>Past month</option>
+    </select>
+  </section>
+
+  <section id="negative-topics-section">
+    <h2 class="section-heading">Negative Topics (Lead Filters)</h2>
+    <p class="field-hint">
+      Same idea as a Topic above, just inverted: any lead matching one is noise, not a prospect - checked
+      after search results come back, never sent to LinkedIn. A match auto-sets the lead's status to
+      "Irrelevant" (reviewable/reversible any time on the Dashboard, never deleted - distinct from "Dismissed",
+      which is always a person's own decision). The two below are built in (can't be removed, keywords fully
+      editable) - add your own for any other kind of noise you keep seeing.
+    </p>
+
+    <label class="checkbox-label" id="reapply-existing-label">
+      <input type="checkbox" id="reapply-existing-checkbox" />
+      Also apply these filters to existing leads on the next scan (may move a lead between "New" and "Irrelevant" based on what currently matches)
+    </label>
+
+    <div id="negative-topics-list"></div>
+    <button id="add-negative-topic-btn" type="button">+ Add Negative Topic</button>
+
+    <p class="field-hint" id="apply-negative-filters-hint">
+      If you want to apply the negative filters above to existing leads right now, without running a new
+      scan, click "Apply Negative Filters" below. It may change some leads' status from "Irrelevant" to
+      "New," or from "New" to "Irrelevant," depending on what your filters currently match.
+    </p>
+    <button id="apply-negative-filters-btn" type="button">Apply Negative Filters</button>
+    <p id="apply-negative-filters-status" class="field-hint"></p>
+  </section>
+
+  <section id="run-section">
+    <button id="scan-btn" type="button">Scan All Topics</button>
+    <p id="progress-text"></p>
+  </section>
+
+  <section id="results-section">
+    <h2>Results</h2>
+    <div id="results-actions">
+      <button id="export-csv-btn" type="button">Export Leads (CSV)</button>
+      <button id="clear-results-btn" type="button">Clear Results</button>
+    </div>
+    <div id="results-list"></div>
+  </section>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+# SalesTeam — Product Requirements Document
+
+**Status:** Living document, reflects the shipped product as of v0.13.2.
+**Note:** No PRD file existed for this project before this document — it was assembled now from the full
+build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
+rather than letting it drift from RELEASE_NOTES.md.
+
+## 1. Problem
+
+A B2B software/AI-services salesperson finds new leads by manually searching LinkedIn Posts and Jobs for
+relevant activity (hiring signals, AI-adoption posts, etc.), then has to separately figure out who's worth
+approaching, draft an opening message, and keep track of who they've already contacted — all by hand, with
+no tooling built for this specific workflow. Existing CRM/sales-intelligence tools assume leads already exist
+in a system; they don't help *find* them on LinkedIn in the first place.
+
+## 2. Goals
+
+- Turn a repeatable LinkedIn search into a one-click, multi-topic scan across both Posts and Jobs.
+- Surface only real, addressable signal — automatically filter out competitors and recruiter/staffing noise
+  that matches the same keywords but is never a prospect.
+- Prioritize the result automatically, so the salesperson always knows what to work on first without having
+  to ask an AI mentor the same question after every scan.
+- Give the salesperson an AI team on top of the data: a mentor for strategy, a simulated buyer to pressure-test
+  messages against, and reviewed (never auto-sent) drafting.
+- Do all of this safely: manual-trigger only (no scheduled/background automation), nothing sent without
+  explicit review, and destructive actions (bulk status changes) require deliberate friction.
+
+## 3. Non-goals
+
+- Not a full CRM. No pipeline stages beyond a simple status label, no deal value/forecasting, no team
+  features (single-user, local-only storage).
+- Never sends a message on the user's behalf. Drafts are generated for copy-paste only.
+- No scheduled or background scanning. Every scan is a manual click, by design — this keeps the tool's
+  behavior indistinguishable from a careful human user, not an automation bot, for LinkedIn ToS reasons.
+- Not a general LinkedIn scraper — scoped to the Posts and Jobs search-results pages the user is already
+  viewing, using their own authenticated session.
+
+## 4. User
+
+Grounded in a real B2B sales role in Swiss enterprise software/AI consulting: manually searching LinkedIn for
+hiring/AI-adoption signals, contacting people who match, and needing a lightweight way to track who's been
+approached without adopting a heavyweight CRM for a one-person prospecting workflow.
+
+## 5. Architecture
+
+Chrome/Edge Manifest V3 extension, no server of its own. Four pages share one `chrome.storage.local` dataset:
+
+| Page | Purpose |
+|---|---|
+| **Scanner** (side panel) | Topics (positive search keywords) + Negative Topics (auto-filters), Job Search config, the scan trigger, and the raw results list. |
+| **Dashboard** (tab) | The pipeline view — pie charts, a sortable/filterable/paginated lead table, per-lead detail page, bulk actions. |
+| **Advisors** (tab) | Cross-lead Sales Mentor and Customer Voice agent chats, for strategy questions not tied to one specific lead. |
+| **Settings** (tab) | Company context, Anthropic API key, message templates, output language, value-add offers — anything general-purpose, non-lead-specific. Home for any future general settings too. |
+
+`background.js` (service worker) orchestrates scans: sequentially runs each topic's search in one background
+tab, merges results, applies negative-topic filtering, optionally re-applies filters to existing leads, then
+runs the automatic prioritization pass — before ever reporting the scan complete.
+
+`agent-shared.js` is the shared AI engine (system prompts, tool definitions, the Anthropic fetch/tool-use
+loop) used identically by the Scanner-era code, Dashboard, and Advisors — one implementation, not a drifting
+copy per page.
+
+## 6. Feature spec
+
+### 6.1 Topics (Scanner)
+
+- Named keyword groups, with an optional second "AND with" group (post must match one keyword from each
+  group). Same shape reused for both Post topics and Job-specific topics.
+- LinkedIn's own search-complexity limits are worked around automatically via query chunking (max 6 OR-terms
+  per group, 9 total per sub-query) — invisible to the user, who just adds however many keywords they want.
+- Author-title filter (checked client-side against each post's visible headline, never sent to LinkedIn) and
+  an "include in-post job ads" toggle.
+
+### 6.2 Negative Topics (Lead Filters)
+
+- Same shape and matching logic as a positive Topic (keywords OR-group, optional AND-with group), but checked
+  client-side against an already-scraped lead's own text *after* the search comes back — never sent to
+  LinkedIn as a query, and never removes a search result, only marks it.
+- Each topic has an `appliesTo` scope: Post leads only, Job listings only, or both — because a signal that's
+  noise on one vertical (a recruiter's own post) is completely normal on the other (a job ad naming an HR
+  contact).
+- Two built-in topics, seeded by the Sales Mentor's own review of a real scan, cannot be removed but every
+  field (keywords, AND-group, scope, enabled) is fully editable:
+  - **Competitor Blocklist** (applies to both) — named competitor consulting/vendor firms.
+  - **Recruiter/Staffing Headline Filter** (Post leads only) — headline phrases like "Talent Acquisition,"
+    "Recruiter."
+- The user can add unlimited custom negative topics for any other recurring noise.
+- A match sets the lead's status to **Irrelevant** and records which topic matched (`irrelevantReason`),
+  shown as a hover tooltip on the Dashboard's status pill — distinct from **Dismissed**, which is always the
+  salesperson's own decision, never the system's.
+- "Also re-apply these filters to existing leads on the next scan" checkbox (Scanner tile, unchecked by
+  default, not a saved setting) — when checked, the next scan also re-checks every currently-"New" existing
+  lead against the current negative topics, catching ones that predate a topic being added/edited. Never
+  touches a lead already acted on.
+- A lead already marked Irrelevant, or missing a reason (pre-dates this feature), gets its reason backfilled
+  automatically, best-effort, the next time it's read.
+
+### 6.3 Lead data model & statuses
+
+Every lead (Post or Job listing) carries: `status`, `statusUpdatedAt`, `priority` + `priorityReason` +
+`priorityScoredAt`, `irrelevantReason` (if applicable), plus source-specific fields (author/headline/snippet
+for Posts; title/company/location for Jobs), `firstSeenAt`/`lastSeenAt`/`postedAt`, and `matchedTopics`.
+
+Statuses: `New` (default) → `Contacted` (manual, or automatic the moment a drafted message is copied) →
+`Responded` / `Converted` (manual) or `Dismissed` (manual) or `Irrelevant` (automatic, negative-topic match).
+
+### 6.4 Automatic lead prioritization
+
+- After every scan's searches finish and negative-topic filtering has run (including any opted-in re-apply
+  pass), every lead still `"New"` without a priority is sent to the Sales Mentor in **one batch call** (not
+  per-lead), scored **P1 (highest — drop everything, contact today) to P5 (lowest — unlikely fit, low
+  urgency)**, each with a short reason, via a forced structured tool call (not free-text parsing, so the
+  output is always well-formed).
+- Scoring weighs real fit against the configured company context, seniority/decision power, and genuine
+  urgency signals — explicitly not just topical keyword overlap.
+- Runs automatically, with no button — visible in the side panel as "prioritizing N new leads…" before "Scan
+  complete." Silently skipped (never fails the scan) if no Anthropic API key is configured.
+- Never re-scores an already-scored lead, or a lead that isn't `"New"`.
+- **"Prioritize Unscored Leads" button** (Dashboard) catches up anything the automatic pass never reached —
+  leads that predate the feature, or a scan that ran with no API key — scoring every unscored `"New"` lead
+  across the *entire* list, not just what's currently filtered on screen.
+
+### 6.5 Dashboard
+
+- **Pie charts** (last 7 days / 30 days / all time), bucketed by each lead's real (parsed) post date, one
+  colored slice per status; clicking a slice/legend row filters the table to that status.
+- **Table**: Post Date, First Scanned, Source, Title, Content (3-line clamp, click to expand), Creator (link),
+  Connection, Status (with Irrelevant-reason tooltip), **Priority** (P1–P5 colored pill, tooltip shows the
+  Mentor's reason), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, Dismiss). Every sortable
+  column supports click-to-sort and an Excel-style per-column dropdown (sort asc/desc, free-text filter).
+  Column widths are user-resizable and persisted.
+- **"Show Irrelevant (negative-filtered) leads" checkbox**, unchecked by default and persisted — the general
+  "All statuses" view excludes Irrelevant leads so the table isn't dominated by filtered-out noise; explicitly
+  selecting "Irrelevant" from the Status filter always shows them regardless.
+- Pagination (20/50/100/All per page, remembered), global search (title/content/creator), CSV export (all
+  leads, or exactly what's currently filtered — both include Priority).
+- **Bulk Change**: a small, deliberately unobtrusive button (pagination row, not the main controls) opens a
+  modal dialog — a red warning naming exactly how many currently-filtered leads will be affected, no default
+  status pre-selected, a confirmation prompt on top of that, and an **"Undo Last Bulk Change"** button in the
+  same dialog that restores every affected lead to its exact prior status (one level of undo, persists across
+  Dashboard sessions until superseded by another bulk change). Closeable via a title-bar-style ✕.
+- **Detail page** (per lead): full content, status control, Draft Message (template-based, AI-generated,
+  copy-to-clipboard — copying auto-advances status New → Contacted), and a lead-scoped one-shot Consult Mentor
+  chat (persisted per lead).
+
+### 6.6 Advisors (Sales Mentor & Customer Voice)
+
+- **Sales Mentor**: persona-configurable agent for cross-lead strategy questions ("which lead should I
+  prioritize," general sales process advice) and drafting. Uses `list_leads`/`get_lead_details` tools only
+  when a question actually needs real data — `list_leads` excludes Irrelevant leads and includes both Post
+  and Job leads (tagged `type` + `hasIndividualContact`), instructing the Mentor to handle each appropriately
+  (draft a message for a Post lead; suggest finding an individual contact for a Job lead).
+- **Customer Voice**: persona-configurable agent that roleplays a realistic buyer, grounding itself in a named
+  lead's real content when one is referenced, or a general persona otherwise.
+- Both share one tool-use engine (`runAgentTurn` in `agent-shared.js`): bounded timeouts (2.5 min per
+  conversational turn, 50s per tool call) with a live ticking status ("Thinking… (Ns)") so a genuinely long
+  analysis reads as progress, not a hang — this exists because a truly stalled request previously hung
+  indefinitely with no error.
+- A stray Enter press while a turn is still in flight is a no-op (matches the Send button's disabled state) —
+  previously this could start a second concurrent turn and silently lose a message.
+
+### 6.7 Settings
+
+Language (English/German), company context ("What We Offer," used by every AI feature to reason about real
+fit), Anthropic API key, message templates (auto-picked per lead by connection status / job-ad detection, or
+chosen manually), value-add offers (a fixed list the AI may mention, never invents). Opened via its own blue
+button in the Scanner tile. The Advisors page reads these live (via `chrome.storage.onChanged`) rather than
+caching a stale copy, since editing now happens on a separate page.
+
+### 6.8 Backup / portability
+
+Export/Import Settings (side panel) — everything above plus the full lead dataset, as one JSON file. API key
+excluded by default (opt-in per export, for deliberately sharing a spend-capped trial key). An automatic
+backup download fires before every scan, so a scan-time failure never loses accumulated data.
+
+## 7. Non-functional requirements
+
+- **Manual-trigger only** — no `alarms`, no background scanning, ever.
+- **Local-first privacy** — all data in `chrome.storage.local`; the only outbound calls are to
+  `linkedin.com` (reading pages already open) and `api.anthropic.com` (only when AI features are used, with
+  the user's own key). No server operated by this project.
+- **No remote code** — no bundler-fetched or eval'd remote JavaScript (a Chrome Web Store policy
+  requirement); Dashboard's pie charts are hand-drawn inline SVG rather than a chart library for this reason.
+- **Self-healing data migrations** — schema changes (e.g. the "Blocked" → "Irrelevant" rename, missing
+  `postedAt`/`status` on old leads) backfill automatically on next read, never requiring a manual migration
+  step or losing existing data.
+- **Bounded AI calls** — every Anthropic fetch has a timeout; a stalled connection now fails with a clear
+  message inside whatever bound is appropriate (2.5 min conversational, 45s draft, 50s tool execution)
+  instead of hanging indefinitely.
+
+## 8. Open items / known gaps
+
+- LinkedIn's DOM structure for search results is unstable; content-script selectors need occasional
+  maintenance when scraping breaks.
+- Negative-topic and Author-title matching is keyword-based, not exact — a common word can over-match, which
+  is why every automatic status change is reviewable and reversible, never a silent delete.
+- No CRM push (Salesforce/other) yet — leads live only in this extension.
+- Chrome Web Store submission is pending review (v0.6.4); this document and the codebase have moved well past
+  that version locally, per the deliberate decision to hold further Web Store uploads until that review clears.
+
+## 9. Version history
+
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.13.2**.

@@ -1,0 +1,18 @@
+# Scraped lead data and full settings/lead backups — contain real people's names,
+# job titles, employers, and LinkedIn profile URLs scraped from their public posts.
+# Never publish this; code and docs only.
+linkedin-lead-scanner-backup-*.json
+linkedin-leads-*.csv
+salesteam-auto-backup-*.json
+salesteam-backup-*.json
+salesteam-dashboard-*.csv
+
+# Unredacted screenshots that show real LinkedIn users' names/companies/emails
+# (the "-redacted"/"-cleaned" versions of these are the ones meant for public use)
+Screen shots/results.png
+Screen shots/Sample message drafted by my Sales Mentor Agent.jpg
+Screen shots/image-1788184816990.png
+Screen shots/image-1788184825115.png
+
+# Unrelated personal phone screenshot, not project content
+Screen shots/Screenshot 2026-08-31 155920.jpg

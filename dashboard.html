@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam Dashboard</title>
+  <link rel="icon" href="icons/icon16.png" />
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header id="page-header">
+    <h1>SalesTeam <span id="version-text"></span></h1>
+    <div id="header-actions">
+      <button id="prioritize-unscored-btn" type="button">Prioritize Unscored Leads</button>
+      <button id="export-csv-all-btn" type="button">Export All (CSV)</button>
+      <button id="export-csv-filtered-btn" type="button">Export Filtered (CSV)</button>
+      <span id="prioritize-status" class="status-text"></span>
+    </div>
+  </header>
+
+  <main id="list-view">
+    <section id="stats-section">
+      <div class="pie-card">
+        <h2>Last 7 days</h2>
+        <div class="pie-wrap" id="pie-7"></div>
+      </div>
+      <div class="pie-card">
+        <h2>Last 30 days</h2>
+        <div class="pie-wrap" id="pie-30"></div>
+      </div>
+      <div class="pie-card">
+        <h2>All time</h2>
+        <div class="pie-wrap" id="pie-all"></div>
+      </div>
+    </section>
+
+    <section id="controls-row">
+      <input id="search-input" type="text" placeholder="Search by name, title, or content…" />
+      <label class="control-label">
+        Status:
+        <select id="status-filter-select">
+          <option value="all">All statuses</option>
+        </select>
+      </label>
+      <span id="result-count"></span>
+      <label class="control-label" id="show-irrelevant-label">
+        <input type="checkbox" id="show-irrelevant-checkbox" />
+        Show Irrelevant (negative-filtered) leads
+      </label>
+    </section>
+
+    <section id="table-section">
+      <table id="results-table">
+        <colgroup id="results-colgroup"></colgroup>
+        <thead id="results-thead"></thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+    </section>
+
+    <section id="pagination-row">
+      <label class="control-label">
+        Show:
+        <select id="page-size-select">
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="all">All</option>
+        </select>
+        per page
+      </label>
+      <div id="pagination-nav">
+        <button id="page-first-btn" type="button" title="First page">&laquo;</button>
+        <button id="page-prev-btn" type="button" title="Previous page">&lsaquo;</button>
+        <span id="page-indicator"></span>
+        <button id="page-next-btn" type="button" title="Next page">&rsaquo;</button>
+        <button id="page-last-btn" type="button" title="Last page">&raquo;</button>
+      </div>
+      <button id="open-bulk-change-btn" type="button" title="Change the status of every currently-filtered lead at once">Bulk Change…</button>
+    </section>
+  </main>
+
+  <dialog id="bulk-change-dialog">
+    <button id="bulk-close-x-btn" type="button" aria-label="Close" title="Close">✕</button>
+    <h3>Bulk Change Status</h3>
+    <p class="bulk-warning">
+      ⚠ This changes the status of every lead currently matching the table's filters
+      (<strong id="bulk-dialog-count">0</strong> lead<span id="bulk-dialog-count-plural">s</span>) in one action.
+      Double-check your search/status/column filters before applying.
+    </p>
+    <label for="bulk-status-select">Change status to:</label>
+    <select id="bulk-status-select">
+      <option value="" selected disabled>Choose a status…</option>
+    </select>
+    <div class="bulk-dialog-actions">
+      <button id="bulk-apply-btn" type="button">Apply</button>
+      <button id="bulk-cancel-btn" type="button">Cancel</button>
+    </div>
+    <p id="bulk-status-text" class="status-text"></p>
+    <hr />
+    <button id="bulk-undo-btn" type="button">Undo Last Bulk Change</button>
+    <p id="bulk-undo-text" class="status-text"></p>
+  </dialog>
+
+  <main id="detail-view" hidden>
+    <a href="#" id="back-to-list-link">&larr; Back to all leads</a>
+
+    <section id="detail-header-section">
+      <h2 id="detail-title"></h2>
+      <div id="detail-meta"></div>
+      <label class="control-label">
+        Status:
+        <select id="detail-status-select"></select>
+      </label>
+    </section>
+
+    <section id="detail-content-section">
+      <h3>Full content</h3>
+      <p id="detail-full-content"></p>
+      <div id="detail-links"></div>
+    </section>
+
+    <section id="detail-draft-section">
+      <h3>Draft Message</h3>
+      <div class="draft-controls">
+        <select id="detail-template-select"></select>
+        <button id="detail-draft-btn" type="button">Draft Message</button>
+      </div>
+      <textarea id="detail-draft-textarea" placeholder="Click “Draft Message” to generate a suggested opening message."></textarea>
+      <div class="draft-actions">
+        <button id="detail-copy-btn" type="button">Copy</button>
+        <span id="detail-draft-status" class="status-text"></span>
+      </div>
+    </section>
+
+    <section id="detail-mentor-section">
+      <div class="section-title-row">
+        <h3>Consult Sales Mentor about this lead</h3>
+        <button id="detail-mentor-clear-btn" class="text-link-btn" type="button">Clear conversation</button>
+      </div>
+      <div id="detail-mentor-history" class="agent-history"></div>
+      <span id="detail-mentor-status" class="status-text"></span>
+      <div class="agent-input-row">
+        <textarea id="detail-mentor-input" class="agent-input" placeholder="Ask about this lead, e.g. “Is this worth pursuing?”"></textarea>
+        <button id="detail-mentor-send-btn" class="agent-send-btn" type="button">Send</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

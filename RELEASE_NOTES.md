@@ -1,0 +1,434 @@
+# SalesTeam — v0.15.0
+
+## New: in-app Help page, with fuzzy-matching Q&A search
+
+- New "Help ↗" button next to Dashboard/Advisors/Settings, opening a dedicated Help page with ~27 curated Q&As across Topics, Negative Topics, Dashboard, Advisors, and Settings, plus a free-text search box.
+- Search is deliberately not AI-based - it's an instant, client-side fuzzy/synonym matcher (tokenizes the query, tolerates typos and word-order/prefix variation, no network call or API key needed). It's built to answer a *fixed* set of canonical questions, not generate new text, so two different phrasings of the same question reliably land on the same answer - e.g. "Enable topic" and "disable a search topic" both surface "How do I enable or disable a Topic without deleting it?" as the top result.
+- Each result is a collapsible card; clicking the question expands/collapses its answer.
+
+---
+
+# SalesTeam — v0.14.2
+
+## Fixed: the v0.14.1 tooltip fix wasn't actually being saved
+
+- The refreshed "(matched...)" reason from v0.14.1 was computed correctly in memory, but "Apply Negative Filters" only wrote changes back to storage when a lead's *status* actually flipped - a lead that stayed Irrelevant (because a different keyword in the same topic still caught it) got its reason silently discarded instead of saved, so the tooltip kept showing the old topic-only text forever.
+- Fixed: any reason refresh now counts as a real change worth saving, not just a status flip. Verified directly: a lead already Irrelevant with the old-format reason now correctly picks up the new "(matched ...)" text after clicking "Apply Negative Filters," even though its status doesn't change.
+
+---
+
+# SalesTeam — v0.14.1
+
+## Irrelevant status tooltip now names the specific keyword, not just the topic
+
+- Not a bug fix - "Apply Negative Filters" correctly leaves a lead Irrelevant when it matches more than one keyword and you only remove one of them. But the hover tooltip only ever named the *topic* ("Recruiter/Staffing Headline Filter"), which made that completely indistinguishable from "this didn't work" when a topic holds several keywords.
+- The tooltip now names both, e.g. `Recruiter/Staffing Headline Filter (matched "Recruiter")` - and refreshes every time "Apply Negative Filters" runs, even for a lead that stays Irrelevant, in case a *different* keyword in the same topic is what's actually catching it now.
+
+---
+
+# SalesTeam — v0.14.0
+
+## New: "Apply Negative Filters" - instant, bidirectional, no scan needed
+
+- Editing a negative topic only ever affected *future* scans, or (if you checked "apply on next scan") newly-caught matches among existing leads - it never handled the reverse: a lead already marked "Irrelevant" whose matching topic you later edited or removed just stayed Irrelevant forever, with no way back short of manually changing it.
+- Both the on-demand action and the existing "apply on next scan" checkbox are now **bidirectional**: every "New" lead gets re-checked (moving to Irrelevant if it now matches), and every "Irrelevant" lead gets re-checked too (moving back to New if it no longer matches anything). A lead you've already acted on yourself - Contacted, Dismissed, Responded, Converted - is never touched by either direction; this only ever second-guesses the system's own past decision, never yours.
+- New **"Apply Negative Filters"** button, right in the Scanner tile's Negative Topics section (not a separate tab) - since every field there already autosaves as you type, this just runs the check against whatever's currently on screen, with no need to wait for or trigger a new scan. Shows exactly how many leads moved each direction.
+- Verified with leads covering every case: a New lead that newly matches, an Irrelevant lead that no longer matches, an Irrelevant lead that still matches (correctly left alone), and a Dismissed lead that matches but must never be touched.
+
+---
+
+# SalesTeam — v0.13.3
+
+## Hardened scans against a specific stuck-scan cause, ahead of testing on a new machine
+
+- `keepAliveSleep` (pings local storage every few seconds so Chrome doesn't decide the extension's service worker is idle and kill it mid-scan) only ever covered the deliberate delay *between* searches - it never covered the up-to-35-second window each search itself can spend waiting on page navigation (20s) and the content script's scrape result (15s). A single slow page load - plausible on an unfamiliar or monitored network - could leave the service worker with enough silent, API-free time to get killed by Chrome outright, which looks exactly like "the scan is stuck forever," since the process that would have reported completion no longer exists.
+- Extended the same keepalive ping to cover *every* wait in the scan loop (both Posts and Jobs), not just the delay between them. Verified in isolation: pings fire on schedule while a wait is pending and stop cleanly the moment it resolves, with the original result passed through unchanged.
+- This is a hardening fix, not a confirmed root-cause fix - the previous stuck-scan report was never conclusively diagnosed. Worth watching closely on the first real test on a different machine (a work laptop, likely a different network) to see if it recurs.
+
+---
+
+# SalesTeam — v0.13.2
+
+## Hover an "Irrelevant" status to see why
+
+- The Dashboard's status pill now shows a tooltip naming the specific negative topic that caught it (currently always "Competitor Blocklist" or "Recruiter/Staffing Headline Filter", but it'll show any custom negative topic you add too - it's not hardcoded to just those two).
+- Recorded going forward at the moment a lead is marked Irrelevant (a fresh scan, "Re-apply to existing leads", or the reapply-on-scan checkbox).
+- Existing Irrelevant leads that predate this (including ones just migrated from the old "Blocked" status) get the reason filled in automatically, best-effort, by re-checking them against your current negative topics the next time they're read - no rescan needed.
+
+---
+
+# SalesTeam — v0.13.1
+
+## Bulk Change dialog: added a close (✕) button
+
+- Top-right corner, styled like a Windows title-bar close button (turns red on hover) - same effect as Cancel, just where people instinctively look for it.
+
+---
+
+# SalesTeam — v0.13.0
+
+## Dashboard: hide Irrelevant leads by default, and a much safer Bulk Change
+
+- **New "Show Irrelevant (negative-filtered) leads" checkbox** next to the status filter, unchecked by default - the Dashboard's "All statuses" view no longer clutters the table with every negative-filtered lead. Explicitly picking "Irrelevant" from the Status dropdown still shows them regardless of the checkbox. The preference is remembered across visits.
+- **Bulk Change moved and locked down.** It's no longer an always-visible control next to the search bar - it's now a small, deliberately unobtrusive "Bulk Change…" button tucked into the pagination row below the table. Clicking it opens a real popup dialog with:
+  - A red warning stating exactly how many currently-filtered leads will be affected.
+  - No default status pre-selected - you must explicitly choose one before Apply does anything.
+  - The same confirmation prompt as before, on top of all that.
+  - A new **"Undo Last Bulk Change"** button in the same dialog, which restores every affected lead to whatever status it had immediately before - a real safety net if a bulk change happens by mistake despite the above. Only holds one level of undo (the most recent bulk change), and the record persists even if you close the Dashboard and come back later.
+
+---
+
+# SalesTeam — v0.12.2
+
+## Status renamed: "Blocked" → "Irrelevant"
+
+- Clearer distinction from "Dismissed": "Dismissed" is always a person's own decision, while this status is the system's - a lead the negative-topic filters recognized as a competitor or recruiter/staffing post, never one you reviewed yourself.
+- Existing leads already marked "Blocked" migrate automatically the next time the extension reads them - no action needed, nothing lost, same reviewable/reversible behavior as before.
+- Updated everywhere: the status enum, the Dashboard's pill color and pie-chart slice, CSV export, the Mentor's prompts and tool descriptions, and the Scanner tile's Negative Topics copy.
+
+---
+
+# SalesTeam — v0.12.1
+
+## New: "Prioritize Unscored Leads" button on the Dashboard
+
+- Automatic prioritization (v0.11.0) only ever scores leads at the moment a scan finishes - it was never meant to, and doesn't, retroactively catch up leads that predate the feature or a scan that ran with no API key configured. If you never noticed the Priority column was empty, this is why.
+- New button next to the CSV exports: **"Prioritize Unscored Leads"** - finds every currently-"New" lead across your whole list (not just what's filtered on screen) that doesn't have a priority yet, and scores all of them in one batch, same as the automatic pass. Shows a status message the whole way through ("Prioritizing N leads…", then "Done - N leads scored"), and tells you plainly if there's nothing left to do or if you haven't added an API key yet.
+
+---
+
+# SalesTeam — v0.12.0
+
+## New Settings page + compact button row
+
+- **"AI Settings" moved off the Advisors page onto its own new Settings page** - language, "What We Offer," Anthropic API key, message templates, and value-add offers. Any general (non-lead-specific) settings added later will live here too, rather than getting bolted onto whichever page happens to need them first. Opened via a new blue "Settings ↗" button in the Scanner tile, alongside Dashboard and Advisors. The Advisors page still *uses* these settings (for the Mentor/Customer Voice and drafting) - it just no longer edits them, and now picks up live edits made on the Settings page in another tab instead of needing a reload.
+- **All 3 blue buttons (Dashboard, Advisors, Settings) now sit in one row**, shortened ("Open Full Dashboard ↗" → "Dashboard ↗", etc.) and evenly sized to fit.
+- **Export/Import resized to match** the new compact button style, but deliberately not stretched to fill the row - there's visible room left for a future backup-related button instead of the two growing to fill the gap.
+
+---
+
+# SalesTeam — v0.11.1
+
+## "Re-apply to existing leads" redone as a checkbox
+
+- Replaced the "Re-apply to existing leads" link (which sat oddly right under "+ Add Negative Topic") with a checkbox at the **top** of the Negative Topics section, below the explanation and above the first filter - with real spacing so it doesn't crowd either.
+- Unchecked by default every time you open the side panel. When checked and you click "Scan All Topics", that scan will - after its own searches finish and the usual automatic blocking of newly-found leads happens - also re-check every currently-"New" *existing* lead against your negative topics, in case one you added or edited since then now matches. It's a one-shot choice for that scan, not a saved setting, so it never keeps silently re-running after you forget it's checked.
+
+---
+
+# SalesTeam — v0.11.0
+
+## Automatic lead prioritization + bulk status changes
+
+- **Negative Topics moved to the Scanner tile** (side panel), right below Job Search - now sitting alongside the positive search Topics they're the inverse of, instead of on the separate Advisors page. Same editor, same built-ins, same "Re-apply to existing leads" button - just relocated. Any edits already made carry over automatically.
+- **New: automatic Mentor prioritization after every scan.** Once a scan's search results are in and the negative-topic filters have blocked the obvious noise, the Sales Mentor scores every remaining "New" lead from **P1 (highest - drop everything, contact today) to P5 (lowest - unlikely fit, low urgency)** in one batch pass, with a short reason for each. This runs automatically as part of the scan itself (visible as "prioritizing N new leads…" in the side panel's progress text) - no button to click. A lead already scored, or not currently "New" (Blocked/Dismissed/etc.), is never re-scored, so this only ever costs an API call for genuinely new work.
+- **New "Priority" column on the Dashboard** - a colored P1-P5 pill (hover for the Mentor's reason), sortable and filterable exactly like every other column. Sort ascending to work top-down from your best leads; unscored leads (not yet run through prioritization, or filtered out as Blocked) show as "—" and sort to the end. Also added to both CSV exports.
+- **New "Bulk change filtered leads to…" control** next to the search bar - pick a target status, hit Apply, and every lead matching your *current* filters (search text, status, any column filter - e.g. Priority = P4 or P5) gets changed in one action, not one row at a time. Asks for confirmation first and tells you how many leads it touched. Useful for clearing out a backlog: filter to low priority, bulk-dismiss the lot.
+- Fixed a small pre-existing gap: a "Blocked" lead's status pill had no color defined (v0.10.0 added the status but missed its pill styling) - it now shows in red like the pie chart already did.
+
+---
+
+# SalesTeam — v0.10.1
+
+## Lead Filters redesigned as "Negative Topics" - reuses the search Topic concept
+
+- **Replaces the flat blocklist text boxes from v0.10.0** with the exact same card-based editor as your search Topics (name, keywords, optional "AND with" group) - just inverted: a lead matching a negative topic is noise, not a prospect.
+- **AND-logic filtering is now possible**, not just a flat keyword list - e.g. a custom topic with keywords "student" AND-with "internship" only blocks a lead mentioning *both*, not either alone.
+- **New "Applies to" selector per filter**: Posts + Jobs, Post leads only, or Job listings only - replaces the old hardcoded rule that the recruiter filter never touches job listings. That rule still exists, it's just now how the built-in "Recruiter/Staffing Headline Filter" topic is configured (Post leads only) rather than special-cased in code.
+- **The two built-ins carry over unchanged** (same companies, same recruiter phrases) - "Competitor Blocklist" (Posts + Jobs) and "Recruiter/Staffing Headline Filter" (Post leads only). They can't be removed, but every field on them - name, keywords, AND-group, applies-to, even disabling them - is fully editable.
+- **Add your own filters** with "+ Add Negative Topic" - e.g. a "Students/Interns" filter, a geography exclusion, anything else that keeps showing up as noise.
+- "Re-apply to existing leads" still works the same way - re-checks every currently-"New" lead against the current filters, never touching one you've already acted on.
+- If you'd already edited the v0.10.0 blocklists, those edits carry over automatically the first time this loads - no need to re-enter anything.
+
+---
+
+# SalesTeam — v0.10.0
+
+## New: automatic competitor/recruiter blocklist
+
+- **Where**: new "Lead Filters" section on the Advisors page.
+- **Competitor blocklist** (company name, one per line) — matched against a job listing's employer, or best-effort against a Post lead's headline. Pre-filled with the list the Sales Mentor itself suggested after reviewing a real scan (BCG Platinion, Deloitte, EY, Zühlke, Eraneos, valantic, Capco, Artefact, Techyon, NVIDIA, Google, AWS, Microsoft, and a few more) - fully editable.
+- **Recruiter/staffing headline filter** (Post leads only) — matched against a Post lead's own headline ("Talent Acquisition", "Recruiter", "Recruitment", etc.). Deliberately never applied to Jobs-vertical listings, since a job ad naming a recruiter or HR contact as the point of contact is completely normal there - only an individual recruiter's *own* post is noise.
+- A match sets the lead's status to a new **"Blocked"** value automatically at scan time (its own pie-chart/status-filter color, never a silent delete) - reviewable and reversible any time from the Dashboard, exactly like any other status.
+- **"Re-apply to existing leads"** button re-checks every currently-"New" lead against the current lists - lets a blocklist edit clean up your existing ~130 leads too, not just future scans. Never touches a lead you've already acted on (Contacted/Dismissed/Responded/Converted) or already reviewed as Blocked.
+- The Sales Mentor and Customer Voice's `list_leads` tool now skips Blocked leads by default, so the noise that prompted this (competitors and recruiter posts crowding out real prospects in "rank my leads" style questions) is gone at the source rather than something the Mentor has to explain away every time.
+
+---
+
+# SalesTeam — v0.9.7
+
+## Fixed: a message sent while the agent was still replying could silently vanish
+
+- **Root cause**: pressing Enter to send always fired immediately, even while a previous question to the same chat (Sales Mentor, Customer Voice, or a lead's Consult Mentor) was still being answered - the Send button correctly disables itself while a turn is in progress, but the Enter-key shortcut didn't check that, so a second turn could start concurrently and race with the first one on the same conversation history. Whichever one lost the race could end up dropped rather than answered - consistent with a message only "going through" on the second try.
+- Enter now does nothing while a turn is still in progress, matching the disabled Send button, in all three chat surfaces (Advisors page's two agents, and the Dashboard's per-lead Consult Mentor).
+
+---
+
+# SalesTeam — v0.9.6
+
+## Sales Mentor now sees job listings too, not just Post leads
+
+- **Fixed**: on the Advisors page, asking the Sales Mentor to rank/prioritize "all your leads" only ever considered LinkedIn Post leads - Jobs-vertical job listings were silently excluded from `list_leads`/`get_lead_details`, so a question like "rank the top 5 out of my 122 leads" was really only ever ranking a subset (e.g. 25), with no indication of that beyond the Mentor's own footnote.
+- A hiring job ad is real buying signal even with no individual scraped to contact yet, so it shouldn't be invisible to the Mentor - it's now included, tagged with `type: "job"` and `hasIndividualContact: false` so the Mentor can tell the two kinds apart.
+- The Mentor's instructions now spell out the difference: for a Post lead it can draft an opening message as before; for a job listing (no individual contact scraped) it should instead suggest finding a specific person at that company to reach out to, or flag it as a signal worth tracking.
+- This only affects the general Advisors page's Sales Mentor/Customer Voice (the tools that survey *all* leads) - the Dashboard's per-lead "Consult Mentor" panel already handled job vs. post leads correctly since it's scoped to one known lead at a time.
+
+---
+
+# SalesTeam — v0.9.5
+
+## Fixed: Advisors chat could hang indefinitely with no error
+
+- **Root cause**: a stalled connection to Anthropic's API had no timeout at all, so if the response never came back, the chat just sat on "Checking: list_leads" (or "Thinking…") forever with nothing in the console — exactly what was reported after asking the Sales Mentor to rank the leads and pick the top 5.
+- **Bounded timeouts added**: the agent conversation call now gives up after 2.5 minutes, tool execution (reading your leads, drafting a message) after 50 seconds, and message drafting after 45 seconds — each with a clear, readable error instead of an endless spinner.
+- **Progress is now visible while it's working**: "Thinking…" and "Using tool: …" now tick up a live seconds counter ("Thinking… (14s)…") instead of sitting static, so a real, longer analysis (like reasoning over 100+ leads) reads as "still working" rather than "frozen" — the two looked identical before, which is exactly what made the original hang impossible to tell apart from normal-but-slow. 2.5 minutes is intentionally generous for a "look at everything and rank it" style question; a truly stalled connection will still fail cleanly well before then.
+
+---
+
+# SalesTeam — v0.9.4
+
+## Lead-activity tracking
+
+- **New "Last Activity" column** — shows when a lead's status was last changed by hand, or when it was first found if it's never been touched. Sort it ascending to surface the leads that have gone the longest without any action.
+- **Status auto-advances New → Contacted** when you copy a drafted message for that lead (the clearest signal available that you're about to reach out — we can't see LinkedIn's own send button). Only fires from "New" specifically, so it never overwrites Dismissed/Responded/Converted, or a lead you'd already marked Contacted yourself.
+
+---
+
+# SalesTeam — v0.9.3
+
+- **Default page size is now 20** (was 50).
+- **CSV export split into two buttons**: "Export All (CSV)" and "Export Filtered (CSV)" — the latter exports exactly what your current search/column filters/status filter are showing (across all pages, not just the one you're looking at), with a distinct filename (`salesteam-leads-filtered-...` vs `salesteam-leads-all-...`) so the two don't get mixed up in your Downloads folder. Both now also include the Post Date and First Scanned columns to match the table.
+
+---
+
+# SalesTeam — v0.9.2
+
+## Found and fixed the column-menu bug
+
+- **The column ▾ menu should actually work now.** Root cause: the popup was a child of its column's header cell, positioned absolutely - but that header cell lives inside the table, which lives inside a horizontally-scrolling container. That nesting can silently clip an absolutely-positioned popup in some browsers/zoom levels even though it's technically still in the DOM (no error, nothing visibly wrong, it just never appears) - consistent with what was reported (no console error, every column affected). Rewritten to render the popup as a direct child of the page itself, positioned using the button's real on-screen coordinates - verified working end-to-end (open, sort, filter, apply, close) with real clicks, not just script-triggered ones.
+- The sort-direction arrow on the active sort column is now visually distinct (smaller, gray) from the ▾ menu icon, so they're not mistaken for two dropdown buttons on the same column.
+- "Show N per page" options changed to 20 / 50 / 100 / All.
+
+---
+
+# SalesTeam — v0.9.1
+
+## Pagination + another pass on the column menu
+
+- **Pagination.** A "Show: 50/100/250/500/All per page" selector plus First/Prev/Next/Last controls under the table - needed once you're past a handful of leads. Any change to search/filter/sort takes you back to page 1.
+- **Column ▾ menu made much easier to hit** - it now spans the header's full height (not just a small 22×22 square), so there's a lot more room for a real click to land on it. If it's still unresponsive after this, that points to something environment-specific (e.g. the browser not having picked up the new CSS) rather than a hitbox problem - worth a full reload (not just "refresh") if so.
+
+---
+
+# SalesTeam — v0.9.0
+
+## Dashboard fixes and new columns
+
+- **Fixed: column header click-to-sort didn't work.** Rebuilding the header row for the Excel-style menus accidentally dropped the "click the header text to sort" behavior entirely. Clicking a column title now toggles ascending/descending again, same as before.
+- **Fixed: the column ▾ menu was very hard to click.** Its hit target was only ~12×16px. Enlarged to a proper 22×22px button.
+- **Content column now shows up to 3 lines by default**, click to expand the row to full content, click again to collapse — instead of a flat 80-character cut.
+- **Pie charts now bucket by real post date, not scan date.** Previously "last 7 days / 30 days / all time" used when the scanner *discovered* a lead, which clusters together if you scan in bursts — so all three charts could show identical numbers. They now use an estimated real post date, parsed from LinkedIn's own relative text ("2h", "3 days ago") at scrape time. Existing leads are backfilled automatically.
+- **The "NEW" badge is back**, now on the Dashboard too (previously only in the side panel, and only during that session). It means "first appeared in your most recent scan" — a new "Post Date" column shows the estimated real post date, and a new "First Scanned" column shows when your scanner found it, so you can filter/sort by either independently of lead status.
+- "Open Advisors" button is now blue, matching "Open Full Dashboard" — the two navigation buttons are now visually distinct from the smaller gray Export/Import utility buttons.
+
+---
+
+# SalesTeam — v0.8.0
+
+## Dashboard improvements + a new Advisors page
+
+**Dashboard:**
+- **Fixed column sorting.** Clicking "Source" (or several other columns) could only ever apply one sort direction — it never actually toggled. Every column now supports real ascending/descending sorting.
+- **Excel-style per-column menus.** Each column header has a ▾ menu: Sort Ascending, Sort Descending, and a Filter box. An active filter shows a small dot on the header; the result count shows "(filtered)" when anything is narrowing the list. The old single global "Sort by" dropdown is gone — column headers now do that job, the way a spreadsheet does.
+- **Resizable columns.** Drag the edge of any column header; widths are remembered (per browser, via localStorage) across reloads.
+- **The per-lead Sales Mentor conversation now persists.** Previously reset every time you left and came back to a lead. Now saved on the lead itself, with a "Clear conversation" button. (Draft Message was already persisting correctly — no change needed there.)
+
+**New: the Advisors page** (`Open Advisors ↗` button in the side panel) — the generic, cross-lead counterpart to the Dashboard's per-lead pages:
+- A persistent **Sales Mentor** conversation for cross-lead strategy questions ("which lead should I prioritize this week?").
+- **Customer Voice** for general buyer-persona pressure-testing.
+- **AI Settings**: your Anthropic API key, "What We Offer," message templates, and language — all moved here from the side panel, since they're used by both the Dashboard and this page, not just scanning.
+
+**Side panel, pared down:** now just Topics, Scan, and a read-only Results list — the per-lead Draft Message section and the Sales Mentor/Customer Voice/Templates sections moved out (see above). Each result card now has an "Open in Dashboard →" link that jumps straight to that lead's detail page.
+
+---
+
+# SalesTeam — v0.7.0
+
+## New: the Leads Dashboard
+
+- **A full Dashboard, in its own browser tab.** New "Open Full Dashboard ↗" button at the top of the side panel opens it. Nothing about the side panel changes — this is a second, complementary view over the same leads.
+- **Pipeline stats at the top** — three pie charts (last 7 days, last 30 days, all time) showing your leads broken down by status. Click a slice (or its legend) to filter the table below by that status instantly.
+- **Every lead has a status now**: New, Contacted, Dismissed, Responded, or Converted. Every lead scraped before this version is automatically backfilled to "New" the first time it's read — nothing to do manually.
+- **A big, sortable, searchable table** of every lead — date found, source (Post / In-Post Job Ad / Job Listing), title, a click-to-expand content preview, the creator (linked to their profile or the job posting), connection level, and status. Sort by clicking any column header or via the "Sort by" dropdown; free-text search filters across title, content, and creator.
+- **Per-row quick actions**: Open/Edit (full detail page), Consult Mentor, Send Message, and one-click Dismiss.
+- **A full lead-detail page** — every field, a status dropdown, a Draft Message panel (same drafting logic as the side panel), and a Sales Mentor conversation scoped to that one specific lead.
+- Under the hood: the Sales Mentor/Customer Voice AI engine (the tool-use loop, lead-lookup tools, and drafting logic) was extracted into a new shared `agent-shared.js` module so the Dashboard and the side panel run the exact same code, not two copies that could drift apart. The side panel's own behavior is unchanged.
+
+---
+
+# SalesTeam — v0.6.5
+
+## New since v0.6.4
+
+- **Scan-complete message now shows how many leads are new.** Previously just "Scan complete — 41 total leads." Now also breaks out how many of those are new since your last scan, e.g. "Scan complete — 41 total leads (7 new)." ("New" means: not already in your saved Results before this scan started — the same definition behind each lead's NEW badge.)
+
+---
+
+# SalesTeam — v0.6.4
+
+## Fixes since v0.6.3
+
+- **Fixed a second, separate cause of a scan hanging with no error.** `navigateAndWait()` (waiting for each search page to finish loading) had no timeout — on a network/machine where a page occasionally never fires "complete" (a proxy, a corporate security interstitial, a managed/throttled network), it would hang forever with nothing ever thrown, meaning even v0.6.2's new error handling couldn't catch or report it. Added a 20-second timeout that proceeds anyway, matching the timeout pattern already used elsewhere (waiting for the content script's scrape result).
+
+---
+
+# SalesTeam — v0.6.3
+
+## New since v0.6.2
+
+- **Automatic settings backup before every scan.** Clicking "Scan All Topics" now silently downloads a full settings backup first (Topics, templates, personas, everything except your API key), landing in Downloads with an "salesteam-auto-backup-..." filename. This protects against things a storage-level save can't - like accidentally reloading the unpacked extension from a different folder, which Chrome treats as a brand-new extension with empty storage. (Your settings were already saving immediately on every edit - this doesn't change that; it adds a real file outside the extension entirely as a second line of defense.)
+
+---
+
+# SalesTeam — v0.6.2
+
+## Fixes since v0.6.1
+
+- **Fixed a scan that could silently freeze partway through with no way to recover.** `scanAllTopics()` had no error handling at all — any failure (a closed tab, a transient extension API hiccup, or Chrome terminating the background service worker mid-run, a known Manifest V3 risk for long tasks) killed the scan with zero feedback: no error message, the Scan button stuck disabled forever, and every lead found in that run lost, since results were only saved once at the very end.
+- Now: errors show a real message and re-enable the Scan button so you can just retry; results save progressively after every topic (not only at the end), so a later failure only loses the *rest* of the scan, not what was already found; and a lightweight keep-alive touch during each delay reduces the chance of the underlying service-worker termination happening at all.
+
+---
+
+# SalesTeam — v0.6.1
+
+## New since v0.6.0
+
+- **Live "N searches for this topic" counter** on every Topic and Job Topic card, updating as you type. Uses the exact same chunking math as the real scan (including the multiplicative concept×AND-group effect that made one topic alone responsible for over half of a recent 41-search scan), so you see the real cost while editing instead of needing a manual audit. Turns orange at 6+ searches to flag topics worth reconsidering.
+
+---
+
+# SalesTeam — v0.6.0
+
+## New since v0.5.1
+
+- **Message language setting** (English / German) for AI drafting and the Sales Mentor — useful for the Swiss market, where most Posts/Jobs content is in Standard German rather than English.
+- **Customer Voice now mirrors a lead's actual language** when grounded in one specific real lead, regardless of the language setting — more authentic than a fixed toggle for something roleplaying a real person. Falls back to the language setting for general questions with no specific lead.
+- Reminder: Topics' keyword lists already accepted any language before this release — German search terms can simply be typed into the existing keyword boxes alongside English ones.
+
+---
+
+# SalesTeam — v0.5.1
+
+## New since v0.5.0
+
+- **Optional API key sharing in Export Settings.** A new checkbox ("Include Anthropic API key in this export") lets you deliberately bundle your key into a settings export — for sharing one spend-capped trial key across a small team before they set up their own. Off by default, with a confirmation prompt when turned on, since it's a real secret once included.
+- Extension renamed from LinkedIn Lead Scanner to **SalesTeam** throughout (manifest, side panel title, icons — now a magnifying glass with "ST" lettering).
+
+---
+
+# LinkedIn Lead Scanner — v0.5.0
+
+## New since v0.4.1
+
+- **Mentor persona setting** (in the Sales Mentor section) — describes the Mentor's background/style (e.g. years of experience, industry focus, tone). Pre-filled with a sensible default; edit it to match how you actually want advice delivered.
+- **Target customer persona setting** (in the Customer Voice section) — describes who your ideal buyer actually is (company type, role, seniority). Used only for general questions with no specific lead named; a named real lead's actual data always takes priority over this generic persona.
+- Both are included in Export/Import Settings, so they can be shared to a second installation the same way Topics and templates already are.
+
+---
+
+# LinkedIn Lead Scanner — v0.4.1
+
+## Fixes since v0.4.0
+
+- **Connection-degree detection now actually works.** The scraper was checking a `data-view-name="null"` attribute that's present (as that literal string) on nearly every element in LinkedIn's DOM, so it always matched the wrong node and came back empty. Fixed to walk up to the first ancestor with real text, confirmed against live posts (1st/2nd/3rd correctly detected).
+- **New "What We Offer" setting**, shared by AI drafting, the Sales Mentor, and Customer Voice. Previously all three reasoned only from a lead's own post, with zero idea what your company actually sells — meaning advice and drafts couldn't reason about real fit, only surface relevance. Add a description once in AI Message Drafting settings and all three features pick it up immediately.
+- **Longer agent replies.** Sales Mentor and Customer Voice were capped at 1024 tokens, cutting off detailed strategic answers mid-sentence. Raised to 2048.
+
+---
+
+# LinkedIn Lead Scanner — v0.4.0
+
+## New since v0.3.0
+
+**An "AI board of advisors" — two agents built on shared infrastructure**
+- The former "Sales Advisor" is now the **Sales Mentor**: a 25-years-experience, always-available persona. Answers general strategy questions directly from its own expertise, and only reaches for the `list_leads`/`get_lead_details` tools when a question is actually about specific leads — the same agent handles both without you needing to pick a mode.
+- New **Customer Voice** agent: roleplays as a realistic B2B buyer so you can bounce a message or approach off it before sending. Name a specific lead and it grounds itself in their real scraped post (via the same tools, read-only); ask a general question and it answers as a typical buyer in this space instead.
+- Both agents are built from one reusable chat engine (same tool-use loop, different persona/system prompt/tool access) — a genuine multi-agent architecture sharing infrastructure, not three separate one-off builds.
+
+---
+
+# LinkedIn Lead Scanner — v0.3.0
+
+## New since v0.2.0
+
+**Sales Advisor (a real AI agent, not just generative text)**
+- A chat panel where you can ask things like "Which lead should I approach first?" or "How should I approach Gabel?"
+- Unlike the message drafter (a single fixed prompt), this gives Claude tools it decides on its own whether to use: `list_leads` (survey what's available), `get_lead_details` (dig into one lead), and `draft_message` (generate a draft as part of its answer) — genuine multi-step tool-calling, the core mechanic of agentic AI.
+- Uses a stronger model (Sonnet) than the drafting feature, since giving real prioritization/approach advice is a reasoning task, not a quick templated draft.
+- All three tools only read/generate local data already in your Results list — none of them touch LinkedIn or send anything.
+- Conversation persists across closing/reopening the side panel; "Clear Conversation" resets it.
+
+---
+
+# LinkedIn Lead Scanner — v0.2.0
+
+## New since v0.1.0
+
+**AI-drafted opening messages (Post leads only)**
+- "Draft Message" button on each Post lead generates a short, personalized LinkedIn message via Claude, using that lead's matched post content, headline, and topic — never auto-sent, always shown as editable text with a Copy button, so you review and send it yourself inside LinkedIn.
+- Three editable templates (auto-picked per lead, or choose manually): already connected (1st-degree), not yet connected, and hiring/job-ad leads — each with its own tone.
+- An optional "things you can offer" list (a real article, report, or demo offer) the AI may reference — it's instructed to never invent one that isn't on your list.
+- Requires your own Anthropic API key, entered under "AI Message Drafting" in settings (stored locally only, and excluded from Export/Import Settings so each installation uses its own key).
+- Best-effort detection of LinkedIn's 1st/2nd/3rd-degree connection badge to pick the right template tone — not yet live-verified against LinkedIn's current DOM, so it may need the same kind of selector tuning as other scraping in this extension.
+
+---
+
+# LinkedIn Lead Scanner — v0.1.0 (First Alpha)
+
+A Chrome extension that manually scans LinkedIn for people and companies talking about — or hiring for — topics you care about, so you can find and reach out to real leads instead of scrolling your feed.
+
+## What it does
+
+**Topics**
+- Define named topics as keyword lists (e.g. "AI Transformation": AI, Artificial Intelligence, Machine Learning...).
+- Each topic can optionally have a second "AND with" group, so a post must mention something from *both* groups (e.g. an AI term AND a project/development term).
+- Enable/disable individual topics without deleting them or losing their keywords.
+- No need to keep keyword lists short — LinkedIn silently breaks on overly long/complex searches, so the extension automatically splits a topic into multiple smaller searches behind the scenes and merges the results back into one list.
+
+**One-click scanning**
+- "Scan All Topics" runs every enabled topic as its own search, then merges everything into a single list, ranked by relevance (posts/jobs matching more topics rank higher, then by how well-matched and how recent).
+- Fully manual — nothing runs automatically or on a schedule, so there's no risk to your LinkedIn account from unattended automation.
+
+**Posts Search filters**
+- "Posted within" timeframe (any time / 24h / week / month).
+- "Author title contains" — narrow to specific job titles (CTO, Director, VP, etc.), checked against each author's visible headline.
+- Include/exclude posts that have an embedded job ad.
+
+**Job Search (LinkedIn's separate Jobs section)**
+- Toggle on to also search LinkedIn Jobs listings, not just Posts.
+- Job-specific topics (e.g. "AI Engineer" OR "ML Engineer") — additive with your Post topics, not a replacement.
+- Location filter (Switzerland, Zurich Metropolitan Area, and you can add more locations yourself).
+- Its own independent "Date posted" filter, since job ads go stale much faster than posts.
+
+**Lead types, clearly labeled**
+- **Post** — someone's personal post matching a topic.
+- **In-Post Job Ad** — a post with LinkedIn's job-listing widget attached.
+- **Job Listing** — a result from LinkedIn's dedicated Jobs section.
+- **Hiring** / **Freelance/Contract** badges — flags plain-text posts that use hiring or freelance-outsourcing language, even without a formal job widget.
+- **NEW** badge — marks leads found for the first time since your last scan.
+
+**Every result shows**
+- Which topic(s) and which specific keyword(s) actually matched.
+- Author/company, headline, snippet or job details, and a direct link to the profile, post, or job.
+
+**Managing your data**
+- **Export Leads (CSV)** — download all leads for Excel/Sheets/CRM.
+- **Export/Import Settings** — back up or transfer your topics, filters, and lead history as a JSON file (e.g. to set up a second person with your tuned topics).
+- **Clear Results** — wipe accumulated leads and start fresh.
+
+## Known limitations (alpha)
+
+- Location/author-title filtering for Posts is approximate — it checks the visible headline/post text, not LinkedIn's full profile data.
+- No exact post permalink for most posts (LinkedIn doesn't expose one without extra clicks) — you get a link to the author's profile and the visible snippet instead.
+- LinkedIn's search-complexity limits (and the Jobs vertical's virtualized list requiring a visible tab) were reverse-engineered through live testing — they could shift if LinkedIn changes its site.
+- Currently assumes an English-language LinkedIn UI.

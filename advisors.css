@@ -1,0 +1,212 @@
+:root {
+  --blue: #0a66c2;
+  --blue-light: #eef4fb;
+  --ink: #1a1a1a;
+  --gray: #555;
+  --gray-light: #888;
+  --border: #ddd;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  margin: 0;
+  padding: 24px 32px 60px;
+  background: #fafafa;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#version-text {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--gray-light);
+}
+
+h2 {
+  font-size: 15px;
+  margin: 0;
+  color: var(--blue);
+}
+
+h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--gray);
+  margin: 16px 0 6px;
+}
+
+#page-header {
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--blue);
+}
+
+.page-subtitle {
+  color: var(--gray);
+  font-size: 13px;
+  margin: 6px 0 0;
+}
+
+.page-subtitle a {
+  color: var(--blue);
+}
+
+#advisors-main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.advisor-card {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+
+.section-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.text-link-btn {
+  background: none;
+  border: none;
+  color: #a00;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+.field-hint {
+  color: var(--gray-light);
+  font-size: 12px;
+  margin: 4px 0 10px;
+}
+
+.field-hint code {
+  background: #f0f0f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+label {
+  display: block;
+  color: var(--gray);
+  font-size: 12.5px;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+select,
+input[type="text"],
+input[type="password"],
+textarea {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+#mentor-persona-input,
+#customer-persona-input {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.agent-history {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: #fafafa;
+}
+
+.agent-bubble {
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 90%;
+  white-space: pre-wrap;
+}
+
+.agent-bubble-you {
+  background: var(--blue);
+  color: white;
+  margin-left: auto;
+}
+
+.agent-bubble-agent {
+  background: var(--blue-light);
+  color: var(--ink);
+}
+
+.agent-bubble-tool {
+  background: none;
+  color: var(--gray-light);
+  font-style: italic;
+  font-size: 12px;
+  padding: 2px 4px;
+  max-width: 100%;
+}
+
+.agent-status {
+  color: var(--gray-light);
+  font-size: 12px;
+  min-height: 14px;
+}
+
+.agent-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.agent-input {
+  flex: 1;
+  min-height: 44px;
+  margin-bottom: 0;
+  resize: vertical;
+}
+
+.agent-send-btn {
+  padding: 0 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--blue);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-send-btn:disabled {
+  background: #9cbfe0;
+  cursor: default;
+}
+
+@media (max-width: 900px) {
+  #advisors-main {
+    grid-template-columns: 1fr;
+  }
+}

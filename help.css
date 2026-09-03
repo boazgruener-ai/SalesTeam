@@ -1,0 +1,130 @@
+:root {
+  --blue: #0a66c2;
+  --blue-light: #eef4fb;
+  --ink: #1a1a1a;
+  --gray: #555;
+  --gray-light: #888;
+  --border: #ddd;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  margin: 0;
+  padding: 24px 32px 60px;
+  background: #fafafa;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#version-text {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--gray-light);
+}
+
+#page-header {
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--blue);
+}
+
+.page-subtitle {
+  color: var(--gray);
+  font-size: 13px;
+  margin: 6px 0 0;
+  max-width: 760px;
+}
+
+#help-main {
+  max-width: 760px;
+}
+
+#help-search-input {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 15px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-sizing: border-box;
+  margin-bottom: 20px;
+}
+
+#help-search-input:focus {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+#help-no-results {
+  color: var(--gray-light);
+  font-size: 13px;
+}
+
+#help-results h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--blue);
+  margin: 22px 0 8px;
+}
+
+#help-results h3:first-child {
+  margin-top: 0;
+}
+
+.qa-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.qa-question {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.qa-question:hover {
+  background: var(--blue-light);
+}
+
+.qa-question::after {
+  content: "+";
+  color: var(--gray-light);
+  font-weight: normal;
+  font-size: 16px;
+  margin-left: 10px;
+  flex-shrink: 0;
+}
+
+.qa-question-open::after {
+  content: "\2212";
+}
+
+.qa-answer {
+  margin: 0;
+  padding: 0 14px 14px;
+  font-size: 13px;
+  color: var(--gray);
+  line-height: 1.5;
+}

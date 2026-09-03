@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam Settings</title>
+  <link rel="icon" href="icons/icon16.png" />
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <header id="page-header">
+    <h1>SalesTeam Settings <span id="version-text"></span></h1>
+    <p class="page-subtitle">
+      Shared by the Sales Mentor, Customer Voice, and the Dashboard's per-lead Draft Message — configure once
+      here. Any other general (non-lead-specific) settings added later will live on this page too.
+    </p>
+  </header>
+
+  <main id="settings-main">
+    <section class="settings-card">
+      <label for="output-language-select">Message / response language</label>
+      <select id="output-language-select">
+        <option value="english">English</option>
+        <option value="german">German (Hochdeutsch)</option>
+      </select>
+      <p class="field-hint">
+        Customer Voice always mirrors a specific lead's own post language when grounded in one, and falls
+        back to this for general questions.
+      </p>
+
+      <h3>What We Offer</h3>
+      <p class="field-hint">
+        Describe your company and what you actually sell. Shared by AI drafting, the Sales Mentor, and
+        Customer Voice, so they can reason about real fit against a lead — not just react to the lead's own
+        post in isolation.
+      </p>
+      <textarea id="company-context-input" placeholder="e.g. We specialize in AI-based automation and process optimization for mid/large companies, using Microsoft, Google and IBM tooling plus custom-built solutions we've already developed."></textarea>
+
+      <label for="anthropic-api-key-input">Anthropic API key</label>
+      <input type="password" id="anthropic-api-key-input" placeholder="sk-ant-..." />
+      <p class="field-hint">
+        Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>.
+        Stored only on this device, and used only to call Anthropic's API directly from your browser.
+      </p>
+
+      <h3>Message templates</h3>
+      <p class="field-hint">
+        Auto-picked per lead based on connection status, or choose manually on the Dashboard. Edit the
+        instructions so drafts sound like you.
+      </p>
+      <div id="message-templates-list"></div>
+
+      <h3>Things you can offer (optional, one per line)</h3>
+      <p class="field-hint">
+        Real resources only — an article link, a report, "free 20-min demo". The AI will only ever mention
+        something from this list, never invent one.
+      </p>
+      <textarea id="value-add-offers-input" placeholder="https://yourcompany.com/ai-readiness-report&#10;Free 20-minute demo at their convenience"></textarea>
+    </section>
+  </main>
+
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

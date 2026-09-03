@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Particle Field</title>
+<style>
+  html, body { margin: 0; overflow: hidden; background: #000; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel" data-presets="typescript" data-filename="sketch.ts">
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  hue: number;
+}
+const canvas = document.getElementById('c') as HTMLCanvasElement;
+const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+let width = window.innerWidth;
+let height = window.innerHeight;
+canvas.width = width;
+canvas.height = height;
+window.addEventListener('resize', () => {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
+});
+let mouseX = width / 2;
+let mouseY = height / 2;
+window.addEventListener('mousemove', (e: MouseEvent) => {
+  mouseX = e.clientX;
+  mouseY = e.clientY;
+});
+const NUM_PARTICLES = 200;
+const particles: Particle[] = [];
+for (let i = 0; i < NUM_PARTICLES; i++) {
+  particles.push({
+    x: Math.random() * width,
+    y: Math.random() * height,
+    vx: 0,
+    vy: 0,
+    hue: Math.random() * 360,
+  });
+}
+function step(): void {
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of particles) {
+    const dx = mouseX - p.x;
+    const dy = mouseY - p.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) + 0.01;
+    p.vx += (dx / dist) * 0.15;
+    p.vy += (dy / dist) * 0.15;
+    p.vx += (Math.random() - 0.5) * 0.3;
+    p.vy += (Math.random() - 0.5) * 0.3;
+    p.vx *= 0.94;
+    p.vy *= 0.94;
+    p.x += p.vx;
+    p.y += p.vy;
+    p.hue = (p.hue + 0.3) % 360;
+    ctx.beginPath();
+    ctx.fillStyle = `hsla(${p.hue}, 90%, 60%, 0.8)`;
+    ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  requestAnimationFrame(step);
+}
+step();
+</script>
+</body>
+</html>

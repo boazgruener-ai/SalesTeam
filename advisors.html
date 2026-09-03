@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam Advisors</title>
+  <link rel="icon" href="icons/icon16.png" />
+  <link rel="stylesheet" href="advisors.css" />
+</head>
+<body>
+  <header id="page-header">
+    <h1>SalesTeam Advisors <span id="version-text"></span></h1>
+    <p class="page-subtitle">
+      Generic, cross-lead strategy — for advice about one specific lead, use that lead's page in the
+      <a href="#" id="open-dashboard-link">Dashboard</a> instead. Company info, API key, message templates,
+      and other general settings live on the separate <a href="#" id="open-settings-link">Settings</a> page.
+    </p>
+  </header>
+
+  <main id="advisors-main">
+    <section id="mentor-section" class="advisor-card">
+      <div class="section-title-row">
+        <h2>Sales Mentor</h2>
+        <button id="advisor-clear-btn" class="text-link-btn" type="button">Clear conversation</button>
+      </div>
+      <p class="field-hint">
+        A senior sales expert on call 24/7 — ask strategic questions ("Which lead should I prioritize this
+        week?", "How could I improve my lead-gen process?"). It looks up real lead data via tool calls only
+        when a question actually needs it, and can draft a message for you as part of its answer.
+      </p>
+      <label for="mentor-persona-input">Mentor persona</label>
+      <textarea id="mentor-persona-input" placeholder="e.g. 25 years in B2B software sales, deep expertise in LinkedIn-based lead generation and social selling, direct and no-nonsense style."></textarea>
+      <div id="advisor-history" class="agent-history"></div>
+      <p id="advisor-status" class="agent-status"></p>
+      <div class="agent-input-row">
+        <textarea id="advisor-input" class="agent-input" placeholder="Ask the mentor a question…"></textarea>
+        <button id="advisor-send-btn" class="agent-send-btn" type="button">Ask</button>
+      </div>
+    </section>
+
+    <section id="customer-voice-section" class="advisor-card">
+      <div class="section-title-row">
+        <h2>Customer Voice</h2>
+        <button id="customer-clear-btn" class="text-link-btn" type="button">Clear conversation</button>
+      </div>
+      <p class="field-hint">
+        Bounce a message or approach off a realistic buyer before you send it. Name a specific lead ("How
+        would Gabel react to this: ...") and it grounds itself in their real post; ask a general question
+        ("What's your main pain point with AI projects today?") and it answers as a typical buyer in this space.
+      </p>
+      <label for="customer-persona-input">Target customer persona (used for general questions when no specific lead is named)</label>
+      <textarea id="customer-persona-input" placeholder="e.g. IT/Operations Director at mid-size manufacturing or logistics companies (200-2000 employees), evaluating AI automation vendors."></textarea>
+      <div id="customer-history" class="agent-history"></div>
+      <p id="customer-status" class="agent-status"></p>
+      <div class="agent-input-row">
+        <textarea id="customer-input" class="agent-input" placeholder="Ask the customer a question…"></textarea>
+        <button id="customer-send-btn" class="agent-send-btn" type="button">Ask</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="advisors.js"></script>
+</body>
+</html>
