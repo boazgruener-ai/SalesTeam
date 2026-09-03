@@ -71,7 +71,7 @@ previously active tab afterward.
 
 sidePanel:
 Displays the extension's core UI (search Topics, Negative Topics/filters, scan trigger, and results) in
-Chrome's side panel, with links to open the Dashboard, Advisors, and Settings pages in their own tabs.
+Chrome's side panel, with links to open the Dashboard, Advisors, Settings, and Help pages in their own tabs.
 
 clipboardWrite:
 Lets the user copy an AI-drafted message with one click, to paste into LinkedIn's own message compose box.

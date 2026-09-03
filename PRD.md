@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.13.2.
+**Status:** Living document, reflects the shipped product as of v0.15.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -85,13 +85,20 @@ copy per page.
   - **Recruiter/Staffing Headline Filter** (Post leads only) — headline phrases like "Talent Acquisition,"
     "Recruiter."
 - The user can add unlimited custom negative topics for any other recurring noise.
-- A match sets the lead's status to **Irrelevant** and records which topic matched (`irrelevantReason`),
-  shown as a hover tooltip on the Dashboard's status pill — distinct from **Dismissed**, which is always the
+- A match sets the lead's status to **Irrelevant** and records both the topic *and* the specific keyword that
+  matched (`irrelevantReason`, e.g. `Recruiter/Staffing Headline Filter (matched "Recruiter")`), shown as a
+  hover tooltip on the Dashboard's status pill — distinct from **Dismissed**, which is always the
   salesperson's own decision, never the system's.
 - "Also re-apply these filters to existing leads on the next scan" checkbox (Scanner tile, unchecked by
   default, not a saved setting) — when checked, the next scan also re-checks every currently-"New" existing
   lead against the current negative topics, catching ones that predate a topic being added/edited. Never
   touches a lead already acted on.
+- **"Apply Negative Filters" button** (Scanner tile, next to the Negative Topics list) — re-checks *every*
+  existing lead against whatever's currently configured, instantly, with no new scan needed. Fully
+  bidirectional: a "New" lead that now matches becomes Irrelevant, and an "Irrelevant" lead that no longer
+  matches (because a keyword was edited or removed) reverts to "New" — the on-next-scan checkbox above only
+  ever caught the first direction. Reports exactly how many leads moved each way. Never touches a lead already
+  acted on (Contacted/Dismissed/Responded/Converted).
 - A lead already marked Irrelevant, or missing a reason (pre-dates this feature), gets its reason backfilled
   automatically, best-effort, the next time it's read.
 
@@ -173,6 +180,15 @@ Export/Import Settings (side panel) — everything above plus the full lead data
 excluded by default (opt-in per export, for deliberately sharing a spend-capped trial key). An automatic
 backup download fires before every scan, so a scan-time failure never loses accumulated data.
 
+### 6.9 Help
+
+A dedicated Help page (its own tab, opened from a "Help ↗" button next to Dashboard/Advisors/Settings): a
+curated set of Q&A entries covering every feature above, plus a free-text search box. Search is deliberately
+not an AI feature — no API key needed, instant, and answers are fixed/reviewed rather than generated. Matching
+is token-overlap across each entry's question and synonym keywords (so "enable a Topic" and "disable a search
+topic" surface the same entry) with light typo tolerance (edit-distance on individual words). Each result is
+a collapsible card.
+
 ## 7. Non-functional requirements
 
 - **Manual-trigger only** — no `alarms`, no background scanning, ever.
@@ -200,4 +216,4 @@ backup download fires before every scan, so a scan-time failure never loses accu
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.13.2**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.15.0**.
