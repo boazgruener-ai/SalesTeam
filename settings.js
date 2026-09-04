@@ -11,6 +11,8 @@ import {
   saveValueAddOffers,
   getCompanyContext,
   saveCompanyContext,
+  getIdealCustomerProfile,
+  saveIdealCustomerProfile,
   getOutputLanguage,
   saveOutputLanguage,
 } from "./storage.js";
@@ -18,6 +20,7 @@ import { sanitizeApiKey } from "./agent-shared.js";
 
 const outputLanguageSelect = document.getElementById("output-language-select");
 const companyContextInput = document.getElementById("company-context-input");
+const idealCustomerProfileInput = document.getElementById("ideal-customer-profile-input");
 const anthropicApiKeyInput = document.getElementById("anthropic-api-key-input");
 const messageTemplatesListEl = document.getElementById("message-templates-list");
 const valueAddOffersInput = document.getElementById("value-add-offers-input");
@@ -51,6 +54,10 @@ companyContextInput.addEventListener("input", () => {
   saveCompanyContext(companyContextInput.value);
 });
 
+idealCustomerProfileInput.addEventListener("input", () => {
+  saveIdealCustomerProfile(idealCustomerProfileInput.value);
+});
+
 valueAddOffersInput.addEventListener("input", () => {
   const offers = valueAddOffersInput.value
     .split("\n")
@@ -68,6 +75,7 @@ async function init() {
 
   outputLanguageSelect.value = await getOutputLanguage();
   companyContextInput.value = await getCompanyContext();
+  idealCustomerProfileInput.value = await getIdealCustomerProfile();
   anthropicApiKeyInput.value = await getAnthropicApiKey();
 
   messageTemplates = await getMessageTemplates();

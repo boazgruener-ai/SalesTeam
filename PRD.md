@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.22.1.
+**Status:** Living document, reflects the shipped product as of v0.23.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -100,7 +100,7 @@ copy per page.
   noise on one vertical (a recruiter's own post) is completely normal on the other (a job ad naming an HR
   contact).
 - Checked against a Post lead's snippet + headline + `company` (Job leads: title + company) — including
-  `company` (v0.22.1) matters because it lets a negative topic target *who the poster actually works for*,
+  `company` (v0.23.0) matters because it lets a negative topic target *who the poster actually works for*,
   a much more precise signal than a keyword that can also match a mere passing mention in the post body.
 - Three built-in topics, seeded by the Sales Mentor's own review of a real scan, cannot be removed but every
   field (keywords, AND-group, scope, enabled) is fully editable:
@@ -110,7 +110,7 @@ copy per page.
   - **Recruiter/Staffing Headline Filter** (Post leads only) — headline phrases like "Talent Acquisition,"
     "Recruiter." Known limitation: this can false-positive on an in-house HR/Talent-Acquisition person
     posting their own employer's real opening, which isn't the same as a third-party staffing agency.
-  - **Known Recruiting Firms** (v0.22.1, applies to both) — a curated list of known Swiss recruiting/staffing
+  - **Known Recruiting Firms** (v0.23.0, applies to both) — a curated list of known Swiss recruiting/staffing
     agencies (Adecco, Randstad, Michael Page, PageGroup, Swisslinx, Robert Walters, Hays), matched against
     the lead's `company` — a more reliable alternative to guessing from headline text.
 - The user can add unlimited custom negative topics for any other recurring noise. New built-in defaults only
@@ -159,7 +159,7 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
   urgency)**, each with a short reason, via a forced structured tool call (not free-text parsing, so the
   output is always well-formed).
 - Scoring weighs real fit against the configured company context, seniority/decision power, and genuine
-  urgency signals — explicitly not just topical keyword overlap. Sees a Post lead's `company` (v0.22.1, once
+  urgency signals — explicitly not just topical keyword overlap. Sees a Post lead's `company` (v0.23.0, once
   extracted or assigned) and its `isJobAd`/`isHiringPost` flags, and is explicitly told not to penalize an
   in-post job ad just because the poster personally isn't senior — the poster is often HR or an unrelated
   employee sharing the opening, not the eventual contact, so what matters is the company-level signal; the
@@ -200,11 +200,16 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
   status pre-selected, a confirmation prompt on top of that, and an **"Undo Last Bulk Change"** button in the
   same dialog that restores every affected lead to its exact prior status (one level of undo, persists across
   Dashboard sessions until superseded by another bulk change). Closeable via a title-bar-style ✕.
-- **Detail page** (per lead): full content, status control, Draft Message (template-based, AI-generated,
-  copy-to-clipboard — copying auto-advances status New → Contacted), and a lead-scoped Consult Mentor chat
-  (persisted per lead) with two quick-action buttons — "Buyer Summary" and "Conversation Starters" — that send
-  the same canned request an equivalent typed message would, through the identical conversation/history/tools,
-  so the salesperson doesn't have to type the same standard requests for every lead.
+- **Detail page** (per lead): full content, status control, **Priority override** (v0.23.0 — a dropdown right
+  next to Status lets the salesperson correct a priority the Mentor got wrong, or set one on a lead that was
+  never scored; permanently protected from both the automatic per-scan pass and correlated re-scoring, since
+  both key off whether the AI itself scored the lead, not just whether a priority exists — clearing it back to
+  "Not scored" makes the lead eligible for automatic scoring again), Draft Message (template-based,
+  AI-generated, copy-to-clipboard — copying auto-advances status New → Contacted), and a lead-scoped Consult
+  Mentor chat (persisted per lead) with two quick-action buttons — "Buyer Summary" and "Conversation
+  Starters" — that send the same canned request an equivalent typed message would, through the identical
+  conversation/history/tools, so the salesperson doesn't have to type the same standard requests for every
+  lead.
 
 ### 6.6 Advisors (Sales Mentor & Customer Voice)
 
@@ -225,10 +230,14 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
 ### 6.7 Settings
 
 Language (English/German), company context ("What We Offer," used by every AI feature to reason about real
-fit), Anthropic API key, message templates (auto-picked per lead by connection status / job-ad detection, or
-chosen manually), value-add offers (a fixed list the AI may mention, never invents). Opened via its own blue
-button in the Scanner tile. The Advisors page reads these live (via `chrome.storage.onChanged`) rather than
-caching a stale copy, since editing now happens on a separate page.
+fit), **Ideal Customer Profile** (v0.23.0 — who's specifically being targeted: size, geography, what they're
+investing in; deliberately a separate field from "What We Offer" since the product and the target customer
+are different concepts, even though every relevant AI feature reads both together — not used by Customer
+Voice, which has no reason to reason about who the seller targets), Anthropic API key, message templates
+(auto-picked per lead by connection status / job-ad detection, or chosen manually), value-add offers (a fixed
+list the AI may mention, never invents). Opened via its own blue button in the Scanner tile. The Advisors page
+reads these live (via `chrome.storage.onChanged`) rather than caching a stale copy, since editing now happens
+on a separate page.
 
 ### 6.8 Backup / portability
 
@@ -276,4 +285,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.22.1**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.23.0**.

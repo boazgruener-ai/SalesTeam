@@ -8,6 +8,7 @@ import {
   getMessageTemplates,
   getValueAddOffers,
   getCompanyContext,
+  getIdealCustomerProfile,
   getMentorPersona,
   saveMentorPersona,
   getCustomerPersona,
@@ -47,6 +48,7 @@ const customerClearBtn = document.getElementById("customer-clear-btn");
 let messageTemplates = [];
 let valueAddOffers = [];
 let companyContext = "";
+let idealCustomerProfile = "";
 let mentorPersona = "";
 let customerPersona = "";
 let outputLanguage = "english";
@@ -144,7 +146,7 @@ function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputE
 }
 
 const salesMentor = createAgentChat({
-  buildSystemPrompt: () => buildMentorSystemPrompt({ mentorPersona, companyContext, outputLanguage }),
+  buildSystemPrompt: () => buildMentorSystemPrompt({ mentorPersona, companyContext, idealCustomerProfile, outputLanguage }),
   tools: [...LEAD_LOOKUP_TOOLS, DRAFT_MESSAGE_TOOL],
   historyEl: advisorHistoryEl,
   statusEl: advisorStatusEl,
@@ -199,6 +201,7 @@ customerPersonaInput.addEventListener("input", () => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.companyContext) companyContext = changes.companyContext.newValue || "";
+  if (changes.idealCustomerProfile) idealCustomerProfile = changes.idealCustomerProfile.newValue || "";
   if (changes.outputLanguage) outputLanguage = changes.outputLanguage.newValue || "english";
   if (changes.messageTemplates) messageTemplates = changes.messageTemplates.newValue || [];
   if (changes.valueAddOffers) valueAddOffers = changes.valueAddOffers.newValue || [];
@@ -209,6 +212,7 @@ async function init() {
 
   outputLanguage = await getOutputLanguage();
   companyContext = await getCompanyContext();
+  idealCustomerProfile = await getIdealCustomerProfile();
   messageTemplates = await getMessageTemplates();
   valueAddOffers = await getValueAddOffers();
 

@@ -24,6 +24,7 @@ import {
   containsWholeWord,
   getAnthropicApiKey,
   getCompanyContext,
+  getIdealCustomerProfile,
   getMentorPersona,
   getOutputLanguage,
   normalizeCompanyName,
@@ -484,7 +485,10 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     // Irrelevant is never touched, same invariant as the base filter above.
     const freshKeys = new Set(toPrioritize.map((r) => r.key));
     for (const existing of Object.values(existingResults)) {
-      if (existing.status !== "New" || !existing.priority || freshKeys.has(existing.key)) continue;
+      // priorityScoredAt (not just priority) required - a manually-set
+      // priority (setLeadPriority in storage.js) deliberately clears it, so
+      // a correlated new signal can never silently override a human's call.
+      if (existing.status !== "New" || !existing.priorityScoredAt || freshKeys.has(existing.key)) continue;
       const correlates = toPrioritize.some((fresh) => {
         if (existing.type === "job" || fresh.type === "job") {
           if (existing.type !== "job" || fresh.type !== "job") return false;
@@ -505,6 +509,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
             apiKey,
             mentorPersona: await getMentorPersona(),
             companyContext: await getCompanyContext(),
+            idealCustomerProfile: await getIdealCustomerProfile(),
             outputLanguage: await getOutputLanguage(),
           };
           const priorities = await prioritizeLeads(toPrioritize, settings);

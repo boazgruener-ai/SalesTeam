@@ -1,3 +1,12 @@
+# SalesTeam — v0.23.0
+
+## New: Ideal Customer Profile setting, and manual Priority override
+
+- New "Ideal Customer Profile" field on the Settings page, deliberately separate from "What We Offer" - who you're targeting (company size, geography, what they're investing in) is a different concept from what you sell, even though every AI feature reads both together. Threaded into prioritization, the Sales Mentor (both the cross-lead and per-lead chat), Account Summaries, and Analyze Post Search Quality - everywhere "is this the right kind of prospect" reasoning happens. Not used by Customer Voice (a simulated buyer has no reason to reason about who the seller targets).
+- New **Priority** dropdown on the Dashboard lead detail page, right next to Status - lets you override a priority the Mentor got wrong, or set one on a lead that was never scored. A manual override is permanently protected from both the automatic per-scan pass and the correlated re-scoring pass (v0.17.1) - neither can silently overwrite a human's call, since both key off whether the AI itself scored the lead (`priorityScoredAt`), not just whether a priority exists. Clearing it back to "Not scored" makes the lead eligible for automatic scoring again.
+
+---
+
 # SalesTeam — v0.22.1
 
 ## Fixed: automatic prioritization couldn't see a Post lead's company or job-ad flags

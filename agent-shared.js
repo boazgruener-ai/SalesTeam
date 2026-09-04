@@ -105,18 +105,32 @@ export function companyContextBlock(companyContext) {
         "more specific advice would be possible once one is added in settings.)\n";
 }
 
+// Deliberately separate from companyContextBlock above - "what we offer"
+// and "who we're targeting" are different concepts, kept as two Settings
+// fields so each stays focused rather than one growing into a mixed bag.
+// Not used by Customer Voice (a simulated buyer has no reason to reason
+// about who the seller is targeting) or purely mechanical prompts like
+// company extraction - only where "is this the right kind of prospect"
+// reasoning actually happens.
+export function idealCustomerProfileBlock(idealCustomerProfile) {
+  return (idealCustomerProfile || "").trim()
+    ? `\nThe kind of customer the salesperson is specifically targeting: ${idealCustomerProfile.trim()}\n`
+    : "";
+}
+
 export function customerPersonaBlock(customerPersona) {
   return (customerPersona || "").trim()
     ? `\nYour default persona, when no specific lead is named: ${customerPersona.trim()}\n`
     : "";
 }
 
-export function buildMentorSystemPrompt({ mentorPersona, companyContext, outputLanguage }) {
+export function buildMentorSystemPrompt({ mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
   return (
     `You are acting as a sales mentor to a salesperson working real leads found by their LinkedIn Lead ` +
     `Scanner extension. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}. ` +
     "There's no such thing as a stupid question." +
     companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
     "When a question is about specific leads (which to prioritize, how to approach one by name), use the " +
     "list_leads and get_lead_details tools to ground your answer in real, current data - never guess or " +
     "invent leads or their content. list_leads returns BOTH Post leads (type: 'post', a real person, " +
@@ -168,7 +182,7 @@ export function buildCustomerSystemPrompt({ companyContext, customerPersona, out
 // prompt instead of relying on the list_leads/get_lead_details tools -
 // avoids a tool round-trip for a conversation that's already scoped to one
 // specific, known lead.
-export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContext, outputLanguage }) {
+export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
   const isJob = lead.type === "job";
   const leadBlock = isJob
     ? `Job listing: "${lead.title || "Untitled role"}" at ${lead.company || "unknown company"}` +
@@ -182,6 +196,7 @@ export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContex
     `You are acting as a sales mentor to a salesperson, discussing ONE specific lead they're looking at right ` +
     `now. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
     companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
     `\nThe lead being discussed:\n${leadBlock}\n\n` +
     "Answer questions about this specific lead directly using the details above - never invent facts beyond " +
     "what's given. When asked to draft or write a message for this lead, use the draft_message tool (with " +
@@ -198,7 +213,7 @@ export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContex
 // history: [] and doesn't save the result anywhere in storage, just an
 // in-memory cache for the session, so re-expanding a group doesn't re-call
 // the AI for leads that haven't changed.
-export function buildAccountSummaryPrompt(companyName, leads, { mentorPersona, companyContext, outputLanguage } = {}) {
+export function buildAccountSummaryPrompt(companyName, leads, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage } = {}) {
   const leadBlocks = leads.map((lead) =>
     lead.type === "job"
       ? `- Job listing: "${lead.title || "Untitled role"}"${lead.location ? ` (${lead.location})` : ""} - matched on: ${(lead.matchedTopics || []).map((t) => t.topicName).join(", ")}`
@@ -209,6 +224,7 @@ export function buildAccountSummaryPrompt(companyName, leads, { mentorPersona, c
     `You are acting as a sales mentor to a salesperson, synthesizing everything they've seen so far about ONE ` +
     `account - ${companyName}. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
     companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
     `\nEvery lead seen at this account so far:\n${leadBlocks.join("\n")}\n\n` +
     "Summarize: who the real decision-maker(s) appear to be, what's collectively happening at this account " +
     "(recurring themes, hiring or buying signals across the leads above), and a suggested angle for " +
@@ -391,11 +407,12 @@ const ASSIGN_PRIORITIES_TOOL = {
   },
 };
 
-function buildPrioritizationPrompt({ mentorPersona, companyContext, outputLanguage }) {
+function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
   return (
     "You are a sales mentor prioritizing a fresh batch of scanned LinkedIn leads for a salesperson, right " +
     `after a scan - they haven't seen these yet. Persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
     companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
     "Assign each lead a priority from 1 (drop everything, contact today) to 5 (unlikely fit, low urgency), " +
     "based on REAL fit against what the company above actually sells, the person's seniority/decision-making " +
     "power, and genuine buying-intent or urgency signals in their post or job ad - not just topical keyword " +
@@ -694,7 +711,7 @@ const ANALYZE_POST_SEARCH_TOOL = {
   },
 };
 
-function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, companyContext) {
+function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, companyContext, idealCustomerProfile) {
   const postNegativeTopics = negativeTopics.filter((t) => t.appliesTo !== "job");
   const noGoodLeadsYet = (stats.byPriority[1] || 0) + (stats.byPriority[2] || 0) + (stats.byPriority[3] || 0) === 0;
   return (
@@ -710,7 +727,8 @@ function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, companyCon
     "represents a competing firm) or an in-house HR/Talent-Acquisition person posting their own employer's " +
     "real opening are both classic false positives worth flagging as negativeTopic remove_keyword " +
     "suggestions - don't assume every 'Irrelevant' classification is correct just because it happened." +
-    companyContextBlock(companyContext) + "\n" +
+    companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) + "\n" +
     "IMPORTANT: a Negative Topic can only ever REDUCE what surfaces - it can never fix a shortage of good " +
     "leads, only make it worse. If the stats below show few or no P1-P3 leads, that's very often actually a " +
     "false-positive-filtering problem (check irrelevantByNegativeTopic and the Irrelevant examples first) " +
@@ -773,7 +791,7 @@ export async function analyzePostSearch(leads, topics, negativeTopics, stats, se
     body: JSON.stringify({
       model: AGENT_MODEL,
       max_tokens: 8192,
-      system: buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, settings.companyContext),
+      system: buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, settings.companyContext, settings.idealCustomerProfile),
       tools: [ANALYZE_POST_SEARCH_TOOL],
       tool_choice: { type: "tool", name: "analyze_post_search" },
       messages: [{ role: "user", content: userText }],

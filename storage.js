@@ -158,6 +158,21 @@ export async function saveCompanyContext(context) {
   await chrome.storage.local.set({ [COMPANY_CONTEXT_KEY]: context });
 }
 
+// Deliberately separate from Company Context above - "what we offer" (the
+// product/service) and "who we're targeting" (company size, geography, what
+// they're investing in) are different concepts a salesperson thinks about
+// independently, even though every AI feature ends up reading both together.
+const IDEAL_CUSTOMER_PROFILE_KEY = "idealCustomerProfile";
+
+export async function getIdealCustomerProfile() {
+  const data = await chrome.storage.local.get(IDEAL_CUSTOMER_PROFILE_KEY);
+  return data[IDEAL_CUSTOMER_PROFILE_KEY] || "";
+}
+
+export async function saveIdealCustomerProfile(profile) {
+  await chrome.storage.local.set({ [IDEAL_CUSTOMER_PROFILE_KEY]: profile });
+}
+
 // Describes the desired Sales Mentor character (background, style) - seeded
 // with a sensible default so the field shows something useful/editable right
 // away rather than starting blank.
@@ -614,6 +629,29 @@ export async function applyLeadPriorities(priorities) {
   return changed;
 }
 
+// Lets the salesperson override a priority the Mentor got wrong (or set one
+// on a lead that never got scored). Deliberately leaves priorityScoredAt
+// unset/cleared - that field means "the AI scored this," and both the
+// automatic per-scan pass (`!r.priority` filter) and the correlated
+// re-scoring pass (which requires priorityScoredAt on an already-scored
+// lead before adding it to the re-score batch) key off its presence, so a
+// manual override can never be silently clobbered by either. An empty
+// priority clears it back to unset, making the lead eligible for automatic
+// scoring again.
+export async function setLeadPriority(key, priority) {
+  const results = await getResults();
+  if (!results[key]) return;
+  if (Number.isInteger(priority) && priority >= 1 && priority <= 5) {
+    results[key].priority = priority;
+    results[key].priorityReason = "Manually set by the salesperson.";
+  } else {
+    delete results[key].priority;
+    delete results[key].priorityReason;
+  }
+  delete results[key].priorityScoredAt;
+  await saveResults(results);
+}
+
 // Best-effort match key for grouping leads by company - not authoritative
 // (e.g. "Azqore" vs "Azqore SA" collapse to the same key, but an unusual
 // suffix this doesn't know about won't). Always show the lead's own raw
@@ -836,6 +874,7 @@ export async function exportSettings(includeApiKey = false) {
     valueAddOffers,
     negativeTopics,
     companyContext,
+    idealCustomerProfile,
     mentorPersona,
     customerPersona,
     outputLanguage,
@@ -857,6 +896,7 @@ export async function exportSettings(includeApiKey = false) {
     getValueAddOffers(),
     getNegativeTopics(),
     getCompanyContext(),
+    getIdealCustomerProfile(),
     getMentorPersona(),
     getCustomerPersona(),
     getOutputLanguage(),
@@ -881,6 +921,7 @@ export async function exportSettings(includeApiKey = false) {
     valueAddOffers,
     negativeTopics,
     companyContext,
+    idealCustomerProfile,
     mentorPersona,
     customerPersona,
     outputLanguage,
@@ -908,6 +949,7 @@ export async function importSettings(data) {
     ...(data.valueAddOffers ? [saveValueAddOffers(data.valueAddOffers)] : []),
     ...(data.negativeTopics ? [saveNegativeTopics(data.negativeTopics)] : []),
     saveCompanyContext(data.companyContext || ""),
+    saveIdealCustomerProfile(data.idealCustomerProfile || ""),
     ...(data.mentorPersona ? [saveMentorPersona(data.mentorPersona)] : []),
     saveCustomerPersona(data.customerPersona || ""),
     saveOutputLanguage(data.outputLanguage || "english"),

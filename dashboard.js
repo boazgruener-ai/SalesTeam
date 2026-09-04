@@ -12,11 +12,13 @@ import {
   getAnthropicApiKey,
   getMentorPersona,
   getCompanyContext,
+  getIdealCustomerProfile,
   getOutputLanguage,
   getMessageTemplates,
   getValueAddOffers,
   getLastScanStartedAt,
   applyLeadPriorities,
+  setLeadPriority,
   getLastBulkChange,
   undoLastBulkChange,
   setLeadCompany,
@@ -81,6 +83,7 @@ let lastScanStartedAt = 0;
 let messageTemplates = [];
 let valueAddOffers = [];
 let companyContext = "";
+let idealCustomerProfile = "";
 let mentorPersona = "";
 let outputLanguage = "english";
 
@@ -187,10 +190,11 @@ async function currentSettings() {
 }
 
 async function loadSettings() {
-  [messageTemplates, valueAddOffers, companyContext, mentorPersona, outputLanguage] = await Promise.all([
+  [messageTemplates, valueAddOffers, companyContext, idealCustomerProfile, mentorPersona, outputLanguage] = await Promise.all([
     getMessageTemplates(),
     getValueAddOffers(),
     getCompanyContext(),
+    getIdealCustomerProfile(),
     getMentorPersona(),
     getOutputLanguage(),
   ]);
@@ -812,7 +816,7 @@ async function showAccountSummary(group) {
     await runAgentTurn("Summarize this account.", {
       history: localHistory,
       apiKey,
-      buildSystemPrompt: () => buildAccountSummaryPrompt(group.displayName, group.leads, { mentorPersona, companyContext, outputLanguage }),
+      buildSystemPrompt: () => buildAccountSummaryPrompt(group.displayName, group.leads, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }),
       tools: [],
       executeTool: async (name) => ({ error: `Unknown tool: ${name}` }),
       saveHistory: async () => {},
@@ -981,6 +985,8 @@ function renderDetail(lead) {
   }
   statusSelect.value = lead.status || "New";
 
+  document.getElementById("detail-priority-select").value = lead.priority ? String(lead.priority) : "";
+
   document.getElementById("detail-full-content").textContent = leadContent(lead) || "(no content captured)";
 
   const linksEl = document.getElementById("detail-links");
@@ -1034,6 +1040,15 @@ function route() {
 document.getElementById("back-to-list-link").addEventListener("click", (event) => {
   event.preventDefault();
   location.hash = "";
+});
+
+document.getElementById("detail-priority-select").addEventListener("change", async (event) => {
+  if (!currentDetailLead) return;
+  const value = event.target.value;
+  await setLeadPriority(currentDetailLead.key, value ? Number(value) : null);
+  await loadLeads();
+  currentDetailLead = allLeads.find((l) => l.key === currentDetailLead.key) || currentDetailLead;
+  renderTable();
 });
 
 document.getElementById("detail-status-select").addEventListener("change", async (event) => {
@@ -1152,7 +1167,7 @@ async function sendCannedMentorPrompt(text) {
     await runAgentTurn(text, {
       history: mentorHistory,
       apiKey,
-      buildSystemPrompt: () => buildLeadScopedMentorPrompt(currentDetailLead, { mentorPersona, companyContext, outputLanguage }),
+      buildSystemPrompt: () => buildLeadScopedMentorPrompt(currentDetailLead, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }),
       tools: currentDetailLead.type === "job" ? [] : [DRAFT_MESSAGE_TOOL],
       executeTool: async (name, input2) => {
         if (name === "draft_message") {
@@ -1262,7 +1277,7 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
       prioritizeStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
       return;
     }
-    const priorities = await prioritizeLeads(toScore, { apiKey, mentorPersona, companyContext, outputLanguage });
+    const priorities = await prioritizeLeads(toScore, { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage });
     const changed = await applyLeadPriorities(priorities);
     prioritizeStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} scored.`;
     await loadLeads();

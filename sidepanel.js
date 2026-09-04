@@ -35,6 +35,7 @@ import {
   reapplyBlocklist,
   getAnthropicApiKey,
   getCompanyContext,
+  getIdealCustomerProfile,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { sanitizeApiKey, suggestLookalikeTopics, analyzePostSearch } from "./agent-shared.js";
@@ -602,7 +603,8 @@ analyzeSearchQualityBtn.addEventListener("click", async () => {
       return;
     }
     const companyContext = await getCompanyContext();
-    const { diagnosis, suggestions } = await analyzePostSearch(examples, topics, negativeTopics, stats, { apiKey, companyContext });
+    const idealCustomerProfile = await getIdealCustomerProfile();
+    const { diagnosis, suggestions } = await analyzePostSearch(examples, topics, negativeTopics, stats, { apiKey, companyContext, idealCustomerProfile });
     const visibleCount = renderSearchAnalysisResults(diagnosis, suggestions);
     searchQualityStatusEl.textContent = visibleCount > 0
       ? `${visibleCount} suggestion${visibleCount === 1 ? "" : "s"} - review and apply the ones you want:`
