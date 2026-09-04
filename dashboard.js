@@ -1260,6 +1260,26 @@ document.getElementById("export-csv-all-btn").addEventListener("click", () => {
   exportLeadsToCsv(allLeads, "all");
 });
 
+// A single prioritize_leads call is capped at 8192 output tokens - fine for
+// a small batch, but a large one (each lead needs a priority plus a written
+// reason) can hit that cap mid-generation, coming back truncated/invalid and
+// silently scoring nothing. Chunking bounds each call's output size and, as
+// a side benefit, lets the UI show real incremental progress instead of just
+// elapsed time. Applies each chunk's results as it completes (not just at
+// the very end) so a later chunk's failure doesn't lose earlier progress.
+const PRIORITIZE_CHUNK_SIZE = 20;
+
+async function prioritizeLeadsInChunks(leads, settings, onProgress) {
+  let totalChanged = 0;
+  for (let i = 0; i < leads.length; i += PRIORITIZE_CHUNK_SIZE) {
+    const chunk = leads.slice(i, i + PRIORITIZE_CHUNK_SIZE);
+    const priorities = await prioritizeLeads(chunk, settings);
+    totalChanged += await applyLeadPriorities(priorities);
+    onProgress?.(Math.min(i + chunk.length, leads.length), leads.length);
+  }
+  return totalChanged;
+}
+
 // Catches up every lead the automatic per-scan pass never got to - leads
 // that predate this feature, or a scan that finished with no API key
 // configured yet. Scores ALL currently-unscored "New" leads regardless of
@@ -1272,15 +1292,17 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
     return;
   }
   prioritizeUnscoredBtn.disabled = true;
-  prioritizeStatusEl.textContent = `Prioritizing ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
+  prioritizeStatusEl.textContent = `Prioritizing 0 of ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
   try {
     const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
     if (!apiKey) {
       prioritizeStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
       return;
     }
-    const priorities = await prioritizeLeads(toScore, { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage });
-    const changed = await applyLeadPriorities(priorities);
+    const settings = { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage };
+    const changed = await prioritizeLeadsInChunks(toScore, settings, (done, total) => {
+      prioritizeStatusEl.textContent = `Prioritizing ${done} of ${total} lead${total === 1 ? "" : "s"} with the Sales Mentor…`;
+    });
     prioritizeStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} scored.`;
     await loadLeads();
     renderAllPieCharts();
@@ -1309,20 +1331,17 @@ rescoreAllBtn.addEventListener("click", async () => {
   }
   rescoreAllBtn.disabled = true;
   const oldPriorities = new Map(toScore.map((l) => [l.key, l.priority || null]));
-  const startedAt = Date.now();
-  const tick = () => {
-    rescoreAllStatusEl.textContent = `Re-scoring ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor… (${Math.round((Date.now() - startedAt) / 1000)}s)`;
-  };
-  tick();
-  const tickIntervalId = setInterval(tick, 1000);
+  rescoreAllStatusEl.textContent = `Re-scoring 0 of ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
   try {
     const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
     if (!apiKey) {
       rescoreAllStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
       return;
     }
-    const priorities = await prioritizeLeads(toScore, { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage });
-    const changed = await applyLeadPriorities(priorities);
+    const settings = { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage };
+    const changed = await prioritizeLeadsInChunks(toScore, settings, (done, total) => {
+      rescoreAllStatusEl.textContent = `Re-scoring ${done} of ${total} lead${total === 1 ? "" : "s"} with the Sales Mentor…`;
+    });
     await loadLeads();
     const priorityChangedCount = toScore.filter((lead) => {
       const updated = allLeads.find((u) => u.key === lead.key);
@@ -1334,7 +1353,6 @@ rescoreAllBtn.addEventListener("click", async () => {
   } catch (err) {
     rescoreAllStatusEl.textContent = `Something went wrong: ${err.message}`;
   } finally {
-    clearInterval(tickIntervalId);
     rescoreAllBtn.disabled = false;
   }
 });

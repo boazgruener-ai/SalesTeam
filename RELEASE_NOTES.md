@@ -1,3 +1,15 @@
+# SalesTeam — v0.24.2
+
+## Fixed: bulk prioritization silently scored nothing on a large batch
+
+- Reported: "Re-score All Priorities" ran for 70+ seconds and finished with "0 leads re-scored, 0 changed priority" - and separately, that the elapsed-time-only status from v0.24.1 didn't say how much longer there was to go.
+- Root cause: prioritization sent every eligible lead in a single AI call, with the response capped at 8192 output tokens. With enough leads (each needing a priority plus a written reason), that cap could be hit mid-generation - the tool call comes back truncated/invalid, and the app had no way to tell that apart from "the model legitimately found nothing to score," so it silently applied zero results.
+- Fixed by chunking both "Prioritize Unscored Leads" and "Re-score All Priorities" into batches of 20 leads per AI call, applying each chunk's results as soon as it completes (so a later chunk failing doesn't lose earlier progress) rather than one unbounded call for the whole list.
+- This also directly answers the progress-visibility ask: the status now shows real counted progress - "Re-scoring 20 of 45 leads with the Sales Mentor…" - updating after every chunk, instead of only an elapsed-time guess with no sense of how much is left.
+- Verified via harness with 45 leads (3 chunks of 20/20/5): confirmed the outgoing calls are correctly split, the status text progresses through real counts as each chunk lands, and a manually-set priority is still never sent.
+
+---
+
 # SalesTeam — v0.24.1
 
 ## Fixed: no feedback while Re-score All Priorities was running, and no visibility into what actually changed
