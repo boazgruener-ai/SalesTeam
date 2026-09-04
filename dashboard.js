@@ -1296,9 +1296,12 @@ async function prioritizeLeadsInChunks(leads, settings, onProgress) {
   let totalChanged = 0;
   for (let i = 0; i < leads.length; i += PRIORITIZE_CHUNK_SIZE) {
     const chunk = leads.slice(i, i + PRIORITIZE_CHUNK_SIZE);
+    // Announced before the call, not after - so the status reflects the
+    // chunk actively in flight ("Re-scoring 20 of 136…") rather than
+    // starting at 0 and only moving once a chunk has already finished.
+    onProgress?.(Math.min(i + chunk.length, leads.length), leads.length);
     const priorities = await prioritizeLeads(chunk, settings);
     totalChanged += await applyLeadPriorities(priorities);
-    onProgress?.(Math.min(i + chunk.length, leads.length), leads.length);
   }
   return totalChanged;
 }
@@ -1315,7 +1318,7 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
     return;
   }
   prioritizeUnscoredBtn.disabled = true;
-  prioritizeStatusEl.textContent = `Prioritizing 0 of ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
+  prioritizeStatusEl.textContent = `Prioritizing ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
   try {
     const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
     if (!apiKey) {
@@ -1354,7 +1357,7 @@ rescoreAllBtn.addEventListener("click", async () => {
   }
   rescoreAllBtn.disabled = true;
   const oldPriorities = new Map(toScore.map((l) => [l.key, l.priority || null]));
-  rescoreAllStatusEl.textContent = `Re-scoring 0 of ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
+  rescoreAllStatusEl.textContent = `Re-scoring ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
   try {
     const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
     if (!apiKey) {

@@ -1,3 +1,13 @@
+# SalesTeam — v0.24.5
+
+## Fixed: bulk prioritization progress said "0 of N" while the first chunk was already running
+
+- Reported: clicking "Re-score All Priorities" showed "Re-scoring 0 of 136 leads…" - misleading, since the first chunk of 20 was already in flight, not stalled at zero.
+- The progress callback fired after each chunk finished, so the count only ever reflected completed work, starting at 0 before anything had a chance to complete. Moved it to fire as each chunk starts instead, so the status now reads "Re-scoring 20 of 136 leads…" from the first moment - the count in flight, not the count already done.
+- Verified via harness: the status now progresses "Re-scoring 45 leads…" → "Re-scoring 20 of 45…" → "Re-scoring 40 of 45…" → "Re-scoring 45 of 45…" → "Done" - no "0 of 45" step.
+
+---
+
 # SalesTeam — v0.24.4
 
 ## New: Matched Topic and Matched Keywords columns on the Dashboard
