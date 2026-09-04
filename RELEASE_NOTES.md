@@ -1,3 +1,14 @@
+# SalesTeam — v0.24.6
+
+## New: total-searches-per-scan estimate in the side panel
+
+- Each Topic already showed its own "N searches for this topic" hint (v0.19.0-era), but there was no grand total anywhere - the user had to add these up by hand (a real scan hit 68 sub-queries, discovered only after starting it) to know what a scan would actually cost before running it.
+- New live total, right above the "Scan All Topics" button: "Total: 76 searches this scan will run (Posts: 60, Jobs: 16)." - sums every enabled Post topic's AND-style chunk count plus, when Job Search is on, every enabled Job-only topic and (if "use Post topics for Jobs" is also on) those same Post topics again, flat-chunked for Jobs - mirroring background.js's scanAllTopics exactly, including the additive (not either/or) relationship between Job-only topics and Post topics reused for Jobs.
+- Recomputes on every topic edit, add, remove, enable/disable toggle, and either Job Search checkbox - so growth is visible immediately as keywords are added, not just per-topic. Turns orange past 30 total searches, the same visual treatment already used for a single expensive topic.
+- Verified via harness against the exact numbers from the "68 rounds" investigation (2 topics, 23×23 each): computed 60 Post sub-queries with Job Search off, and correctly added 16 more (2 topics × 8 flat-chunked sub-queries each) once Job Search + "use Post topics for Jobs" were both on.
+
+---
+
 # SalesTeam — v0.24.5
 
 ## Fixed: bulk prioritization progress said "0 of N" while the first chunk was already running

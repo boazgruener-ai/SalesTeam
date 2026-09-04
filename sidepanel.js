@@ -138,6 +138,40 @@ function topicChunkHint(keywordCount, andKeywordCount, mode) {
   };
 }
 
+// Grand total across everything a real scan will actually run - mirrors
+// background.js's scanAllTopics exactly: enabled Post topics (AND-style
+// chunking), plus, if Job Search is on, enabled Job-only topics (flat
+// chunking) and, if "use Post topics for Jobs" is also on, those same Post
+// topics AGAIN but flat-chunked for Jobs (Job Search is additive with Posts,
+// not either/or - see background.js). Recomputed on every topic/checkbox
+// change so growth is visible immediately, not just per-topic.
+function updateTotalSearchesHint() {
+  const hintEl = document.getElementById("total-searches-hint");
+  const enabledPostTopics = topics.filter((t) => t.enabled !== false);
+  const postTotal = enabledPostTopics.reduce(
+    (sum, t) => sum + countPostSubQueries(t.keywords.length, (t.andKeywords || []).length), 0);
+
+  let jobTotal = 0;
+  if (jobSearchEnabledCheckbox.checked) {
+    const enabledJobOnlyTopics = jobTopics.filter((t) => t.enabled !== false);
+    jobTotal += enabledJobOnlyTopics.reduce(
+      (sum, t) => sum + countJobSubQueries(t.keywords.length, (t.andKeywords || []).length), 0);
+    if (jobSearchUsePostTopicsCheckbox.checked) {
+      jobTotal += enabledPostTopics.reduce(
+        (sum, t) => sum + countJobSubQueries(t.keywords.length, (t.andKeywords || []).length), 0);
+    }
+  }
+
+  const total = postTotal + jobTotal;
+  if (total === 0) {
+    hintEl.textContent = "";
+    return;
+  }
+  const breakdown = jobSearchEnabledCheckbox.checked ? ` (Posts: ${postTotal}, Jobs: ${jobTotal})` : "";
+  hintEl.textContent = `Total: ${total} search${total === 1 ? "" : "es"} this scan will run${breakdown}.`;
+  hintEl.classList.toggle("keyword-limit-hint-warn", total >= 30);
+}
+
 function newTopic() {
   return { id: crypto.randomUUID(), name: "", keywords: [], andKeywords: [], enabled: true };
 }
@@ -245,6 +279,7 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
 
 async function persistTopics() {
   await saveTopics(topics);
+  updateTotalSearchesHint();
 }
 
 function renderTopics() {
@@ -261,6 +296,7 @@ function renderTopics() {
 
 async function persistJobTopics() {
   await saveJobTopics(jobTopics);
+  updateTotalSearchesHint();
 }
 
 function renderJobTopics() {
@@ -1043,10 +1079,12 @@ includeJobAdsCheckbox.addEventListener("change", () => {
 
 jobSearchEnabledCheckbox.addEventListener("change", () => {
   saveJobSearchEnabled(jobSearchEnabledCheckbox.checked);
+  updateTotalSearchesHint();
 });
 
 jobSearchUsePostTopicsCheckbox.addEventListener("change", () => {
   saveJobSearchUsePostTopics(jobSearchUsePostTopicsCheckbox.checked);
+  updateTotalSearchesHint();
 });
 
 jobSearchLocationSelect.addEventListener("change", () => {
@@ -1190,6 +1228,7 @@ async function init() {
   jobLocationPresets = await getJobSearchLocationPresets();
   renderJobLocationOptions(await getJobSearchLocation());
   jobSearchTimeframeSelect.value = await getJobSearchTimeframe();
+  updateTotalSearchesHint();
 
   negativeTopics = await getNegativeTopics();
   renderNegativeTopics();

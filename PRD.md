@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.24.5.
+**Status:** Living document, reflects the shipped product as of v0.24.6.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -67,7 +67,12 @@ copy per page.
 - Named keyword groups, with an optional second "AND with" group (post must match one keyword from each
   group). Same shape reused for both Post topics and Job-specific topics.
 - LinkedIn's own search-complexity limits are worked around automatically via query chunking (max 6 OR-terms
-  per group, 9 total per sub-query) — invisible to the user, who just adds however many keywords they want.
+  per group, 9 total per sub-query) — the user can add however many keywords they want, and the cost is made
+  visible rather than hidden: each topic shows its own live "N searches for this topic" hint, and a grand
+  total across every enabled Post and Job topic ("Total: 76 searches this scan will run (Posts: 60, Jobs:
+  16)") sits above the "Scan All Topics" button, turning orange past 30 — found necessary once a user's own
+  topic redesign (adding a large bilingual AND-topic to chase a previously-empty topic) pushed one real scan
+  to 68 sub-queries, discovered only after starting it.
 - Author-title filter (checked client-side against each post's visible headline, never sent to LinkedIn) and
   an "include in-post job ads" toggle.
 - **"Suggest Lookalike Topics"** button — looks at the salesperson's own highest-priority (P1-P3) **Post**
@@ -315,4 +320,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.5**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.6**.
