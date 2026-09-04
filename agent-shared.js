@@ -681,24 +681,37 @@ const ANALYZE_POST_SEARCH_TOOL = {
   },
 };
 
-function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats) {
+function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, companyContext) {
   const postNegativeTopics = negativeTopics.filter((t) => t.appliesTo !== "job");
+  const noGoodLeadsYet = (stats.byPriority[1] || 0) + (stats.byPriority[2] || 0) + (stats.byPriority[3] || 0) === 0;
   return (
     "You are a sales mentor diagnosing why a salesperson's LinkedIn Post search isn't surfacing enough good " +
     "leads. Two mechanics to reason about precisely: a Topic is a group of keywords, OR-matched against a " +
     "post's own text (plus an optional second group the post must ALSO mention) - too narrow a keyword list " +
     "misses relevant posts, too generic a keyword catches irrelevant chatter. A Negative Topic works the same " +
     "way, but a match marks the lead 'Irrelevant' instead of surfacing it - too aggressive a negative " +
-    "keyword can silently kill genuinely good leads.\n\n" +
+    "keyword can silently kill genuinely good leads." +
+    companyContextBlock(companyContext) + "\n" +
+    "IMPORTANT: a Negative Topic can only ever REDUCE what surfaces - it can never fix a shortage of good " +
+    "leads, only make it worse. If the stats below show few or no P1-P3 leads, that's a keyword-coverage " +
+    "problem (Topics not casting a wide/specific enough net for what this company's real buyers actually " +
+    "post about), not a noise problem - in that case, do not suggest only Negative Topic changes. Use what " +
+    "the company actually sells (above) to propose genuinely new Topic keywords or a new Topic aimed at " +
+    "buying-intent language its real prospects would plausibly write, not just tweaks to what's already " +
+    "there.\n\n" +
     "Current Post Topics (JSON):\n" + JSON.stringify(topics.map((t) => ({ name: t.name, keywords: t.keywords, andKeywords: t.andKeywords, enabled: t.enabled }))) + "\n\n" +
     "Current Negative Topics that apply to Posts (JSON):\n" + JSON.stringify(postNegativeTopics.map((t) => ({ name: t.name, keywords: t.keywords, andKeywords: t.andKeywords, appliesTo: t.appliesTo, enabled: t.enabled }))) + "\n\n" +
     "Stats on currently-unactioned Post leads (JSON):\n" + JSON.stringify(stats) + "\n\n" +
-    "Diagnose what's likely limiting quality or volume right now - e.g. topics too broad/narrow, a missing " +
-    "segment entirely, a negative topic possibly over-matching - grounded in the stats and the example leads " +
-    "given next, not speculation. Then propose specific keyword changes (additions, removals, or a genuinely " +
-    "new Topic/Negative Topic) that would plausibly help. It's fine to propose few or even zero changes if " +
-    "the setup looks reasonable and the real issue is something outside this tool's control - don't force " +
-    "weak suggestions. Call analyze_post_search exactly once."
+    (noGoodLeadsYet
+      ? "There are currently ZERO P1-P3 Post leads - this is the primary problem to address, and your " +
+        "suggestions must include at least a few new-keyword or new-Topic ideas aimed at finding better " +
+        "leads, not just narrowing what already comes through.\n\n"
+      : "") +
+    "Diagnose what's likely limiting quality or volume right now, grounded in the stats and the example " +
+    "leads given next, not speculation. Then propose specific keyword changes (additions, removals, or a " +
+    "genuinely new Topic/Negative Topic) that would plausibly help. It's fine to propose few or even zero " +
+    "negative-topic changes if those look reasonable - the priority is fixing lead quality/volume, not " +
+    "finding something to say about every config. Call analyze_post_search exactly once."
   );
 }
 
@@ -735,7 +748,7 @@ export async function analyzePostSearch(leads, topics, negativeTopics, stats, se
     body: JSON.stringify({
       model: AGENT_MODEL,
       max_tokens: 8192,
-      system: buildPostSearchAnalysisPrompt(topics, negativeTopics, stats),
+      system: buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, settings.companyContext),
       tools: [ANALYZE_POST_SEARCH_TOOL],
       tool_choice: { type: "tool", name: "analyze_post_search" },
       messages: [{ role: "user", content: userText }],

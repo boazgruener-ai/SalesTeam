@@ -1,3 +1,12 @@
+# SalesTeam — v0.20.1
+
+## Fixed: Analyze Post Search Quality only ever suggested more Negative Topics
+
+- Reported: with zero P1-P3 Post leads, every suggestion was another Negative Topic (narrowing further, not helping). Root cause: the analysis never had access to the company context (what the business actually sells), so the Mentor had nothing to reason from except a pile of uniformly mediocre example posts - which naturally pushes toward "here's what's wrong with these" (negative topics) rather than "here's what a good one would look like" (new positive keywords, which requires knowing what to look for).
+- Now passes company context into the analysis, and explicitly tells the model that a Negative Topic can only ever reduce volume, never fix a shortage of good leads - when there are zero or few P1-P3 leads, it must propose new Topic keywords or a new Topic grounded in what the company actually sells, not just narrow further.
+
+---
+
 # SalesTeam — v0.20.0
 
 ## New: "Analyze Post Search Quality" - diagnose and fix why Posts aren't scoring well

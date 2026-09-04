@@ -34,6 +34,7 @@ import {
   saveNegativeTopics,
   reapplyBlocklist,
   getAnthropicApiKey,
+  getCompanyContext,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { sanitizeApiKey, suggestLookalikeTopics, analyzePostSearch } from "./agent-shared.js";
@@ -581,7 +582,8 @@ analyzeSearchQualityBtn.addEventListener("click", async () => {
       searchQualityStatusEl.textContent = "No unactioned Post leads yet - run a scan first.";
       return;
     }
-    const { diagnosis, suggestions } = await analyzePostSearch(examples, topics, negativeTopics, stats, { apiKey });
+    const companyContext = await getCompanyContext();
+    const { diagnosis, suggestions } = await analyzePostSearch(examples, topics, negativeTopics, stats, { apiKey, companyContext });
     const visibleCount = renderSearchAnalysisResults(diagnosis, suggestions);
     searchQualityStatusEl.textContent = visibleCount > 0
       ? `${visibleCount} suggestion${visibleCount === 1 ? "" : "s"} - review and apply the ones you want:`
