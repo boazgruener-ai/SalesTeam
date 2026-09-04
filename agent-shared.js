@@ -690,27 +690,34 @@ function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, companyCon
     "post's own text (plus an optional second group the post must ALSO mention) - too narrow a keyword list " +
     "misses relevant posts, too generic a keyword catches irrelevant chatter. A Negative Topic works the same " +
     "way, but a match marks the lead 'Irrelevant' instead of surfacing it - too aggressive a negative " +
-    "keyword can silently kill genuinely good leads." +
+    "keyword can silently kill genuinely good leads. Some example leads below are already marked " +
+    "'Irrelevant' and carry an irrelevantReason naming exactly which Negative Topic/keyword caught them - " +
+    "read their actual snippet and judge for yourself whether that classification looks right. A generic " +
+    "platform/vendor name (e.g. a cloud or AI provider mentioned only as tooling, not because the poster " +
+    "represents a competing firm) or an in-house HR/Talent-Acquisition person posting their own employer's " +
+    "real opening are both classic false positives worth flagging as negativeTopic remove_keyword " +
+    "suggestions - don't assume every 'Irrelevant' classification is correct just because it happened." +
     companyContextBlock(companyContext) + "\n" +
     "IMPORTANT: a Negative Topic can only ever REDUCE what surfaces - it can never fix a shortage of good " +
-    "leads, only make it worse. If the stats below show few or no P1-P3 leads, that's a keyword-coverage " +
-    "problem (Topics not casting a wide/specific enough net for what this company's real buyers actually " +
-    "post about), not a noise problem - in that case, do not suggest only Negative Topic changes. Use what " +
-    "the company actually sells (above) to propose genuinely new Topic keywords or a new Topic aimed at " +
-    "buying-intent language its real prospects would plausibly write, not just tweaks to what's already " +
-    "there.\n\n" +
+    "leads, only make it worse. If the stats below show few or no P1-P3 leads, that's very often actually a " +
+    "false-positive-filtering problem (check irrelevantByNegativeTopic and the Irrelevant examples first) " +
+    "rather than a keyword-coverage problem - don't assume it's the latter without checking. Either way, " +
+    "use what the company actually sells (above) to also propose genuinely new Topic keywords or a new " +
+    "Topic aimed at buying-intent language its real prospects would plausibly write, not just tweaks to " +
+    "what's already there.\n\n" +
     "Current Post Topics (JSON):\n" + JSON.stringify(topics.map((t) => ({ name: t.name, keywords: t.keywords, andKeywords: t.andKeywords, enabled: t.enabled }))) + "\n\n" +
     "Current Negative Topics that apply to Posts (JSON):\n" + JSON.stringify(postNegativeTopics.map((t) => ({ name: t.name, keywords: t.keywords, andKeywords: t.andKeywords, appliesTo: t.appliesTo, enabled: t.enabled }))) + "\n\n" +
-    "Stats on currently-unactioned Post leads (JSON):\n" + JSON.stringify(stats) + "\n\n" +
+    "Stats on currently-unactioned Post leads, including ones marked Irrelevant (JSON):\n" + JSON.stringify(stats) + "\n\n" +
     (noGoodLeadsYet
-      ? "There are currently ZERO P1-P3 Post leads - this is the primary problem to address, and your " +
-        "suggestions must include at least a few new-keyword or new-Topic ideas aimed at finding better " +
-        "leads, not just narrowing what already comes through.\n\n"
+      ? "There are currently ZERO P1-P3 Post leads - this is the primary problem to address. Check whether " +
+        "irrelevantByNegativeTopic shows one keyword suppressing a lot of leads before concluding it's a " +
+        "coverage problem; either way, your suggestions must include at least a few ideas aimed at finding " +
+        "or recovering better leads, not just narrowing further.\n\n"
       : "") +
     "Diagnose what's likely limiting quality or volume right now, grounded in the stats and the example " +
     "leads given next, not speculation. Then propose specific keyword changes (additions, removals, or a " +
     "genuinely new Topic/Negative Topic) that would plausibly help. It's fine to propose few or even zero " +
-    "negative-topic changes if those look reasonable - the priority is fixing lead quality/volume, not " +
+    "changes to a given side if that side looks reasonable - the priority is fixing lead quality/volume, not " +
     "finding something to say about every config. Call analyze_post_search exactly once."
   );
 }
@@ -718,6 +725,11 @@ function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats, companyCon
 function summarizeLeadForSearchAnalysis(lead) {
   return {
     key: lead.key,
+    status: lead.status,
+    // Only ever present on an Irrelevant lead - names exactly which Negative
+    // Topic/keyword suppressed it, so a false positive is directly visible
+    // rather than something to infer.
+    irrelevantReason: lead.status === "Irrelevant" ? lead.irrelevantReason || "" : undefined,
     headline: lead.headline,
     snippet: (lead.snippet || "").slice(0, 400),
     matchedTopics: lead.matchedTopics.map((t) => t.topicName),

@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.20.1.
+**Status:** Living document, reflects the shipped product as of v0.21.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -78,15 +78,18 @@ copy per page.
   to an existing Topic, create a new one, or skip it — nothing is written until explicitly accepted.
 - **"Analyze Post Search Quality"** button (Search Quality section, after Negative Topics) — the actual fix
   for the problem Lookalike Topics can't help with (it only has good examples once Posts already score well).
-  Looks at every unactioned (`"New"`) Post lead plus the current Topics *and* Negative Topics together,
-  diagnoses what's likely limiting quality/volume, and proposes specific keyword changes across both —
-  additions, removals, or a genuinely new Topic/Negative Topic. Grounded in the configured company context
-  (what the business actually sells) so it can propose genuinely new keywords, not just react to mediocre
-  examples — explicitly told that a Negative Topic can only ever reduce volume, never fix a shortage of good
-  leads, so a "zero/few P1-P3 leads" situation must get positive-keyword suggestions, not just more
-  narrowing. Same review-first pattern: each suggestion can be redirected to a different existing topic or
-  accepted as new, and a removal referencing a keyword that's already gone is filtered out rather than shown
-  as a broken action.
+  Looks at every unactioned Post lead — `"New"` *and* `"Irrelevant"` — plus the current Topics *and* Negative
+  Topics together, diagnoses what's likely limiting quality/volume, and proposes specific keyword changes
+  across both — additions, removals, or a genuinely new Topic/Negative Topic. Including Irrelevant leads is
+  deliberate: an over-aggressive Negative Topic keyword is invisible otherwise, and stats include an
+  `irrelevantByNegativeTopic` breakdown plus each Irrelevant example's exact `irrelevantReason`, so a false
+  positive (a generic platform mention, an in-house HR poster) is directly visible rather than assumed
+  correct. Grounded in the configured company context (what the business actually sells) so it can propose
+  genuinely new keywords, not just react to mediocre examples — explicitly told that a Negative Topic can
+  only ever reduce volume, never fix a shortage of good leads. Same review-first pattern: each suggestion can
+  be redirected to a different existing topic or accepted as new, and a removal referencing a keyword that's
+  already gone is filtered out rather than shown as a broken action. Still excludes Dismissed/Contacted/
+  Responded/Converted — those are the salesperson's own decisions, not the system's.
 
 ### 6.2 Negative Topics (Lead Filters)
 
@@ -258,4 +261,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.20.1**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.21.0**.

@@ -1,3 +1,13 @@
+# SalesTeam — v0.21.0
+
+## Analyze Post Search Quality now also looks at Irrelevant leads - and found a real bug doing it
+
+- The user found two concrete examples of legitimate leads (a real product company's in-post job ad) wrongly marked Irrelevant, and traced both to real issues: `Recruiter/Staffing Headline Filter` is too blunt (an in-house HR/Talent-Acquisition poster's own employer opening isn't the same as a third-party staffing agency), and `Competitor Blocklist` mixes actual competing consultancies with generic cloud/AI platform names (Microsoft, Google, AWS, NVIDIA) that get mentioned constantly as mere tooling references, not evidence of a competitor.
+- This was invisible to "Analyze Post Search Quality" because it was scoped to skip Irrelevant leads entirely - exactly the leads that would reveal an over-aggressive Negative Topic. Now includes them: new `stats.irrelevantByNegativeTopic` breakdown shows which Negative Topic is suppressing how many leads, each Irrelevant example carries its exact `irrelevantReason`, and the Mentor is explicitly told not to assume a classification is correct just because it happened - a generic platform mention or an in-house HR poster are named as classic false positives to flag as removal suggestions.
+- Still excludes Dismissed/Contacted/Responded/Converted - those are the salesperson's own decisions, not the system's, and not what this audits.
+
+---
+
 # SalesTeam — v0.20.1
 
 ## Fixed: Analyze Post Search Quality only ever suggested more Negative Topics

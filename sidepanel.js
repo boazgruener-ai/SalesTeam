@@ -416,16 +416,35 @@ suggestTopicsBtn.addEventListener("click", async () => {
 // everywhere else: nothing is written until "Apply Selected" is clicked.
 let lastSearchQualitySuggestions = [];
 
+// Includes Irrelevant leads (not just "New") deliberately - an over-eager
+// Negative Topic keyword can be the actual reason for a Post shortage, and
+// that's invisible unless the analysis can see what got filtered out. Still
+// excludes Dismissed/Contacted/Responded/Converted - those are the human's
+// own decisions, not the system's, and not what this is auditing.
 async function computeQualifyingLeadsForSearchAnalysis() {
   const resultsMap = await getResults();
-  const leads = Object.values(resultsMap).filter((l) => l.type !== "job" && l.status === "New");
-  const stats = { total: leads.length, byPriority: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unscored: 0 } };
+  const leads = Object.values(resultsMap).filter((l) => l.type !== "job" && (l.status === "New" || l.status === "Irrelevant"));
+  const stats = {
+    total: leads.length,
+    byStatus: { New: 0, Irrelevant: 0 },
+    byPriority: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unscored: 0 },
+    irrelevantByNegativeTopic: {},
+  };
   for (const lead of leads) {
+    stats.byStatus[lead.status] = (stats.byStatus[lead.status] || 0) + 1;
     if (lead.priority) stats.byPriority[lead.priority]++;
     else stats.byPriority.unscored++;
+    if (lead.status === "Irrelevant" && lead.irrelevantReason) {
+      const topicName = lead.irrelevantReason.split(" (matched")[0];
+      stats.irrelevantByNegativeTopic[topicName] = (stats.irrelevantByNegativeTopic[topicName] || 0) + 1;
+    }
   }
-  const examples = leads.slice().sort((a, b) => (b.firstSeenAt || 0) - (a.firstSeenAt || 0)).slice(0, 40);
-  return { examples, stats };
+  // Cap each status separately so a lopsided total (e.g. mostly Irrelevant)
+  // can't crowd the other status out of the example set entirely.
+  const byRecency = (a, b) => (b.firstSeenAt || 0) - (a.firstSeenAt || 0);
+  const newExamples = leads.filter((l) => l.status === "New").sort(byRecency).slice(0, 20);
+  const irrelevantExamples = leads.filter((l) => l.status === "Irrelevant").sort(byRecency).slice(0, 20);
+  return { examples: [...newExamples, ...irrelevantExamples], stats };
 }
 
 function findTopicArrayByTarget(target) {
