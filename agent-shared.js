@@ -400,6 +400,12 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, outputLangua
     "based on REAL fit against what the company above actually sells, the person's seniority/decision-making " +
     "power, and genuine buying-intent or urgency signals in their post or job ad - not just topical keyword " +
     "overlap. A lead can look on-topic and still be a weak fit, or look generic and still be a strong one. " +
+    "For an in-post job ad (isJobAd/isHiringPost) specifically: the poster is often HR, a recruiter, or an " +
+    "unrelated employee sharing the opening, not the eventual contact - don't penalize the priority just " +
+    "because the poster personally lacks seniority. What actually matters is the underlying company-level " +
+    "signal (a real company, per its `company` field if given, running the kind of program described) - a " +
+    "strong company signal with an unclear individual contact is still worth a real priority, since the next " +
+    "step is finding a better contact there, not necessarily messaging the poster. " +
     "Use the full 1-5 range across the batch rather than clustering everyone in the middle - these are meant " +
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
     "Call assign_priorities exactly once, with one entry (priority plus a short, specific reason) for EVERY " +
@@ -423,8 +429,15 @@ function summarizeLeadForPrioritization(lead) {
         type: "post",
         author: lead.author,
         headline: lead.headline,
+        // AI-extracted or manually assigned (v0.17.0) - without this, an
+        // in-post job ad can't be reasoned about at the company level at
+        // all, only via whatever's visible in the poster's own headline.
+        company: lead.company || null,
         snippet: (lead.snippet || "").slice(0, 400),
         connectionDegree: lead.connectionDegree || "unknown",
+        isJobAd: Boolean(lead.isJobAd),
+        isHiringPost: Boolean(lead.isHiringPost),
+        isFreelancePost: Boolean(lead.isFreelancePost),
         matchedTopics: lead.matchedTopics.map((t) => t.topicName),
       };
 }

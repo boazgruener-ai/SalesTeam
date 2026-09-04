@@ -1,3 +1,14 @@
+# SalesTeam — v0.22.1
+
+## Fixed: automatic prioritization couldn't see a Post lead's company or job-ad flags
+
+- Reported: after fixing the Negative Topic false positives, Post leads still weren't scoring P1-P3 - a real example (a bank running an internal AI/Digital Transformation program, hiring an AI Engineer) scored P4 when it should plausibly have been P2-P3.
+- Root cause: `summarizeLeadForPrioritization` never included a Post lead's `company` (AI-extracted since v0.17.0) or its `isJobAd`/`isHiringPost` flags - the batch auto-scoring pass had strictly less context than the interactive Mentor chat gets for the same lead via `list_leads`. Company-level signal (a real company running a relevant program) was invisible to the score.
+- Also strengthened the prompt: for an in-post job ad, the poster is often HR, a recruiter, or an unrelated employee sharing the opening, not the eventual contact - it's now told explicitly not to penalize the score just because the poster personally lacks seniority, since the real signal is the company-level program, and the next step is finding a better contact there.
+- Verified via harness: the outgoing request now includes `company`/`isJobAd`/`isHiringPost`/`isFreelancePost` for Post leads, and the prompt carries the new guidance.
+
+---
+
 # SalesTeam — v0.22.0
 
 ## New: negative topics can now match a lead's company, and a Known Recruiting Firms filter
