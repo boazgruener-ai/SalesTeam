@@ -1,3 +1,13 @@
+# SalesTeam — v0.20.0
+
+## New: "Analyze Post Search Quality" - diagnose and fix why Posts aren't scoring well
+
+- New button in the Scanner side panel (Search Quality section, after Negative Topics) has the Sales Mentor look at every unactioned ("New") Post lead plus your current Topics and Negative Topics together, diagnose what's likely limiting quality or volume, and propose specific keyword changes across both - additions, removals, or a genuinely new Topic or Negative Topic.
+- This is the actual fix for the problem "Suggest Lookalike Topics" can't help with: that feature only has good examples to learn from once Posts are already scoring well. This one looks at what's actually coming through (even if none of it scores highly yet) and the search configuration itself.
+- Fully review-first, same as every other config-mutating flow in the app: each suggestion shows its reasoning, add-suggestions let you redirect to an existing Topic/Negative Topic or accept a new one, and nothing is written until you check it and click "Apply Selected." A removal suggestion referencing a keyword that's already gone (edited since, or the AI got it wrong) is filtered out rather than shown as a broken action.
+
+---
+
 # SalesTeam — v0.19.1
 
 ## Fixed: Lookalike Topics was learning from Job leads and suggesting job-title keywords

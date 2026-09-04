@@ -646,6 +646,112 @@ export async function suggestLookalikeTopics(leads, settings) {
   return toolUse?.input?.suggestions || [];
 }
 
+// Diagnoses why Post leads aren't scoring/surfacing well and proposes
+// concrete keyword changes across BOTH Topics and Negative Topics - the
+// actual fix for the problem Lookalike Topics can't help with (it only has
+// good examples to learn from once Posts are already scoring well). One
+// unified suggestion shape (target: topic/negativeTopic, action: add/remove
+// keyword) so the caller only needs one render/apply path for all four
+// combinations, instead of four separate ones.
+const ANALYZE_POST_SEARCH_TOOL = {
+  name: "analyze_post_search",
+  description: "Records a diagnosis and suggested Topic/Negative-Topic keyword changes to improve Post lead quality.",
+  input_schema: {
+    type: "object",
+    properties: {
+      diagnosis: { type: "string", description: "2-4 sentences on what's likely limiting Post lead quality/volume right now." },
+      suggestions: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            target: { type: "string", enum: ["topic", "negativeTopic"] },
+            action: { type: "string", enum: ["add_keyword", "remove_keyword"] },
+            topicName: { type: "string", description: "The existing topic's name this applies to, or a new name if isNewTopic is true." },
+            isNewTopic: { type: "boolean", description: "Only meaningful with action=add_keyword - true to propose a brand-new topic rather than adding to an existing one." },
+            keyword: { type: "string" },
+            appliesTo: { type: "string", enum: ["post", "job", "both"], description: "Only meaningful when target=negativeTopic." },
+            rationale: { type: "string", description: "Under 20 words." },
+          },
+          required: ["target", "action", "topicName", "keyword", "rationale"],
+        },
+      },
+    },
+    required: ["diagnosis", "suggestions"],
+  },
+};
+
+function buildPostSearchAnalysisPrompt(topics, negativeTopics, stats) {
+  const postNegativeTopics = negativeTopics.filter((t) => t.appliesTo !== "job");
+  return (
+    "You are a sales mentor diagnosing why a salesperson's LinkedIn Post search isn't surfacing enough good " +
+    "leads. Two mechanics to reason about precisely: a Topic is a group of keywords, OR-matched against a " +
+    "post's own text (plus an optional second group the post must ALSO mention) - too narrow a keyword list " +
+    "misses relevant posts, too generic a keyword catches irrelevant chatter. A Negative Topic works the same " +
+    "way, but a match marks the lead 'Irrelevant' instead of surfacing it - too aggressive a negative " +
+    "keyword can silently kill genuinely good leads.\n\n" +
+    "Current Post Topics (JSON):\n" + JSON.stringify(topics.map((t) => ({ name: t.name, keywords: t.keywords, andKeywords: t.andKeywords, enabled: t.enabled }))) + "\n\n" +
+    "Current Negative Topics that apply to Posts (JSON):\n" + JSON.stringify(postNegativeTopics.map((t) => ({ name: t.name, keywords: t.keywords, andKeywords: t.andKeywords, appliesTo: t.appliesTo, enabled: t.enabled }))) + "\n\n" +
+    "Stats on currently-unactioned Post leads (JSON):\n" + JSON.stringify(stats) + "\n\n" +
+    "Diagnose what's likely limiting quality or volume right now - e.g. topics too broad/narrow, a missing " +
+    "segment entirely, a negative topic possibly over-matching - grounded in the stats and the example leads " +
+    "given next, not speculation. Then propose specific keyword changes (additions, removals, or a genuinely " +
+    "new Topic/Negative Topic) that would plausibly help. It's fine to propose few or even zero changes if " +
+    "the setup looks reasonable and the real issue is something outside this tool's control - don't force " +
+    "weak suggestions. Call analyze_post_search exactly once."
+  );
+}
+
+function summarizeLeadForSearchAnalysis(lead) {
+  return {
+    key: lead.key,
+    headline: lead.headline,
+    snippet: (lead.snippet || "").slice(0, 400),
+    matchedTopics: lead.matchedTopics.map((t) => t.topicName),
+    priority: lead.priority || null,
+    priorityReason: lead.priorityReason || "",
+  };
+}
+
+// Batch call, same shape as prioritizeLeads/suggestLookalikeTopics. `leads`
+// is the capped example set; `stats` (computed by the caller from the FULL
+// qualifying set before capping) carries the volume signal so examples
+// alone don't have to.
+export async function analyzePostSearch(leads, topics, negativeTopics, stats, settings) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey) return { diagnosis: "", suggestions: [] };
+
+  const userText = "Example currently-unactioned Post leads (JSON):\n" +
+    JSON.stringify(leads.map(summarizeLeadForSearchAnalysis));
+
+  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AGENT_MODEL,
+      max_tokens: 8192,
+      system: buildPostSearchAnalysisPrompt(topics, negativeTopics, stats),
+      tools: [ANALYZE_POST_SEARCH_TOOL],
+      tool_choice: { type: "tool", name: "analyze_post_search" },
+      messages: [{ role: "user", content: userText }],
+    }),
+  }, AGENT_FETCH_TIMEOUT_MS);
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`API error ${response.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "analyze_post_search");
+  return { diagnosis: toolUse?.input?.diagnosis || "", suggestions: toolUse?.input?.suggestions || [] };
+}
+
 // job-drafted messages don't exist (draft_message rejects type "job"), so
 // only_not_yet_drafted only ever filters Post leads - a job lead is always
 // kept, since "not yet drafted" isn't a meaningful state for it.

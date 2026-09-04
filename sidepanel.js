@@ -36,7 +36,7 @@ import {
   getAnthropicApiKey,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
-import { sanitizeApiKey, suggestLookalikeTopics } from "./agent-shared.js";
+import { sanitizeApiKey, suggestLookalikeTopics, analyzePostSearch } from "./agent-shared.js";
 
 const openDashboardBtn = document.getElementById("open-dashboard-btn");
 const openAdvisorsBtn = document.getElementById("open-advisors-btn");
@@ -47,6 +47,9 @@ const addTopicBtn = document.getElementById("add-topic-btn");
 const suggestTopicsBtn = document.getElementById("suggest-topics-btn");
 const suggestTopicsStatusEl = document.getElementById("suggest-topics-status");
 const suggestTopicsResultsEl = document.getElementById("suggest-topics-results");
+const analyzeSearchQualityBtn = document.getElementById("analyze-search-quality-btn");
+const searchQualityStatusEl = document.getElementById("search-quality-status");
+const searchQualityResultsEl = document.getElementById("search-quality-results");
 const jobTopicsListEl = document.getElementById("job-topics-list");
 const addJobTopicBtn = document.getElementById("add-job-topic-btn");
 const scanBtn = document.getElementById("scan-btn");
@@ -401,6 +404,192 @@ suggestTopicsBtn.addEventListener("click", async () => {
     suggestTopicsStatusEl.textContent = `Something went wrong: ${err.message}`;
   } finally {
     suggestTopicsBtn.disabled = false;
+  }
+});
+
+// "Analyze Post Search Quality": the actual fix for the problem Lookalike
+// Topics can't help with (it only has good examples to learn from once
+// Posts are already scoring well). Looks at every unactioned ("New") Post
+// lead plus the current Topics/Negative Topics config together, and
+// proposes specific keyword changes across both - review-first, same as
+// everywhere else: nothing is written until "Apply Selected" is clicked.
+let lastSearchQualitySuggestions = [];
+
+async function computeQualifyingLeadsForSearchAnalysis() {
+  const resultsMap = await getResults();
+  const leads = Object.values(resultsMap).filter((l) => l.type !== "job" && l.status === "New");
+  const stats = { total: leads.length, byPriority: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unscored: 0 } };
+  for (const lead of leads) {
+    if (lead.priority) stats.byPriority[lead.priority]++;
+    else stats.byPriority.unscored++;
+  }
+  const examples = leads.slice().sort((a, b) => (b.firstSeenAt || 0) - (a.firstSeenAt || 0)).slice(0, 40);
+  return { examples, stats };
+}
+
+function findTopicArrayByTarget(target) {
+  return target === "negativeTopic" ? negativeTopics : topics;
+}
+
+function findTopicByName(target, name) {
+  const array = findTopicArrayByTarget(target);
+  const lower = (name || "").trim().toLowerCase();
+  return array.find((t) => (t.name || "").trim().toLowerCase() === lower);
+}
+
+function keywordExistsInTopic(topic, keyword) {
+  const lower = (keyword || "").trim().toLowerCase();
+  return (topic.keywords || []).some((k) => k.toLowerCase() === lower) ||
+    (topic.andKeywords || []).some((k) => k.toLowerCase() === lower);
+}
+
+function renderSearchAnalysisResults(diagnosis, suggestions) {
+  lastSearchQualitySuggestions = suggestions;
+  searchQualityResultsEl.innerHTML = "";
+
+  if (diagnosis) {
+    const diagnosisEl = document.createElement("p");
+    diagnosisEl.className = "field-hint search-quality-diagnosis";
+    diagnosisEl.textContent = diagnosis;
+    searchQualityResultsEl.appendChild(diagnosisEl);
+  }
+
+  const visibleIndexes = [];
+  suggestions.forEach((s, i) => {
+    // A remove_keyword suggestion referencing a keyword/topic that's since
+    // changed (or the AI simply got wrong) would be a broken, confusing
+    // action - skip it rather than show something that can't actually apply.
+    if (s.action === "remove_keyword") {
+      const topic = findTopicByName(s.target, s.topicName);
+      if (!topic || !keywordExistsInTopic(topic, s.keyword)) return;
+    }
+    visibleIndexes.push(i);
+
+    const row = document.createElement("div");
+    row.className = "lookalike-suggestion-row";
+    const label = document.createElement("label");
+    label.className = "checkbox-label";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.dataset.index = String(i);
+    const targetLabel = s.target === "negativeTopic" ? "Negative Topic" : "Topic";
+    const actionLabel = s.action === "remove_keyword" ? "Remove" : "Add";
+    const fromTo = s.action === "remove_keyword" ? "from" : s.isNewTopic ? "as a new" : "to";
+    label.append(
+      checkbox,
+      document.createTextNode(
+        ` [${targetLabel}] ${actionLabel} "${s.keyword}" ${fromTo} "${s.topicName}" — ${s.rationale}`
+      )
+    );
+    row.appendChild(label);
+
+    if (s.action === "add_keyword") {
+      const select = document.createElement("select");
+      select.dataset.index = String(i);
+      const existingOptions = findTopicArrayByTarget(s.target)
+        .map((t) => `<option value="${t.id}">${t.name || "(unnamed topic)"}</option>`)
+        .join("");
+      select.innerHTML = `<option value="__new__">+ New ${targetLabel} named "${s.topicName}"</option>` + existingOptions;
+      // Best-guess default: if the AI's suggested topic name matches an existing one, pre-select it
+      // instead of defaulting to "new" - isNewTopic is what the AI itself thinks, but a real match wins.
+      const matched = !s.isNewTopic && findTopicByName(s.target, s.topicName);
+      if (matched) select.value = matched.id;
+      row.appendChild(select);
+    }
+
+    searchQualityResultsEl.appendChild(row);
+  });
+
+  if (visibleIndexes.length === 0) {
+    const noneEl = document.createElement("p");
+    noneEl.className = "field-hint";
+    noneEl.textContent = "No actionable suggestions this time.";
+    searchQualityResultsEl.appendChild(noneEl);
+    searchQualityResultsEl.hidden = false;
+    return 0;
+  }
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.id = "search-quality-apply-btn";
+  addBtn.textContent = "Apply Selected";
+  addBtn.addEventListener("click", applySelectedSearchAnalysisSuggestions);
+  searchQualityResultsEl.appendChild(addBtn);
+  searchQualityResultsEl.hidden = false;
+  return visibleIndexes.length;
+}
+
+async function applySelectedSearchAnalysisSuggestions() {
+  const rows = [...searchQualityResultsEl.querySelectorAll(".lookalike-suggestion-row")];
+  let topicsChanged = false;
+  let negativeTopicsChanged = false;
+  let applied = 0;
+
+  for (const row of rows) {
+    const checkbox = row.querySelector("input[type=checkbox]");
+    if (!checkbox.checked) continue;
+    const suggestion = lastSearchQualitySuggestions[Number(checkbox.dataset.index)];
+    const array = findTopicArrayByTarget(suggestion.target);
+
+    if (suggestion.action === "add_keyword") {
+      const select = row.querySelector("select");
+      if (select.value === "__new__") {
+        const newTopicEntry = suggestion.target === "negativeTopic"
+          ? { ...newNegativeTopic(), name: suggestion.topicName, keywords: [suggestion.keyword], appliesTo: suggestion.appliesTo || "both" }
+          : { ...newTopic(), name: suggestion.topicName, keywords: [suggestion.keyword] };
+        array.push(newTopicEntry);
+      } else {
+        const topic = array.find((t) => t.id === select.value);
+        if (topic && !keywordExistsInTopic(topic, suggestion.keyword)) topic.keywords.push(suggestion.keyword);
+      }
+    } else if (suggestion.action === "remove_keyword") {
+      const topic = findTopicByName(suggestion.target, suggestion.topicName);
+      if (topic) {
+        const lower = suggestion.keyword.trim().toLowerCase();
+        topic.keywords = (topic.keywords || []).filter((k) => k.toLowerCase() !== lower);
+        topic.andKeywords = (topic.andKeywords || []).filter((k) => k.toLowerCase() !== lower);
+      }
+    }
+
+    if (suggestion.target === "negativeTopic") negativeTopicsChanged = true;
+    else topicsChanged = true;
+    applied++;
+  }
+
+  if (topicsChanged) { await persistTopics(); renderTopics(); }
+  if (negativeTopicsChanged) { await persistNegativeTopics(); renderNegativeTopics(); }
+
+  searchQualityStatusEl.textContent = `Applied ${applied} change${applied === 1 ? "" : "s"}.`;
+  searchQualityResultsEl.hidden = true;
+  searchQualityResultsEl.innerHTML = "";
+}
+
+analyzeSearchQualityBtn.addEventListener("click", async () => {
+  analyzeSearchQualityBtn.disabled = true;
+  searchQualityResultsEl.hidden = true;
+  searchQualityResultsEl.innerHTML = "";
+  searchQualityStatusEl.textContent = "Looking at your Post search setup…";
+  try {
+    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+    if (!apiKey) {
+      searchQualityStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
+      return;
+    }
+    const { examples, stats } = await computeQualifyingLeadsForSearchAnalysis();
+    if (stats.total === 0) {
+      searchQualityStatusEl.textContent = "No unactioned Post leads yet - run a scan first.";
+      return;
+    }
+    const { diagnosis, suggestions } = await analyzePostSearch(examples, topics, negativeTopics, stats, { apiKey });
+    const visibleCount = renderSearchAnalysisResults(diagnosis, suggestions);
+    searchQualityStatusEl.textContent = visibleCount > 0
+      ? `${visibleCount} suggestion${visibleCount === 1 ? "" : "s"} - review and apply the ones you want:`
+      : "Analysis complete - no changes suggested.";
+  } catch (err) {
+    searchQualityStatusEl.textContent = `Something went wrong: ${err.message}`;
+  } finally {
+    analyzeSearchQualityBtn.disabled = false;
   }
 });
 
