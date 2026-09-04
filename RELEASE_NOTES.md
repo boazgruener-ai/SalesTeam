@@ -1,3 +1,53 @@
+# SalesTeam — v0.19.0
+
+## New: Group by Company, Excel-style, right in the leads table
+
+- New **Company** column on the Dashboard table, sortable and filterable like any other.
+- New "Group by Company" checkbox clusters leads by company - Excel-style outline grouping, right inside the same table (not a separate view): a collapsible header row per company (name, lead count, expand/collapse caret) with its leads nested underneath. Leads with no company yet collect into a trailing "Unknown company" group.
+- Each company group has a "Get Account Summary" button - a one-shot AI synthesis across every lead seen at that account (who the real decision-maker looks like, what's collectively happening, a suggested angle), cached per session so re-opening it doesn't re-call the AI.
+- Grouping needs a company's leads to stay together, so it temporarily shows "All" leads per page (restoring your previous page-size choice when you turn grouping back off).
+- Known limitation, same one noted in v0.17.0: this groups by normalized company name (handles minor legal-suffix differences like "Azqore" vs "Azqore SA"), not by brand/subsidiary aliasing (e.g. "Google Inc." vs "Alphabet") - that needs a proper merge tool, planned as later work.
+
+---
+
+# SalesTeam — v0.18.0
+
+## New: "Suggest Lookalike Topics" - find more leads like your best ones
+
+- New button in the Scanner tile's Topics section looks at your highest-priority (P1, or P1+P2 if you don't have many P1s yet) leads and asks the Sales Mentor what made them strong matches, then suggests new search keywords for finding more like them - the positive counterpart to Negative Topics, which only ever filter noise out.
+- Fully review-first, like every other config-changing action in the app: each suggestion shows its reasoning and lets you choose whether to add it to an existing Topic or create a new one, or skip it - nothing is added to your actual Topics until you check it and click "Add Selected."
+
+---
+
+# SalesTeam — v0.17.1
+
+## Improved: priority now re-checks when a second signal shows up for the same lead
+
+- Automatic prioritization previously only ever scored a brand-new lead in isolation. Now, if a scan finds a new lead from the same person (Post leads, matched by profile URL) or the same company (Job leads, matched by the normalized company name from v0.17.0) as an existing "New" lead that's already been scored, both get re-scored together - a second signal from the same account can genuinely change the right priority.
+- Only ever touches leads still in "New" status - anything you've acted on (Contacted, Dismissed, Responded, Converted) or that's Irrelevant is never re-scored, no matter what correlates.
+
+---
+
+# SalesTeam — v0.17.0
+
+## New: leads now get a Company - AI-extracted for Posts, manual override always available
+
+- Job leads already had a clean company field from the scrape; Post leads never did - only a free-text headline like "Head of AI for IT @ Azqore". After every scan, a batched AI call now extracts a best-guess company name for every Post lead still missing one (skipped silently with no API key, same as lead prioritization). A "Extract Companies" button on the Dashboard catches up any leads that predate this or ran with no API key.
+- New "Assign Company" icon on every lead row opens a small dialog to search every company already seen across your leads (native browser autocomplete) or type a brand-new one - or clear it back to blank. A manually-set (or previously extracted) company is never touched again by the automatic extraction pass, so a scan can't silently overwrite a correction.
+- This is foundational groundwork for grouping leads by company on the Dashboard, coming next.
+- Known limitation, by design for now: this only normalizes minor legal-suffix variation (e.g. "Azqore" vs "Azqore SA"). It has no way to know that different brand names or subsidiaries are the same company (e.g. "Google Inc." vs "Alphabet", "Facebook" vs "Meta") - that needs a proper alias/merge mechanism, planned as later work alongside a dedicated Companies view.
+
+---
+
+# SalesTeam — v0.16.0
+
+## New: "Buyer Summary" and "Conversation Starters" quick-action buttons
+
+- The lead detail page's Sales Mentor chat now has two one-click buttons above the message box - "Buyer Summary" and "Conversation Starters" - so you don't have to type the same standard requests for every lead. They send the exact same request an equivalent typed message would, through the same conversation you'd get by typing it yourself (same history, same lead-scoped context, same Draft Message tool access).
+- First of several features inspired by a look at LinkedIn Sales Navigator's AI features - built natively using data already scraped and your own Anthropic API key, no Sales Navigator subscription needed.
+
+---
+
 # SalesTeam — v0.15.1
 
 ## Fixed: Chrome Web Store rejection for excessive permissions

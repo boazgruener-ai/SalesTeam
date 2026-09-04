@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.15.0.
+**Status:** Living document, reflects the shipped product as of v0.19.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -70,6 +70,11 @@ copy per page.
   per group, 9 total per sub-query) — invisible to the user, who just adds however many keywords they want.
 - Author-title filter (checked client-side against each post's visible headline, never sent to LinkedIn) and
   an "include in-post job ads" toggle.
+- **"Suggest Lookalike Topics"** button — looks at the salesperson's own highest-priority (P1, or P1+P2 if
+  there aren't many P1s yet) leads and asks the Sales Mentor what made them strong matches, then suggests new
+  keywords for finding more like them. Review-first like everything else here: each suggestion shows its
+  reasoning and lets the user add it to an existing Topic, create a new one, or skip it — nothing is written
+  until explicitly accepted.
 
 ### 6.2 Negative Topics (Lead Filters)
 
@@ -105,11 +110,20 @@ copy per page.
 ### 6.3 Lead data model & statuses
 
 Every lead (Post or Job listing) carries: `status`, `statusUpdatedAt`, `priority` + `priorityReason` +
-`priorityScoredAt`, `irrelevantReason` (if applicable), plus source-specific fields (author/headline/snippet
-for Posts; title/company/location for Jobs), `firstSeenAt`/`lastSeenAt`/`postedAt`, and `matchedTopics`.
+`priorityScoredAt`, `irrelevantReason` (if applicable), `company` + `companyExtractedAt` (if applicable),
+plus source-specific fields (author/headline/snippet for Posts; title/company/location for Jobs),
+`firstSeenAt`/`lastSeenAt`/`postedAt`, and `matchedTopics`.
 
 Statuses: `New` (default) → `Contacted` (manual, or automatic the moment a drafted message is copied) →
 `Responded` / `Converted` (manual) or `Dismissed` (manual) or `Irrelevant` (automatic, negative-topic match).
+
+**Company.** Job leads get a clean `company` field straight from the scrape; Post leads never had one before
+v0.17.0 — only a free-text headline (e.g. "Head of AI for IT @ Azqore"). After every scan, a batched AI call
+extracts a best-guess company for every Post lead still missing one (silently skipped with no API key, same
+pattern as prioritization), with a "🏢 Assign Company" row action to search every company already seen
+(native browser autocomplete) or type a new one, or clear it. A manually-set or previously-extracted company
+is never touched again by the automatic pass — `companyExtractedAt` is only ever set for an AI guess, cleared
+on manual assignment, so a scan can never silently overwrite a human's correction.
 
 ### 6.4 Automatic lead prioritization
 
@@ -126,16 +140,26 @@ Statuses: `New` (default) → `Contacted` (manual, or automatic the moment a dra
 - **"Prioritize Unscored Leads" button** (Dashboard) catches up anything the automatic pass never reached —
   leads that predate the feature, or a scan that ran with no API key — scoring every unscored `"New"` lead
   across the *entire* list, not just what's currently filtered on screen.
+- **Correlated re-scoring**: if a scan finds a new lead from the same person (Post leads, matched by profile
+  URL) or same company (Job leads, matched by normalized company) as an existing `"New"` lead that's already
+  scored, both get re-scored together in the same batch — a second signal from the same account can change
+  the right priority. Still only ever touches `"New"` leads; anything already acted on is never re-scored.
 
 ### 6.5 Dashboard
 
 - **Pie charts** (last 7 days / 30 days / all time), bucketed by each lead's real (parsed) post date, one
   colored slice per status; clicking a slice/legend row filters the table to that status.
 - **Table**: Post Date, First Scanned, Source, Title, Content (3-line clamp, click to expand), Creator (link),
-  Connection, Status (with Irrelevant-reason tooltip), **Priority** (P1–P5 colored pill, tooltip shows the
-  Mentor's reason), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, Dismiss). Every sortable
-  column supports click-to-sort and an Excel-style per-column dropdown (sort asc/desc, free-text filter).
-  Column widths are user-resizable and persisted.
+  **Company**, Connection, Status (with Irrelevant-reason tooltip), **Priority** (P1–P5 colored pill, tooltip
+  shows the Mentor's reason), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, 🏢 Assign
+  Company, Dismiss). Every sortable column supports click-to-sort and an Excel-style per-column dropdown (sort
+  asc/desc, free-text filter). Column widths are user-resizable and persisted.
+- **"Group by Company"** checkbox — Excel-style outline grouping inside this same table (not a separate view):
+  a collapsible header row per company (name, lead count, expand/collapse caret) with its leads nested
+  underneath; leads with no company yet collect into a trailing "Unknown company" group. Each company header
+  has a **"Get Account Summary"** button — a one-shot AI synthesis across every lead seen at that account,
+  cached per session so re-opening it doesn't re-call the AI. Forces "All" leads per page while active (a
+  company's leads have to stay together), restoring the prior page size when turned off.
 - **"Show Irrelevant (negative-filtered) leads" checkbox**, unchecked by default and persisted — the general
   "All statuses" view excludes Irrelevant leads so the table isn't dominated by filtered-out noise; explicitly
   selecting "Irrelevant" from the Status filter always shows them regardless.
@@ -147,8 +171,10 @@ Statuses: `New` (default) → `Contacted` (manual, or automatic the moment a dra
   same dialog that restores every affected lead to its exact prior status (one level of undo, persists across
   Dashboard sessions until superseded by another bulk change). Closeable via a title-bar-style ✕.
 - **Detail page** (per lead): full content, status control, Draft Message (template-based, AI-generated,
-  copy-to-clipboard — copying auto-advances status New → Contacted), and a lead-scoped one-shot Consult Mentor
-  chat (persisted per lead).
+  copy-to-clipboard — copying auto-advances status New → Contacted), and a lead-scoped Consult Mentor chat
+  (persisted per lead) with two quick-action buttons — "Buyer Summary" and "Conversation Starters" — that send
+  the same canned request an equivalent typed message would, through the identical conversation/history/tools,
+  so the salesperson doesn't have to type the same standard requests for every lead.
 
 ### 6.6 Advisors (Sales Mentor & Customer Voice)
 
@@ -211,9 +237,13 @@ a collapsible card.
 - Negative-topic and Author-title matching is keyword-based, not exact — a common word can over-match, which
   is why every automatic status change is reviewable and reversible, never a silent delete.
 - No CRM push (Salesforce/other) yet — leads live only in this extension.
-- Chrome Web Store submission is pending review (v0.6.4); this document and the codebase have moved well past
-  that version locally, per the deliberate decision to hold further Web Store uploads until that review clears.
+- Company grouping is normalized-string matching, not brand/subsidiary aliasing — it handles minor legal-suffix
+  variation ("Azqore" vs "Azqore SA") but has no way to know that different names are the same company (e.g.
+  "Google Inc." vs "Alphabet," "Facebook" vs "Meta"). A proper alias/merge mechanism is planned as later work,
+  likely alongside a dedicated Companies view (deferred for now in favor of the in-table grouping above).
+- Chrome Web Store submission was rejected once (v0.15.0, excessive `scripting`/`tabs` permissions that
+  weren't actually used) and resubmitted after removing them (v0.15.1); awaiting review as of this writing.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.15.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.19.0**.

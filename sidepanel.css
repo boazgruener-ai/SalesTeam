@@ -315,6 +315,32 @@ section {
   margin-top: 2px;
 }
 
+#suggest-topics-results {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 10px;
+  margin: 0 0 12px;
+  background: #fafafa;
+}
+
+.lookalike-suggestion-row {
+  margin-bottom: 8px;
+}
+
+.lookalike-suggestion-row .checkbox-label {
+  margin-bottom: 4px;
+}
+
+.lookalike-suggestion-row select {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px;
+}
+
+#suggest-topics-add-btn {
+  margin-top: 4px;
+}
+
 .result-card .job-ad-badge {
   background: #7a4b00;
   color: white;

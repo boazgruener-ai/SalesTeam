@@ -33,8 +33,10 @@ import {
   getNegativeTopics,
   saveNegativeTopics,
   reapplyBlocklist,
+  getAnthropicApiKey,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
+import { sanitizeApiKey, suggestLookalikeTopics } from "./agent-shared.js";
 
 const openDashboardBtn = document.getElementById("open-dashboard-btn");
 const openAdvisorsBtn = document.getElementById("open-advisors-btn");
@@ -42,6 +44,9 @@ const openSettingsBtn = document.getElementById("open-settings-btn");
 const openHelpBtn = document.getElementById("open-help-btn");
 const topicsListEl = document.getElementById("topics-list");
 const addTopicBtn = document.getElementById("add-topic-btn");
+const suggestTopicsBtn = document.getElementById("suggest-topics-btn");
+const suggestTopicsStatusEl = document.getElementById("suggest-topics-status");
+const suggestTopicsResultsEl = document.getElementById("suggest-topics-results");
 const jobTopicsListEl = document.getElementById("job-topics-list");
 const addJobTopicBtn = document.getElementById("add-job-topic-btn");
 const scanBtn = document.getElementById("scan-btn");
@@ -285,6 +290,117 @@ addTopicBtn.addEventListener("click", () => {
   topics.push(newTopic());
   persistTopics();
   renderTopics();
+});
+
+// "Lookalike" topic suggestions: looks at the salesperson's own best-scoring
+// leads (P1, falling back to P1+P2 if there aren't many P1s yet) for keyword
+// ideas that would surface more leads like them - review-first, exactly like
+// every other config-mutating flow here: nothing is added to Topics until
+// the user checks a suggestion and clicks "Add Selected".
+let lastLookalikeSuggestions = [];
+
+async function computeQualifyingLeadsForLookalike() {
+  const resultsMap = await getResults();
+  const leads = Object.values(resultsMap);
+  let qualifying = leads.filter((l) => l.priority === 1);
+  if (qualifying.length < 5) {
+    qualifying = leads.filter((l) => l.priority === 1 || l.priority === 2);
+  }
+  return qualifying.slice(0, 30);
+}
+
+function renderLookalikeSuggestions(suggestions) {
+  lastLookalikeSuggestions = suggestions;
+  suggestTopicsResultsEl.innerHTML = "";
+  const existingTopicOptions = topics
+    .map((t) => `<option value="${t.id}">${t.name || "(unnamed topic)"}</option>`)
+    .join("");
+  suggestions.forEach((s, i) => {
+    const row = document.createElement("div");
+    row.className = "lookalike-suggestion-row";
+    const label = document.createElement("label");
+    label.className = "checkbox-label";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.dataset.index = String(i);
+    const exampleCount = s.exampleLeadKeys?.length || 0;
+    label.append(
+      checkbox,
+      document.createTextNode(
+        ` ${s.suggestedKeyword} — ${s.rationale} (${exampleCount} example${exampleCount === 1 ? "" : "s"})`
+      )
+    );
+    const select = document.createElement("select");
+    select.dataset.index = String(i);
+    select.innerHTML = `<option value="__new__">+ New Topic named "${s.suggestedKeyword}"</option>` + existingTopicOptions;
+    row.append(label, select);
+    suggestTopicsResultsEl.appendChild(row);
+  });
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.id = "suggest-topics-add-btn";
+  addBtn.textContent = "Add Selected";
+  addBtn.addEventListener("click", applySelectedLookalikeSuggestions);
+  suggestTopicsResultsEl.appendChild(addBtn);
+  suggestTopicsResultsEl.hidden = false;
+}
+
+async function applySelectedLookalikeSuggestions() {
+  const rows = [...suggestTopicsResultsEl.querySelectorAll(".lookalike-suggestion-row")];
+  let added = 0;
+  for (const row of rows) {
+    const checkbox = row.querySelector("input[type=checkbox]");
+    if (!checkbox.checked) continue;
+    const suggestion = lastLookalikeSuggestions[Number(checkbox.dataset.index)];
+    const select = row.querySelector("select");
+    if (select.value === "__new__") {
+      topics.push({ id: crypto.randomUUID(), name: suggestion.suggestedKeyword, keywords: [suggestion.suggestedKeyword], andKeywords: [], enabled: true });
+    } else {
+      const topic = topics.find((t) => t.id === select.value);
+      if (topic && !topic.keywords.includes(suggestion.suggestedKeyword)) {
+        topic.keywords.push(suggestion.suggestedKeyword);
+      }
+    }
+    added++;
+  }
+  if (added > 0) {
+    await persistTopics();
+    renderTopics();
+  }
+  suggestTopicsStatusEl.textContent = `Added ${added} keyword${added === 1 ? "" : "s"}.`;
+  suggestTopicsResultsEl.hidden = true;
+  suggestTopicsResultsEl.innerHTML = "";
+}
+
+suggestTopicsBtn.addEventListener("click", async () => {
+  suggestTopicsBtn.disabled = true;
+  suggestTopicsResultsEl.hidden = true;
+  suggestTopicsResultsEl.innerHTML = "";
+  suggestTopicsStatusEl.textContent = "Looking at your highest-priority leads…";
+  try {
+    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+    if (!apiKey) {
+      suggestTopicsStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
+      return;
+    }
+    const qualifying = await computeQualifyingLeadsForLookalike();
+    if (qualifying.length === 0) {
+      suggestTopicsStatusEl.textContent = "Not enough high-priority leads yet - run a scan first.";
+      return;
+    }
+    const suggestions = await suggestLookalikeTopics(qualifying, { apiKey });
+    if (suggestions.length === 0) {
+      suggestTopicsStatusEl.textContent = "Nothing new stood out this time.";
+      return;
+    }
+    suggestTopicsStatusEl.textContent = `${suggestions.length} suggestion${suggestions.length === 1 ? "" : "s"} - review and add the ones you want:`;
+    renderLookalikeSuggestions(suggestions);
+  } catch (err) {
+    suggestTopicsStatusEl.textContent = `Something went wrong: ${err.message}`;
+  } finally {
+    suggestTopicsBtn.disabled = false;
+  }
 });
 
 addJobTopicBtn.addEventListener("click", () => {

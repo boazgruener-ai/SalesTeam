@@ -184,6 +184,53 @@ h3 {
   margin-left: auto;
 }
 
+#group-by-company-label {
+  margin-left: 12px;
+}
+
+.company-group-header td {
+  background: var(--blue-light, #eef4fb);
+  font-weight: 600;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.group-caret-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 4px;
+  color: var(--gray);
+}
+
+.group-header-label {
+  flex: 1;
+}
+
+.group-summary-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+
+.group-summary-btn:hover {
+  background: #f2f2f2;
+}
+
+.company-group-summary-row td {
+  background: #fbfbfb;
+  color: var(--gray);
+  font-size: 13px;
+  padding: 8px 14px;
+  white-space: pre-wrap;
+}
+
 #result-count {
   color: var(--gray-light);
   font-size: 12px;
@@ -643,6 +690,32 @@ table#results-table {
   max-width: 100%;
 }
 
+.mentor-quick-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mentor-quick-btn {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: white;
+  color: #444;
+  cursor: pointer;
+}
+
+.mentor-quick-btn:hover {
+  background: #f2f2f2;
+}
+
+.mentor-quick-btn:disabled {
+  color: #aaa;
+  cursor: default;
+}
+
 .agent-input-row {
   display: flex;
   gap: 8px;
@@ -705,7 +778,8 @@ table#results-table {
   border-color: var(--gray-light);
 }
 
-#bulk-change-dialog {
+#bulk-change-dialog,
+#assign-company-dialog {
   position: relative;
   border: none;
   border-radius: 10px;
@@ -718,7 +792,8 @@ table#results-table {
 /* Standard Windows-titlebar-style close button - top right, plain until
    hovered, red fill on hover so it reads as the "close this window" action
    people already know rather than something needing an explicit label. */
-#bulk-close-x-btn {
+#bulk-close-x-btn,
+#assign-company-close-x-btn {
   position: absolute;
   top: 0;
   right: 0;
@@ -733,16 +808,19 @@ table#results-table {
   cursor: pointer;
 }
 
-#bulk-close-x-btn:hover {
+#bulk-close-x-btn:hover,
+#assign-company-close-x-btn:hover {
   background: #e81123;
   color: white;
 }
 
-#bulk-change-dialog::backdrop {
+#bulk-change-dialog::backdrop,
+#assign-company-dialog::backdrop {
   background: rgba(0, 0, 0, 0.5);
 }
 
-#bulk-change-dialog h3 {
+#bulk-change-dialog h3,
+#assign-company-dialog h3 {
   margin: 0 0 10px;
   color: var(--ink);
   font-size: 16px;
@@ -758,7 +836,8 @@ table#results-table {
   margin: 0 0 14px;
 }
 
-#bulk-change-dialog label {
+#bulk-change-dialog label,
+#assign-company-dialog label {
   display: block;
   font-size: 12.5px;
   color: var(--gray);
@@ -766,7 +845,8 @@ table#results-table {
   margin-bottom: 4px;
 }
 
-#bulk-change-dialog select {
+#bulk-change-dialog select,
+#assign-company-dialog input {
   width: 100%;
   padding: 8px;
   border: 1px solid #ccc;
@@ -774,6 +854,7 @@ table#results-table {
   font-size: 13px;
   margin-bottom: 12px;
   box-sizing: border-box;
+  font-family: inherit;
 }
 
 .bulk-dialog-actions {

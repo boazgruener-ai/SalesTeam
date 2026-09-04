@@ -26,9 +26,10 @@ import {
   getCompanyContext,
   getMentorPersona,
   getOutputLanguage,
+  normalizeCompanyName,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
-import { prioritizeLeads, PRIORITY_LEVELS } from "./agent-shared.js";
+import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
 const MIN_DELAY_MS = 3000;
@@ -438,6 +439,33 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
       await saveResults(existingResults);
     }
 
+    // Best-effort company extraction for Post leads (Job leads already get a
+    // clean `company` straight from the scrape) - run before prioritization
+    // so it's available to any later reader this same scan. Never touches a
+    // lead that already has a company, whether scraped, extracted here on an
+    // earlier scan, or manually assigned (storage.js's setLeadCompany) - a
+    // scan can never clobber a human's correction.
+    const toExtractCompany = Object.values(existingResults).filter((r) => r.type !== "job" && !r.company);
+    if (toExtractCompany.length > 0) {
+      const apiKeyForExtraction = await getAnthropicApiKey();
+      if (apiKeyForExtraction) {
+        try {
+          const extracted = await extractCompaniesForLeads(toExtractCompany, { apiKey: apiKeyForExtraction });
+          const extractedAt = Date.now();
+          for (const { key, company } of extracted) {
+            if (existingResults[key] && !existingResults[key].company && company && company.trim()) {
+              existingResults[key].company = company.trim();
+              existingResults[key].companyExtractedAt = extractedAt;
+            }
+          }
+          await saveResults(existingResults);
+        } catch (err) {
+          // Never fails the scan - company extraction is an enhancement, same as prioritization below.
+          console.error("[SalesTeam] Company extraction failed (non-fatal):", err);
+        }
+      }
+    }
+
     // Post-processing, after every search (and the negative-topic blocking
     // baked into mergeTopicPosts/mergeJobPosts above, plus the optional
     // re-apply pass just above) is done - only ever scores leads that are
@@ -445,6 +473,29 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     // already acted on, or already scored in an earlier scan, is never
     // re-scored or overwritten.
     const toPrioritize = Object.values(existingResults).filter((r) => r.status === "New" && !r.priority);
+
+    // A brand-new lead this scan might be a second signal about someone/
+    // somewhere already scored - the same person posting again (Post leads,
+    // matched by profileUrl) or another opening at the same company (Job
+    // leads, matched by normalized company). If so, re-score the existing
+    // lead alongside the new one, since a second signal can change the right
+    // priority. Only ever considers already-"New" leads - anything the
+    // salesperson has acted on (Contacted/Dismissed/Responded/Converted) or
+    // Irrelevant is never touched, same invariant as the base filter above.
+    const freshKeys = new Set(toPrioritize.map((r) => r.key));
+    for (const existing of Object.values(existingResults)) {
+      if (existing.status !== "New" || !existing.priority || freshKeys.has(existing.key)) continue;
+      const correlates = toPrioritize.some((fresh) => {
+        if (existing.type === "job" || fresh.type === "job") {
+          if (existing.type !== "job" || fresh.type !== "job") return false;
+          const existingCompany = normalizeCompanyName(existing.company);
+          return existingCompany && existingCompany === normalizeCompanyName(fresh.company);
+        }
+        return Boolean(existing.profileUrl) && existing.profileUrl === fresh.profileUrl;
+      });
+      if (correlates) toPrioritize.push(existing);
+    }
+
     if (toPrioritize.length > 0) {
       const apiKey = await getAnthropicApiKey();
       if (apiKey) {

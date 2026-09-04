@@ -11,9 +11,11 @@
     <h1>SalesTeam <span id="version-text"></span></h1>
     <div id="header-actions">
       <button id="prioritize-unscored-btn" type="button">Prioritize Unscored Leads</button>
+      <button id="extract-companies-btn" type="button">Extract Companies</button>
       <button id="export-csv-all-btn" type="button">Export All (CSV)</button>
       <button id="export-csv-filtered-btn" type="button">Export Filtered (CSV)</button>
       <span id="prioritize-status" class="status-text"></span>
+      <span id="extract-companies-status" class="status-text"></span>
     </div>
   </header>
 
@@ -45,6 +47,10 @@
       <label class="control-label" id="show-irrelevant-label">
         <input type="checkbox" id="show-irrelevant-checkbox" />
         Show Irrelevant (negative-filtered) leads
+      </label>
+      <label class="control-label" id="group-by-company-label">
+        <input type="checkbox" id="group-by-company-checkbox" />
+        Group by Company
       </label>
     </section>
 
@@ -100,6 +106,19 @@
     <p id="bulk-undo-text" class="status-text"></p>
   </dialog>
 
+  <dialog id="assign-company-dialog">
+    <button id="assign-company-close-x-btn" type="button" aria-label="Close" title="Close">✕</button>
+    <h3>Assign Company</h3>
+    <label for="assign-company-input">Search an existing company, or type a new one:</label>
+    <input id="assign-company-input" type="text" list="known-companies-datalist" placeholder="Company name…" autocomplete="off" />
+    <datalist id="known-companies-datalist"></datalist>
+    <div class="bulk-dialog-actions">
+      <button id="assign-company-save-btn" type="button">Save</button>
+      <button id="assign-company-clear-btn" type="button">Clear</button>
+      <button id="assign-company-cancel-btn" type="button">Cancel</button>
+    </div>
+  </dialog>
+
   <main id="detail-view" hidden>
     <a href="#" id="back-to-list-link">&larr; Back to all leads</a>
 
@@ -138,6 +157,10 @@
       </div>
       <div id="detail-mentor-history" class="agent-history"></div>
       <span id="detail-mentor-status" class="status-text"></span>
+      <div class="mentor-quick-actions">
+        <button id="mentor-quick-summary-btn" class="mentor-quick-btn" type="button">Buyer Summary</button>
+        <button id="mentor-quick-openers-btn" class="mentor-quick-btn" type="button">Conversation Starters</button>
+      </div>
       <div class="agent-input-row">
         <textarea id="detail-mentor-input" class="agent-input" placeholder="Ask about this lead, e.g. “Is this worth pursuing?”"></textarea>
         <button id="detail-mentor-send-btn" class="agent-send-btn" type="button">Send</button>

@@ -587,6 +587,57 @@ export async function applyLeadPriorities(priorities) {
   return changed;
 }
 
+// Best-effort match key for grouping leads by company - not authoritative
+// (e.g. "Azqore" vs "Azqore SA" collapse to the same key, but an unusual
+// suffix this doesn't know about won't). Always show the lead's own raw
+// `company` string alongside any grouping so a bad merge is still visible.
+const COMPANY_SUFFIX_RE = /\s+(sa|ag|gmbh|inc|ltd|llc|corp|plc|co|sarl|srl|bv|nv|group|holding|holdings)\s*$/i;
+
+export function normalizeCompanyName(name) {
+  if (!name) return "";
+  const collapsed = name.toLowerCase().replace(/[.,]/g, "").replace(/\s+/g, " ").trim();
+  return collapsed.replace(COMPANY_SUFFIX_RE, "").trim();
+}
+
+// Applied by background.js after the batched AI company-extraction pass
+// (agent-shared.js's extractCompaniesForLeads) - never overwrites a lead
+// that already has a company, whether it was scraped (Job leads), extracted
+// here before, or manually assigned via setLeadCompany below, so a scan can
+// never clobber a human's correction.
+export async function applyExtractedCompanies(entries) {
+  const results = await getResults();
+  const extractedAt = Date.now();
+  let changed = 0;
+  for (const { key, company } of entries) {
+    const trimmed = (company || "").trim();
+    if (results[key] && !results[key].company && trimmed) {
+      results[key].company = trimmed;
+      results[key].companyExtractedAt = extractedAt;
+      changed++;
+    }
+  }
+  if (changed > 0) await saveResults(results);
+  return changed;
+}
+
+// Lets the salesperson correct or fill in a company the AI extraction got
+// wrong or couldn't determine - takes precedence forever after, since
+// applyExtractedCompanies above only ever touches leads with no company yet.
+// An empty company clears it back to unset, making it eligible for
+// extraction again on the next scan.
+export async function setLeadCompany(key, company) {
+  const results = await getResults();
+  if (!results[key]) return;
+  const trimmed = (company || "").trim();
+  if (trimmed) {
+    results[key].company = trimmed;
+  } else {
+    delete results[key].company;
+  }
+  delete results[key].companyExtractedAt; // no longer an AI guess either way
+  await saveResults(results);
+}
+
 // Persists the Dashboard detail page's lead-scoped Sales Mentor conversation
 // onto the lead itself, so it survives closing/reopening that lead - same
 // pattern as updateResultDraft, just a different field.

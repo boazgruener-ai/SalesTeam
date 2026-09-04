@@ -19,6 +19,9 @@ import {
   applyLeadPriorities,
   getLastBulkChange,
   undoLastBulkChange,
+  setLeadCompany,
+  applyExtractedCompanies,
+  normalizeCompanyName,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
@@ -30,6 +33,8 @@ import {
   DRAFT_MESSAGE_TOOL,
   toolDraftMessage,
   prioritizeLeads,
+  extractCompaniesForLeads,
+  buildAccountSummaryPrompt,
 } from "./agent-shared.js";
 
 const STATUS_COLORS = {
@@ -48,6 +53,7 @@ const resultCountEl = document.getElementById("result-count");
 const searchInput = document.getElementById("search-input");
 const statusFilterSelect = document.getElementById("status-filter-select");
 const showIrrelevantCheckbox = document.getElementById("show-irrelevant-checkbox");
+const groupByCompanyCheckbox = document.getElementById("group-by-company-checkbox");
 const bulkChangeDialog = document.getElementById("bulk-change-dialog");
 const openBulkChangeBtn = document.getElementById("open-bulk-change-btn");
 const bulkStatusSelect = document.getElementById("bulk-status-select");
@@ -58,9 +64,17 @@ const bulkUndoBtn = document.getElementById("bulk-undo-btn");
 const bulkUndoText = document.getElementById("bulk-undo-text");
 const prioritizeUnscoredBtn = document.getElementById("prioritize-unscored-btn");
 const prioritizeStatusEl = document.getElementById("prioritize-status");
+const extractCompaniesBtn = document.getElementById("extract-companies-btn");
+const extractCompaniesStatusEl = document.getElementById("extract-companies-status");
 
 const SHOW_IRRELEVANT_STORAGE_KEY = "salesteam-dashboard-show-irrelevant";
 let showIrrelevant = false;
+
+const GROUP_BY_COMPANY_STORAGE_KEY = "salesteam-dashboard-group-by-company";
+let groupByCompany = false;
+let pageSizeBeforeGrouping = null;
+const collapsedCompanyGroups = new Set();
+const accountSummaryCache = new Map(); // normalized company name -> summary text, session-only
 
 let allLeads = [];
 let lastScanStartedAt = 0;
@@ -351,6 +365,10 @@ function creatorCell(td, lead) {
   }
 }
 
+function companyCell(td, lead) {
+  td.textContent = lead.company || "—";
+}
+
 function connectionCell(td, lead) {
   if (lead.connectionDegree) {
     const pill = document.createElement("span");
@@ -405,6 +423,7 @@ function actionsCell(td, lead) {
     makeIconBtn("✎", "Open / Edit", () => openDetail(lead.key)),
     makeIconBtn("🧭", "Consult Mentor", () => openDetail(lead.key, "mentor")),
     makeIconBtn("✉", "Send Message", () => openDetail(lead.key, "draft")),
+    makeIconBtn("🏢", "Assign Company", () => openAssignCompanyDialog(lead)),
     makeIconBtn(
       "✕",
       "Dismiss",
@@ -432,6 +451,7 @@ const COLUMNS = [
   { id: "title", label: "Title", width: 220, getSortValue: leadTitle, getFilterText: leadTitle, render: titleCell },
   { id: "content", label: "Content", width: 280, getFilterText: leadContent, render: contentCell },
   { id: "creator", label: "Creator", width: 160, getSortValue: leadCreatorName, getFilterText: leadCreatorName, render: creatorCell },
+  { id: "company", label: "Company", width: 150, getSortValue: (l) => l.company || "", getFilterText: (l) => l.company || "", render: companyCell },
   { id: "connection", label: "Connection", width: 110, getSortValue: (l) => l.connectionDegree || "", getFilterText: (l) => l.connectionDegree || "", render: connectionCell },
   { id: "status", label: "Status", width: 110, getSortValue: (l) => l.status || "New", getFilterText: (l) => l.status || "New", render: statusCell },
   { id: "priority", label: "Priority", width: 100, getSortValue: leadPrioritySortValue, getFilterText: (l) => leadPriorityLabel(l) || "not scored", render: priorityCell },
@@ -455,6 +475,21 @@ function loadPageSize() {
 function loadShowIrrelevant() {
   showIrrelevant = localStorage.getItem(SHOW_IRRELEVANT_STORAGE_KEY) === "true";
   showIrrelevantCheckbox.checked = showIrrelevant;
+}
+
+// Grouping needs every lead in a company's cluster to stay together, so
+// forces page size to "All" while it's on (disabling the page-size picker)
+// and restores whatever the user had before once it's turned back off.
+function loadGroupByCompany() {
+  groupByCompany = localStorage.getItem(GROUP_BY_COMPANY_STORAGE_KEY) === "true";
+  groupByCompanyCheckbox.checked = groupByCompany;
+  if (groupByCompany) {
+    pageSizeBeforeGrouping = pageSize;
+    pageSize = "all";
+    const pageSizeSelect = document.getElementById("page-size-select");
+    pageSizeSelect.value = "all";
+    pageSizeSelect.disabled = true;
+  }
 }
 
 function loadColumnWidths() {
@@ -729,6 +764,120 @@ function renderPaginationControls(totalLeads) {
   document.getElementById("page-last-btn").disabled = currentPage >= totalPages;
 }
 
+// Excel-style outline grouping, inside this same table rather than a
+// separate view - clusters the already-filtered/sorted leads by normalized
+// company (stable sort, so within-group order still respects whatever the
+// active column sort is). Leads with no company (pre-extraction backlog, or
+// extraction never determined one) collect into a trailing "Unknown
+// company" bucket, sorted last (key: "").
+function groupLeadsByCompany(leads) {
+  const sorted = leads.slice().sort((a, b) => {
+    const ca = normalizeCompanyName(a.company) || "￿";
+    const cb = normalizeCompanyName(b.company) || "￿";
+    return ca.localeCompare(cb);
+  });
+  const groups = [];
+  let current = null;
+  for (const lead of sorted) {
+    const key = normalizeCompanyName(lead.company);
+    if (!current || current.key !== key) {
+      current = { key, displayName: lead.company || "Unknown company", leads: [] };
+      groups.push(current);
+    }
+    current.leads.push(lead);
+  }
+  return groups;
+}
+
+const openAccountSummaries = new Set(); // group keys currently showing their summary row
+const loadingAccountSummaries = new Set();
+
+async function showAccountSummary(group) {
+  if (openAccountSummaries.has(group.key)) {
+    openAccountSummaries.delete(group.key);
+    renderTable();
+    return;
+  }
+  openAccountSummaries.add(group.key);
+  renderTable();
+  if (accountSummaryCache.has(group.key) || loadingAccountSummaries.has(group.key)) return;
+  loadingAccountSummaries.add(group.key);
+  try {
+    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+    if (!apiKey) {
+      accountSummaryCache.set(group.key, "Add an Anthropic API key on the Settings page first.");
+      return;
+    }
+    const localHistory = [];
+    await runAgentTurn("Summarize this account.", {
+      history: localHistory,
+      apiKey,
+      buildSystemPrompt: () => buildAccountSummaryPrompt(group.displayName, group.leads, { mentorPersona, companyContext, outputLanguage }),
+      tools: [],
+      executeTool: async (name) => ({ error: `Unknown tool: ${name}` }),
+      saveHistory: async () => {},
+      onStatus: () => {},
+    });
+    const lastAssistant = [...localHistory].reverse().find((m) => m.role === "assistant");
+    const text = lastAssistant ? lastAssistant.content.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "";
+    accountSummaryCache.set(group.key, text || "(no summary returned)");
+  } catch (err) {
+    accountSummaryCache.set(group.key, `Something went wrong: ${err.message}`);
+  } finally {
+    loadingAccountSummaries.delete(group.key);
+    renderTable();
+  }
+}
+
+function buildGroupHeaderRow(group) {
+  const tr = document.createElement("tr");
+  tr.className = "company-group-header";
+  const td = document.createElement("td");
+  td.colSpan = COLUMNS.length;
+
+  const isCollapsed = collapsedCompanyGroups.has(group.key);
+  const caret = document.createElement("button");
+  caret.type = "button";
+  caret.className = "group-caret-btn";
+  caret.textContent = isCollapsed ? "▶" : "▼";
+  caret.title = isCollapsed ? "Expand" : "Collapse";
+  caret.addEventListener("click", () => {
+    if (isCollapsed) collapsedCompanyGroups.delete(group.key);
+    else collapsedCompanyGroups.add(group.key);
+    renderTable();
+  });
+
+  const label = document.createElement("span");
+  label.className = "group-header-label";
+  label.textContent = `${group.displayName} (${group.leads.length} lead${group.leads.length === 1 ? "" : "s"})`;
+
+  td.append(caret, label);
+
+  if (group.key) {
+    // No summary for the "Unknown company" bucket (key "") - there's no
+    // single account to synthesize across an arbitrary mix of leads.
+    const summaryBtn = document.createElement("button");
+    summaryBtn.type = "button";
+    summaryBtn.className = "group-summary-btn";
+    summaryBtn.textContent = "Get Account Summary";
+    summaryBtn.addEventListener("click", () => showAccountSummary(group));
+    td.appendChild(summaryBtn);
+  }
+
+  tr.appendChild(td);
+  return tr;
+}
+
+function buildGroupSummaryRow(group) {
+  const tr = document.createElement("tr");
+  tr.className = "company-group-summary-row";
+  const td = document.createElement("td");
+  td.colSpan = COLUMNS.length;
+  td.textContent = loadingAccountSummaries.has(group.key) ? "Thinking…" : (accountSummaryCache.get(group.key) || "");
+  tr.appendChild(td);
+  return tr;
+}
+
 function renderTable() {
   renderColgroup();
   renderTableHead();
@@ -749,6 +898,17 @@ function renderTable() {
     td.textContent = allLeads.length === 0 ? "No leads yet. Run a scan from the side panel." : "No leads match your filters.";
     tr.appendChild(td);
     tbody.appendChild(tr);
+    return;
+  }
+
+  if (groupByCompany) {
+    for (const group of groupLeadsByCompany(leads)) {
+      tbody.appendChild(buildGroupHeaderRow(group));
+      if (openAccountSummaries.has(group.key)) tbody.appendChild(buildGroupSummaryRow(group));
+      if (!collapsedCompanyGroups.has(group.key)) {
+        for (const lead of group.leads) tbody.appendChild(buildRow(lead));
+      }
+    }
     return;
   }
 
@@ -963,15 +1123,30 @@ async function sendMentorMessage() {
   // runAgentTurn concurrently, racing on the same shared mentorHistory array
   // and silently losing or scrambling whichever message loses the race.
   if (sendBtn.disabled) return;
-  const leadKey = currentDetailLead.key; // captured now - currentDetailLead may be swapped mid-turn by a draft_message refresh
   const input = document.getElementById("detail-mentor-input");
-  const statusEl = document.getElementById("detail-mentor-status");
   const text = input.value.trim();
   if (!text) return;
   input.value = "";
+  await sendCannedMentorPrompt(text);
+}
+
+// Shared by the free-text Send button and the "Buyer Summary"/"Conversation
+// Starters" quick-action buttons below - all three are just different ways
+// to put a message into the same lead-scoped Mentor conversation.
+async function sendCannedMentorPrompt(text) {
+  if (!currentDetailLead) return;
+  const sendBtn = document.getElementById("detail-mentor-send-btn");
+  const quickBtns = [
+    document.getElementById("mentor-quick-summary-btn"),
+    document.getElementById("mentor-quick-openers-btn"),
+  ];
+  if (sendBtn.disabled) return;
+  const leadKey = currentDetailLead.key; // captured now - currentDetailLead may be swapped mid-turn by a draft_message refresh
+  const statusEl = document.getElementById("detail-mentor-status");
 
   const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
   sendBtn.disabled = true;
+  quickBtns.forEach((btn) => { btn.disabled = true; });
   try {
     const settings = await currentSettings();
     await runAgentTurn(text, {
@@ -996,10 +1171,17 @@ async function sendMentorMessage() {
     });
   } finally {
     sendBtn.disabled = false;
+    quickBtns.forEach((btn) => { btn.disabled = false; });
   }
 }
 
 document.getElementById("detail-mentor-send-btn").addEventListener("click", sendMentorMessage);
+document.getElementById("mentor-quick-summary-btn").addEventListener("click", () => {
+  sendCannedMentorPrompt("Give me a buyer summary of this lead.");
+});
+document.getElementById("mentor-quick-openers-btn").addEventListener("click", () => {
+  sendCannedMentorPrompt("Suggest 2-3 specific conversation-opener lines referencing their actual content.");
+});
 document.getElementById("detail-mentor-input").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -1093,6 +1275,37 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
   }
 });
 
+// Catches up every Post lead the automatic per-scan extraction never got to
+// - same reasoning as "Prioritize Unscored Leads" above. Job leads already
+// have a company from the scrape, so they're never included here. Never
+// touches a lead that already has a company - AI-extracted or manually
+// assigned - so this can only ever fill gaps, never overwrite a correction.
+extractCompaniesBtn.addEventListener("click", async () => {
+  const toExtract = allLeads.filter((l) => l.type !== "job" && !l.company);
+  if (toExtract.length === 0) {
+    extractCompaniesStatusEl.textContent = "Nothing to do - every lead already has a company.";
+    return;
+  }
+  extractCompaniesBtn.disabled = true;
+  extractCompaniesStatusEl.textContent = `Extracting companies for ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"}…`;
+  try {
+    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+    if (!apiKey) {
+      extractCompaniesStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
+      return;
+    }
+    const extracted = await extractCompaniesForLeads(toExtract, { apiKey });
+    const changed = await applyExtractedCompanies(extracted);
+    extractCompaniesStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} got a company.`;
+    await loadLeads();
+    renderTable();
+  } catch (err) {
+    extractCompaniesStatusEl.textContent = `Something went wrong: ${err.message}`;
+  } finally {
+    extractCompaniesBtn.disabled = false;
+  }
+});
+
 // "Filtered" means everything matching the current search/column filters/
 // status filter, across every page - not just the rows currently visible on
 // this one page of the table. Sort order doesn't affect which leads are
@@ -1179,6 +1392,50 @@ bulkUndoBtn.addEventListener("click", async () => {
   }
 });
 
+// Lets the salesperson search every company already seen across all leads
+// (via the datalist, native browser autocomplete/filter-as-you-type) or type
+// one that's brand new - a plain prompt() has no way to offer the former.
+const assignCompanyDialog = document.getElementById("assign-company-dialog");
+const assignCompanyInput = document.getElementById("assign-company-input");
+const knownCompaniesDatalist = document.getElementById("known-companies-datalist");
+let assignCompanyLeadKey = null;
+
+function populateKnownCompaniesDatalist() {
+  const names = new Set(allLeads.map((l) => l.company).filter(Boolean));
+  knownCompaniesDatalist.innerHTML = "";
+  for (const name of Array.from(names).sort((a, b) => a.localeCompare(b))) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    knownCompaniesDatalist.appendChild(opt);
+  }
+}
+
+function openAssignCompanyDialog(lead) {
+  assignCompanyLeadKey = lead.key;
+  populateKnownCompaniesDatalist();
+  assignCompanyInput.value = lead.company || "";
+  assignCompanyDialog.showModal();
+  assignCompanyInput.focus();
+}
+
+async function saveAssignedCompany(value) {
+  await setLeadCompany(assignCompanyLeadKey, value);
+  assignCompanyDialog.close();
+  await loadLeads();
+  renderTable();
+}
+
+document.getElementById("assign-company-close-x-btn").addEventListener("click", () => assignCompanyDialog.close());
+document.getElementById("assign-company-cancel-btn").addEventListener("click", () => assignCompanyDialog.close());
+document.getElementById("assign-company-clear-btn").addEventListener("click", () => saveAssignedCompany(""));
+document.getElementById("assign-company-save-btn").addEventListener("click", () => saveAssignedCompany(assignCompanyInput.value));
+assignCompanyInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    saveAssignedCompany(assignCompanyInput.value);
+  }
+});
+
 // ---------------------------------------------------------------------
 // Wiring + init
 // ---------------------------------------------------------------------
@@ -1199,6 +1456,28 @@ showIrrelevantCheckbox.addEventListener("change", () => {
     localStorage.setItem(SHOW_IRRELEVANT_STORAGE_KEY, String(showIrrelevant));
   } catch {
     // best-effort only - a display preference isn't worth surfacing an error for
+  }
+  renderTableFromScratch();
+});
+
+groupByCompanyCheckbox.addEventListener("change", () => {
+  groupByCompany = groupByCompanyCheckbox.checked;
+  try {
+    localStorage.setItem(GROUP_BY_COMPANY_STORAGE_KEY, String(groupByCompany));
+  } catch {
+    // best-effort only - a display preference isn't worth surfacing an error for
+  }
+  const pageSizeSelect = document.getElementById("page-size-select");
+  if (groupByCompany) {
+    pageSizeBeforeGrouping = pageSize;
+    pageSize = "all";
+    pageSizeSelect.value = "all";
+    pageSizeSelect.disabled = true;
+  } else {
+    pageSize = pageSizeBeforeGrouping ?? pageSize;
+    pageSizeBeforeGrouping = null;
+    pageSizeSelect.disabled = false;
+    pageSizeSelect.value = String(pageSize);
   }
   renderTableFromScratch();
 });
@@ -1250,6 +1529,7 @@ async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
   loadColumnWidths();
   loadPageSize();
+  loadGroupByCompany();
   loadShowIrrelevant();
   await loadSettings();
   await loadLeads();

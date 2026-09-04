@@ -191,6 +191,33 @@ export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContex
   );
 }
 
+// One-shot, ephemeral synthesis across every lead seen at one company (the
+// Dashboard's "Get Account Summary", inside its Group by Company view) -
+// same shape as buildLeadScopedMentorPrompt but for a whole account instead
+// of one lead. Deliberately not a persisted chat: the caller passes
+// history: [] and doesn't save the result anywhere in storage, just an
+// in-memory cache for the session, so re-expanding a group doesn't re-call
+// the AI for leads that haven't changed.
+export function buildAccountSummaryPrompt(companyName, leads, { mentorPersona, companyContext, outputLanguage } = {}) {
+  const leadBlocks = leads.map((lead) =>
+    lead.type === "job"
+      ? `- Job listing: "${lead.title || "Untitled role"}"${lead.location ? ` (${lead.location})` : ""} - matched on: ${(lead.matchedTopics || []).map((t) => t.topicName).join(", ")}`
+      : `- Lead: ${lead.author || "Unknown"} - ${lead.headline || "n/a"}\n  Their post: "${(lead.snippet || "").slice(0, 300)}"`
+  );
+
+  return (
+    `You are acting as a sales mentor to a salesperson, synthesizing everything they've seen so far about ONE ` +
+    `account - ${companyName}. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
+    companyContextBlock(companyContext) +
+    `\nEvery lead seen at this account so far:\n${leadBlocks.join("\n")}\n\n` +
+    "Summarize: who the real decision-maker(s) appear to be, what's collectively happening at this account " +
+    "(recurring themes, hiring or buying signals across the leads above), and a suggested angle for " +
+    "approaching them - grounded only in what's given above, never inventing detail. Keep it tight, a short " +
+    "few paragraphs, not an exhaustive report.\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
 export const LEAD_LOOKUP_TOOLS = [
   {
     name: "list_leads",
@@ -443,6 +470,185 @@ export async function prioritizeLeads(leads, settings) {
   const data = await response.json();
   const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "assign_priorities");
   return toolUse?.input?.priorities || [];
+}
+
+// Post leads only ever carry a free-text headline (e.g. "Head of AI for IT @
+// Azqore") - never a structured company field, unlike Job leads which get one
+// straight from the scrape. This extracts a best-guess employer name from the
+// headline so Post leads can be grouped by company like Job leads already
+// are (see storage.js's normalizeCompanyName / setLeadCompany). A user's own
+// manual company assignment always takes precedence - this is only ever
+// called for leads still missing a company.
+const EXTRACT_COMPANIES_TOOL = {
+  name: "extract_companies",
+  description: "Records the extracted employer/company name for every lead given, where determinable.",
+  input_schema: {
+    type: "object",
+    properties: {
+      companies: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            key: { type: "string", description: "The lead's key, exactly as given." },
+            company: { type: "string", description: "The company's own name only, not the person's job title." },
+          },
+          required: ["key"],
+        },
+      },
+    },
+    required: ["companies"],
+  },
+};
+
+function buildCompanyExtractionPrompt() {
+  return (
+    "You extract employer/company names from LinkedIn headlines for a sales tool. For each lead below, read " +
+    "its headline and identify the company the person currently works at (e.g. \"Head of AI for IT @ Azqore\" " +
+    "→ \"Azqore\"). Return the company's own name only, never the person's job title or department. If a " +
+    "headline genuinely doesn't name a current employer (e.g. \"Open to work\", a vague headline with no " +
+    "company), omit that lead's company entirely rather than guessing. " +
+    "Call extract_companies exactly once, with one entry for EVERY lead listed below."
+  );
+}
+
+// Batch-extracts a company name per lead in ONE call, same shape as
+// prioritizeLeads - a forced tool call, called by background.js as a scan
+// post-processing step, [] on no API key (skip silently, never fails the
+// scan), real failures throw and are handled as non-fatal by the caller.
+export async function extractCompaniesForLeads(leads, settings) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey || leads.length === 0) return [];
+
+  const userText = "Leads to extract a company from (JSON):\n" +
+    JSON.stringify(leads.map((lead) => ({ key: lead.key, headline: lead.headline })));
+
+  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AGENT_MODEL,
+      max_tokens: 8192,
+      system: buildCompanyExtractionPrompt(),
+      tools: [EXTRACT_COMPANIES_TOOL],
+      tool_choice: { type: "tool", name: "extract_companies" },
+      messages: [{ role: "user", content: userText }],
+    }),
+  }, AGENT_FETCH_TIMEOUT_MS);
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`API error ${response.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "extract_companies");
+  return (toolUse?.input?.companies || []).filter((entry) => entry.company && entry.company.trim());
+}
+
+// Suggests new search keywords based on what made the salesperson's own
+// best-scoring leads strong matches - the inverse of Negative Topics (which
+// filter out what's NOT wanted), this looks for more of what IS wanted.
+// Always review-first: the caller (sidepanel.js) shows suggestions for the
+// user to individually accept before anything is added to their actual
+// Topics - this function only ever suggests, never writes to storage itself.
+const SUGGEST_TOPICS_TOOL = {
+  name: "suggest_topics",
+  description: "Records suggested new search keywords based on the given high-priority leads.",
+  input_schema: {
+    type: "object",
+    properties: {
+      suggestions: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            suggestedKeyword: { type: "string", description: "A specific, useful search keyword - not a generic word already obviously covered." },
+            rationale: { type: "string", description: "Under 20 words - why this would find more leads like the examples." },
+            exampleLeadKeys: { type: "array", items: { type: "string" }, description: "Keys of the lead(s) that inspired this suggestion." },
+          },
+          required: ["suggestedKeyword", "rationale", "exampleLeadKeys"],
+        },
+      },
+    },
+    required: ["suggestions"],
+  },
+};
+
+function buildLookalikePrompt() {
+  return (
+    "You are a sales mentor reviewing a salesperson's highest-priority LinkedIn leads to find what made them " +
+    "strong matches, so you can suggest NEW search keywords for finding more leads just like them - the " +
+    "opposite of filtering noise out, this is about surfacing more of what's already working. For each lead " +
+    "below, look at its matched keywords/topics and its actual content, and identify keyword ideas that would " +
+    "plausibly catch OTHER similar leads too - specific and genuinely novel, not just repeating a keyword the " +
+    "lead was already found by, and not a generic word so broad it would match almost anything. It's " +
+    "completely fine to suggest zero if nothing stands out - don't force weak suggestions. " +
+    "Call suggest_topics exactly once, citing which lead key(s) inspired each suggestion."
+  );
+}
+
+function summarizeLeadForLookalike(lead) {
+  return lead.type === "job"
+    ? {
+        key: lead.key,
+        type: "job",
+        title: lead.title,
+        company: lead.company,
+        matchedTopics: lead.matchedTopics.map((t) => t.topicName),
+        priorityReason: lead.priorityReason || "",
+      }
+    : {
+        key: lead.key,
+        type: "post",
+        headline: lead.headline,
+        snippet: (lead.snippet || "").slice(0, 400),
+        matchedTopics: lead.matchedTopics.map((t) => t.topicName),
+        priorityReason: lead.priorityReason || "",
+      };
+}
+
+// Batch call over the caller's own best-scoring leads (typically P1, capped
+// by the caller before this is called to bound token cost) - same
+// forced-tool-call shape as prioritizeLeads/extractCompaniesForLeads.
+export async function suggestLookalikeTopics(leads, settings) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey || leads.length === 0) return [];
+
+  const userText = "High-priority leads to learn from (JSON):\n" +
+    JSON.stringify(leads.map(summarizeLeadForLookalike));
+
+  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AGENT_MODEL,
+      max_tokens: 8192,
+      system: buildLookalikePrompt(),
+      tools: [SUGGEST_TOPICS_TOOL],
+      tool_choice: { type: "tool", name: "suggest_topics" },
+      messages: [{ role: "user", content: userText }],
+    }),
+  }, AGENT_FETCH_TIMEOUT_MS);
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`API error ${response.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "suggest_topics");
+  return toolUse?.input?.suggestions || [];
 }
 
 // job-drafted messages don't exist (draft_message rejects type "job"), so
