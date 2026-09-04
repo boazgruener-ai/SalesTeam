@@ -293,19 +293,20 @@ addTopicBtn.addEventListener("click", () => {
 });
 
 // "Lookalike" topic suggestions: looks at the salesperson's own best-scoring
-// leads (P1, falling back to P1+P2 if there aren't many P1s yet) for keyword
-// ideas that would surface more leads like them - review-first, exactly like
-// every other config-mutating flow here: nothing is added to Topics until
-// the user checks a suggestion and clicks "Add Selected".
+// leads (P1-P3) for keyword ideas that would surface more leads like them -
+// review-first, exactly like every other config-mutating flow here: nothing
+// is added to Topics until the user checks a suggestion and clicks "Add
+// Selected". Post leads only, deliberately - Job leads only ever carry a
+// title/company/location (no scraped body text), so there's nothing for the
+// Mentor to actually generalize from beyond the title itself, and it would
+// just echo job-title language back as a "keyword" - which also can't help,
+// since this only ever writes into Post Topics, not Job Topics.
 let lastLookalikeSuggestions = [];
 
 async function computeQualifyingLeadsForLookalike() {
   const resultsMap = await getResults();
   const leads = Object.values(resultsMap);
-  let qualifying = leads.filter((l) => l.priority === 1);
-  if (qualifying.length < 5) {
-    qualifying = leads.filter((l) => l.priority === 1 || l.priority === 2);
-  }
+  const qualifying = leads.filter((l) => l.type !== "job" && [1, 2, 3].includes(l.priority));
   return qualifying.slice(0, 30);
 }
 

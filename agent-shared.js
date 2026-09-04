@@ -582,35 +582,30 @@ const SUGGEST_TOPICS_TOOL = {
 
 function buildLookalikePrompt() {
   return (
-    "You are a sales mentor reviewing a salesperson's highest-priority LinkedIn leads to find what made them " +
-    "strong matches, so you can suggest NEW search keywords for finding more leads just like them - the " +
-    "opposite of filtering noise out, this is about surfacing more of what's already working. For each lead " +
-    "below, look at its matched keywords/topics and its actual content, and identify keyword ideas that would " +
-    "plausibly catch OTHER similar leads too - specific and genuinely novel, not just repeating a keyword the " +
-    "lead was already found by, and not a generic word so broad it would match almost anything. It's " +
-    "completely fine to suggest zero if nothing stands out - don't force weak suggestions. " +
+    "You are a sales mentor reviewing a salesperson's highest-priority LinkedIn POSTS (not job listings) to " +
+    "find what made them strong matches, so you can suggest NEW search keywords for finding more posts just " +
+    "like them - the opposite of filtering noise out, this is about surfacing more of what's already working. " +
+    "For each post below, look at its matched keywords/topics and its actual snippet text, and identify " +
+    "keyword ideas that would plausibly appear in OTHER similar posts' own text - specific and genuinely " +
+    "novel, not just repeating a keyword the lead was already found by, and not a generic word so broad it " +
+    "would match almost anything. These keywords get matched against free-text post content, so favor real " +
+    "phrases a person would actually write in a post, not a rigid label. It's completely fine to suggest zero " +
+    "if nothing stands out - don't force weak suggestions. " +
     "Call suggest_topics exactly once, citing which lead key(s) inspired each suggestion."
   );
 }
 
+// Post leads only (see the caller in sidepanel.js) - a Job lead only ever
+// carries a title/company/location, with no scraped body text to actually
+// reason about, so it isn't included here.
 function summarizeLeadForLookalike(lead) {
-  return lead.type === "job"
-    ? {
-        key: lead.key,
-        type: "job",
-        title: lead.title,
-        company: lead.company,
-        matchedTopics: lead.matchedTopics.map((t) => t.topicName),
-        priorityReason: lead.priorityReason || "",
-      }
-    : {
-        key: lead.key,
-        type: "post",
-        headline: lead.headline,
-        snippet: (lead.snippet || "").slice(0, 400),
-        matchedTopics: lead.matchedTopics.map((t) => t.topicName),
-        priorityReason: lead.priorityReason || "",
-      };
+  return {
+    key: lead.key,
+    headline: lead.headline,
+    snippet: (lead.snippet || "").slice(0, 400),
+    matchedTopics: lead.matchedTopics.map((t) => t.topicName),
+    priorityReason: lead.priorityReason || "",
+  };
 }
 
 // Batch call over the caller's own best-scoring leads (typically P1, capped

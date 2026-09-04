@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.19.0.
+**Status:** Living document, reflects the shipped product as of v0.19.1.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -70,11 +70,12 @@ copy per page.
   per group, 9 total per sub-query) — invisible to the user, who just adds however many keywords they want.
 - Author-title filter (checked client-side against each post's visible headline, never sent to LinkedIn) and
   an "include in-post job ads" toggle.
-- **"Suggest Lookalike Topics"** button — looks at the salesperson's own highest-priority (P1, or P1+P2 if
-  there aren't many P1s yet) leads and asks the Sales Mentor what made them strong matches, then suggests new
-  keywords for finding more like them. Review-first like everything else here: each suggestion shows its
-  reasoning and lets the user add it to an existing Topic, create a new one, or skip it — nothing is written
-  until explicitly accepted.
+- **"Suggest Lookalike Topics"** button — looks at the salesperson's own highest-priority (P1-P3) **Post**
+  leads and asks the Sales Mentor what made them strong matches, then suggests new keywords for finding more
+  like them. Post leads only, deliberately: Job leads carry no scraped body text (only title/company/location),
+  so there's nothing to generalize from beyond the title itself, and this only ever writes into Post Topics
+  anyway. Review-first like everything else here: each suggestion shows its reasoning and lets the user add it
+  to an existing Topic, create a new one, or skip it — nothing is written until explicitly accepted.
 
 ### 6.2 Negative Topics (Lead Filters)
 
@@ -246,4 +247,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.19.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.19.1**.

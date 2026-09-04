@@ -1,3 +1,12 @@
+# SalesTeam — v0.19.1
+
+## Fixed: Lookalike Topics was learning from Job leads and suggesting job-title keywords
+
+- The v0.18.0 feature gathered example leads from every type (Posts and Jobs) but only ever wrote suggestions into Post Topics. Since Job leads carry no scraped body text - only title/company/location - the AI had nothing to generalize from except the job title itself, and just echoed it back as a "keyword." When most high-priority leads happen to be Job leads, this actively pulled Post Topics toward job-title language instead of helping find more Posts.
+- Now restricted to Post leads only (P1-P3, widened from just P1), since only Posts have real content to learn from and only Post Topics get written to.
+
+---
+
 # SalesTeam — v0.19.0
 
 ## New: Group by Company, Excel-style, right in the leads table
