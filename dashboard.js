@@ -66,6 +66,8 @@ const bulkUndoBtn = document.getElementById("bulk-undo-btn");
 const bulkUndoText = document.getElementById("bulk-undo-text");
 const prioritizeUnscoredBtn = document.getElementById("prioritize-unscored-btn");
 const prioritizeStatusEl = document.getElementById("prioritize-status");
+const rescoreAllBtn = document.getElementById("rescore-all-btn");
+const rescoreAllStatusEl = document.getElementById("rescore-all-status");
 const extractCompaniesBtn = document.getElementById("extract-companies-btn");
 const extractCompaniesStatusEl = document.getElementById("extract-companies-status");
 
@@ -1287,6 +1289,42 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
     prioritizeStatusEl.textContent = `Something went wrong: ${err.message}`;
   } finally {
     prioritizeUnscoredBtn.disabled = false;
+  }
+});
+
+// Re-runs AI prioritization on every "New" lead the Mentor has already
+// scored (priorityScoredAt set), not just unscored ones - lets fixes to the
+// prioritization prompt or Ideal Customer Profile retroactively apply to
+// leads scored before those existed. Never touches a manually-set priority
+// (setLeadPriority clears priorityScoredAt precisely so this can tell the
+// difference) - same guard as background.js's correlated re-scoring.
+rescoreAllBtn.addEventListener("click", async () => {
+  const toScore = allLeads.filter((l) => l.status === "New" && (!l.priority || l.priorityScoredAt));
+  if (toScore.length === 0) {
+    rescoreAllStatusEl.textContent = "Nothing to do - no \"New\" leads are eligible (manually-set priorities are left alone).";
+    return;
+  }
+  if (!confirm(`Re-score ${toScore.length} "New" lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor? This overwrites their current AI-assigned priority (manually-set priorities are skipped).`)) {
+    return;
+  }
+  rescoreAllBtn.disabled = true;
+  rescoreAllStatusEl.textContent = `Re-scoring ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
+  try {
+    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+    if (!apiKey) {
+      rescoreAllStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
+      return;
+    }
+    const priorities = await prioritizeLeads(toScore, { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage });
+    const changed = await applyLeadPriorities(priorities);
+    rescoreAllStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} re-scored.`;
+    await loadLeads();
+    renderAllPieCharts();
+    renderTable();
+  } catch (err) {
+    rescoreAllStatusEl.textContent = `Something went wrong: ${err.message}`;
+  } finally {
+    rescoreAllBtn.disabled = false;
   }
 });
 

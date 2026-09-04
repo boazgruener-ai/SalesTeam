@@ -1,3 +1,14 @@
+# SalesTeam — v0.24.0
+
+## New: Re-score All Priorities, and a prompt fix for thought-leadership posts scoring too high
+
+- Reported: two AI-scored leads that clearly didn't deserve their priority - a P3 post that was just industry commentary on AI market trends from someone at an outsourcing company, and a specific example (a "Head of AI for IT" post that was really just a roundup of AI industry news, no expressed need) scored P3 when it should be P4-5. Both share a pattern: an impressive, on-topic-sounding title or company, but the post itself contains no actual buying-intent signal.
+- Strengthened the prioritization prompt: topical overlap and an impressive poster title are not buying intent on their own. A post that's really just industry commentary or thought leadership - reacting to AI news, sharing opinions/trends - with no expressed need, project, challenge, or hire of its own is now explicitly called out as a weak lead (4-5), regardless of how senior or on-topic the poster looks.
+- New **Re-score All Priorities** button on the Dashboard, next to "Prioritize Unscored Leads" - re-runs AI prioritization on every "New" lead the Mentor has already scored, not just unscored ones, so prompt fixes and the new Ideal Customer Profile (v0.23.0) can retroactively apply to leads scored before they existed. Same manual-override protection as everywhere else: a priority you set yourself (no `priorityScoredAt`) is never touched or resent to the AI. Prompts for confirmation first, since it overwrites existing AI-assigned priorities.
+- Verified via harness: an unscored lead and a previously-AI-scored lead are both sent and re-scored; a manually-set priority and a non-"New" lead are both left completely untouched and never sent to the AI.
+
+---
+
 # SalesTeam — v0.23.0
 
 ## New: Ideal Customer Profile setting, and manual Priority override

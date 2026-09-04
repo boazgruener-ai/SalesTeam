@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.23.0.
+**Status:** Living document, reflects the shipped product as of v0.24.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -164,12 +164,22 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
   in-post job ad just because the poster personally isn't senior — the poster is often HR or an unrelated
   employee sharing the opening, not the eventual contact, so what matters is the company-level signal; the
   next step is finding a better contact there, not necessarily messaging the poster.
+- Guards against the opposite failure too (v0.24.0): a post from someone with an impressive AI-sounding title
+  at a company that clearly already runs AI at scale, that's really just industry commentary or thought
+  leadership — reacting to AI news, sharing opinions/trends — with no expressed need, project, challenge, or
+  hire of its own. Topical overlap and an impressive title aren't buying intent; the prompt now explicitly
+  scores that pattern low (4-5) regardless of how senior or on-topic the poster looks.
 - Runs automatically, with no button — visible in the side panel as "prioritizing N new leads…" before "Scan
   complete." Silently skipped (never fails the scan) if no Anthropic API key is configured.
 - Never re-scores an already-scored lead, or a lead that isn't `"New"`.
 - **"Prioritize Unscored Leads" button** (Dashboard) catches up anything the automatic pass never reached —
   leads that predate the feature, or a scan that ran with no API key — scoring every unscored `"New"` lead
   across the *entire* list, not just what's currently filtered on screen.
+- **"Re-score All Priorities" button** (Dashboard, v0.24.0) re-runs the Mentor on every already-scored `"New"`
+  lead too, not just unscored ones — lets a prompt fix or a new/changed Ideal Customer Profile retroactively
+  apply to leads scored before it existed. Same manual-override protection as everywhere else: a lead whose
+  priority was set by hand (no `priorityScoredAt`) is never touched or resent to the AI. Confirms before
+  running, since it overwrites existing AI-assigned priorities.
 - **Correlated re-scoring**: if a scan finds a new lead from the same person (Post leads, matched by profile
   URL) or same company (Job leads, matched by normalized company) as an existing `"New"` lead that's already
   scored, both get re-scored together in the same batch — a second signal from the same account can change
@@ -285,4 +295,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.23.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.0**.

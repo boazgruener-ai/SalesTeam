@@ -423,6 +423,13 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "signal (a real company, per its `company` field if given, running the kind of program described) - a " +
     "strong company signal with an unclear individual contact is still worth a real priority, since the next " +
     "step is finding a better contact there, not necessarily messaging the poster. " +
+    "Watch out for the opposite failure too: a post from someone with an impressive AI-sounding title, at a " +
+    "company that clearly already runs AI at scale internally, that is really just industry commentary or " +
+    "thought leadership (e.g. reacting to AI industry news, sharing opinions/trends, listicles) with no " +
+    "expressed need, project, challenge, or hiring signal of their own - that is a WEAK lead and belongs low " +
+    "(4-5), regardless of how senior or on-topic the poster looks. Topical overlap and an impressive title " +
+    "are not buying intent; only score a post higher because it names or implies an actual need, initiative, " +
+    "problem, or hire happening at that company right now. " +
     "Use the full 1-5 range across the batch rather than clustering everyone in the middle - these are meant " +
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
     "Call assign_priorities exactly once, with one entry (priority plus a short, specific reason) for EVERY " +
