@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.24.0.
+**Status:** Living document, reflects the shipped product as of v0.24.1.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -179,7 +179,10 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
   lead too, not just unscored ones — lets a prompt fix or a new/changed Ideal Customer Profile retroactively
   apply to leads scored before it existed. Same manual-override protection as everywhere else: a lead whose
   priority was set by hand (no `priorityScoredAt`) is never touched or resent to the AI. Confirms before
-  running, since it overwrites existing AI-assigned priorities.
+  running, since it overwrites existing AI-assigned priorities. Ticks a live elapsed-time status while the
+  (single, unbatched) call is in flight (v0.24.1 — the same pattern used for long Sales Mentor chat turns),
+  and the completion message reports two numbers: how many leads were successfully re-scored, and how many
+  of those actually ended up with a different priority than before.
 - **Correlated re-scoring**: if a scan finds a new lead from the same person (Post leads, matched by profile
   URL) or same company (Job leads, matched by normalized company) as an existing `"New"` lead that's already
   scored, both get re-scored together in the same batch — a second signal from the same account can change
@@ -295,4 +298,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.1**.

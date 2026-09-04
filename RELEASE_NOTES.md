@@ -1,3 +1,14 @@
+# SalesTeam — v0.24.1
+
+## Fixed: no feedback while Re-score All Priorities was running, and no visibility into what actually changed
+
+- Reported: clicking "Re-score All Priorities" gave no indication whether it had run, completed, or was still working - a single unbatched AI call across every eligible lead can genuinely take tens of seconds, and the button gave no sign of life during that wait.
+- Now ticks a live elapsed-time status while the call is in flight ("Re-scoring 160 leads with the Sales Mentor… (12s)"), the same pattern already used for long Sales Mentor chat turns, so a real wait reads as progress rather than a hang.
+- The completion message now reports two numbers, not one: how many leads were successfully re-scored, and how many of those actually ended up with a *different* priority than before (comparing each lead's prior priority to its new one) - e.g. "Done - 160 leads re-scored, 34 changed priority." Previously it only ever reported the first number, which doesn't tell you whether the re-score changed anything.
+- Verified via harness with a simulated slow API call: the status ticks through multiple elapsed-second values before completing, and the changed-priority count correctly distinguishes a lead whose new score matches its old one from one that actually moved.
+
+---
+
 # SalesTeam — v0.24.0
 
 ## New: Re-score All Priorities, and a prompt fix for thought-leadership posts scoring too high

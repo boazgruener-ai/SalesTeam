@@ -1308,7 +1308,13 @@ rescoreAllBtn.addEventListener("click", async () => {
     return;
   }
   rescoreAllBtn.disabled = true;
-  rescoreAllStatusEl.textContent = `Re-scoring ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
+  const oldPriorities = new Map(toScore.map((l) => [l.key, l.priority || null]));
+  const startedAt = Date.now();
+  const tick = () => {
+    rescoreAllStatusEl.textContent = `Re-scoring ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor… (${Math.round((Date.now() - startedAt) / 1000)}s)`;
+  };
+  tick();
+  const tickIntervalId = setInterval(tick, 1000);
   try {
     const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
     if (!apiKey) {
@@ -1317,13 +1323,18 @@ rescoreAllBtn.addEventListener("click", async () => {
     }
     const priorities = await prioritizeLeads(toScore, { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage });
     const changed = await applyLeadPriorities(priorities);
-    rescoreAllStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} re-scored.`;
     await loadLeads();
+    const priorityChangedCount = toScore.filter((lead) => {
+      const updated = allLeads.find((u) => u.key === lead.key);
+      return updated && (updated.priority || null) !== oldPriorities.get(lead.key);
+    }).length;
+    rescoreAllStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} re-scored, ${priorityChangedCount} changed priority.`;
     renderAllPieCharts();
     renderTable();
   } catch (err) {
     rescoreAllStatusEl.textContent = `Something went wrong: ${err.message}`;
   } finally {
+    clearInterval(tickIntervalId);
     rescoreAllBtn.disabled = false;
   }
 });
