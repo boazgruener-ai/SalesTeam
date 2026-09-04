@@ -375,6 +375,27 @@ function companyCell(td, lead) {
   td.textContent = lead.company || "—";
 }
 
+// A lead can match more than one Topic (e.g. re-scanning with an edited
+// keyword list) - matchedTopics is one entry per topic it matched, each
+// carrying its own matchedKeywords. These two flatten that for the table so
+// "which topic/keyword is triggering this" is visible without exporting to
+// CSV, mirroring the side panel's own CSV columns (sidepanel.js).
+function leadMatchedTopicNames(lead) {
+  return (lead.matchedTopics || []).map((t) => t.topicName).join("; ");
+}
+
+function leadMatchedKeywords(lead) {
+  return [...new Set((lead.matchedTopics || []).flatMap((t) => t.matchedKeywords || []))].join("; ");
+}
+
+function matchedTopicsCell(td, lead) {
+  td.textContent = leadMatchedTopicNames(lead) || "—";
+}
+
+function matchedKeywordsCell(td, lead) {
+  td.textContent = leadMatchedKeywords(lead) || "—";
+}
+
 function connectionCell(td, lead) {
   if (lead.connectionDegree) {
     const pill = document.createElement("span");
@@ -454,6 +475,8 @@ const COLUMNS = [
   { id: "firstScanned", label: "First Scanned", width: 150, getSortValue: (l) => l.firstSeenAt || 0, getFilterText: (l) => formatDateTime(l.firstSeenAt),
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
   { id: "source", label: "Source", width: 130, getSortValue: leadSourceLabel, getFilterText: leadSourceLabel, render: sourceCell },
+  { id: "matchedTopics", label: "Matched Topic", width: 150, getSortValue: leadMatchedTopicNames, getFilterText: leadMatchedTopicNames, render: matchedTopicsCell },
+  { id: "matchedKeywords", label: "Matched Keywords", width: 180, getSortValue: leadMatchedKeywords, getFilterText: leadMatchedKeywords, render: matchedKeywordsCell },
   { id: "title", label: "Title", width: 220, getSortValue: leadTitle, getFilterText: leadTitle, render: titleCell },
   { id: "content", label: "Content", width: 280, getFilterText: leadContent, render: contentCell },
   { id: "creator", label: "Creator", width: 160, getSortValue: leadCreatorName, getFilterText: leadCreatorName, render: creatorCell },

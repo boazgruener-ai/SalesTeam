@@ -1,3 +1,13 @@
+# SalesTeam — v0.24.4
+
+## New: Matched Topic and Matched Keywords columns on the Dashboard
+
+- Two new sortable/filterable table columns, right after Source: **Matched Topic** (every Topic this lead matched, e.g. from a re-scan with edited keywords) and **Matched Keywords** (the actual keyword(s) that triggered each match, deduplicated across topics) - the same data the CSV export already carried, now visible and filterable directly in the table without exporting.
+- Lets a question like "which topics are actually producing leads" or "what keyword is dragging in this noise" be answered by sorting/filtering the table directly, the same workflow already used to investigate the AI Transformation topic and the Negative Topic false positives earlier.
+- Verified via harness: a lead matching multiple topics shows both joined with "; ", keywords are deduplicated across topics, a lead with no match shows "—", and the column-filter dropdown correctly narrows the table by topic name.
+
+---
+
 # SalesTeam — v0.24.3
 
 ## Fixed: Ideal Customer Profile mismatch was crushing strong buying signals to the bottom of the scale

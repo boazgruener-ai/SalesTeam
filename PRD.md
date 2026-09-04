@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.24.3.
+**Status:** Living document, reflects the shipped product as of v0.24.4.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -204,9 +204,12 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
 
 - **Pie charts** (last 7 days / 30 days / all time), bucketed by each lead's real (parsed) post date, one
   colored slice per status; clicking a slice/legend row filters the table to that status.
-- **Table**: Post Date, First Scanned, Source, Title, Content (3-line clamp, click to expand), Creator (link),
-  **Company**, Connection, Status (with Irrelevant-reason tooltip), **Priority** (P1–P5 colored pill, tooltip
-  shows the Mentor's reason), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, 🏢 Assign
+- **Table**: Post Date, First Scanned, Source, **Matched Topic** / **Matched Keywords** (v0.24.4 — every Topic
+  this lead matched and the specific keyword(s) that triggered each, deduplicated across topics; the same data
+  the CSV export already carried, now visible and filterable directly in the table so "which topic/keyword is
+  triggering this" doesn't require exporting first), Title, Content (3-line clamp, click to expand), Creator
+  (link), **Company**, Connection, Status (with Irrelevant-reason tooltip), **Priority** (P1–P5 colored pill,
+  tooltip shows the Mentor's reason), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, 🏢 Assign
   Company, Dismiss). Every sortable column supports click-to-sort and an Excel-style per-column dropdown (sort
   asc/desc, free-text filter). Column widths are user-resizable and persisted.
 - **"Group by Company"** checkbox — Excel-style outline grouping inside this same table (not a separate view):
@@ -310,4 +313,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.3**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.4**.
