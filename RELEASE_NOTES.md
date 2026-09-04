@@ -1,3 +1,14 @@
+# SalesTeam — v0.24.3
+
+## Fixed: Ideal Customer Profile mismatch was crushing strong buying signals to the bottom of the scale
+
+- Reported: several leads with an explicit, on-topic hiring signal for exactly the kind of work sold (an AI Engineer job ad with LangGraph/agentic AI/RAG requirements at vFairs; a contract AI Developer hire using LangChain/Anthropic at a mental-health practice; a walk-in AI Developer hire at an Indian software company) were all scoring P4-P5 - the bottom of the range - despite the clear technical fit.
+- Traced through the actual detection: `isHiringPost`/`isJobAd` and `company` extraction were all working correctly for these leads - the AI genuinely saw the hiring signal and the company. The defect was in how the prompt weighed things: geography/company-size mismatch against the Ideal Customer Profile (Switzerland, enterprise) was being treated as effectively disqualifying, overriding an otherwise strong, explicit buying-intent signal.
+- Fixed by making the prompt explicit that Ideal Customer Profile fit is a secondary, moderating factor, not a pass/fail gate - a real, on-topic need outside the exact ICP should typically land around 2-3, not the bottom. The bottom of the range (4-5) is reserved for leads with no genuine buying signal at all, a clearly unrelated technical domain, or noise that should already have been filtered - not simply "real need, wrong location."
+- Not mechanically testable the way the chunking fix was (this changes the AI's judgment, not the app's data flow) - re-run "Re-score All Priorities" against your real leads to see the effect.
+
+---
+
 # SalesTeam — v0.24.2
 
 ## Fixed: bulk prioritization silently scored nothing on a large batch

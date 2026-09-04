@@ -423,6 +423,13 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "signal (a real company, per its `company` field if given, running the kind of program described) - a " +
     "strong company signal with an unclear individual contact is still worth a real priority, since the next " +
     "step is finding a better contact there, not necessarily messaging the poster. " +
+    "Treat the Ideal Customer Profile as a secondary, moderating factor, not a pass/fail gate: an explicit, " +
+    "on-topic need - a real hiring ad or stated project for AI engineering, LLM/agent development, RAG, or " +
+    "similar work the company above actually sells - should not be crushed to the bottom of the range just " +
+    "because the company is the wrong size or outside the target geography. That kind of lead is typically " +
+    "still a 2-3: a real, reachable opportunity, just not a perfect-fit one. Reserve 4-5 for leads with no " +
+    "genuine buying signal at all, a clearly unrelated technical domain, or noise that should have been " +
+    "filtered - not simply \"real need, wrong location.\" " +
     "Watch out for the opposite failure too: a post from someone with an impressive AI-sounding title, at a " +
     "company that clearly already runs AI at scale internally, that is really just industry commentary or " +
     "thought leadership (e.g. reacting to AI industry news, sharing opinions/trends, listicles) with no " +

@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.24.2.
+**Status:** Living document, reflects the shipped product as of v0.24.3.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -164,6 +164,12 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
   in-post job ad just because the poster personally isn't senior — the poster is often HR or an unrelated
   employee sharing the opening, not the eventual contact, so what matters is the company-level signal; the
   next step is finding a better contact there, not necessarily messaging the poster.
+- Treats Ideal Customer Profile fit as a secondary, moderating factor, not a pass/fail gate (v0.24.3 — a real
+  bug found via user-supplied examples: an explicit AI-engineer/AI-developer hiring signal was being crushed
+  to P4-5 purely for being outside Switzerland or not "enterprise," even though `isHiringPost`/`isJobAd` and
+  `company` were all being seen correctly). An on-topic need outside the exact ICP should typically land
+  around 2-3; the bottom of the range (4-5) is reserved for no genuine buying signal at all, a clearly
+  unrelated technical domain, or noise that should already have been filtered.
 - Guards against the opposite failure too (v0.24.0): a post from someone with an impressive AI-sounding title
   at a company that clearly already runs AI at scale, that's really just industry commentary or thought
   leadership — reacting to AI news, sharing opinions/trends — with no expressed need, project, challenge, or
@@ -304,4 +310,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.2**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.3**.
