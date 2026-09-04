@@ -303,9 +303,14 @@ const DEFAULT_NEGATIVE_TOPICS = [
   {
     id: "builtin-competitors",
     name: "Competitor Blocklist",
+    // Deliberately excludes generic cloud/AI platform vendors (Microsoft,
+    // Google, AWS, NVIDIA, etc.) - those get mentioned constantly as mere
+    // tooling references in unrelated posts ("built on Azure," "runs on an
+    // NVIDIA GPU"), which made this list kill a large share of genuinely
+    // good leads. Keep this to firms that actually compete for the same
+    // consulting/services work.
     keywords: [
       "BCG Platinion", "Deloitte", "EY", "Zühlke", "Eraneos", "valantic", "Capco", "Artefact", "Techyon",
-      "NVIDIA", "Google", "AWS", "Microsoft", "LatticeFlow", "Genesys", "Check Point", "Proton", "Mistral", "Artificialy",
     ],
     andKeywords: [],
     enabled: true,
@@ -319,6 +324,20 @@ const DEFAULT_NEGATIVE_TOPICS = [
     andKeywords: [],
     enabled: true,
     appliesTo: "post",
+    builtin: true,
+  },
+  {
+    id: "builtin-recruiting-firms",
+    name: "Known Recruiting Firms",
+    // Matched against the lead's own `company` (see negativeTopicHaystack
+    // below) - a far more precise signal than a headline/snippet keyword,
+    // since it targets who the poster actually works for rather than
+    // self-description text or a passing mention. Short canonical names, not
+    // full legal names, so "Randstad" still matches "Randstad Switzerland."
+    keywords: ["Adecco", "Randstad", "Michael Page", "PageGroup", "Swisslinx", "Robert Walters", "Hays"],
+    andKeywords: [],
+    enabled: true,
+    appliesTo: "both",
     builtin: true,
   },
 ];
@@ -366,7 +385,15 @@ export function containsWholeWord(haystackLower, keyword) {
 // a real search Topic would be checked against, so a negative topic behaves
 // exactly like a familiar Topic, just inverted and applied after the fact.
 function negativeTopicHaystack(lead) {
-  return lead.type === "job" ? `${lead.title || ""} ${lead.company || ""}` : `${lead.snippet || ""} ${lead.headline || ""}`;
+  return lead.type === "job"
+    ? `${lead.title || ""} ${lead.company || ""}`
+    // Post leads' `company` (AI-extracted or manually assigned, since v0.17.0)
+    // is included here deliberately - a much more precise signal than
+    // headline/snippet text alone. It's what makes a company-name-based
+    // negative topic (e.g. a list of known recruiting firms, matched against
+    // who the poster actually works for) meaningfully more reliable than a
+    // generic keyword that can also match a mere passing mention.
+    : `${lead.snippet || ""} ${lead.headline || ""} ${lead.company || ""}`;
 }
 
 // Returns the SPECIFIC keyword that matched (not just true/false) - a topic

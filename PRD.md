@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.21.0.
+**Status:** Living document, reflects the shipped product as of v0.22.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -99,12 +99,23 @@ copy per page.
 - Each topic has an `appliesTo` scope: Post leads only, Job listings only, or both — because a signal that's
   noise on one vertical (a recruiter's own post) is completely normal on the other (a job ad naming an HR
   contact).
-- Two built-in topics, seeded by the Sales Mentor's own review of a real scan, cannot be removed but every
+- Checked against a Post lead's snippet + headline + `company` (Job leads: title + company) — including
+  `company` (v0.22.0) matters because it lets a negative topic target *who the poster actually works for*,
+  a much more precise signal than a keyword that can also match a mere passing mention in the post body.
+- Three built-in topics, seeded by the Sales Mentor's own review of a real scan, cannot be removed but every
   field (keywords, AND-group, scope, enabled) is fully editable:
-  - **Competitor Blocklist** (applies to both) — named competitor consulting/vendor firms.
+  - **Competitor Blocklist** (applies to both) — named competing consulting/services firms. Deliberately
+    excludes generic cloud/AI platform vendors (Microsoft, Google, AWS, NVIDIA) — those get mentioned
+    constantly as mere tooling references, which was killing a large share of genuinely good leads.
   - **Recruiter/Staffing Headline Filter** (Post leads only) — headline phrases like "Talent Acquisition,"
-    "Recruiter."
-- The user can add unlimited custom negative topics for any other recurring noise.
+    "Recruiter." Known limitation: this can false-positive on an in-house HR/Talent-Acquisition person
+    posting their own employer's real opening, which isn't the same as a third-party staffing agency.
+  - **Known Recruiting Firms** (v0.22.0, applies to both) — a curated list of known Swiss recruiting/staffing
+    agencies (Adecco, Randstad, Michael Page, PageGroup, Swisslinx, Robert Walters, Hays), matched against
+    the lead's `company` — a more reliable alternative to guessing from headline text.
+- The user can add unlimited custom negative topics for any other recurring noise. New built-in defaults only
+  apply to fresh installs — an existing configuration is the user's own live data and isn't touched
+  automatically when a default changes.
 - A match sets the lead's status to **Irrelevant** and records both the topic *and* the specific keyword that
   matched (`irrelevantReason`, e.g. `Recruiter/Staffing Headline Filter (matched "Recruiter")`), shown as a
   hover tooltip on the Dashboard's status pill — distinct from **Dismissed**, which is always the
@@ -261,4 +272,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.21.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.22.0**.

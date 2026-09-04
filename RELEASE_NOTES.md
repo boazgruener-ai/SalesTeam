@@ -1,3 +1,14 @@
+# SalesTeam — v0.22.0
+
+## New: negative topics can now match a lead's company, and a Known Recruiting Firms filter
+
+- Negative Topics can now check a Post lead's `company` (AI-extracted or manually assigned, since v0.17.0) in addition to headline/snippet text - a far more precise signal, since it targets who the poster actually works for rather than a self-description or a passing mention.
+- New built-in "Known Recruiting Firms" negative topic, matched against company name: Adecco, Randstad, Michael Page, PageGroup, Swisslinx, Robert Walters, Hays - a more reliable alternative to guessing from headline text.
+- Default `Competitor Blocklist` no longer includes generic cloud/AI platform vendors (Microsoft, Google, AWS, NVIDIA) - those get mentioned constantly as mere tooling references in unrelated posts, which was killing a large share of genuinely good leads. Kept to firms that actually compete for the same consulting/services work.
+- These are new *defaults* for fresh installs only - an existing configuration isn't touched automatically, since Negative Topics are the user's own live settings. To pick up the fix: manually remove the platform-vendor keywords from your own `Competitor Blocklist`, and add a `Known Recruiting Firms` negative topic yourself if you want it (or ask the Sales Mentor's "Analyze Post Search Quality" to suggest it now that it can see the improvement is possible).
+
+---
+
 # SalesTeam — v0.21.0
 
 ## Analyze Post Search Quality now also looks at Irrelevant leads - and found a real bug doing it
