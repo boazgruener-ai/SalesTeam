@@ -61,14 +61,6 @@ Anthropic API key.
 storage:
 Stores the user's search Topics, filters, scraped leads, and AI conversation history locally in the browser.
 
-scripting:
-Injects the extension's content scripts into LinkedIn search-results pages to read the same content already
-visible to the user.
-
-tabs:
-Opens and updates a single background tab to run each scan's searches sequentially, and restores the user's
-previously active tab afterward.
-
 sidePanel:
 Displays the extension's core UI (search Topics, Negative Topics/filters, scan trigger, and results) in
 Chrome's side panel, with links to open the Dashboard, Advisors, Settings, and Help pages in their own tabs.

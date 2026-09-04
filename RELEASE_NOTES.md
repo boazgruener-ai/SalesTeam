@@ -1,3 +1,13 @@
+# SalesTeam — v0.15.1
+
+## Fixed: Chrome Web Store rejection for excessive permissions
+
+- The Chrome Web Store rejected the v0.15.0 submission for requesting `scripting` and `tabs` without actually needing them - a legitimate finding, not a false flag. Content scripts are injected via the manifest's static `content_scripts` block, which never needed the `scripting` permission (that's only for dynamic `chrome.scripting.executeScript()`, never used here). Every `chrome.tabs.*` call in the code (`create`/`update`/`remove`/`query`/`onUpdated`) only touches tab IDs and load status, never `url`/`title`/`favIconUrl` - the only things the `tabs` permission actually gates.
+- Removed both from `manifest.json`. No functional change - every tab-management call already worked without them, since this extension only manages tabs it created itself or ones already covered by its `linkedin.com` host permission.
+- Updated the Chrome Web Store listing's permission-justification section to drop the now-removed entries.
+
+---
+
 # SalesTeam — v0.15.0
 
 ## New: in-app Help page, with fuzzy-matching Q&A search
