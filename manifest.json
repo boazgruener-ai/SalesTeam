@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SalesTeam - AI Sales Team for LinkedIn",
-  "version": "0.25.0",
+  "version": "0.25.1",
   "description": "Scan LinkedIn for leads, get AI prioritization and outreach advice, and pressure-test your messages with an AI Customer Voice.",
   "permissions": ["storage", "sidePanel", "clipboardWrite"],
   "host_permissions": ["https://www.linkedin.com/*", "https://api.anthropic.com/*"],

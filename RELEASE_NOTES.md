@@ -1,3 +1,33 @@
+# SalesTeam — v0.25.1
+
+## Fixed: v0.25.0's AND-topic join never actually intersected anything
+
+- Reported immediately after shipping v0.25.0: every AND-topic came back with "0 intersected" leads, live on real LinkedIn - a strictly worse outcome than the original problem, since these topics now produced zero leads via a different mechanism.
+- Root cause: the concept/activity intersection was keyed on `post.key`, which falls back to `profileUrl + first 80 characters of the snippet` whenever LinkedIn doesn't expose a real permalink (the common case). That snippet excerpt is very likely not stable for the same real post across two independent searches - LinkedIn appears to center the shown excerpt on wherever the matched term sits in the post body, so a concept-match excerpt and an activity-match excerpt of the identical post can start at completely different points, producing two different keys for one real post and guaranteeing they'd never intersect.
+- Fixed by joining on `profileUrl` instead - the author's identity, which doesn't depend on which excerpt LinkedIn happened to show. The post's own snippet-based `key` is untouched everywhere else (Dashboard rows, CSV export, cross-scan dedup). Same fix also applies to a same-phase duplicate (the same post surfacing via two chunks of one group), which was likely silently affected by the identical instability.
+- Verified via harness with the same real post deliberately given three different snippet excerpts across its three appearances (mirroring the live symptom) - the fix correctly intersects it as one match, while genuinely different people are still correctly excluded.
+
+## Fixed: "Clear Results" permanently deleted every saved lead - now it only clears the view
+
+- Discovered mid-investigation of the bug above: "Clear Results" (side panel) never just cleared the visible list - it called `clearResults()`, wiping chrome.storage.local's entire lead database, with only a confirm() dialog standing between a click and permanently losing everything (which is exactly what happened this session: 185 real leads gone).
+- Fixed at the actual behavior, not just the label: the button is now purely visual - it clears this panel's own displayed list and never touches storage. A saved lead is no longer deletable by anything in the app except a person's own explicit per-lead action. Reopening the panel, or running a new scan, shows every saved lead again.
+- Also removed the now-dead `clearResults()` storage function entirely, so there's no destructive path left to accidentally wire back up later.
+
+## New: Settings and Leads now back up as two separate files - and the auto-backup covers everything persistent
+
+- Reported alongside the incident above: the combined backup/restore file meant recovering lost leads would also silently roll back any Topic/settings edits made since that backup was taken - a real cost the user hit firsthand needing to recover from the "Clear Results" incident.
+- Split into two independent files and flows: **Export/Import Settings** (Topics, Job Topics, filters, personas, company context, message templates, API key) and **Export/Import Leads** (the full lead history, plus - newly captured, previously missing from any backup entirely - the generic Sales Mentor and Customer Voice conversation histories, which live in their own storage separate from any one lead). Restoring one can never touch or roll back the other.
+- **Import Leads merges, it never replaces**: a lead already saved locally is left exactly as-is (its current status/priority are presumably more current than an older snapshot); only a lead genuinely missing locally gets restored back in. Same principle for the two chat histories - only restored if the current one is empty, never overwriting a live conversation.
+- The automatic pre-scan backup now downloads both files every time, replacing the single combined `salesteam-auto-backup-*.json`.
+- Verified via harness: exporting leads includes both chat histories and the last-scan timestamp; importing a backup with a stale version of an existing lead leaves the local (newer) one untouched while still restoring a genuinely-missing lead; a non-empty local chat history survives an import that carries a different one.
+
+## Minor GUI fixes
+
+- The Dashboard/Advisors/Settings/Help buttons (side panel) were wrapping their trailing arrow onto a second line instead of sitting beside the label - fixed with `white-space: nowrap`.
+- Added hover tooltips (native `title` text) explaining what each button does, across the side panel - continuing across the rest of the app in a follow-up.
+
+---
+
 # SalesTeam — v0.25.0
 
 ## Changed: AND-topics now search additively, not multiplicatively - the same AND, at a fraction of the cost

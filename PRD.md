@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.25.0.
+**Status:** Living document, reflects the shipped product as of v0.25.1.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -76,10 +76,12 @@ copy per page.
   sub-queries. Rather than combining a topic's two keyword groups into one LinkedIn query per pairing (which
   required a full cartesian product of concept-chunks × activity-chunks to cover every combination), the two
   groups now run as two independent, cheap LinkedIn searches (each a plain OR list), and the AND is applied
-  client-side by intersecting the two raw result sets on the post's own key — same logical AND
-  (concept-AND-activity is still required to count as a match), additive cost instead of multiplicative (a
-  30×30 topic dropped from 48 sub-queries to 10). Completely invisible in the Topics UI — same `keywords` +
-  `andKeywords` shape, same editing experience. To offset the fact that each phase now searches a broader,
+  client-side by intersecting the two raw result sets on the post's `profileUrl` (not its own `key`, which is
+  usually snippet-derived and, confirmed live in v0.25.0, unstable for the same post across two independent
+  searches - fixed in v0.25.1) — same logical AND (concept-AND-activity is still required to count as a
+  match), additive cost instead of multiplicative (a 30×30 topic dropped from 48 sub-queries to 10).
+  Completely invisible in the Topics UI — same `keywords` + `andKeywords` shape, same editing experience. To
+  offset the fact that each phase now searches a broader,
   single-constraint corpus (versus LinkedIn doing the full intersection server-side before), these two phases
   scrape twice as deep (more scroll passes, not more LinkedIn requests) so a genuine double-match has a better
   chance of surviving the client-side join.
@@ -286,9 +288,20 @@ on a separate page.
 
 ### 6.8 Backup / portability
 
-Export/Import Settings (side panel) — everything above plus the full lead dataset, as one JSON file. API key
-excluded by default (opt-in per export, for deliberately sharing a spend-capped trial key). An automatic
-backup download fires before every scan, so a scan-time failure never loses accumulated data.
+Two independent export/import flows (side panel, v0.25.1) — restoring one can never touch or roll back the
+other, found necessary after a combined single-file design meant recovering lost leads also silently rolled
+back Topic edits made since that backup:
+- **Settings**: Topics, Job Topics, filters, personas, company context, message templates, negative topics,
+  API key (opt-in per export, for deliberately sharing a spend-capped trial key). Import replaces wholesale —
+  this is configuration a person deliberately set.
+- **Leads**: the full lead dataset, plus the generic Sales Mentor and Customer Voice conversation histories
+  (previously not backed up anywhere at all, despite being genuinely irreplaceable). Import **merges, never
+  replaces** — a lead or chat history already present locally is left exactly as-is; only what's genuinely
+  missing locally gets restored, so importing an older backup can never discard newer local activity.
+
+Both files download automatically before every scan, so a scan-time failure never loses accumulated data.
+"Clear Results" (side panel) is display-only — it clears that panel's own list, never chrome.storage.local; no
+action in the app deletes a saved lead except a person's own explicit per-lead status change.
 
 ### 6.9 Help
 
@@ -330,4 +343,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.25.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.25.1**.

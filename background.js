@@ -277,14 +277,26 @@ function fullTopicMatchedKeywords(post, topic) {
   return allKeywords.filter((kw) => containsWholeWord(haystack, kw));
 }
 
-// Used when the same post surfaces more than once for one side of an
-// AND-topic's two independent searches (once within a phase's own chunk
-// loop, and again when merging the concept/activity phases together) -
-// keeps whichever occurrence has the lower (more relevant) rank instead of
-// letting a later chunk silently overwrite a better one.
+// Keyed on profileUrl, not post.key: a post's key falls back to
+// `profileUrl::first-80-chars-of-snippet` whenever LinkedIn doesn't expose a
+// real permalink (content-script.js - the common case), and that snippet
+// excerpt is very likely NOT stable for the same real post across two
+// independent searches (LinkedIn appears to center the shown excerpt on
+// wherever the matched term sits in the post body, so a concept-match
+// excerpt and an activity-match excerpt of the identical post can start at
+// completely different points). Using post.key as the join key therefore
+// almost never intersects real double-matches - confirmed live: every
+// AND-topic came back with 0 intersected despite non-zero matches on both
+// sides. profileUrl doesn't depend on which excerpt was shown, so it's a
+// reliable identity for "the same real author" across both searches. Also
+// used for a same-phase duplicate (same post surfacing via two chunks of
+// one group), for the same reason - keeps whichever occurrence has the
+// lower (more relevant) rank instead of letting a later chunk silently
+// overwrite a better one. The final post object still carries its own
+// original, snippet-based `key` - only this join uses profileUrl.
 function keepBestRank(map, post) {
-  const existing = map.get(post.key);
-  if (!existing || post.rank < existing.rank) map.set(post.key, post);
+  const existing = map.get(post.profileUrl);
+  if (!existing || post.rank < existing.rank) map.set(post.profileUrl, post);
 }
 
 async function scanAllTopics({ reapplyToExisting = false } = {}) {
@@ -422,8 +434,8 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         }
 
         const intersected = [];
-        for (const [key, conceptPost] of conceptMatches) {
-          const activityPost = activityMatches.get(key);
+        for (const [profileUrl, conceptPost] of conceptMatches) {
+          const activityPost = activityMatches.get(profileUrl);
           if (!activityPost) continue;
           const post = { ...conceptPost, rank: Math.min(conceptPost.rank, activityPost.rank) };
           post.matchedKeywords = fullTopicMatchedKeywords(post, topic);

@@ -27,9 +27,10 @@ import {
   saveJobSearchLocationPresets,
   getJobSearchTimeframe,
   saveJobSearchTimeframe,
-  clearResults,
   exportSettings,
   importSettings,
+  exportLeads,
+  importLeads,
   getNegativeTopics,
   saveNegativeTopics,
   reapplyBlocklist,
@@ -76,10 +77,13 @@ const applyNegativeFiltersStatus = document.getElementById("apply-negative-filte
 
 let negativeTopics = [];
 const jobSearchTimeframeSelect = document.getElementById("job-search-timeframe-select");
-const exportBtn = document.getElementById("export-btn");
+const exportSettingsBtn = document.getElementById("export-settings-btn");
 const exportIncludeApiKeyCheckbox = document.getElementById("export-include-api-key-checkbox");
-const importBtn = document.getElementById("import-btn");
-const importFileInput = document.getElementById("import-file-input");
+const importSettingsBtn = document.getElementById("import-settings-btn");
+const importSettingsFileInput = document.getElementById("import-settings-file-input");
+const exportLeadsBtn = document.getElementById("export-leads-btn");
+const importLeadsBtn = document.getElementById("import-leads-btn");
+const importLeadsFileInput = document.getElementById("import-leads-file-input");
 const exportCsvBtn = document.getElementById("export-csv-btn");
 
 let topics = [];
@@ -1087,8 +1091,7 @@ jobSearchTimeframeSelect.addEventListener("change", () => {
 // folder (a different folder path is a different extension ID to Chrome,
 // with its own empty storage), a corrupted profile, or an accidental
 // uninstall.
-async function downloadSettingsBackup(filenamePrefix, includeApiKey = false) {
-  const data = await exportSettings(includeApiKey);
+function downloadJson(data, filenamePrefix) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1100,7 +1103,15 @@ async function downloadSettingsBackup(filenamePrefix, includeApiKey = false) {
   URL.revokeObjectURL(url);
 }
 
-exportBtn.addEventListener("click", async () => {
+async function downloadSettingsBackup(filenamePrefix, includeApiKey = false) {
+  await downloadJson(await exportSettings(includeApiKey), filenamePrefix);
+}
+
+async function downloadLeadsBackup(filenamePrefix) {
+  await downloadJson(await exportLeads(), filenamePrefix);
+}
+
+exportSettingsBtn.addEventListener("click", async () => {
   const includeApiKey = exportIncludeApiKeyCheckbox.checked;
   if (includeApiKey && !confirm(
     "This export will include your Anthropic API key in plain text. Only send this file to people you " +
@@ -1108,16 +1119,16 @@ exportBtn.addEventListener("click", async () => {
   )) {
     return;
   }
-  await downloadSettingsBackup("salesteam-backup", includeApiKey);
+  await downloadSettingsBackup("salesteam-settings-backup", includeApiKey);
 });
 
-importBtn.addEventListener("click", () => {
-  importFileInput.click();
+importSettingsBtn.addEventListener("click", () => {
+  importSettingsFileInput.click();
 });
 
-importFileInput.addEventListener("change", async () => {
-  const file = importFileInput.files[0];
-  importFileInput.value = "";
+importSettingsFileInput.addEventListener("change", async () => {
+  const file = importSettingsFileInput.files[0];
+  importSettingsFileInput.value = "";
   if (!file) return;
 
   let data;
@@ -1128,10 +1139,38 @@ importFileInput.addEventListener("change", async () => {
     return;
   }
 
-  if (!confirm("Import this backup? It will replace your current topics, filters, and results.")) return;
+  if (!confirm("Import this settings backup? It will replace your current Topics, filters, and other settings - your leads are never touched by this.")) return;
 
   await importSettings(data);
   await init();
+});
+
+exportLeadsBtn.addEventListener("click", async () => {
+  await downloadLeadsBackup("salesteam-leads-backup");
+});
+
+importLeadsBtn.addEventListener("click", () => {
+  importLeadsFileInput.click();
+});
+
+importLeadsFileInput.addEventListener("change", async () => {
+  const file = importLeadsFileInput.files[0];
+  importLeadsFileInput.value = "";
+  if (!file) return;
+
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    alert("That file isn't valid JSON - couldn't import it.");
+    return;
+  }
+
+  const restored = await importLeads(data);
+  alert(restored > 0
+    ? `Restored ${restored} lead${restored === 1 ? "" : "s"} that weren't already saved locally.`
+    : "Nothing to restore - every lead in that backup is already saved locally.");
+  if (restored > 0) await renderResultsFromStorage();
 });
 
 exportCsvBtn.addEventListener("click", async () => {
@@ -1154,21 +1193,28 @@ exportCsvBtn.addEventListener("click", async () => {
   URL.revokeObjectURL(url);
 });
 
-clearResultsBtn.addEventListener("click", async () => {
-  if (!confirm("Clear all saved leads? This can't be undone.")) return;
-  await clearResults();
+// Visual only - never touches storage. A saved lead is never deleted by
+// anything in this app except a user's own explicit per-lead action; this
+// just declutters this panel's own view (e.g. before a re-scan). Reopening
+// the side panel, or running a new scan, shows every saved lead again.
+clearResultsBtn.addEventListener("click", () => {
   renderResults([]);
 });
 
 scanBtn.addEventListener("click", async () => {
   scanBtn.disabled = true;
-  progressTextEl.textContent = "Backing up settings…";
-  // A real file outside the extension's own storage - see
-  // downloadSettingsBackup's comment for why this is the backup that
-  // actually matters, not a chrome.storage.local save (which already
-  // happens continuously as you type, independent of scanning).
-  await downloadSettingsBackup("salesteam-auto-backup").catch((err) => {
-    console.error("[SalesTeam] Pre-scan settings backup failed:", err);
+  progressTextEl.textContent = "Backing up settings and leads…";
+  // Real files outside the extension's own storage - see exportSettings'
+  // comment for why this is the backup that actually matters, not a
+  // chrome.storage.local save (which already happens continuously as you
+  // type/scan, independent of this). Two separate files, same reasoning as
+  // the manual Export buttons: restoring one should never be able to roll
+  // back the other.
+  await Promise.all([
+    downloadSettingsBackup("salesteam-auto-settings-backup"),
+    downloadLeadsBackup("salesteam-auto-leads-backup"),
+  ]).catch((err) => {
+    console.error("[SalesTeam] Pre-scan backup failed:", err);
   });
   progressTextEl.textContent = "Starting scan…";
   chrome.runtime.sendMessage({ type: "SCAN_ALL", reapplyToExisting: reapplyExistingCheckbox.checked });

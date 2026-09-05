@@ -53,9 +53,10 @@ section {
   font-weight: 600;
   font-size: 12px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-#backup-buttons-row {
+.backup-buttons-row {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
@@ -66,9 +67,9 @@ section {
 }
 
 /* Sized to match #top-nav-buttons' compact buttons, but deliberately NOT
-   stretched to fill the row (flex: 1) - leaves visible room for a future
-   backup-related button instead of the two growing to fill the gap. */
-#backup-buttons-row button {
+   stretched to fill the row (flex: 1) - Settings and Leads export/import are
+   two separate rows, each with its own pair of buttons. */
+.backup-buttons-row button {
   flex: 0 0 auto;
   min-width: 70px;
   padding: 7px 4px;
