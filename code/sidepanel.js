@@ -1413,6 +1413,18 @@ async function init() {
   renderNegativeTopics();
 
   await renderResultsFromStorage();
+
+  // Chrome ties storage to the extension's install location - a moved or
+  // reinstalled unpacked extension starts genuinely blank even though the
+  // old data still exists in a backup file, which is exactly what happened
+  // when this project's code moved into /code (v0.27.0). Can't be fixed by
+  // auto-restoring (no API lets one extension read another's storage,
+  // even a former version of itself under a different path) - this is the
+  // next best thing: point straight at the fix instead of leaving it a
+  // silent, alarming blank slate.
+  const noTopicsConfigured = topics.length === 0 && jobTopics.length === 0;
+  const noLeadsFound = Object.keys(await getResults()).length === 0;
+  document.getElementById("empty-state-banner").hidden = !(noTopicsConfigured && noLeadsFound);
 }
 
 init();

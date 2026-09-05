@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.27.0.")
+p.add_run("Living document, reflects the shipped product as of v0.27.1.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -435,6 +435,16 @@ doc.add_paragraph(
     "chrome.storage.local; no action in the app deletes a saved lead except a person's own explicit "
     "per-lead status change."
 )
+p = doc.add_paragraph()
+r = p.add_run("Empty-install warning (v0.27.1): "); r.bold = True
+p.add_run(
+    "Chrome ties an unpacked extension's storage to its install location, not its code - moving or "
+    "reinstalling from a different path starts genuinely blank even though the old data still exists in a "
+    "backup file, and no API lets a new install read an old one's storage to auto-migrate it. The side "
+    "panel shows a banner whenever it finds zero Topics/Job Topics and zero leads, pointing directly at "
+    "Import Settings/Import Leads instead of leaving an unexplained blank slate - worded to also make sense "
+    "for a genuinely new install."
+)
 
 doc.add_heading("6.9 Help", level=3)
 doc.add_paragraph(
@@ -526,7 +536,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.27.0."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.27.1."
 )
 
 for section in doc.sections:

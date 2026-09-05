@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.27.0.
+**Status:** Living document, reflects the shipped product as of v0.27.1.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -317,6 +317,13 @@ Downloads land in `/backup` (v0.27.0), not the project root — CSV exports land
 (side panel) is display-only — it clears that panel's own list, never chrome.storage.local; no action in the
 app deletes a saved lead except a person's own explicit per-lead status change.
 
+**Empty-install warning (v0.27.1):** Chrome ties an unpacked extension's storage to its install location, not
+its code — moving or reinstalling from a different path starts genuinely blank even though the old data still
+exists in a backup file, and no API lets a new install read an old one's storage to auto-migrate it. The side
+panel shows a banner whenever it finds zero Topics/Job Topics and zero leads, pointing directly at Import
+Settings/Import Leads instead of leaving an unexplained blank slate — worded to also make sense for a
+genuinely new install.
+
 ### 6.9 Help
 
 A dedicated Help page (its own tab, opened from a "Help ↗" button next to Dashboard/Advisors/Settings): a
@@ -395,4 +402,4 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.27.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.27.1**.

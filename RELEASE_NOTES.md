@@ -1,3 +1,15 @@
+# SalesTeam — v0.27.1
+
+## New: warns when the extension comes up completely empty
+
+- Reported after v0.27.0's folder move: reinstalling the extension pointed at its new `/code` location came up with zero leads and zero settings, with no explanation - alarming, even though the data wasn't actually lost (it lives in a `/backup` file, restorable via Import Settings/Import Leads).
+- Root cause of *why* this happens at all: Chrome ties an unpacked extension's storage to its install location, not its code or manifest content - moving or reinstalling from a different path is a different extension as far as Chrome is concerned, with its own blank storage. There's no API that lets a new install read an old one's storage, even a former version of itself at a different path, so this can't be fixed with automatic migration.
+- Added the next best thing: the side panel now shows a clear banner whenever it finds zero Topics/Job Topics and zero leads, explaining what likely happened and pointing directly at Import Settings/Import Leads instead of leaving a silent, unexplained blank slate. Worded to also make sense for a genuinely new install with nothing to restore.
+- Going forward this specific incident shouldn't recur: `/code` is now the permanent, stable install location - every future update edits those files in place, so reloading the extension (the refresh icon in `chrome://extensions`) never changes the install path or resets storage again.
+- Verified via harness: the banner shows when both Topics and leads are empty, and stays hidden as soon as either has real data.
+
+---
+
 # SalesTeam — v0.27.0
 
 ## Changed: project folder reorganized into /code, /backup, /exports, /log, /builds
