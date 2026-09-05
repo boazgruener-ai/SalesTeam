@@ -86,37 +86,21 @@ let topics = [];
 let jobTopics = [];
 let jobLocationPresets = [];
 
-// Mirrors the limits in background.js - a single OR-group tops out at 6
-// terms, and when a topic's optional second "AND with" group is used, the
-// combined total across both groups tops out at 9. Lists longer than this
-// get auto-split into multiple sub-searches at scan time.
+// Mirrors the limit in background.js - a single OR-group tops out at 6
+// terms. Lists longer than this get auto-split into multiple sub-searches
+// at scan time.
 const MAX_OR_TERMS = 6;
-const TOTAL_TERM_BUDGET = 9;
 
-// Mirrors background.js's splitBudget() exactly - when both a topic's
-// keyword group and its "AND with" group are large, LinkedIn's 9-term
-// combined ceiling forces both chunk sizes to shrink below 6, which is what
-// makes concept-chunks × AND-chunks multiply up fast. This lets the topic
-// editor show the real number of searches a topic will run, instead of the
-// user finding out only after asking for a manual audit.
-function splitBudget(countA, countB) {
-  let sizeA = Math.min(MAX_OR_TERMS, countA);
-  let sizeB = Math.min(MAX_OR_TERMS, countB);
-  while (sizeA + sizeB > TOTAL_TERM_BUDGET && (sizeA > 1 || sizeB > 1)) {
-    if (sizeA >= sizeB && sizeA > 1) sizeA--;
-    else if (sizeB > 1) sizeB--;
-    else break;
-  }
-  return { sizeA, sizeB };
-}
-
-// Post topics: concept-chunks × AND-chunks (multiplicative) once an AND
-// group is present - matches background.js's planTopicChunks.
+// Post topics: concept and AND-chunks are each searched independently
+// (additive), then joined client-side on post key - matches background.js's
+// planTopicChunks/scanAllTopics. This lets the topic editor show the real
+// number of searches a topic will run, instead of the user finding out only
+// after asking for a manual audit.
 function countPostSubQueries(keywordCount, andKeywordCount) {
   if (keywordCount === 0) return 0;
-  if (andKeywordCount === 0) return Math.ceil(keywordCount / MAX_OR_TERMS);
-  const { sizeA, sizeB } = splitBudget(keywordCount, andKeywordCount);
-  return Math.ceil(keywordCount / sizeA) * Math.ceil(andKeywordCount / sizeB);
+  const conceptChunks = Math.ceil(keywordCount / MAX_OR_TERMS);
+  const activityChunks = andKeywordCount > 0 ? Math.ceil(andKeywordCount / MAX_OR_TERMS) : 0;
+  return conceptChunks + activityChunks;
 }
 
 // Job topics: one flat combined OR-list (both groups merged), chunked

@@ -1,3 +1,15 @@
+# SalesTeam — v0.25.0
+
+## Changed: AND-topics now search additively, not multiplicatively - the same AND, at a fraction of the cost
+
+- Real problem: the user built a well-designed AND-topic (~23-30 "AI" concept keywords AND'd with ~23-30 "transformation/project/initiative" activity keywords, EN + DE) specifically to fix the "AI Transformation" topic generating zero leads. It worked as a search, but pushed one real scan to 68 sub-queries - because the AND was enforced by combining both keyword groups into ONE LinkedIn query per pairing, requiring a full cartesian product of concept-chunks × activity-chunks. Dropping the AND entirely (discussed and rejected) defeats the purpose: "AI" alone floods with irrelevant chatter, "transformation" alone floods with unrelated business posts - the join of the two is the actual signal my wife needs.
+- Fixed at the root, per the user's own proposed design: the two keyword groups now run as **two independent, cheap LinkedIn searches** (each a plain OR list, chunked straight at 6 terms - no combining), and the AND is applied **client-side** by intersecting the two raw result sets on the post's own key, keeping only posts that appeared in both. Same logical AND, additive sub-query cost instead of multiplicative - a 30×30 topic that cost 48 sub-queries now costs 10. The Topics UI and data model are completely unchanged; this is invisible to the salesperson.
+- Recall trade-off, identified and mitigated before shipping: today, LinkedIn intersects both groups server-side across its entire index before the app's bounded scrape takes its slice, so that slice is already 100% genuine double-matches. Under the new design, each phase searches a broader single-constraint corpus, and a real double-match could rank below the scraped cutoff in one phase and never reach the intersection. Mitigated by scraping deeper (more scroll passes, doubled) specifically on these two phases only - more scrolling per page, not more LinkedIn requests, so it adds latency, not detection risk.
+- The per-topic and grand-total search-count hints (side panel, v0.19.0/v0.24.6) automatically reflect the new additive math - no separate change needed there.
+- Verified via a mocked harness around the actual scan loop: sub-query count for an AND-topic is additive (2 concept chunks + 1 activity chunk = 3, not 2×1... or worse for larger lists); a post matching only one group is correctly excluded from the topic's final matches; a post matching both groups survives with the better (lower) of its ranks across both a same-phase duplicate and the cross-phase merge; a topic with no AND group is completely unaffected (regression-checked). Real-world lead volume/quality still needs a live scan to judge, the same way the earlier prioritization-prompt fix did.
+
+---
+
 # SalesTeam — v0.24.6
 
 ## New: total-searches-per-scan estimate in the side panel

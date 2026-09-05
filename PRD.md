@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.24.6.
+**Status:** Living document, reflects the shipped product as of v0.25.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -67,12 +67,22 @@ copy per page.
 - Named keyword groups, with an optional second "AND with" group (post must match one keyword from each
   group). Same shape reused for both Post topics and Job-specific topics.
 - LinkedIn's own search-complexity limits are worked around automatically via query chunking (max 6 OR-terms
-  per group, 9 total per sub-query) — the user can add however many keywords they want, and the cost is made
+  per group) — the user can add however many keywords they want, and the cost is made
   visible rather than hidden: each topic shows its own live "N searches for this topic" hint, and a grand
   total across every enabled Post and Job topic ("Total: 76 searches this scan will run (Posts: 60, Jobs:
-  16)") sits above the "Scan All Topics" button, turning orange past 30 — found necessary once a user's own
-  topic redesign (adding a large bilingual AND-topic to chase a previously-empty topic) pushed one real scan
-  to 68 sub-queries, discovered only after starting it.
+  16)") sits above the "Scan All Topics" button, turning orange past 30.
+- **AND-topics search additively, not multiplicatively (v0.25.0)** — found necessary once a user's own topic
+  redesign (a large bilingual AND-topic chasing a previously-empty topic) pushed one real scan to 68
+  sub-queries. Rather than combining a topic's two keyword groups into one LinkedIn query per pairing (which
+  required a full cartesian product of concept-chunks × activity-chunks to cover every combination), the two
+  groups now run as two independent, cheap LinkedIn searches (each a plain OR list), and the AND is applied
+  client-side by intersecting the two raw result sets on the post's own key — same logical AND
+  (concept-AND-activity is still required to count as a match), additive cost instead of multiplicative (a
+  30×30 topic dropped from 48 sub-queries to 10). Completely invisible in the Topics UI — same `keywords` +
+  `andKeywords` shape, same editing experience. To offset the fact that each phase now searches a broader,
+  single-constraint corpus (versus LinkedIn doing the full intersection server-side before), these two phases
+  scrape twice as deep (more scroll passes, not more LinkedIn requests) so a genuine double-match has a better
+  chance of surviving the client-side join.
 - Author-title filter (checked client-side against each post's visible headline, never sent to LinkedIn) and
   an "include in-post job ads" toggle.
 - **"Suggest Lookalike Topics"** button — looks at the salesperson's own highest-priority (P1-P3) **Post**
@@ -320,4 +330,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.24.6**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.25.0**.

@@ -21,6 +21,13 @@ const FEED_POST_LABEL = "Feed post";
 const MAX_WAIT_MS = 8000;
 const POLL_INTERVAL_MS = 300;
 const MAX_SCROLL_PASSES = 15;
+// Used for an AND-topic's two independent concept-only/activity-only
+// searches (background.js's currentScanDeepScroll) - each is a broader,
+// single-constraint search than the old combined query, so a real
+// double-match needs a bigger scraped pool to have a chance of surviving
+// the client-side intersection. Still bounded by STAGNANT_PASSES_TO_STOP,
+// so this only takes longer when there's genuinely more content to load.
+const DEEP_MAX_SCROLL_PASSES = 30;
 const STAGNANT_PASSES_TO_STOP = 2;
 const SCROLL_PAUSE_MS = 1500;
 
@@ -267,11 +274,11 @@ function extractPost(card, rank, searchedKeywords, authorTitles, includeJobAds) 
   }
 }
 
-async function scrollUntilPlateau() {
+async function scrollUntilPlateau(maxPasses = MAX_SCROLL_PASSES) {
   let lastCount = findCards().length;
   let stagnantPasses = 0;
 
-  for (let i = 0; i < MAX_SCROLL_PASSES; i++) {
+  for (let i = 0; i < maxPasses; i++) {
     window.scrollTo(0, document.body.scrollHeight);
     await sleep(SCROLL_PAUSE_MS);
 
@@ -286,9 +293,9 @@ async function scrollUntilPlateau() {
   }
 }
 
-async function scrapeCurrentPage(searchedKeywords, authorTitles, includeJobAds) {
+async function scrapeCurrentPage(searchedKeywords, authorTitles, includeJobAds, deepScroll) {
   await waitForCards();
-  await scrollUntilPlateau();
+  await scrollUntilPlateau(deepScroll ? DEEP_MAX_SCROLL_PASSES : MAX_SCROLL_PASSES);
 
   const cards = findCards();
   console.log(`[LinkedIn Lead Scanner] ${cards.length} card element(s) matched selectors.`);
@@ -310,6 +317,7 @@ async function run() {
     currentScanTopicId,
     currentScanTopicName,
     currentScanKeywords,
+    currentScanDeepScroll,
     authorTitle: authorTitles,
     includeJobAds,
     authorTitleEnabled,
@@ -317,6 +325,7 @@ async function run() {
     "currentScanTopicId",
     "currentScanTopicName",
     "currentScanKeywords",
+    "currentScanDeepScroll",
     "authorTitle",
     "includeJobAds",
     "authorTitleEnabled",
@@ -332,7 +341,7 @@ async function run() {
 
   // Defaults to true (include job ads) when never explicitly set.
   const shouldIncludeJobAds = includeJobAds === undefined ? true : Boolean(includeJobAds);
-  const posts = await scrapeCurrentPage(currentScanKeywords || [], effectiveAuthorTitles, shouldIncludeJobAds);
+  const posts = await scrapeCurrentPage(currentScanKeywords || [], effectiveAuthorTitles, shouldIncludeJobAds, Boolean(currentScanDeepScroll));
   console.log(`[LinkedIn Lead Scanner] topic "${currentScanTopicName}": found ${posts.length} post(s).`);
 
   chrome.runtime.sendMessage({

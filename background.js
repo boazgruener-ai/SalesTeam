@@ -33,21 +33,31 @@ import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
+// Used only for the two independent AND-group searches below (concept-only,
+// activity-only) - their deeper scroll (DEEP_MAX_SCROLL_PASSES, see
+// content-script.js) can legitimately take longer than a normal search's
+// scroll-until-plateau, and this must stay comfortably above that worst
+// case or waitForScrapeResult would time out mid-scroll and silently return
+// [] before the content script ever gets to send its result.
+const DEEP_SCRAPE_TIMEOUT_MS = 60000;
 const MIN_DELAY_MS = 3000;
 const MAX_DELAY_MS = 8000;
 
 // Confirmed empirically: a single parenthesized OR-group in LinkedIn's
 // keyword search tops out at 6 terms (6 works, 7 silently returns zero, no
-// error), and combining two ANDed OR-groups in one query tops out at 9
-// terms total across both. A topic's keywords are its primary OR-group; it
-// can optionally have a second "andKeywords" OR-group requiring a post to
-// ALSO mention one of those (e.g. concept terms AND activity terms). Both
-// limits are enforced by chunking. Location/author-title filters are
-// deliberately NOT sent to LinkedIn at all (see content-script.js) - they're
-// applied client-side against each post's scraped headline instead, so they
-// never compete with a topic's own two groups for this budget.
+// error). A topic's keywords are its primary OR-group; it can optionally
+// have a second "andKeywords" OR-group requiring a post to ALSO mention one
+// of those (e.g. concept terms AND activity terms). Rather than combining
+// both groups into one query (which used to require shrinking both to share
+// a 9-term combined-query cap, forcing a cartesian product of concept-chunks
+// x activity-chunks - a 23x23 topic cost 30 sub-queries), each group is
+// searched independently as its own plain OR list, and the AND is applied
+// client-side by intersecting the two raw result sets on post key (see the
+// scan loop below) - same logical AND, additive cost instead of
+// multiplicative. Location/author-title filters are deliberately NOT sent to
+// LinkedIn at all (see content-script.js) - they're applied client-side
+// against each post's scraped headline instead.
 const MAX_OR_TERMS = 6;
-const TOTAL_TERM_BUDGET = 9;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -79,28 +89,17 @@ function buildSearchUrl(conceptChunk, activityChunk, timeframe) {
   return url;
 }
 
-// When a topic has both a primary keyword group and an optional "AND with"
-// group, splits the shared 9-term budget between them - shrinking whichever
-// group is currently larger, one term at a time, until both individually
-// fit MAX_OR_TERMS and their sum fits TOTAL_TERM_BUDGET.
-function splitBudget(countA, countB) {
-  let sizeA = Math.min(MAX_OR_TERMS, countA);
-  let sizeB = Math.min(MAX_OR_TERMS, countB);
-  while (sizeA + sizeB > TOTAL_TERM_BUDGET && (sizeA > 1 || sizeB > 1)) {
-    if (sizeA >= sizeB && sizeA > 1) sizeA--;
-    else if (sizeB > 1) sizeB--;
-    else break;
-  }
-  return { sizeA, sizeB };
-}
-
+// No shared-budget splitting needed anymore - each group is chunked
+// independently at the same MAX_OR_TERMS, since they're never combined into
+// one query. activityChunks is genuinely empty (not [[]]) when the topic has
+// no AND group, so `.length === 0` cleanly distinguishes the two paths in
+// the scan loop below.
 function planTopicChunks(topic) {
   const activityKeywords = topic.andKeywords || [];
-  if (activityKeywords.length === 0) {
-    return { conceptChunks: chunk(topic.keywords, MAX_OR_TERMS), activityChunks: [[]] };
-  }
-  const { sizeA, sizeB } = splitBudget(topic.keywords.length, activityKeywords.length);
-  return { conceptChunks: chunk(topic.keywords, sizeA), activityChunks: chunk(activityKeywords, sizeB) };
+  return {
+    conceptChunks: chunk(topic.keywords, MAX_OR_TERMS),
+    activityChunks: activityKeywords.length > 0 ? chunk(activityKeywords, MAX_OR_TERMS) : [],
+  };
 }
 
 // Jobs search uses a completely different LinkedIn system than Posts (own
@@ -238,7 +237,7 @@ function navigateAndWait(tabId, url) {
   });
 }
 
-function waitForScrapeResult(topicId) {
+function waitForScrapeResult(topicId, timeoutMs = SCRAPE_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let settled = false;
     const timeout = setTimeout(() => {
@@ -247,7 +246,7 @@ function waitForScrapeResult(topicId) {
         chrome.runtime.onMessage.removeListener(listener);
         resolve([]);
       }
-    }, SCRAPE_TIMEOUT_MS);
+    }, timeoutMs);
 
     function listener(message) {
       if (message?.type === "SCRAPE_RESULT" && message.topicId === topicId && !settled) {
@@ -276,6 +275,16 @@ function fullTopicMatchedKeywords(post, topic) {
   const allKeywords = [...topic.keywords, ...(topic.andKeywords || [])];
   const haystack = `${post.snippet} ${post.headline}`.toLowerCase();
   return allKeywords.filter((kw) => containsWholeWord(haystack, kw));
+}
+
+// Used when the same post surfaces more than once for one side of an
+// AND-topic's two independent searches (once within a phase's own chunk
+// loop, and again when merging the concept/activity phases together) -
+// keeps whichever occurrence has the lower (more relevant) rank instead of
+// letting a later chunk silently overwrite a better one.
+function keepBestRank(map, post) {
+  const existing = map.get(post.key);
+  if (!existing || post.rank < existing.rank) map.set(post.key, post);
 }
 
 async function scanAllTopics({ reapplyToExisting = false } = {}) {
@@ -331,7 +340,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
 
     const topicChunkPlans = topics.map(planTopicChunks);
     const postSubQueries = topicChunkPlans.reduce(
-      (sum, plan) => sum + plan.conceptChunks.length * plan.activityChunks.length,
+      (sum, plan) => sum + plan.conceptChunks.length + plan.activityChunks.length,
       0
     );
     const jobSubQueries = jobKeywordChunks.reduce((sum, chunks) => sum + chunks.length, 0);
@@ -349,19 +358,21 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         currentScanTopicName: topic.name,
       });
 
-      for (const conceptChunk of conceptChunks) {
-        for (const activityChunk of activityChunks) {
+      if (activityChunks.length === 0) {
+        // Plain OR-topic - unchanged: one flat chunk loop, merged immediately
+        // per sub-query.
+        for (const conceptChunk of conceptChunks) {
           completed++;
           broadcastProgress(completed, totalSubQueries, topic.name);
 
-          await chrome.storage.local.set({ currentScanKeywords: [...conceptChunk, ...activityChunk] });
-          await withKeepAlive(navigateAndWait(tab.id, buildSearchUrl(conceptChunk, activityChunk, timeframe)));
+          await chrome.storage.local.set({ currentScanKeywords: conceptChunk });
+          await withKeepAlive(navigateAndWait(tab.id, buildSearchUrl(conceptChunk, [], timeframe)));
 
           const posts = await withKeepAlive(waitForScrapeResult(topic.id));
           for (const post of posts) {
             post.matchedKeywords = fullTopicMatchedKeywords(post, topic);
           }
-          console.log(`[SalesTeam] topic "${topic.name}" (sub-query ${completed}/${totalSubQueries}), concept:`, conceptChunk, `AND:`, activityChunk);
+          console.log(`[SalesTeam] topic "${topic.name}" (sub-query ${completed}/${totalSubQueries}):`, conceptChunk);
           for (const post of posts) {
             console.log(`  - ${post.author}: matchedKeywords=`, post.matchedKeywords, `snippet="${post.snippet.slice(0, 100)}"`);
           }
@@ -371,9 +382,64 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
             await keepAliveSleep(randomDelay());
           }
         }
+      } else {
+        // AND-topic - concept and activity groups searched independently
+        // (each a plain OR list, never combined into one query), then
+        // joined client-side on post key. Scraped deeper and given a longer
+        // scrape timeout (currentScanDeepScroll, DEEP_SCRAPE_TIMEOUT_MS)
+        // since each phase is a broader single-constraint search than the
+        // old combined query, and a real double-match needs to survive
+        // being scraped from a bigger, less-targeted result pool.
+        const conceptMatches = new Map();
+        const activityMatches = new Map();
+
+        for (const conceptChunk of conceptChunks) {
+          completed++;
+          broadcastProgress(completed, totalSubQueries, topic.name);
+
+          await chrome.storage.local.set({ currentScanKeywords: conceptChunk, currentScanDeepScroll: true });
+          await withKeepAlive(navigateAndWait(tab.id, buildSearchUrl(conceptChunk, [], timeframe)));
+          const posts = await withKeepAlive(waitForScrapeResult(topic.id, DEEP_SCRAPE_TIMEOUT_MS));
+          for (const post of posts) keepBestRank(conceptMatches, post);
+
+          if (completed < totalSubQueries) {
+            await keepAliveSleep(randomDelay());
+          }
+        }
+
+        for (const activityChunk of activityChunks) {
+          completed++;
+          broadcastProgress(completed, totalSubQueries, topic.name);
+
+          await chrome.storage.local.set({ currentScanKeywords: activityChunk, currentScanDeepScroll: true });
+          await withKeepAlive(navigateAndWait(tab.id, buildSearchUrl(activityChunk, [], timeframe)));
+          const posts = await withKeepAlive(waitForScrapeResult(topic.id, DEEP_SCRAPE_TIMEOUT_MS));
+          for (const post of posts) keepBestRank(activityMatches, post);
+
+          if (completed < totalSubQueries) {
+            await keepAliveSleep(randomDelay());
+          }
+        }
+
+        const intersected = [];
+        for (const [key, conceptPost] of conceptMatches) {
+          const activityPost = activityMatches.get(key);
+          if (!activityPost) continue;
+          const post = { ...conceptPost, rank: Math.min(conceptPost.rank, activityPost.rank) };
+          post.matchedKeywords = fullTopicMatchedKeywords(post, topic);
+          intersected.push(post);
+        }
+        console.log(
+          `[SalesTeam] topic "${topic.name}": ${conceptMatches.size} concept match(es), ` +
+          `${activityMatches.size} activity match(es), ${intersected.length} intersected (real AND match(es)).`
+        );
+        for (const post of intersected) {
+          console.log(`  - ${post.author}: matchedKeywords=`, post.matchedKeywords, `snippet="${post.snippet.slice(0, 100)}"`);
+        }
+        mergeTopicPosts(existingResults, topic, intersected, negativeTopics);
       }
 
-      await chrome.storage.local.remove(["currentScanTopicId", "currentScanTopicName"]);
+      await chrome.storage.local.remove(["currentScanTopicId", "currentScanTopicName", "currentScanDeepScroll"]);
       // Checkpoint after each topic, not just at the very end - so a later
       // failure/timeout doesn't lose everything found so far in this scan.
       await saveResults(existingResults);
