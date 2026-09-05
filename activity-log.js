@@ -140,6 +140,14 @@ clearLogBtn.addEventListener("click", async () => {
   await loadLog();
 });
 
+// Live-updates while this tab stays open - a scan can log many entries over
+// its whole run, and this page shouldn't require a manual reload to see
+// them, the same reasoning Dashboard/Advisors already apply to their own
+// storage reads.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.activityLog) loadLog();
+});
+
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
   await loadLog();

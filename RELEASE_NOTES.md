@@ -1,3 +1,14 @@
+# SalesTeam — v0.26.1
+
+## Fixed: Activity Log didn't update live while open
+
+- Reported immediately after shipping v0.26.0: clearing results and starting a scan while the Activity Log tab was already open showed only the "Cleared results" entry - the scan's own logging never appeared until the page was manually reloaded.
+- Root cause: the page loaded its data once on open and never refreshed - a static snapshot, not a live view, unlike the Dashboard/Advisors pages which already react to `chrome.storage.onChanged`.
+- Fixed by adding the same `chrome.storage.onChanged` listener, re-loading and re-applying the current filters whenever the log changes - matching the pattern already established elsewhere in the app.
+- Verified via harness: simulating a background-written log append (no message, no reload) updates the open page automatically.
+
+---
+
 # SalesTeam — v0.26.0
 
 ## New: in-app Activity Log - every user and extension action, without opening DevTools

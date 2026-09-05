@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.26.0.
+**Status:** Living document, reflects the shipped product as of v0.26.1.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -338,6 +338,9 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   `chrome.storage.local` quota) and nothing else in the app guards against quota exhaustion, so the log is
   deliberately self-limiting. Filterable by actor/free-text/errors-only; a confirm-gated "Clear Log" resets
   only the log itself, never any lead or setting.
+- Updates live via `chrome.storage.onChanged` (v0.26.1) — a scan can log many entries over its whole run, and
+  this page doesn't require a manual reload to see them, the same reactive pattern the Dashboard/Advisors
+  pages already use for their own storage reads.
 
 ## 7. Non-functional requirements
 
@@ -370,4 +373,4 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.26.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.26.1**.
