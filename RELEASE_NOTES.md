@@ -1,3 +1,15 @@
+# SalesTeam — v0.26.2
+
+## Changed: Activity Log can no longer be manually cleared - and every button in the app now has a hover tooltip
+
+- Reported: "Please remove this Clear Log button. I do not want to delete the activity log ever. It is my only way to investigate if anything broke." The 2000-entry cap was also a raw count that could silently drop recent history during a single unusually active day - replaced with a predictable, always-90-days retention window instead.
+- Removed the "Clear Log" button and `clearActivityLog()` entirely - there is no action anywhere in the app that can delete this log.
+- Rearchitected storage: one array per calendar day (`activityLog:YYYY-MM-DD`) instead of one shared array. Each write only touches that day's (small) array, and anything older than 90 days is pruned automatically on every append - a predictable "always the last 90 days" guarantee instead of a count that could exhaust itself faster during a busy day. Existing log data from v0.26.0/v0.26.1's flat single-key scheme is migrated automatically (bucketed by each entry's own timestamp) the first time the log is read, then the old key is removed.
+- Also finished the hover-tooltip pass from earlier - every remaining untitled button across the Dashboard (including the lead detail/edit page, Bulk Change, Assign Company), Advisors, and Help now has a `title` explaining what it does, matching what was already done for the side panel.
+- Verified via harness: today's entries land in the correct day-bucket; a 100-day-old bucket is pruned while a 30-day-old one survives; a simulated legacy flat-array log is correctly split into per-day buckets and the old key removed.
+
+---
+
 # SalesTeam — v0.26.1
 
 ## Fixed: Activity Log didn't update live while open

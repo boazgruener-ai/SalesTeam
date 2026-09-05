@@ -1,15 +1,16 @@
 // Activity Log page: renders every entry storage.js's appendActivityLog has
 // recorded (both user actions and automatic extension actions, including
-// errors), newest first, with simple client-side filtering. Read-only view
-// except for "Clear Log" - the log itself, not the underlying data those
-// actions touched.
-import { getActivityLog, clearActivityLog } from "./storage.js";
+// errors), newest first, with simple client-side filtering. Deliberately
+// read-only - this is the one place to investigate "what happened" after
+// something looks wrong, so nothing here can delete it. Old entries age out
+// on their own (storage.js prunes anything past the 90-day retention
+// window), not via any action on this page.
+import { getActivityLog } from "./storage.js";
 
 const actorFilterEl = document.getElementById("log-actor-filter");
 const searchInputEl = document.getElementById("log-search-input");
 const errorsOnlyCheckbox = document.getElementById("log-errors-only-checkbox");
 const countEl = document.getElementById("log-count");
-const clearLogBtn = document.getElementById("log-clear-btn");
 const emptyStateEl = document.getElementById("log-empty-state");
 const noMatchStateEl = document.getElementById("log-no-match-state");
 const tableEl = document.getElementById("log-table");
@@ -134,18 +135,14 @@ actorFilterEl.addEventListener("change", applyFilters);
 searchInputEl.addEventListener("input", applyFilters);
 errorsOnlyCheckbox.addEventListener("change", applyFilters);
 
-clearLogBtn.addEventListener("click", async () => {
-  if (!confirm("Permanently delete every entry in the Activity Log? This cannot be undone. (This only clears the log itself - your leads and settings are never affected.)")) return;
-  await clearActivityLog();
-  await loadLog();
-});
-
 // Live-updates while this tab stays open - a scan can log many entries over
 // its whole run, and this page shouldn't require a manual reload to see
 // them, the same reasoning Dashboard/Advisors already apply to their own
-// storage reads.
+// storage reads. Each day's entries live under their own "activityLog:
+// YYYY-MM-DD" key (storage.js) rather than one shared key, so this checks
+// for any changed key with that prefix, not one fixed key name.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.activityLog) loadLog();
+  if (area === "local" && Object.keys(changes).some((k) => k.startsWith("activityLog:") || k === "activityLog")) loadLog();
 });
 
 async function init() {

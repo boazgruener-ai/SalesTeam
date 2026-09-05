@@ -854,17 +854,34 @@ export async function saveResults(results) {
 // NOT inferred from chrome.runtime.sendMessage broadcasts, which are lost
 // entirely if no page happens to be listening (confirmed: background.js's
 // scan-lifecycle messages have no storage-backed fallback today).
-// Capped (oldest dropped first) since chrome.storage.local has no
-// unlimitedStorage permission here (5MB real quota) and nothing else in the
-// app currently guards against quota exhaustion.
-const ACTIVITY_LOG_KEY = "activityLog";
-const ACTIVITY_LOG_MAX_ENTRIES = 2000;
+//
+// Deliberately never manually clearable - this is the one place to
+// investigate "what happened" after something looks wrong, so it must
+// never be at risk of being wiped by mistake. Stored as one array per
+// calendar day (activityLog:YYYY-MM-DD) rather than one giant array, and
+// self-prunes anything older than the retention window on every write -
+// a predictable "always the last 90 days" guarantee, not a raw entry-count
+// cap that could silently drop recent history during a single unusually
+// active day. Each day's own write only touches that day's (small) array,
+// not the entire accumulated history.
+const ACTIVITY_LOG_PREFIX = "activityLog:";
+const LEGACY_ACTIVITY_LOG_KEY = "activityLog"; // pre-90-day-retention flat array (v0.26.0/0.26.1)
+const ACTIVITY_LOG_RETENTION_DAYS = 90;
+
+function activityLogDayKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${ACTIVITY_LOG_PREFIX}${y}-${m}-${d}`;
+}
 
 export async function appendActivityLog({ actor, action, label, prevValue, newValue, error, errorMessage }) {
-  const data = await chrome.storage.local.get(ACTIVITY_LOG_KEY);
-  const log = data[ACTIVITY_LOG_KEY] || [];
-  log.push({
-    timestamp: Date.now(),
+  const now = new Date();
+  const key = activityLogDayKey(now);
+  const data = await chrome.storage.local.get(key);
+  const dayLog = data[key] || [];
+  dayLog.push({
+    timestamp: now.getTime(),
     actor,
     action,
     label,
@@ -873,17 +890,43 @@ export async function appendActivityLog({ actor, action, label, prevValue, newVa
     error: Boolean(error),
     errorMessage: errorMessage || null,
   });
-  if (log.length > ACTIVITY_LOG_MAX_ENTRIES) log.splice(0, log.length - ACTIVITY_LOG_MAX_ENTRIES);
-  await chrome.storage.local.set({ [ACTIVITY_LOG_KEY]: log });
+  await chrome.storage.local.set({ [key]: dayLog });
+
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - ACTIVITY_LOG_RETENTION_DAYS);
+  const cutoffKey = activityLogDayKey(cutoff);
+  const all = await chrome.storage.local.get(null);
+  const staleKeys = Object.keys(all).filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX) && k < cutoffKey);
+  if (staleKeys.length > 0) await chrome.storage.local.remove(staleKeys);
 }
 
 export async function getActivityLog() {
-  const data = await chrome.storage.local.get(ACTIVITY_LOG_KEY);
-  return data[ACTIVITY_LOG_KEY] || [];
-}
+  const all = await chrome.storage.local.get(null);
 
-export async function clearActivityLog() {
-  await chrome.storage.local.set({ [ACTIVITY_LOG_KEY]: [] });
+  // One-time migration from the old flat single-key scheme - bucket each
+  // existing entry by its own timestamp's local day, then remove the old
+  // key so this only ever runs once.
+  const legacy = all[LEGACY_ACTIVITY_LOG_KEY];
+  if (Array.isArray(legacy) && legacy.length > 0) {
+    const buckets = {};
+    for (const entry of legacy) {
+      const key = activityLogDayKey(new Date(entry.timestamp));
+      (buckets[key] = buckets[key] || []).push(entry);
+    }
+    const toWrite = {};
+    for (const key of Object.keys(buckets)) {
+      toWrite[key] = [...(all[key] || []), ...buckets[key]].sort((a, b) => a.timestamp - b.timestamp);
+    }
+    await chrome.storage.local.set(toWrite);
+    await chrome.storage.local.remove(LEGACY_ACTIVITY_LOG_KEY);
+    Object.assign(all, toWrite);
+    delete all[LEGACY_ACTIVITY_LOG_KEY];
+  }
+
+  const dayKeys = Object.keys(all).filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX)).sort();
+  const combined = [];
+  for (const key of dayKeys) combined.push(...(all[key] || []));
+  return combined;
 }
 
 // Exports configuration only (topics, filters, personas, etc.) - deliberately

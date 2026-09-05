@@ -302,6 +302,7 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "remove-topic-btn";
+    removeBtn.title = `Permanently remove this ${topicKind.toLowerCase()}`;
     removeBtn.textContent = "Remove topic";
     removeBtn.addEventListener("click", () => {
       appendActivityLog({
@@ -427,6 +428,7 @@ function renderLookalikeSuggestions(suggestions) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.id = "suggest-topics-add-btn";
+  addBtn.title = "Add the checked keyword suggestions to your Topics";
   addBtn.textContent = "Add Selected";
   addBtn.addEventListener("click", applySelectedLookalikeSuggestions);
   suggestTopicsResultsEl.appendChild(addBtn);
@@ -618,6 +620,7 @@ function renderSearchAnalysisResults(diagnosis, suggestions) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.id = "search-quality-apply-btn";
+  addBtn.title = "Apply the checked keyword changes to your Topics/Negative Topics";
   addBtn.textContent = "Apply Selected";
   addBtn.addEventListener("click", applySelectedSearchAnalysisSuggestions);
   searchQualityResultsEl.appendChild(addBtn);
@@ -838,6 +841,7 @@ function renderNegativeTopics() {
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.className = "remove-topic-btn";
+      removeBtn.title = "Permanently remove this Negative Topic";
       removeBtn.textContent = "Remove filter";
       removeBtn.addEventListener("click", () => {
         negativeTopics = negativeTopics.filter((t) => t.id !== topic.id);

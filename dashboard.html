@@ -10,11 +10,11 @@
   <header id="page-header">
     <h1>SalesTeam <span id="version-text"></span></h1>
     <div id="header-actions">
-      <button id="prioritize-unscored-btn" type="button">Prioritize Unscored Leads</button>
-      <button id="rescore-all-btn" type="button">Re-score All Priorities</button>
-      <button id="extract-companies-btn" type="button">Extract Companies</button>
-      <button id="export-csv-all-btn" type="button">Export All (CSV)</button>
-      <button id="export-csv-filtered-btn" type="button">Export Filtered (CSV)</button>
+      <button id="prioritize-unscored-btn" type="button" title="Score every unscored 'New' lead with the Sales Mentor">Prioritize Unscored Leads</button>
+      <button id="rescore-all-btn" type="button" title="Re-run AI prioritization on every already-scored 'New' lead (manual overrides are skipped)">Re-score All Priorities</button>
+      <button id="extract-companies-btn" type="button" title="Auto-extract a company name for every Post lead that doesn't have one yet">Extract Companies</button>
+      <button id="export-csv-all-btn" type="button" title="Download every lead as a CSV file">Export All (CSV)</button>
+      <button id="export-csv-filtered-btn" type="button" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
       <span id="prioritize-status" class="status-text"></span>
       <span id="rescore-all-status" class="status-text"></span>
       <span id="extract-companies-status" class="status-text"></span>
@@ -99,12 +99,12 @@
       <option value="" selected disabled>Choose a status…</option>
     </select>
     <div class="bulk-dialog-actions">
-      <button id="bulk-apply-btn" type="button">Apply</button>
-      <button id="bulk-cancel-btn" type="button">Cancel</button>
+      <button id="bulk-apply-btn" type="button" title="Change every currently-filtered lead to the selected status">Apply</button>
+      <button id="bulk-cancel-btn" type="button" title="Close without making any change">Cancel</button>
     </div>
     <p id="bulk-status-text" class="status-text"></p>
     <hr />
-    <button id="bulk-undo-btn" type="button">Undo Last Bulk Change</button>
+    <button id="bulk-undo-btn" type="button" title="Restore every lead affected by the last Bulk Change to its previous status">Undo Last Bulk Change</button>
     <p id="bulk-undo-text" class="status-text"></p>
   </dialog>
 
@@ -115,9 +115,9 @@
     <input id="assign-company-input" type="text" list="known-companies-datalist" placeholder="Company name…" autocomplete="off" />
     <datalist id="known-companies-datalist"></datalist>
     <div class="bulk-dialog-actions">
-      <button id="assign-company-save-btn" type="button">Save</button>
-      <button id="assign-company-clear-btn" type="button">Clear</button>
-      <button id="assign-company-cancel-btn" type="button">Cancel</button>
+      <button id="assign-company-save-btn" type="button" title="Save this company for the lead">Save</button>
+      <button id="assign-company-clear-btn" type="button" title="Remove the company from this lead">Clear</button>
+      <button id="assign-company-cancel-btn" type="button" title="Close without making any change">Cancel</button>
     </div>
   </dialog>
 
@@ -154,11 +154,11 @@
       <h3>Draft Message</h3>
       <div class="draft-controls">
         <select id="detail-template-select"></select>
-        <button id="detail-draft-btn" type="button">Draft Message</button>
+        <button id="detail-draft-btn" type="button" title="Generate an AI draft message for this lead">Draft Message</button>
       </div>
       <textarea id="detail-draft-textarea" placeholder="Click “Draft Message” to generate a suggested opening message."></textarea>
       <div class="draft-actions">
-        <button id="detail-copy-btn" type="button">Copy</button>
+        <button id="detail-copy-btn" type="button" title="Copy the draft message to your clipboard (also marks this lead Contacted)">Copy</button>
         <span id="detail-draft-status" class="status-text"></span>
       </div>
     </section>
@@ -166,17 +166,17 @@
     <section id="detail-mentor-section">
       <div class="section-title-row">
         <h3>Consult Sales Mentor about this lead</h3>
-        <button id="detail-mentor-clear-btn" class="text-link-btn" type="button">Clear conversation</button>
+        <button id="detail-mentor-clear-btn" class="text-link-btn" type="button" title="Permanently clear this lead's Mentor conversation history">Clear conversation</button>
       </div>
       <div id="detail-mentor-history" class="agent-history"></div>
       <span id="detail-mentor-status" class="status-text"></span>
       <div class="mentor-quick-actions">
-        <button id="mentor-quick-summary-btn" class="mentor-quick-btn" type="button">Buyer Summary</button>
-        <button id="mentor-quick-openers-btn" class="mentor-quick-btn" type="button">Conversation Starters</button>
+        <button id="mentor-quick-summary-btn" class="mentor-quick-btn" type="button" title="Ask the Mentor to summarize this lead as a potential buyer">Buyer Summary</button>
+        <button id="mentor-quick-openers-btn" class="mentor-quick-btn" type="button" title="Ask the Mentor to suggest opening lines for this lead">Conversation Starters</button>
       </div>
       <div class="agent-input-row">
         <textarea id="detail-mentor-input" class="agent-input" placeholder="Ask about this lead, e.g. “Is this worth pursuing?”"></textarea>
-        <button id="detail-mentor-send-btn" class="agent-send-btn" type="button">Send</button>
+        <button id="detail-mentor-send-btn" class="agent-send-btn" type="button" title="Send your message to the Sales Mentor">Send</button>
       </div>
     </section>
   </main>

@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.26.1.
+**Status:** Living document, reflects the shipped product as of v0.26.2.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -334,10 +334,13 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
 - Free-text fields log once per real edit (focus → blur, only if changed), not per keystroke - reverting a
   field back to its original value logs nothing. The Anthropic API key's actual value is never logged, only
   that it changed.
-- Capped at 2000 entries (oldest dropped first) - no `unlimitedStorage` permission is declared (5MB real
-  `chrome.storage.local` quota) and nothing else in the app guards against quota exhaustion, so the log is
-  deliberately self-limiting. Filterable by actor/free-text/errors-only; a confirm-gated "Clear Log" resets
-  only the log itself, never any lead or setting.
+- **Never manually clearable (v0.26.2)** — this is the one place to investigate what happened after
+  something looks wrong, so no action anywhere deletes it. Stored as one array per calendar day
+  (`activityLog:YYYY-MM-DD`) rather than one shared array; anything older than a 90-day retention window is
+  pruned automatically on every write — a predictable "always the last 90 days" guarantee, not a raw
+  entry-count cap that could exhaust itself faster during a single unusually active day. Log data from the
+  earlier flat single-key scheme migrates automatically (bucketed by each entry's own timestamp) the first
+  time it's read.
 - Updates live via `chrome.storage.onChanged` (v0.26.1) — a scan can log many entries over its whole run, and
   this page doesn't require a manual reload to see them, the same reactive pattern the Dashboard/Advisors
   pages already use for their own storage reads.
@@ -373,4 +376,4 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.26.1**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.26.2**.

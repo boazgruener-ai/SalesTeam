@@ -12,7 +12,8 @@
     <p class="page-subtitle">
       Every user action and automatic extension action - topic edits, scans, exports/imports, lead changes,
       and errors - with old/new values where applicable. Written directly to storage as each action happens,
-      so it's complete even if this page (or the side panel) was closed at the time.
+      so it's complete even if this page (or the side panel) was closed at the time. Read-only by design -
+      entries age out on their own after 90 days, nothing here can delete it early.
     </p>
   </header>
 
@@ -29,7 +30,6 @@
         Errors only
       </label>
       <span id="log-count" class="log-count"></span>
-      <button id="log-clear-btn" type="button" title="Permanently delete every entry in this log - cannot be undone">Clear Log</button>
     </div>
 
     <p id="log-empty-state" class="empty-state" hidden>No activity logged yet.</p>

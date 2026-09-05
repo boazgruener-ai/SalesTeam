@@ -298,6 +298,7 @@ function makeQaCard(entry) {
   const q = document.createElement("button");
   q.type = "button";
   q.className = "qa-question";
+  q.title = "Click to expand/collapse the answer";
   q.textContent = entry.question;
   const a = document.createElement("p");
   a.className = "qa-answer";

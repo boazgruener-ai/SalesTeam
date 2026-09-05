@@ -612,6 +612,7 @@ function toggleColumnMenu(column, anchorEl) {
   if (column.getSortValue) {
     const ascBtn = document.createElement("button");
     ascBtn.className = "col-menu-item";
+    ascBtn.title = `Sort by ${column.label}, A-Z / oldest first`;
     ascBtn.textContent = "Sort Ascending";
     ascBtn.addEventListener("click", () => {
       sortColumn = column.id;
@@ -621,6 +622,7 @@ function toggleColumnMenu(column, anchorEl) {
     });
     const descBtn = document.createElement("button");
     descBtn.className = "col-menu-item";
+    descBtn.title = `Sort by ${column.label}, Z-A / newest first`;
     descBtn.textContent = "Sort Descending";
     descBtn.addEventListener("click", () => {
       sortColumn = column.id;
@@ -649,9 +651,11 @@ function toggleColumnMenu(column, anchorEl) {
     const actionsRow = document.createElement("div");
     actionsRow.className = "col-menu-actions";
     const applyBtn = document.createElement("button");
+    applyBtn.title = `Filter the table to rows matching this text in ${column.label}`;
     applyBtn.textContent = "Apply";
     applyBtn.addEventListener("click", applyFilter);
     const clearBtn = document.createElement("button");
+    clearBtn.title = `Remove this column's filter`;
     clearBtn.textContent = "Clear";
     clearBtn.addEventListener("click", () => {
       columnFilters[column.id] = "";
@@ -891,6 +895,7 @@ function buildGroupHeaderRow(group) {
     const summaryBtn = document.createElement("button");
     summaryBtn.type = "button";
     summaryBtn.className = "group-summary-btn";
+    summaryBtn.title = "Ask the Sales Mentor to synthesize every lead seen at this company";
     summaryBtn.textContent = "Get Account Summary";
     summaryBtn.addEventListener("click", () => showAccountSummary(group));
     td.appendChild(summaryBtn);
