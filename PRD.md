@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.25.1.
+**Status:** Living document, reflects the shipped product as of v0.26.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -312,6 +312,33 @@ is token-overlap across each entry's question and synonym keywords (so "enable a
 topic" surface the same entry) with light typo tolerance (edit-distance on individual words). Each result is
 a collapsible card.
 
+### 6.10 Activity Log
+
+A dedicated page (v0.26.0, its own tab, opened from an "Activity Log ↗" button next to Help) recording every
+meaningful User action and automatic Extension action, with old/new values where applicable and every error -
+prompted by two incidents in one session that were hard to diagnose without it: an AND-topic bug only visible
+via the background service worker's own DevTools console (unreliable - it clears itself when the worker goes
+idle), and a data-loss incident reconstructed after the fact from context clues.
+
+- **Written directly to `chrome.storage.local`** from wherever each action actually happens - including
+  inside `background.js` itself - never inferred from `chrome.runtime.sendMessage` broadcasts, which are lost
+  entirely if no page happens to be listening (true of every scan-lifecycle message already, with no
+  storage-backed fallback before this). The log is therefore complete even for a scan that ran while every
+  page was closed.
+- Covers: Topic/Job Topic/Negative Topic add/remove/enable/scope/keyword edits (old→new keyword counts),
+  scans started/completed/errored, automatic negative-topic filtering (both on discovery and on re-apply) and
+  automatic company extraction/prioritization (including correlated re-scoring) with their failures, Export/
+  Import Settings and Leads, lead status/priority/company changes, Bulk Change + Undo, Prioritize/Re-score/
+  Extract Companies, Apply Negative Filters, accepted Lookalike/Search-Quality suggestions, settings field
+  edits, and clearing an AI conversation.
+- Free-text fields log once per real edit (focus → blur, only if changed), not per keystroke - reverting a
+  field back to its original value logs nothing. The Anthropic API key's actual value is never logged, only
+  that it changed.
+- Capped at 2000 entries (oldest dropped first) - no `unlimitedStorage` permission is declared (5MB real
+  `chrome.storage.local` quota) and nothing else in the app guards against quota exhaustion, so the log is
+  deliberately self-limiting. Filterable by actor/free-text/errors-only; a confirm-gated "Clear Log" resets
+  only the log itself, never any lead or setting.
+
 ## 7. Non-functional requirements
 
 - **Manual-trigger only** — no `alarms`, no background scanning, ever.
@@ -343,4 +370,4 @@ a collapsible card.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.25.1**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.26.0**.

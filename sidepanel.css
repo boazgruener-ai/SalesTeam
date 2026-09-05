@@ -39,6 +39,7 @@ section {
 
 #top-nav-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 14px;
 }

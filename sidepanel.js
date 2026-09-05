@@ -37,14 +37,32 @@ import {
   getAnthropicApiKey,
   getCompanyContext,
   getIdealCustomerProfile,
+  appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { sanitizeApiKey, suggestLookalikeTopics, analyzePostSearch } from "./agent-shared.js";
+
+// Logs one activity-log entry per real edit (focus -> blur, value actually
+// changed), not per keystroke - the field's own existing "input" listener
+// keeps saving live as before; this only adds logging on top. Shared across
+// every free-text field in this file (topic name/keywords/andKeywords,
+// author titles, negative-topic name/keywords) so each site is one line
+// instead of a bespoke focus/blur pair.
+function logOnBlur(el, { action, labelFor }) {
+  let valueAtFocus = el.value;
+  el.addEventListener("focus", () => { valueAtFocus = el.value; });
+  el.addEventListener("blur", () => {
+    if (el.value !== valueAtFocus) {
+      appendActivityLog({ actor: "user", action, label: labelFor(valueAtFocus, el.value), prevValue: valueAtFocus, newValue: el.value });
+    }
+  });
+}
 
 const openDashboardBtn = document.getElementById("open-dashboard-btn");
 const openAdvisorsBtn = document.getElementById("open-advisors-btn");
 const openSettingsBtn = document.getElementById("open-settings-btn");
 const openHelpBtn = document.getElementById("open-help-btn");
+const openActivityLogBtn = document.getElementById("open-activity-log-btn");
 const topicsListEl = document.getElementById("topics-list");
 const addTopicBtn = document.getElementById("add-topic-btn");
 const suggestTopicsBtn = document.getElementById("suggest-topics-btn");
@@ -185,6 +203,7 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
     return;
   }
 
+  const topicKind = mode === "jobs" ? "Job Topic" : "Topic";
   for (const topic of topicsArray) {
     if (topic.enabled === undefined) topic.enabled = true;
     if (!topic.andKeywords) topic.andKeywords = [];
@@ -201,9 +220,15 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
     enabledCheckbox.checked = topic.enabled;
     enabledCheckbox.title = "Include this topic in the next scan";
     enabledCheckbox.addEventListener("change", () => {
+      const prevValue = topic.enabled;
       topic.enabled = enabledCheckbox.checked;
       card.classList.toggle("topic-disabled", !topic.enabled);
       onUpdate();
+      appendActivityLog({
+        actor: "user", action: "topic_enabled_changed",
+        label: `${topicKind} "${topic.name || "(untitled)"}" ${topic.enabled ? "enabled" : "disabled"}`,
+        prevValue, newValue: topic.enabled,
+      });
     });
 
     const nameInput = document.createElement("input");
@@ -216,6 +241,10 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
     nameInput.addEventListener("input", () => {
       topic.name = nameInput.value;
       onUpdate();
+    });
+    logOnBlur(nameInput, {
+      action: "topic_renamed",
+      labelFor: (oldVal, newVal) => `${topicKind} renamed: "${oldVal || "(untitled)"}" → "${newVal || "(untitled)"}"`,
     });
 
     headerRow.append(enabledCheckbox, nameInput);
@@ -244,6 +273,14 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
       applyChunkHint(keywordsHint, topic.keywords.length, topic.andKeywords.length, mode);
       onUpdate();
     });
+    logOnBlur(keywordsTextarea, {
+      action: "topic_keywords_changed",
+      labelFor: (oldVal, newVal) => {
+        const oldCount = oldVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        const newCount = newVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        return `${topicKind} "${topic.name || "(untitled)"}" keywords changed (${oldCount} → ${newCount} keywords)`;
+      },
+    });
 
     andKeywordsTextarea.addEventListener("input", () => {
       topic.andKeywords = andKeywordsTextarea.value
@@ -253,12 +290,27 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
       applyChunkHint(keywordsHint, topic.keywords.length, topic.andKeywords.length, mode);
       onUpdate();
     });
+    logOnBlur(andKeywordsTextarea, {
+      action: "topic_and_keywords_changed",
+      labelFor: (oldVal, newVal) => {
+        const oldCount = oldVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        const newCount = newVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        return `${topicKind} "${topic.name || "(untitled)"}" AND-with keywords changed (${oldCount} → ${newCount} keywords)`;
+      },
+    });
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "remove-topic-btn";
     removeBtn.textContent = "Remove topic";
-    removeBtn.addEventListener("click", () => onRemove(topic));
+    removeBtn.addEventListener("click", () => {
+      appendActivityLog({
+        actor: "user", action: "topic_removed",
+        label: `${topicKind} "${topic.name || "(untitled)"}" removed (${topic.keywords.length} keywords)`,
+        prevValue: { name: topic.name, keywords: topic.keywords, andKeywords: topic.andKeywords }, newValue: null,
+      });
+      onRemove(topic);
+    });
 
     card.append(headerRow, keywordsTextarea, andLabel, andKeywordsTextarea, keywordsHint, removeBtn);
     listEl.appendChild(card);
@@ -315,10 +367,15 @@ openHelpBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: chrome.runtime.getURL("help.html") });
 });
 
+openActivityLogBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("activity-log.html") });
+});
+
 addTopicBtn.addEventListener("click", () => {
   topics.push(newTopic());
   persistTopics();
   renderTopics();
+  appendActivityLog({ actor: "user", action: "topic_added", label: "Added a new Topic" });
 });
 
 // "Lookalike" topic suggestions: looks at the salesperson's own best-scoring
@@ -401,6 +458,9 @@ async function applySelectedLookalikeSuggestions() {
   suggestTopicsStatusEl.textContent = `Added ${added} keyword${added === 1 ? "" : "s"}.`;
   suggestTopicsResultsEl.hidden = true;
   suggestTopicsResultsEl.innerHTML = "";
+  if (added > 0) {
+    appendActivityLog({ actor: "user", action: "lookalike_suggestions_applied", label: `Accepted ${added} Suggest Lookalike Topics keyword${added === 1 ? "" : "s"}`, newValue: added });
+  }
 }
 
 suggestTopicsBtn.addEventListener("click", async () => {
@@ -608,6 +668,9 @@ async function applySelectedSearchAnalysisSuggestions() {
   searchQualityStatusEl.textContent = `Applied ${applied} change${applied === 1 ? "" : "s"}.`;
   searchQualityResultsEl.hidden = true;
   searchQualityResultsEl.innerHTML = "";
+  if (applied > 0) {
+    appendActivityLog({ actor: "user", action: "search_quality_suggestions_applied", label: `Accepted ${applied} Analyze Post Search Quality suggestion${applied === 1 ? "" : "s"}`, newValue: applied });
+  }
 }
 
 analyzeSearchQualityBtn.addEventListener("click", async () => {
@@ -644,6 +707,7 @@ addJobTopicBtn.addEventListener("click", () => {
   jobTopics.push(newTopic());
   persistJobTopics();
   renderJobTopics();
+  appendActivityLog({ actor: "user", action: "topic_added", label: "Added a new Job Topic" });
 });
 
 function linesFrom(textarea) {
@@ -686,9 +750,15 @@ function renderNegativeTopics() {
     enabledCheckbox.checked = topic.enabled;
     enabledCheckbox.title = "Apply this filter on future scans";
     enabledCheckbox.addEventListener("change", () => {
+      const prevValue = topic.enabled;
       topic.enabled = enabledCheckbox.checked;
       card.classList.toggle("topic-disabled", !topic.enabled);
       persistNegativeTopics();
+      appendActivityLog({
+        actor: "user", action: "negative_topic_enabled_changed",
+        label: `Negative Topic "${topic.name || "(untitled)"}" ${topic.enabled ? "enabled" : "disabled"}`,
+        prevValue, newValue: topic.enabled,
+      });
     });
 
     const nameInput = document.createElement("input");
@@ -698,6 +768,10 @@ function renderNegativeTopics() {
     nameInput.addEventListener("input", () => {
       topic.name = nameInput.value;
       persistNegativeTopics();
+    });
+    logOnBlur(nameInput, {
+      action: "negative_topic_renamed",
+      labelFor: (oldVal, newVal) => `Negative Topic renamed: "${oldVal || "(untitled)"}" → "${newVal || "(untitled)"}"`,
     });
 
     const appliesToSelect = document.createElement("select");
@@ -710,8 +784,14 @@ function renderNegativeTopics() {
     }
     appliesToSelect.value = topic.appliesTo;
     appliesToSelect.addEventListener("change", () => {
+      const prevValue = topic.appliesTo;
       topic.appliesTo = appliesToSelect.value;
       persistNegativeTopics();
+      appendActivityLog({
+        actor: "user", action: "negative_topic_applies_to_changed",
+        label: `Negative Topic "${topic.name || "(untitled)"}" scope changed`,
+        prevValue, newValue: topic.appliesTo,
+      });
     });
 
     headerRow.append(enabledCheckbox, nameInput, appliesToSelect);
@@ -722,6 +802,14 @@ function renderNegativeTopics() {
     keywordsTextarea.addEventListener("input", () => {
       topic.keywords = linesFrom(keywordsTextarea);
       persistNegativeTopics();
+    });
+    logOnBlur(keywordsTextarea, {
+      action: "negative_topic_keywords_changed",
+      labelFor: (oldVal, newVal) => {
+        const oldCount = oldVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        const newCount = newVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        return `Negative Topic "${topic.name || "(untitled)"}" keywords changed (${oldCount} → ${newCount} keywords)`;
+      },
     });
 
     const andLabel = document.createElement("label");
@@ -735,6 +823,14 @@ function renderNegativeTopics() {
       topic.andKeywords = linesFrom(andKeywordsTextarea);
       persistNegativeTopics();
     });
+    logOnBlur(andKeywordsTextarea, {
+      action: "negative_topic_and_keywords_changed",
+      labelFor: (oldVal, newVal) => {
+        const oldCount = oldVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        const newCount = newVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+        return `Negative Topic "${topic.name || "(untitled)"}" AND-with keywords changed (${oldCount} → ${newCount} keywords)`;
+      },
+    });
 
     card.append(headerRow, keywordsTextarea, andLabel, andKeywordsTextarea);
 
@@ -747,6 +843,11 @@ function renderNegativeTopics() {
         negativeTopics = negativeTopics.filter((t) => t.id !== topic.id);
         persistNegativeTopics();
         renderNegativeTopics();
+        appendActivityLog({
+          actor: "user", action: "negative_topic_removed",
+          label: `Negative Topic "${topic.name || "(untitled)"}" removed`,
+          prevValue: { name: topic.name, keywords: topic.keywords, andKeywords: topic.andKeywords }, newValue: null,
+        });
       });
       card.appendChild(removeBtn);
     }
@@ -759,6 +860,7 @@ addNegativeTopicBtn.addEventListener("click", () => {
   negativeTopics.push(newNegativeTopic());
   persistNegativeTopics();
   renderNegativeTopics();
+  appendActivityLog({ actor: "user", action: "negative_topic_added", label: "Added a new Negative Topic" });
 });
 
 // Immediate, no-scan-needed alternative to the "apply on next scan" checkbox
@@ -778,6 +880,11 @@ applyNegativeFiltersBtn.addEventListener("click", async () => {
       if (restoredCount > 0) parts.push(`${restoredCount} lead${restoredCount === 1 ? "" : "s"} restored to New`);
       applyNegativeFiltersStatus.textContent = `Done - ${parts.join(", ")}.`;
     }
+    appendActivityLog({
+      actor: "user", action: "negative_filters_applied",
+      label: `Applied Negative Filters: ${blockedCount} marked Irrelevant, ${restoredCount} restored to New`,
+      newValue: { blockedCount, restoredCount },
+    });
   } finally {
     applyNegativeFiltersBtn.disabled = false;
   }
@@ -1046,6 +1153,7 @@ async function renderResultsFromStorage() {
 
 timeframeSelect.addEventListener("change", () => {
   saveTimeframe(timeframeSelect.value);
+  appendActivityLog({ actor: "user", action: "timeframe_changed", label: `Posted-within timeframe changed to "${timeframeSelect.value}"`, newValue: timeframeSelect.value });
 });
 
 authorTitleInput.addEventListener("input", () => {
@@ -1059,20 +1167,24 @@ authorTitleInput.addEventListener("input", () => {
 authorTitleEnabledCheckbox.addEventListener("change", () => {
   authorTitleInput.disabled = !authorTitleEnabledCheckbox.checked;
   saveAuthorTitleEnabled(authorTitleEnabledCheckbox.checked);
+  appendActivityLog({ actor: "user", action: "author_title_filter_toggled", label: `Author title filter ${authorTitleEnabledCheckbox.checked ? "enabled" : "disabled"}`, newValue: authorTitleEnabledCheckbox.checked });
 });
 
 includeJobAdsCheckbox.addEventListener("change", () => {
   saveIncludeJobAds(includeJobAdsCheckbox.checked);
+  appendActivityLog({ actor: "user", action: "include_job_ads_toggled", label: `Include in-post job ads ${includeJobAdsCheckbox.checked ? "enabled" : "disabled"}`, newValue: includeJobAdsCheckbox.checked });
 });
 
 jobSearchEnabledCheckbox.addEventListener("change", () => {
   saveJobSearchEnabled(jobSearchEnabledCheckbox.checked);
   updateTotalSearchesHint();
+  appendActivityLog({ actor: "user", action: "job_search_toggled", label: `Job Search ${jobSearchEnabledCheckbox.checked ? "enabled" : "disabled"}`, newValue: jobSearchEnabledCheckbox.checked });
 });
 
 jobSearchUsePostTopicsCheckbox.addEventListener("change", () => {
   saveJobSearchUsePostTopics(jobSearchUsePostTopicsCheckbox.checked);
   updateTotalSearchesHint();
+  appendActivityLog({ actor: "user", action: "job_search_use_post_topics_toggled", label: `"Also use Post topics for Job Search" ${jobSearchUsePostTopicsCheckbox.checked ? "enabled" : "disabled"}`, newValue: jobSearchUsePostTopicsCheckbox.checked });
 });
 
 jobSearchLocationSelect.addEventListener("change", () => {
@@ -1120,6 +1232,7 @@ exportSettingsBtn.addEventListener("click", async () => {
     return;
   }
   await downloadSettingsBackup("salesteam-settings-backup", includeApiKey);
+  appendActivityLog({ actor: "user", action: "settings_exported", label: "Exported Settings backup" });
 });
 
 importSettingsBtn.addEventListener("click", () => {
@@ -1143,10 +1256,12 @@ importSettingsFileInput.addEventListener("change", async () => {
 
   await importSettings(data);
   await init();
+  appendActivityLog({ actor: "user", action: "settings_imported", label: "Imported Settings backup (replaced current Topics/filters/settings)" });
 });
 
 exportLeadsBtn.addEventListener("click", async () => {
   await downloadLeadsBackup("salesteam-leads-backup");
+  appendActivityLog({ actor: "user", action: "leads_exported", label: "Exported Leads backup" });
 });
 
 importLeadsBtn.addEventListener("click", () => {
@@ -1171,6 +1286,7 @@ importLeadsFileInput.addEventListener("change", async () => {
     ? `Restored ${restored} lead${restored === 1 ? "" : "s"} that weren't already saved locally.`
     : "Nothing to restore - every lead in that backup is already saved locally.");
   if (restored > 0) await renderResultsFromStorage();
+  appendActivityLog({ actor: "user", action: "leads_imported", label: `Imported Leads backup - restored ${restored} lead${restored === 1 ? "" : "s"}`, newValue: restored });
 });
 
 exportCsvBtn.addEventListener("click", async () => {
@@ -1199,6 +1315,7 @@ exportCsvBtn.addEventListener("click", async () => {
 // the side panel, or running a new scan, shows every saved lead again.
 clearResultsBtn.addEventListener("click", () => {
   renderResults([]);
+  appendActivityLog({ actor: "user", action: "results_view_cleared", label: "Cleared results view (leads are not deleted)" });
 });
 
 scanBtn.addEventListener("click", async () => {
@@ -1218,6 +1335,7 @@ scanBtn.addEventListener("click", async () => {
   });
   progressTextEl.textContent = "Starting scan…";
   chrome.runtime.sendMessage({ type: "SCAN_ALL", reapplyToExisting: reapplyExistingCheckbox.checked });
+  appendActivityLog({ actor: "user", action: "scan_started", label: "Started a scan" });
 });
 
 chrome.runtime.onMessage.addListener((message) => {

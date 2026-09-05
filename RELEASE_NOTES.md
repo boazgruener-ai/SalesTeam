@@ -1,3 +1,18 @@
+# SalesTeam — v0.26.0
+
+## New: in-app Activity Log - every user and extension action, without opening DevTools
+
+- Prompted by today's two incidents: an AND-topic bug that could only be diagnosed via the background service worker's DevTools console (which the user found unreliable - it cleared itself when the worker went idle, showing empty at exactly the moment it was needed), and a data-loss incident that had to be reconstructed after the fact from context clues. Both would have been immediately obvious with a persistent, in-app log.
+- New **Activity Log** page (side panel's top-nav row, next to Help) records both **User** actions (topic/negative-topic add/remove/enable/edit with keyword-count old→new, running a scan, Export/Import Settings and Leads, lead status/priority/company changes, Bulk Change + Undo, Prioritize/Re-score/Extract Companies, Apply Negative Filters, accepted Lookalike/Search-Quality suggestions, settings field edits, clearing an AI conversation) and **Extension** actions (scan lifecycle, automatic negative-topic filtering on discovery and on re-apply, automatic company extraction, automatic prioritization including correlated re-scoring, and every error along the way) - each with Date/Time, Actor, Action, Previous Value, New Value.
+- **Critical design point**: written directly to `chrome.storage.local` from wherever each action actually happens - including inside `background.js` itself - never inferred from `chrome.runtime.sendMessage` broadcasts, which are silently lost entirely if no page happens to be open when a scan runs (confirmed: this was already true of every scan-lifecycle message before this feature, with no storage-backed fallback). So the log is complete even for a scan that ran while both the side panel and this log page were closed.
+- Free-text fields (topic keywords, company context, message templates, etc.) log once per real edit (focus → blur, only if the value actually changed), not once per keystroke - editing a field and reverting it back logs nothing.
+- The Anthropic API key's actual value is never logged, only "API key changed" - before/after values are always `null` for that one field specifically.
+- Capped at 2000 entries (oldest dropped first) - chrome.storage.local has no `unlimitedStorage` permission here (5MB real quota), and nothing else in the app currently guards against quota exhaustion, so the log is deliberately self-limiting. A "Clear Log" button (confirm-gated, clearly worded as permanent) resets it if wanted - this only clears the log itself, never any lead or setting.
+- Filterable by actor (All/User/Extension), free-text search, and an "Errors only" toggle; error rows are visually flagged.
+- Verified via harness: the storage-level cap/append logic; real focus→edit→blur logging on a live topic keyword textarea (and confirming a no-op focus/blur logs nothing); Add/Remove Topic and Scan-started logging; the Activity Log page's rendering and all three filters against seeded data, including Clear Log; a full scan run correctly logging `scan_completed` and an aggregate `negative_filters_auto_applied` count; and the API key field's blur handler never carrying the actual key text.
+
+---
+
 # SalesTeam — v0.25.1
 
 ## Fixed: v0.25.0's AND-topic join never actually intersected anything

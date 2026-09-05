@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam Activity Log</title>
+  <link rel="icon" href="icons/icon16.png" />
+  <link rel="stylesheet" href="activity-log.css" />
+</head>
+<body>
+  <header id="page-header">
+    <h1>SalesTeam Activity Log <span id="version-text"></span></h1>
+    <p class="page-subtitle">
+      Every user action and automatic extension action - topic edits, scans, exports/imports, lead changes,
+      and errors - with old/new values where applicable. Written directly to storage as each action happens,
+      so it's complete even if this page (or the side panel) was closed at the time.
+    </p>
+  </header>
+
+  <main id="log-main">
+    <div id="log-controls">
+      <select id="log-actor-filter">
+        <option value="all">All actors</option>
+        <option value="user">User</option>
+        <option value="extension">Extension</option>
+      </select>
+      <input id="log-search-input" type="text" placeholder="Search action, description, or value…" />
+      <label class="checkbox-label">
+        <input type="checkbox" id="log-errors-only-checkbox" />
+        Errors only
+      </label>
+      <span id="log-count" class="log-count"></span>
+      <button id="log-clear-btn" type="button" title="Permanently delete every entry in this log - cannot be undone">Clear Log</button>
+    </div>
+
+    <p id="log-empty-state" class="empty-state" hidden>No activity logged yet.</p>
+    <p id="log-no-match-state" class="empty-state" hidden>No entries match the current filter.</p>
+
+    <div id="log-table-wrap">
+      <table id="log-table" hidden>
+        <thead>
+          <tr>
+            <th>Date &amp; Time</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Previous Value</th>
+            <th>New Value</th>
+          </tr>
+        </thead>
+        <tbody id="log-tbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script type="module" src="activity-log.js"></script>
+</body>
+</html>

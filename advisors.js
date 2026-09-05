@@ -20,6 +20,7 @@ import {
   getCustomerVoiceHistory,
   saveCustomerVoiceHistory,
   clearCustomerVoiceHistory,
+  appendActivityLog,
 } from "./storage.js";
 import {
   sanitizeApiKey,
@@ -66,7 +67,7 @@ async function draftSettings() {
 // Same reusable chat-wiring pattern as the side panel's Sales Mentor/Customer
 // Voice used before this page existed: DOM wiring here, the actual tool-use
 // loop lives in agent-shared.js's runAgentTurn so both pages share it.
-function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputEl, sendBtn, clearBtn, executeTool, getHistoryFn, saveHistoryFn, clearHistoryFn }) {
+function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputEl, sendBtn, clearBtn, executeTool, getHistoryFn, saveHistoryFn, clearHistoryFn, label }) {
   let history = [];
 
   function appendBubble(kind, text) {
@@ -132,9 +133,11 @@ function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputE
   });
   clearBtn.addEventListener("click", async () => {
     if (!confirm("Clear this conversation? This can't be undone.")) return;
+    const prevLength = history.length;
     history = [];
     await clearHistoryFn();
     render();
+    appendActivityLog({ actor: "user", action: "conversation_cleared", label: `Cleared ${label} conversation (${prevLength} message(s))`, prevValue: prevLength, newValue: 0 });
   });
 
   return {
@@ -157,6 +160,7 @@ const salesMentor = createAgentChat({
   getHistoryFn: getAdvisorHistory,
   saveHistoryFn: saveAdvisorHistory,
   clearHistoryFn: clearAdvisorHistory,
+  label: "Sales Mentor",
 });
 
 const customerVoice = createAgentChat({
@@ -171,6 +175,7 @@ const customerVoice = createAgentChat({
   getHistoryFn: getCustomerVoiceHistory,
   saveHistoryFn: saveCustomerVoiceHistory,
   clearHistoryFn: clearCustomerVoiceHistory,
+  label: "Customer Voice",
 });
 
 document.getElementById("open-dashboard-link").addEventListener("click", (event) => {
@@ -183,15 +188,30 @@ document.getElementById("open-settings-link").addEventListener("click", (event) 
   chrome.tabs.create({ url: chrome.runtime.getURL("settings.html") });
 });
 
+// Logs one activity-log entry per real edit (focus -> blur, value actually
+// changed), not per keystroke - the field's own "input" listener above
+// keeps saving live; this only adds logging on top.
+function logOnBlur(el, { action, labelFor }) {
+  let valueAtFocus = el.value;
+  el.addEventListener("focus", () => { valueAtFocus = el.value; });
+  el.addEventListener("blur", () => {
+    if (el.value !== valueAtFocus) {
+      appendActivityLog({ actor: "user", action, label: labelFor(valueAtFocus, el.value), prevValue: valueAtFocus, newValue: el.value });
+    }
+  });
+}
+
 mentorPersonaInput.addEventListener("input", () => {
   mentorPersona = mentorPersonaInput.value;
   saveMentorPersona(mentorPersona);
 });
+logOnBlur(mentorPersonaInput, { action: "mentor_persona_changed", labelFor: () => "Sales Mentor persona changed" });
 
 customerPersonaInput.addEventListener("input", () => {
   customerPersona = customerPersonaInput.value;
   saveCustomerPersona(customerPersona);
 });
+logOnBlur(customerPersonaInput, { action: "customer_persona_changed", labelFor: () => "Customer Voice persona changed" });
 
 // companyContext/outputLanguage/messageTemplates/valueAddOffers are now
 // edited exclusively on the separate Settings page - this page only reads

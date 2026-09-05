@@ -24,6 +24,7 @@ import {
   setLeadCompany,
   applyExtractedCompanies,
   normalizeCompanyName,
+  appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
@@ -455,10 +456,12 @@ function actionsCell(td, lead) {
       "✕",
       "Dismiss",
       async () => {
+        const prevValue = lead.status || "New";
         await updateLeadStatus(lead.key, "Dismissed");
         await loadLeads();
         renderAllPieCharts();
         renderTable();
+        appendActivityLog({ actor: "user", action: "lead_status_changed", label: `Lead "${leadTitle(lead)}" status changed`, prevValue, newValue: "Dismissed" });
       },
       "dismiss-btn"
     )
@@ -1069,20 +1072,24 @@ document.getElementById("back-to-list-link").addEventListener("click", (event) =
 
 document.getElementById("detail-priority-select").addEventListener("change", async (event) => {
   if (!currentDetailLead) return;
+  const prevValue = currentDetailLead.priority || null;
   const value = event.target.value;
   await setLeadPriority(currentDetailLead.key, value ? Number(value) : null);
   await loadLeads();
   currentDetailLead = allLeads.find((l) => l.key === currentDetailLead.key) || currentDetailLead;
   renderTable();
+  appendActivityLog({ actor: "user", action: "lead_priority_changed", label: `Lead "${leadTitle(currentDetailLead)}" priority manually set`, prevValue, newValue: value ? Number(value) : null });
 });
 
 document.getElementById("detail-status-select").addEventListener("change", async (event) => {
   if (!currentDetailLead) return;
+  const prevValue = currentDetailLead.status || "New";
   await updateLeadStatus(currentDetailLead.key, event.target.value);
   await loadLeads();
   currentDetailLead = allLeads.find((l) => l.key === currentDetailLead.key) || currentDetailLead;
   renderAllPieCharts();
   renderTable();
+  appendActivityLog({ actor: "user", action: "lead_status_changed", label: `Lead "${leadTitle(currentDetailLead)}" status changed`, prevValue, newValue: event.target.value });
 });
 
 document.getElementById("detail-draft-btn").addEventListener("click", async () => {
@@ -1127,6 +1134,7 @@ document.getElementById("detail-copy-btn").addEventListener("click", async () =>
     document.getElementById("detail-status-select").value = "Contacted";
     await loadLeads();
     renderAllPieCharts();
+    appendActivityLog({ actor: "user", action: "lead_status_changed", label: `Lead "${leadTitle(currentDetailLead)}" status auto-changed to Contacted (message copied)`, prevValue: "New", newValue: "Contacted" });
   }
 });
 
@@ -1333,8 +1341,10 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
     await loadLeads();
     renderAllPieCharts();
     renderTable();
+    appendActivityLog({ actor: "user", action: "leads_prioritized_manual", label: `Prioritize Unscored Leads: ${changed} lead${changed === 1 ? "" : "s"} scored`, newValue: changed });
   } catch (err) {
     prioritizeStatusEl.textContent = `Something went wrong: ${err.message}`;
+    appendActivityLog({ actor: "user", action: "leads_prioritized_manual", label: "Prioritize Unscored Leads failed", error: true, errorMessage: err.message });
   } finally {
     prioritizeUnscoredBtn.disabled = false;
   }
@@ -1376,8 +1386,10 @@ rescoreAllBtn.addEventListener("click", async () => {
     rescoreAllStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} re-scored, ${priorityChangedCount} changed priority.`;
     renderAllPieCharts();
     renderTable();
+    appendActivityLog({ actor: "user", action: "leads_rescored_manual", label: `Re-score All Priorities: ${changed} re-scored, ${priorityChangedCount} changed priority`, newValue: { changed, priorityChangedCount } });
   } catch (err) {
     rescoreAllStatusEl.textContent = `Something went wrong: ${err.message}`;
+    appendActivityLog({ actor: "user", action: "leads_rescored_manual", label: "Re-score All Priorities failed", error: true, errorMessage: err.message });
   } finally {
     rescoreAllBtn.disabled = false;
   }
@@ -1407,8 +1419,10 @@ extractCompaniesBtn.addEventListener("click", async () => {
     extractCompaniesStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} got a company.`;
     await loadLeads();
     renderTable();
+    appendActivityLog({ actor: "user", action: "companies_extracted_manual", label: `Extract Companies: ${changed} lead${changed === 1 ? "" : "s"} got a company`, newValue: changed });
   } catch (err) {
     extractCompaniesStatusEl.textContent = `Something went wrong: ${err.message}`;
+    appendActivityLog({ actor: "user", action: "companies_extracted_manual", label: "Extract Companies failed", error: true, errorMessage: err.message });
   } finally {
     extractCompaniesBtn.disabled = false;
   }
@@ -1482,6 +1496,7 @@ bulkApplyBtn.addEventListener("click", async () => {
     await loadLeads();
     renderAllPieCharts();
     renderTableFromScratch();
+    appendActivityLog({ actor: "user", action: "bulk_status_changed", label: `Bulk Change: ${changed} lead${changed === 1 ? "" : "s"} changed to "${targetStatus}"`, newValue: { count: changed, targetStatus } });
   } finally {
     bulkApplyBtn.disabled = false;
   }
@@ -1495,6 +1510,9 @@ bulkUndoBtn.addEventListener("click", async () => {
     await loadLeads();
     renderAllPieCharts();
     renderTableFromScratch();
+    if (restored > 0) {
+      appendActivityLog({ actor: "user", action: "bulk_status_undo", label: `Undid last Bulk Change - ${restored} lead(s) restored to their previous status`, newValue: restored });
+    }
   } finally {
     await refreshUndoButtonState();
   }
@@ -1507,6 +1525,8 @@ const assignCompanyDialog = document.getElementById("assign-company-dialog");
 const assignCompanyInput = document.getElementById("assign-company-input");
 const knownCompaniesDatalist = document.getElementById("known-companies-datalist");
 let assignCompanyLeadKey = null;
+let assignCompanyLeadPrevCompany = null;
+let assignCompanyLeadLabel = "";
 
 function populateKnownCompaniesDatalist() {
   const names = new Set(allLeads.map((l) => l.company).filter(Boolean));
@@ -1520,6 +1540,8 @@ function populateKnownCompaniesDatalist() {
 
 function openAssignCompanyDialog(lead) {
   assignCompanyLeadKey = lead.key;
+  assignCompanyLeadPrevCompany = lead.company || null;
+  assignCompanyLeadLabel = leadTitle(lead);
   populateKnownCompaniesDatalist();
   assignCompanyInput.value = lead.company || "";
   assignCompanyDialog.showModal();
@@ -1531,6 +1553,11 @@ async function saveAssignedCompany(value) {
   assignCompanyDialog.close();
   await loadLeads();
   renderTable();
+  appendActivityLog({
+    actor: "user", action: "lead_company_assigned",
+    label: `Lead "${assignCompanyLeadLabel}" company ${value ? "assigned" : "cleared"}`,
+    prevValue: assignCompanyLeadPrevCompany, newValue: value || null,
+  });
 }
 
 document.getElementById("assign-company-close-x-btn").addEventListener("click", () => assignCompanyDialog.close());

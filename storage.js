@@ -844,6 +844,48 @@ export async function saveResults(results) {
   await chrome.storage.local.set({ [RESULTS_KEY]: results });
 }
 
+// In-app audit trail of both user actions (topic edits, exports, scans
+// clicked, lead status/priority changes...) and automatic extension actions
+// (scan lifecycle, auto-prioritization, auto negative-topic filtering,
+// errors) - so any of this is visible without opening the background
+// service worker's DevTools console, which the user found unreliable
+// (it clears itself when the worker goes idle). Written directly here from
+// wherever each action actually happens, including inside background.js -
+// NOT inferred from chrome.runtime.sendMessage broadcasts, which are lost
+// entirely if no page happens to be listening (confirmed: background.js's
+// scan-lifecycle messages have no storage-backed fallback today).
+// Capped (oldest dropped first) since chrome.storage.local has no
+// unlimitedStorage permission here (5MB real quota) and nothing else in the
+// app currently guards against quota exhaustion.
+const ACTIVITY_LOG_KEY = "activityLog";
+const ACTIVITY_LOG_MAX_ENTRIES = 2000;
+
+export async function appendActivityLog({ actor, action, label, prevValue, newValue, error, errorMessage }) {
+  const data = await chrome.storage.local.get(ACTIVITY_LOG_KEY);
+  const log = data[ACTIVITY_LOG_KEY] || [];
+  log.push({
+    timestamp: Date.now(),
+    actor,
+    action,
+    label,
+    prevValue: prevValue === undefined ? null : prevValue,
+    newValue: newValue === undefined ? null : newValue,
+    error: Boolean(error),
+    errorMessage: errorMessage || null,
+  });
+  if (log.length > ACTIVITY_LOG_MAX_ENTRIES) log.splice(0, log.length - ACTIVITY_LOG_MAX_ENTRIES);
+  await chrome.storage.local.set({ [ACTIVITY_LOG_KEY]: log });
+}
+
+export async function getActivityLog() {
+  const data = await chrome.storage.local.get(ACTIVITY_LOG_KEY);
+  return data[ACTIVITY_LOG_KEY] || [];
+}
+
+export async function clearActivityLog() {
+  await chrome.storage.local.set({ [ACTIVITY_LOG_KEY]: [] });
+}
+
 // Exports configuration only (topics, filters, personas, etc.) - deliberately
 // NOT the lead history, so restoring settings from an older backup can never
 // roll back leads found/scored since then, and vice versa (see exportLeads).
@@ -1051,12 +1093,16 @@ export function parseRelativeTimestamp(text, referenceMs) {
 
 // Merges freshly scraped posts for one topic into the existing results map.
 // Keyed by post.key (the real post URL when LinkedIn exposes one, otherwise
-// a profile+snippet fallback - see content-script.js). Returns the updated
-// map. A post is "new" if its key wasn't already present before this merge —
-// callers should check that against the pre-merge map, since this function
-// mutates matchedTopics/lastSeenAt on existing entries.
+// a profile+snippet fallback - see content-script.js). Mutates
+// existingResults in place (matchedTopics/lastSeenAt on existing entries);
+// returns the count of brand-new leads auto-marked Irrelevant by a negative
+// topic on discovery, so a caller (background.js) can log one aggregate
+// activity-log entry for the whole scan rather than one per lead - calling
+// the (async, storage-backed) activity log once per matched post here would
+// risk a lost-update race between concurrent read-modify-write cycles.
 export function mergeTopicPosts(existingResults, topic, scrapedPosts, negativeTopics = []) {
   const now = Date.now();
+  let newlyIrrelevantCount = 0;
   for (const post of scrapedPosts) {
     const existing = existingResults[post.key];
     const matchedKeywords = post.matchedKeywords || [];
@@ -1107,11 +1153,12 @@ export function mergeTopicPosts(existingResults, topic, scrapedPosts, negativeTo
       if (negativeTopicMatch) {
         newLead.status = "Irrelevant";
         newLead.irrelevantReason = formatIrrelevantReason(negativeTopicMatch);
+        newlyIrrelevantCount++;
       }
       existingResults[post.key] = newLead;
     }
   }
-  return existingResults;
+  return newlyIrrelevantCount;
 }
 
 // Same merge/dedupe pattern as mergeTopicPosts, but for job listings scraped
@@ -1120,6 +1167,7 @@ export function mergeTopicPosts(existingResults, topic, scrapedPosts, negativeTo
 // type: "job" so both kinds show up together in one merged, ranked list.
 export function mergeJobPosts(existingResults, topic, scrapedJobs, negativeTopics = []) {
   const now = Date.now();
+  let newlyIrrelevantCount = 0;
   for (const job of scrapedJobs) {
     const existing = existingResults[job.key];
     const matchedKeywords = job.matchedKeywords || [];
@@ -1160,9 +1208,10 @@ export function mergeJobPosts(existingResults, topic, scrapedJobs, negativeTopic
       if (negativeTopicMatch) {
         newLead.status = "Irrelevant";
         newLead.irrelevantReason = formatIrrelevantReason(negativeTopicMatch);
+        newlyIrrelevantCount++;
       }
       existingResults[job.key] = newLead;
     }
   }
-  return existingResults;
+  return newlyIrrelevantCount;
 }

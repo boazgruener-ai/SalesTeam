@@ -28,6 +28,7 @@ import {
   getMentorPersona,
   getOutputLanguage,
   normalizeCompanyName,
+  appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
@@ -303,15 +304,11 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
   const allTopics = await getTopics();
   const topics = allTopics.filter((topic) => topic.enabled !== false);
   if (topics.length === 0) {
-    chrome.runtime
-      .sendMessage({
-        type: "SCAN_ERROR",
-        message:
-          allTopics.length === 0
-            ? "No topics configured."
-            : "All topics are disabled - enable at least one to scan.",
-      })
-      .catch(() => {});
+    const message = allTopics.length === 0
+      ? "No topics configured."
+      : "All topics are disabled - enable at least one to scan.";
+    chrome.runtime.sendMessage({ type: "SCAN_ERROR", message }).catch(() => {});
+    appendActivityLog({ actor: "extension", action: "scan_error", label: "Scan could not start", error: true, errorMessage: message });
     return;
   }
 
@@ -361,6 +358,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     tab = await chrome.tabs.create({ url: "about:blank", active: false });
 
     let completed = 0;
+    let autoIrrelevantCount = 0;
     for (let i = 0; i < topics.length; i++) {
       const topic = topics[i];
       const { conceptChunks, activityChunks } = topicChunkPlans[i];
@@ -388,7 +386,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
           for (const post of posts) {
             console.log(`  - ${post.author}: matchedKeywords=`, post.matchedKeywords, `snippet="${post.snippet.slice(0, 100)}"`);
           }
-          mergeTopicPosts(existingResults, topic, posts, negativeTopics);
+          autoIrrelevantCount += mergeTopicPosts(existingResults, topic, posts, negativeTopics);
 
           if (completed < totalSubQueries) {
             await keepAliveSleep(randomDelay());
@@ -448,7 +446,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         for (const post of intersected) {
           console.log(`  - ${post.author}: matchedKeywords=`, post.matchedKeywords, `snippet="${post.snippet.slice(0, 100)}"`);
         }
-        mergeTopicPosts(existingResults, topic, intersected, negativeTopics);
+        autoIrrelevantCount += mergeTopicPosts(existingResults, topic, intersected, negativeTopics);
       }
 
       await chrome.storage.local.remove(["currentScanTopicId", "currentScanTopicName", "currentScanDeepScroll"]);
@@ -492,7 +490,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
           for (const job of jobs) {
             console.log(`  - "${job.title}" @ ${job.company}: matchedKeywords=`, job.matchedKeywords);
           }
-          mergeJobPosts(existingResults, topic, jobs, negativeTopics);
+          autoIrrelevantCount += mergeJobPosts(existingResults, topic, jobs, negativeTopics);
 
           if (completed < totalSubQueries) {
             await keepAliveSleep(randomDelay());
@@ -514,8 +512,17 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     // storage round-trip), so the prioritization step below never wastes a
     // call scoring a lead that's about to become Irrelevant anyway.
     if (reapplyToExisting) {
-      applyNegativeTopicsToResultsMap(existingResults, negativeTopics);
-      await saveResults(existingResults);
+      const { blockedCount, restoredCount, anyChanged } = applyNegativeTopicsToResultsMap(existingResults, negativeTopics);
+      if (anyChanged) await saveResults(existingResults);
+      if (blockedCount > 0 || restoredCount > 0) {
+        appendActivityLog({
+          actor: "extension",
+          action: "negative_filters_reapplied",
+          label: `Re-applied Negative Topics to existing leads during scan: ${blockedCount} marked Irrelevant, ${restoredCount} restored to New`,
+          prevValue: null,
+          newValue: { blockedCount, restoredCount },
+        });
+      }
     }
 
     // Best-effort company extraction for Post leads (Job leads already get a
@@ -531,16 +538,22 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         try {
           const extracted = await extractCompaniesForLeads(toExtractCompany, { apiKey: apiKeyForExtraction });
           const extractedAt = Date.now();
+          let extractedCount = 0;
           for (const { key, company } of extracted) {
             if (existingResults[key] && !existingResults[key].company && company && company.trim()) {
               existingResults[key].company = company.trim();
               existingResults[key].companyExtractedAt = extractedAt;
+              extractedCount++;
             }
           }
           await saveResults(existingResults);
+          if (extractedCount > 0) {
+            appendActivityLog({ actor: "extension", action: "companies_extracted", label: `Auto-extracted company for ${extractedCount} lead${extractedCount === 1 ? "" : "s"}`, newValue: extractedCount });
+          }
         } catch (err) {
           // Never fails the scan - company extraction is an enhancement, same as prioritization below.
           console.error("[SalesTeam] Company extraction failed (non-fatal):", err);
+          appendActivityLog({ actor: "extension", action: "companies_extracted", label: "Automatic company extraction failed", error: true, errorMessage: err?.message || String(err) });
         }
       }
     }
@@ -592,18 +605,24 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
           };
           const priorities = await prioritizeLeads(toPrioritize, settings);
           const scoredAt = Date.now();
+          let scoredCount = 0;
           for (const { key, priority, reason } of priorities) {
             if (existingResults[key] && PRIORITY_LEVELS.includes(priority)) {
               existingResults[key].priority = priority;
               existingResults[key].priorityReason = reason || "";
               existingResults[key].priorityScoredAt = scoredAt;
+              scoredCount++;
             }
           }
           await saveResults(existingResults);
+          if (scoredCount > 0) {
+            appendActivityLog({ actor: "extension", action: "leads_prioritized", label: `Auto-prioritized ${scoredCount} lead${scoredCount === 1 ? "" : "s"} with the Sales Mentor`, newValue: scoredCount });
+          }
         } catch (err) {
           // Never fails the scan itself - the leads are already found and
           // saved either way, prioritization is an enhancement on top.
           console.error("[SalesTeam] Lead prioritization failed (non-fatal):", err);
+          appendActivityLog({ actor: "extension", action: "leads_prioritized", label: "Automatic prioritization failed", error: true, errorMessage: err?.message || String(err) });
         }
       }
     }
@@ -612,7 +631,17 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
       ...r,
       isNew: !preScanKeys.has(r.key),
     }));
+    const newCount = sorted.filter((r) => r.isNew).length;
     chrome.runtime.sendMessage({ type: "SCAN_COMPLETE", results: sorted }).catch(() => {});
+    appendActivityLog({ actor: "extension", action: "scan_completed", label: `Scan complete - ${sorted.length} total leads (${newCount} new)`, newValue: newCount });
+    if (autoIrrelevantCount > 0) {
+      appendActivityLog({
+        actor: "extension",
+        action: "negative_filters_auto_applied",
+        label: `Auto-marked ${autoIrrelevantCount} new lead${autoIrrelevantCount === 1 ? "" : "s"} Irrelevant on discovery (Negative Topics)`,
+        newValue: autoIrrelevantCount,
+      });
+    }
   } catch (err) {
     // Without this, any error here (a closed tab, a transient extension API
     // failure, Chrome terminating this service worker mid-run - a known
@@ -622,14 +651,10 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     // lost since results were only saved at the very end.
     console.error("[SalesTeam] Scan failed:", err);
     await saveResults(existingResults).catch(() => {});
-    chrome.runtime
-      .sendMessage({
-        type: "SCAN_ERROR",
-        message:
-          `Scan stopped early due to an error (${err?.message || err}). Leads found before the error ` +
-          "were saved - check Results, then try scanning again to pick up the rest.",
-      })
-      .catch(() => {});
+    const errorMessage = `Scan stopped early due to an error (${err?.message || err}). Leads found before the error ` +
+      "were saved - check Results, then try scanning again to pick up the rest.";
+    chrome.runtime.sendMessage({ type: "SCAN_ERROR", message: errorMessage }).catch(() => {});
+    appendActivityLog({ actor: "extension", action: "scan_error", label: "Scan stopped early due to an error", error: true, errorMessage: err?.message || String(err) });
   } finally {
     if (previouslyActiveTab) {
       await chrome.tabs.update(previouslyActiveTab.id, { active: true }).catch(() => {});
