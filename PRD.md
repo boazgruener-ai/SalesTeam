@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.26.2.
+**Status:** Living document, reflects the shipped product as of v0.27.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -42,6 +42,19 @@ hiring/AI-adoption signals, contacting people who match, and needing a lightweig
 approached without adopting a heavyweight CRM for a one-person prospecting workflow.
 
 ## 5. Architecture
+
+**Project layout (v0.27.0):** the repo root holds only living project documentation (this PRD,
+RELEASE_NOTES.md, README.md) and unrelated assets (pitch deck, screenshots) — everything else is organized
+into subfolders:
+- **`/code`** — the actual loadable extension (`manifest.json` + every `.js`/`.html`/`.css` file + `icons/`)
+  plus the Python doc-generation scripts. Chrome's unpacked-extension loading requires `manifest.json` and
+  everything it references to live together in one folder (no `../` escapes allowed), so this is the folder
+  Chrome's "Load unpacked" points at.
+- **`/backup`** — Settings/Leads export downloads (manual and automatic pre-scan) land here.
+- **`/exports`** — CSV export downloads land here.
+- **`/log`** — periodic Activity Log file exports land here (see 6.10).
+- **`/builds`** — every shipped release's zip is archived under its own `builds/vX.Y.Z/` folder, alongside a
+  copy of that exact version's `manifest.json`.
 
 Chrome/Edge Manifest V3 extension, no server of its own. Four pages share one `chrome.storage.local` dataset:
 
@@ -300,8 +313,9 @@ back Topic edits made since that backup:
   missing locally gets restored, so importing an older backup can never discard newer local activity.
 
 Both files download automatically before every scan, so a scan-time failure never loses accumulated data.
-"Clear Results" (side panel) is display-only — it clears that panel's own list, never chrome.storage.local; no
-action in the app deletes a saved lead except a person's own explicit per-lead status change.
+Downloads land in `/backup` (v0.27.0), not the project root — CSV exports land in `/exports`. "Clear Results"
+(side panel) is display-only — it clears that panel's own list, never chrome.storage.local; no action in the
+app deletes a saved lead except a person's own explicit per-lead status change.
 
 ### 6.9 Help
 
@@ -344,6 +358,11 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
 - Updates live via `chrome.storage.onChanged` (v0.26.1) — a scan can log many entries over its whole run, and
   this page doesn't require a manual reload to see them, the same reactive pattern the Dashboard/Advisors
   pages already use for their own storage reads.
+- **Periodic file export to `/log` (v0.27.0)** — since this app never runs anything in the background on its
+  own, this piggybacks on the existing manual Scan trigger (the same moment Settings/Leads backups already
+  fire) rather than a `chrome.alarms` schedule. Each *closed* day (not today, which is still being written to)
+  is exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the
+  next day — a predictable, permission-free approximation of a daily export, not a true cron.
 
 ## 7. Non-functional requirements
 
@@ -376,4 +395,4 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.26.2**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.27.0**.

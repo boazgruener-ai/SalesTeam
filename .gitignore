@@ -1,11 +1,13 @@
-# Scraped lead data and full settings/lead backups — contain real people's names,
-# job titles, employers, and LinkedIn profile URLs scraped from their public posts.
-# Never publish this; code and docs only.
-linkedin-lead-scanner-backup-*.json
-linkedin-leads-*.csv
-salesteam-auto-backup-*.json
-salesteam-backup-*.json
-salesteam-dashboard-*.csv
+# Scraped lead data, full settings/lead backups, and activity-log exports —
+# contain real people's names, job titles, employers, and LinkedIn profile
+# URLs scraped from their public posts. Never publish this; code and docs
+# only. Ignored by folder rather than filename pattern - a filename-pattern
+# approach silently stopped covering salesteam-auto-leads-backup-*/
+# salesteam-auto-settings-backup-* when the combined backup file was split
+# into two (v0.25.1), which a folder-level rule can't drift out of sync with.
+/backup/
+/exports/
+/log/
 
 # Unredacted screenshots that show real LinkedIn users' names/companies/emails
 # (the "-redacted"/"-cleaned" versions of these are the ones meant for public use)

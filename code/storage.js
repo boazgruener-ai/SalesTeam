@@ -867,6 +867,7 @@ export async function saveResults(results) {
 const ACTIVITY_LOG_PREFIX = "activityLog:";
 const LEGACY_ACTIVITY_LOG_KEY = "activityLog"; // pre-90-day-retention flat array (v0.26.0/0.26.1)
 const ACTIVITY_LOG_RETENTION_DAYS = 90;
+const ACTIVITY_LOG_EXPORTED_DAYS_KEY = "activityLogExportedDays";
 
 function activityLogDayKey(date) {
   const y = date.getFullYear();
@@ -898,6 +899,15 @@ export async function appendActivityLog({ actor, action, label, prevValue, newVa
   const all = await chrome.storage.local.get(null);
   const staleKeys = Object.keys(all).filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX) && k < cutoffKey);
   if (staleKeys.length > 0) await chrome.storage.local.remove(staleKeys);
+
+  // The exported-days tracking list (see getPendingActivityLogExportDays
+  // below) should never grow forever either - drop anything referring to a
+  // day that's already aged out of retention.
+  const exportedDays = all[ACTIVITY_LOG_EXPORTED_DAYS_KEY] || [];
+  const prunedExportedDays = exportedDays.filter((d) => `${ACTIVITY_LOG_PREFIX}${d}` >= cutoffKey);
+  if (prunedExportedDays.length !== exportedDays.length) {
+    await chrome.storage.local.set({ [ACTIVITY_LOG_EXPORTED_DAYS_KEY]: prunedExportedDays });
+  }
 }
 
 export async function getActivityLog() {
@@ -927,6 +937,30 @@ export async function getActivityLog() {
   const combined = [];
   for (const key of dayKeys) combined.push(...(all[key] || []));
   return combined;
+}
+
+// Backs the periodic file export to /log - piggybacks on an already-existing
+// manual trigger (the side panel's Scan button, same as the settings/leads
+// backups) rather than a chrome.alarms schedule, since this app deliberately
+// never runs anything in the background on its own. Only ever returns
+// "closed" days (not today, which is still being written to and would
+// produce a different file every time it's re-exported the same day) that
+// haven't already been exported, so a day's file is written exactly once.
+export async function getPendingActivityLogExportDays() {
+  const all = await chrome.storage.local.get(null);
+  const todayKey = activityLogDayKey(new Date());
+  const exported = new Set(all[ACTIVITY_LOG_EXPORTED_DAYS_KEY] || []);
+  return Object.keys(all)
+    .filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX) && k !== todayKey && !exported.has(k.slice(ACTIVITY_LOG_PREFIX.length)))
+    .sort()
+    .map((k) => ({ date: k.slice(ACTIVITY_LOG_PREFIX.length), entries: all[k] || [] }));
+}
+
+export async function markActivityLogDayExported(date) {
+  const data = await chrome.storage.local.get(ACTIVITY_LOG_EXPORTED_DAYS_KEY);
+  const exported = new Set(data[ACTIVITY_LOG_EXPORTED_DAYS_KEY] || []);
+  exported.add(date);
+  await chrome.storage.local.set({ [ACTIVITY_LOG_EXPORTED_DAYS_KEY]: [...exported] });
 }
 
 // Exports configuration only (topics, filters, personas, etc.) - deliberately

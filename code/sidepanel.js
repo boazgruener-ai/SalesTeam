@@ -31,6 +31,8 @@ import {
   importSettings,
   exportLeads,
   importLeads,
+  getPendingActivityLogExportDays,
+  markActivityLogDayExported,
   getNegativeTopics,
   saveNegativeTopics,
   reapplyBlocklist,
@@ -1207,24 +1209,46 @@ jobSearchTimeframeSelect.addEventListener("change", () => {
 // folder (a different folder path is a different extension ID to Chrome,
 // with its own empty storage), a corrupted profile, or an accidental
 // uninstall.
-function downloadJson(data, filenamePrefix) {
+// The "download" attribute accepts a relative path with folders, which
+// Chrome creates/reuses under whatever the browser's own download location
+// is - relies on that download location being this project's own folder
+// (confirmed), not an arbitrary path this code can't otherwise control.
+function downloadJsonAs(data, path) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${filenamePrefix}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.download = path;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
 }
 
+function downloadJson(data, folder, filenamePrefix) {
+  downloadJsonAs(data, `${folder}/${filenamePrefix}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+}
+
 async function downloadSettingsBackup(filenamePrefix, includeApiKey = false) {
-  await downloadJson(await exportSettings(includeApiKey), filenamePrefix);
+  await downloadJson(await exportSettings(includeApiKey), "backup", filenamePrefix);
 }
 
 async function downloadLeadsBackup(filenamePrefix) {
-  await downloadJson(await exportLeads(), filenamePrefix);
+  await downloadJson(await exportLeads(), "backup", filenamePrefix);
+}
+
+// Piggybacks on the manual Scan trigger (see scanBtn below) rather than a
+// background schedule - this app never runs anything on its own. Each
+// "closed" day (not today, which is still being written to) gets exported
+// exactly once, the first time a scan happens on or after the next day -
+// not a true daily cron, but a predictable, permission-free approximation
+// of one.
+async function exportPendingActivityLogDays() {
+  const pending = await getPendingActivityLogExportDays();
+  for (const { date, entries } of pending) {
+    if (entries.length > 0) downloadJsonAs({ date, entries }, `log/activityLog-${date}.json`);
+    await markActivityLogDayExported(date);
+  }
 }
 
 exportSettingsBtn.addEventListener("click", async () => {
@@ -1306,7 +1330,7 @@ exportCsvBtn.addEventListener("click", async () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `linkedin-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `exports/linkedin-leads-${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1336,6 +1360,9 @@ scanBtn.addEventListener("click", async () => {
     downloadLeadsBackup("salesteam-auto-leads-backup"),
   ]).catch((err) => {
     console.error("[SalesTeam] Pre-scan backup failed:", err);
+  });
+  await exportPendingActivityLogDays().catch((err) => {
+    console.error("[SalesTeam] Activity Log export failed:", err);
   });
   progressTextEl.textContent = "Starting scan…";
   chrome.runtime.sendMessage({ type: "SCAN_ALL", reapplyToExisting: reapplyExistingCheckbox.checked });

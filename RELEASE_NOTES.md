@@ -1,3 +1,18 @@
+# SalesTeam — v0.27.0
+
+## Changed: project folder reorganized into /code, /backup, /exports, /log, /builds
+
+- Requested for a cleaner project folder - everything used to sit flat at the SalesTeam root: extension source, every backup/export download, and every historical release zip all mixed together.
+- **`/code`** — the actual loadable extension (manifest.json, every .js/.html/.css file, icons/) plus the Python doc-generation scripts (previously living outside the project entirely, in a session scratchpad). Chrome's unpacked-extension loading requires manifest.json and everything it references to stay in one folder together (no `../` escapes allowed), so this is the one folder Chrome's "Load unpacked" now needs to point at - **this is the one manual step needed after updating**: remove the old unpacked extension and re-load it pointing at `SalesTeam/code`.
+- **`/backup`** — Export Settings/Leads (manual and automatic pre-scan) now download here instead of the project root.
+- **`/exports`** — CSV exports (side panel and Dashboard) now download here instead of the project root.
+- **`/log`** — new: a **periodic Activity Log export**. Since this app deliberately never runs anything in the background on its own, this piggybacks on the existing manual Scan trigger (the same moment settings/leads backups already fire): each *closed* day (not today, which is still being written to) gets exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the next day. Not a true daily cron, but a predictable, permission-free approximation of one - no new manifest permission needed.
+- **`/builds`** — every release's zip now gets archived under its own `builds/vX.Y.Z/` folder (including a copy of that exact version's manifest.json, extracted from its zip), replacing the previous practice of deleting the old zip when a new one shipped. All prior releases still in the repo were backfilled into this structure.
+- Along the way, found and fixed a real gap: `.gitignore`'s old filename-pattern rules for backups (`salesteam-auto-backup-*.json` etc.) had silently stopped covering the newer split filenames (`salesteam-auto-leads-backup-*`/`salesteam-auto-settings-backup-*`, introduced in v0.25.1) - replaced with folder-level ignores (`/backup/`, `/exports/`, `/log/`) that can't drift out of sync with a future naming change the same way.
+- Verified via harness: the reorganized extension loads and renders correctly from its new `/code` location with no broken internal references; the new pending-export-day tracking correctly excludes today, exports each closed day exactly once, and never re-exports a day already marked done.
+
+---
+
 # SalesTeam — v0.26.2
 
 ## Changed: Activity Log can no longer be manually cleared - and every button in the app now has a hover tooltip
