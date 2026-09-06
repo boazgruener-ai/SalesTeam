@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.28.2.
+**Status:** Living document, reflects the shipped product as of v0.28.3.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -332,6 +332,14 @@ panel shows a banner whenever it finds zero Topics/Job Topics and zero leads, po
 Settings/Import Leads instead of leaving an unexplained blank slate — worded to also make sense for a
 genuinely new install.
 
+**Missing-API-key warning (v0.28.3):** the API key is deliberately excluded from every automatic backup and
+from a manual export unless the "include API key" box is checked (a plain-text secret shouldn't be included by
+default) — so restoring Topics/leads after an empty-install recovery (above) brings the data back but not the
+key, silently breaking company extraction, prioritization, Draft Message, and both Advisors chats until each
+is clicked and fails. A second, separate side-panel banner now shows whenever there's real Topics/leads data
+but no API key configured, naming the AI features that need it and pointing straight at Settings — but only
+once there's real data, so it doesn't duplicate the empty-install banner above on a genuinely fresh install.
+
 ### 6.9 Help
 
 A dedicated Help page (its own tab, opened from a "Help ↗" button next to Dashboard/Advisors/Settings): a
@@ -446,4 +454,4 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.2**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.3**.

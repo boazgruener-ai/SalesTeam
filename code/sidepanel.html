@@ -8,13 +8,21 @@
 <body>
   <h1>SalesTeam <span id="version-text"></span></h1>
 
-  <div id="empty-state-banner" hidden>
+  <div id="empty-state-banner" class="warning-banner" hidden>
     <strong>No Topics and no leads found.</strong> If you just reinstalled or moved the extension and expected
     your data to be here, it isn't lost - Chrome ties storage to the extension's install location, so a moved
     or reinstalled extension starts with a blank slate even though your old data still exists in a backup
     file. Restore it below with <strong>Import Settings</strong> (Topics, filters) and
     <strong>Import Leads</strong> (your lead history) - look in <code>/backup</code> for your most recent
     files. If this really is a fresh start, ignore this and add a Topic below.
+  </div>
+
+  <div id="missing-api-key-banner" class="warning-banner" hidden>
+    <strong>No Anthropic API key configured.</strong> Company extraction, lead prioritization, Draft Message,
+    and the Sales Mentor/Customer Voice chats all need one to work - a Settings restore doesn't bring it back
+    on its own, since it's deliberately left out of automatic backups and excluded from a manual export unless
+    you tick the "include API key" box (a plain-text secret shouldn't be included by default). Add it on the
+    <strong>Settings</strong> page.
   </div>
 
   <div id="top-nav-buttons">

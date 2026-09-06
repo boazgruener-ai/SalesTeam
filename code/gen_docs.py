@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.28.2.")
+p.add_run("Living document, reflects the shipped product as of v0.28.3.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -456,6 +456,18 @@ p.add_run(
     "Import Settings/Import Leads instead of leaving an unexplained blank slate - worded to also make sense "
     "for a genuinely new install."
 )
+p = doc.add_paragraph()
+r = p.add_run("Missing-API-key warning (v0.28.3): "); r.bold = True
+p.add_run(
+    "the API key is deliberately excluded from every automatic backup and from a manual export unless the "
+    "“include API key” box is checked (a plain-text secret shouldn't be included by default) - so "
+    "restoring Topics/leads after an empty-install recovery (above) brings the data back but not the key, "
+    "silently breaking company extraction, prioritization, Draft Message, and both Advisors chats until "
+    "each is clicked and fails. A second, separate side-panel banner now shows whenever there's real "
+    "Topics/leads data but no API key configured, naming the AI features that need it and pointing "
+    "straight at Settings - but only once there's real data, so it doesn't duplicate the empty-install "
+    "banner above on a genuinely fresh install."
+)
 
 doc.add_heading("6.9 Help", level=3)
 doc.add_paragraph(
@@ -587,7 +599,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.2."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.3."
 )
 
 for section in doc.sections:

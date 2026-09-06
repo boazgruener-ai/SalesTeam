@@ -1423,8 +1423,23 @@ async function init() {
   // next best thing: point straight at the fix instead of leaving it a
   // silent, alarming blank slate.
   const noTopicsConfigured = topics.length === 0 && jobTopics.length === 0;
-  const noLeadsFound = Object.keys(await getResults()).length === 0;
+  const results = await getResults();
+  const noLeadsFound = Object.keys(results).length === 0;
   document.getElementById("empty-state-banner").hidden = !(noTopicsConfigured && noLeadsFound);
+
+  // A missing API key silently breaks company extraction, prioritization,
+  // Draft Message, and both Advisors chats - each surfaces its own "Add an
+  // Anthropic API key" message when actually clicked, but nothing said so
+  // up front. Worth flagging distinctly from the banner above: this is the
+  // exact gap that bit the empty-install incident (v0.27.1) a second time -
+  // a Settings restore brought Topics/leads back but not the key, since it's
+  // deliberately excluded from automatic backups and opt-in on a manual
+  // export (see downloadSettingsBackup/exportSettingsBtn below). Only shown
+  // once there's real data to act on - a genuinely fresh install already
+  // gets the banner above, which covers "add a key" as part of setup anyway.
+  const hasApiKey = Boolean((await getAnthropicApiKey()) || "");
+  const hasSomeData = !noTopicsConfigured || !noLeadsFound;
+  document.getElementById("missing-api-key-banner").hidden = hasApiKey || !hasSomeData;
 }
 
 init();

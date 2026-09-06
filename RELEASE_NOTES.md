@@ -1,3 +1,13 @@
+# SalesTeam — v0.28.3
+
+## New: warns when the extension has data but no Anthropic API key configured
+
+- Root-caused a real incident: after v0.27.0's folder move wiped storage (see v0.27.1), the Settings backup the user restored brought Topics and leads back but not the Anthropic API key - it's deliberately excluded from every automatic backup, and opt-in (behind a confirmation) on a manual export, so a plain-text secret is never included by default. The key stayed empty from that point on, silently breaking company extraction, prioritization, Draft Message, and both Advisors chats - each only said so when actually clicked ("Add an Anthropic API key on the Settings page first"), with nothing surfacing the gap up front. This is the same category of problem the v0.27.1 empty-state banner addressed, just for a different field.
+- Added a second, separate side-panel banner: shown whenever there are real Topics/leads but no API key configured, naming exactly which features need it and pointing at Settings. Deliberately only shown once there's real data, so it doesn't duplicate the existing empty-install banner on a genuinely fresh install (that one already covers "add a key" as part of first-time setup).
+- Verified via harness across three scenarios: data + no key (new banner only), data + key (neither banner), and a fresh install with nothing at all (only the original empty-state banner, not both).
+
+---
+
 # SalesTeam — v0.28.2
 
 ## Fixed: Target Account matches now also apply via Prioritize Unscored/Re-score All Priorities

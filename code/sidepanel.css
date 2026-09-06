@@ -11,7 +11,7 @@ h1 {
   margin: 0 0 12px;
 }
 
-#empty-state-banner {
+.warning-banner {
   background: #fff8e1;
   border: 1px solid #e6b800;
   border-radius: 6px;
@@ -22,7 +22,7 @@ h1 {
   color: #5c4a00;
 }
 
-#empty-state-banner code {
+.warning-banner code {
   background: #f0e6c0;
   padding: 1px 4px;
   border-radius: 3px;
