@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.4.")
+p.add_run("Living document, reflects the shipped product as of v0.29.5.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -288,7 +288,7 @@ p.add_run(
 p = doc.add_paragraph()
 r = p.add_run("Extract Companies from Profiles (v0.29.1, opt-in, Dashboard-only): "); r.bold = True
 p.add_run(
-    "the AI extraction above can only find a company that's actually present in the scraped headline text - and a LinkedIn search-results feed only ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page often shows a structured current employer that the person's headline never mentions at all. Fixing that requires visiting the person's own profile page, a materially bigger LinkedIn scraping footprint than reading a search-results feed - so this is a separate, explicit, manual Dashboard button, never part of the automatic per-scan pipeline. Filters to Post leads still missing a company with a profileUrl; confirms first, naming the real scope; visits one profile at a time in a background tab, paced with a randomized 4-9s delay between visits; reuses the same never-overwrite write path (applyExtractedCompanies) as headline extraction. A new content script (profile-content-script.js) only runs during this explicit action, gated on a profileExtractionActive flag, so ordinary profile browsing is never scraped - its selectors could not be verified against a live LinkedIn profile before shipping and may need a live-tuning pass."
+    "the AI extraction above can only find a company that's actually present in the scraped headline text - and a LinkedIn search-results feed only ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page often shows a structured current employer that the person's headline never mentions at all. Fixing that requires visiting the person's own profile page, a materially bigger LinkedIn scraping footprint than reading a search-results feed - so this is a separate, explicit, manual Dashboard button, never part of the automatic per-scan pipeline. Filters to Post leads still missing a company with a profileUrl; confirms first, naming the real scope; visits one profile at a time in a background tab, paced with a randomized 4-9s delay between visits; reuses the same never-overwrite write path (applyExtractedCompanies) as headline extraction. A new content script (profile-content-script.js) only runs during this explicit action, gated on a profileExtractionActive flag, so ordinary profile browsing is never scraped. Fixed in v0.29.5 after a real 20-profile run returned 0 companies: LinkedIn's current profile page hydrates its Experience section in after the page's load event, so the extractor now polls for up to ~6s for it to appear; also, the company-page link wraps both the job title and company name as one text block, so it now reads the specific line holding the company name and strips the trailing employment-type suffix. The Experience-section lookup itself was also hardened to anchor on the section's own literal 'Experience' heading text rather than an id/class guess. Extended in v0.29.5 to also extract the person's stated location from the same visit (still unverified against a live sample), feeding the new Location Filter (6.13)."
 )
 
 doc.add_heading("6.4 Automatic lead prioritization", level=3)
@@ -538,7 +538,7 @@ add_bullets(doc, [
     "cron.",
 ])
 
-doc.add_heading("6.11 Target Accounts (v0.28.0, extended through v0.29.4)", level=3)
+doc.add_heading("6.11 Target Accounts (v0.28.0, extended through v0.29.5)", level=3)
 doc.add_paragraph(
     "A curated, externally-researched list of target companies - one row per company, scored 0-100 for "
     "AI-consulting sales fit (AI_Priority_Score), with a categorical label (Very High, Very High - "
@@ -598,7 +598,8 @@ add_bullets(doc, [
     "code (PRIORITIZATION_RULE_CATALOG in storage.js), never stored or edited - only its value and "
     "enabled state are user-adjustable. Disabling a rule leaves those leads to the Sales Mentor's own "
     "judgment as a plain signal. The Mentor's own judgment is always the base decision for every lead "
-    "and can't itself be disabled, only constrained or overridden by an enabled rule that applies.",
+    "and can't itself be disabled, only constrained or overridden by an enabled rule that applies. "
+    "Extended in v0.29.5 with two further transparency rows, Competitor Blocklist and Location Filter - see 6.13.",
 ])
 
 doc.add_heading("6.12 Target Accounts Explorer (v0.29.0, extended v0.29.3)", level=3)
@@ -638,6 +639,36 @@ add_bullets(doc, [
     "same .xlsx file in Settings is the recovery path if storage is ever wiped.",
 ])
 
+doc.add_heading("6.13 Location Filter (v0.29.5)", level=3)
+doc.add_paragraph(
+    "Many scanned leads come from outside Switzerland, the actual sales territory - previously the only "
+    "lever was Topic-level location keywords at LinkedIn-query time, described by the user as best effort. "
+    "Once a lead's own stated location is known (a Job lead's own scraped location, or a Post lead's "
+    "location from an opt-in profile visit - 6.3), that data can drive a real, reviewable auto-filter, the "
+    "same mechanism Negative Topics (6.2) already uses, never a silent delete."
+)
+add_bullets(doc, [
+    "Configuration lives in Settings (6.7), one of three modes: Off (default), By continent (six "
+    "checkboxes: North America, Latin America, Europe including UK and Switzerland, Africa, Middle East, "
+    "South East Asia), or By country (a free-text list, one per line). The six continents mirror standard "
+    "Americas/EMEA/APAC sales territories, split one level further; since they don't geographically cover "
+    "the whole world on their own, the remaining regions fold into South East Asia rather than adding a "
+    "seventh Other bucket.",
+    "classifyLocation() in storage.js checks a fixed country-to-continent table (~150 countries plus "
+    "common aliases) first, then a small Swiss-city fallback list for LinkedIn's Greater X Area phrasing. "
+    "Never guesses - returns nothing rather than a wrong classification.",
+    "A lead is only ever marked Irrelevant for a confident, configured mismatch - one with no location "
+    "data yet, or text that can't be confidently classified, is never touched.",
+    "Composes with Negative Topics (6.2) via a parallel locationFilterReason field - each filter's own "
+    "restore-to-New logic checks that the other reason is also absent before restoring.",
+    "Applied automatically after every Extract Companies from Profiles run, and on demand via a "
+    "standalone Apply Location Filter button (Dashboard and Settings).",
+    "Visible and toggleable from the Prioritization Rules table (6.11) alongside Competitor Blocklist, "
+    "for the same transparency reason - both exclude a lead to Irrelevant outright rather than setting a "
+    "priority level. The built-in Competitor Blocklist also gained PwC, KPMG, Accenture, McKinsey, and "
+    "Bain for fresh installs.",
+])
+
 doc.add_heading("7. Non-functional requirements", level=2)
 add_bullets(doc, [
     "Manual-trigger only — no alarms, no background scanning, ever.",
@@ -674,7 +705,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.4."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.5."
 )
 
 for section in doc.sections:

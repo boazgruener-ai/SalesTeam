@@ -1,3 +1,24 @@
+# SalesTeam — v0.29.5
+
+## New: Location Filter (by continent or country) + two more transparency rows on Prioritization Rules
+
+- Reported, with a real example: a PwC Switzerland lead scored Priority 3 instead of `Irrelevant` - a competitor, not a buyer. Also requested: "add a rule that puts a lead as Irrelevant because its location is outside the target geography (Switzerland)," configurable by continent or by country from Settings, which would also make a Topic's own location keywords unnecessary going forward.
+- New **Location Filter** on Settings: Off / By continent (North America, Latin America, Europe including UK and Switzerland, Africa, Middle East, South East Asia) / By country (free-text list). A lead whose classified location doesn't match gets marked Irrelevant automatically - reviewable and reversible, exactly like Negative Topics, never a silent delete. A lead with no location yet, or text that can't be confidently classified, is never touched.
+- The six continents mirror standard Americas/EMEA/APAC sales territories, split one level further (per the user's own stated rationale); since they don't geographically cover the whole world on their own, the remaining regions (South/East/Central Asia, Oceania) fold into "South East Asia" rather than adding a seventh "Other" bucket.
+- "Extract Companies from Profiles" (v0.29.1) now also captures a person's stated location from the same profile visit, and automatically re-checks the Location Filter once the run finishes. A new standalone **"Apply Location Filter"** button (Dashboard and Settings) re-checks on demand, e.g. after a Settings change.
+- The Prioritization Rules table (v0.29.4) now also lists **Competitor Blocklist** and **Location Filter** as two further rows, reflecting and toggling their real enabled state, for the same transparency reason as the four rules already there - both exclude a lead to Irrelevant outright rather than setting a priority level. The built-in Competitor Blocklist itself also gained PwC, KPMG, Accenture, McKinsey, and Bain for fresh installs (an existing, already-saved list needed the same firms added by hand).
+- Verified via harness: location classification against real strings seen this session (Zurich/Switzerland, Lahore/Pakistan, "Greater Zurich Area," USA, UAE, unparseable text), the filter's continent/country/off modes and no-location/unclassifiable-never-touched guarantee, composition with Negative Topics in both directions (neither auto-filter wrongly restores a lead the other still wants hidden), the extended profile scrape writing both company and location independently, and the Settings UI end-to-end (mode toggle, continent/country persistence, and the Prioritization Rules table's two new rows staying in sync with both the dedicated form and their own row checkbox).
+
+## Fixed: "Extract Companies from Profiles" returning 0 companies on a real run
+
+- Reported with a real example: a live 20-profile run found 0 companies, including a profile independently confirmed to show one clearly ("The Bank of Punjab"). Diagnosed from a real DOM sample the user provided.
+- **Root cause 1**: LinkedIn's current profile page is a heavily client-rendered app with no static markup - its Experience section hydrates in after the page's own load event, which is when the extraction script previously ran, once, with no retry. It now polls for up to ~6 seconds for the section to actually appear before giving up.
+- **Root cause 2**: the company-page link wraps both the job title and the company name as one block of text, so reading the whole link's text returned them run together (e.g. "Data AnalystThe Bank of Punjab · Full-time"). It now reads the specific line that holds the company name and strips the trailing employment-type suffix.
+- Also hardened the Experience-section lookup itself to anchor on the section's own literal "Experience" heading text, rather than guessing at an id/class - a more durable marker against this app's generated ids.
+- Verified via harness against the real DOM sample provided (correct company extracted, not concatenated with the title; a deliberately-planted "Switzerland" mention inside the Experience section still correctly excluded from location) and a simulated 1.5s hydration delay (confirmed the extractor waits for and finds the late-arriving content instead of giving up instantly).
+
+---
+
 # SalesTeam — v0.29.4
 
 ## New: configurable Prioritization Rules table on Settings

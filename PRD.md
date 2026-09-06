@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.4.
+**Status:** Living document, reflects the shipped product as of v0.29.5.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -205,6 +205,22 @@ manual Dashboard button**, never part of the automatic per-scan pipeline:
   in the page's top card) — same durable-marker philosophy as `content-script.js` (hashed class names
   aren't stable hooks), though **this file's selectors could not be verified against a live, logged-in
   LinkedIn profile before shipping** and may need a live-tuning pass if they come back empty/wrong.
+  **Fixed in v0.29.5** after a real 20-profile run returned 0 companies: a real DOM sample (a confirmed
+  match, "The Bank of Punjab") showed two actual causes. First, LinkedIn's current profile page is a
+  heavily client-rendered Ember/Voyager app with no static markup — its Experience section hydrates in
+  *after* the page's load event, which is when `document_idle` fires; the extractor now polls (12 × 500ms,
+  ~6s) for either field to actually appear before giving up, instead of taking one snapshot too early.
+  Second, the company-page link wraps *both* the job title and the company name as one text node
+  (`<p>Data Analyst</p><p>The Bank of Punjab · Full-time</p>` inside one `<a>`), so reading the whole
+  anchor's `textContent` returned them concatenated; it now reads the entry's second `<p>` specifically and
+  strips the trailing "· Full-time"/"· Part-time" employment-type suffix. The Experience-section lookup
+  itself was also hardened to anchor on the section's own literal "Experience" heading text rather than an
+  id/class guess — a more durable marker against this app's generated ids (e.g.
+  "...ExperienceTopLevelSection", not a plain `id="experience"` on this profile). **Extended in v0.29.5** to
+  also extract the person's stated location from the same page visit (a small, Switzerland-biased
+  hint-word list, restricted to text before the Experience section — this half is still unverified against
+  a live sample), feeding the new Location Filter (6.13) — same never-overwrite write path, extended to
+  accept `location` alongside `company`.
 
 ### 6.4 Automatic lead prioritization
 
@@ -420,7 +436,7 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   is exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the
   next day — a predictable, permission-free approximation of a daily export, not a true cron.
 
-### 6.11 Target Accounts (v0.28.0, extended through v0.29.4)
+### 6.11 Target Accounts (v0.28.0, extended through v0.29.5)
 
 A curated, externally-researched list of target companies — one row per company, scored 0-100 for AI-
 consulting sales fit (`AI_Priority_Score`), with a categorical label (`Very High`, `Very High - Provisional`,
@@ -494,7 +510,8 @@ something a model chose (or didn't choose) to mention:
   what the rule actually means. Disabling a rule leaves those leads to the Sales Mentor's own judgment as a
   plain signal, exactly as a non-qualifying match already works; the Mentor's own judgment is always the
   base decision for every lead and can't itself be disabled, only constrained or overridden by an enabled
-  rule that applies.
+  rule that applies. Extended in v0.29.5 with two further transparency rows, Competitor Blocklist and
+  Location Filter — see 6.13.
 
 ### 6.12 Target Accounts Explorer (v0.29.0, extended v0.29.3)
 
@@ -549,6 +566,54 @@ company via `Company_ID`. This page browses all of it.
   scenario in 6.8), the recovery path is the same one manual action: re-pick the same `.xlsx` file in
   Settings again — it's the user's own external file, not something only a backup file could restore.
 
+### 6.13 Location Filter (v0.29.5)
+
+Many scanned leads come from outside Switzerland, the actual sales territory — previously the only lever was
+putting location keywords into a Topic's own "AND with" group at LinkedIn-query time, which the user
+themselves described as "best effort." Once a lead's own stated location is known (a Job lead's own scraped
+location, or a Post lead's location from an opt-in profile visit — see 6.3's "Extract Companies from
+Profiles," extended in this version to also capture location from the same page visit), that data can drive
+a real, reviewable auto-filter — the same reviewable/reversible mechanism Negative Topics (6.6) already uses,
+never a silent delete.
+
+- **Configuration lives in Settings (6.7)**, one of three modes: **Off** (default — untouched), **By
+  continent** (six checkboxes: North America, Latin America, Europe — including UK and Switzerland, Africa,
+  Middle East, South East Asia), or **By country** (a free-text list, one country per line, matching this
+  project's established list-editing convention for user-typed lists). The six continents deliberately mirror
+  standard Americas/EMEA/APAC sales-territory conventions, broken down one level further (North America +
+  Latin America split out of Americas; Africa + Middle East split out of EMEA) — reported directly by the
+  user as the intentional rationale. They don't geographically partition the globe on their own (South,
+  East, and Central Asia and Oceania have no dedicated bucket); rather than add a seventh "Other" catch-all,
+  those are folded into "South East Asia" so the six checkboxes still cover every classified country.
+- **Classification (`classifyLocation` in `storage.js`)**: a fixed country→continent table (~150 countries
+  plus common aliases like "USA"/"UK") checked first, then a small Swiss-city fallback list (Zurich, Geneva,
+  Basel, Bern, Lausanne, Lucerne, Winterthur, St. Gallen, Lugano, Zug) for LinkedIn's "Greater X Area" phrasing
+  that omits a country name entirely. Never guesses — returns nothing rather than a wrong classification.
+- **A lead is only ever marked `Irrelevant` for a confident, configured mismatch** — one with no location data
+  yet, or text that can't be confidently classified, is never touched by this filter, exactly like an empty
+  Negative Topic keyword list never matches anything either.
+- **Composes with Negative Topics (6.6) on the same lead** via a parallel `locationFilterReason` field
+  alongside the existing `irrelevantReason` — each filter's own restore-to-`New` logic checks that the
+  *other* reason is also absent before restoring, so clearing one filter's match never wrongly un-blocks a
+  lead the other filter still wants hidden.
+- **Applied automatically** after every "Extract Companies from Profiles" run (fresh location data just
+  arrived) and **on demand** via a standalone **"Apply Location Filter"** button on both the Dashboard and
+  Settings (mirrors "Apply Negative Filters," 6.6) — for re-running after a Settings change without
+  re-visiting profiles.
+- **Visible and toggleable from the Prioritization Rules table (6.11)** — reported directly, alongside a real
+  example (a PwC Switzerland lead scoring Priority 3 instead of `Irrelevant`, since PwC wasn't yet in the
+  user's own saved Competitor Blocklist): for transparency, the same table also lists **Competitor Blocklist**
+  (reflecting/toggling the real `builtin-competitors` Negative Topic's enabled state) and **Location Filter**
+  (reflecting/toggling `mode !== "off"`) as two additional rows, even though neither sets a P-level the way
+  the four rules above do — both instead exclude a lead to `Irrelevant` outright, overriding the Sales
+  Mentor the same way a decisive rule does. `DEFAULT_NEGATIVE_TOPICS`' Competitor Blocklist was also extended
+  (PwC, KPMG, Accenture, McKinsey, Bain added) for fresh installs — an existing, already-saved list isn't
+  retroactively changed by a code default, so the user's own list needed the same firms added by hand once.
+- Same "unverified against a live, logged-in LinkedIn profile" caveat as the rest of profile-content-script.js
+  (6.3) — the location-detection heuristic (a short, Switzerland-biased hint-word list, restricted to text
+  appearing before the Experience section so an unrelated country mention inside someone's work history isn't
+  mistaken for their actual location) is a first attempt, pending real-world confirmation.
+
 ## 7. Non-functional requirements
 
 - **Manual-trigger only** — no `alarms`, no background scanning, ever.
@@ -580,4 +645,4 @@ company via `Company_ID`. This page browses all of it.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.4**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.5**.

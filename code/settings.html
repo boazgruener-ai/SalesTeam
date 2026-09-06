@@ -59,6 +59,39 @@
       <label for="target-account-threshold-input">Target Account confidence threshold</label>
       <input type="number" id="target-account-threshold-input" min="0" max="100" title="Companies scored at or above this (and labeled Very High/High, non-provisional) 'qualify' - see the Prioritization Rules below for exactly what that triggers" />
 
+      <h3>Location Filter</h3>
+      <p class="field-hint">
+        Restrict leads to your actual sales territory, using each lead's own location (filled in from a
+        Job listing's own location, or from an opt-in profile visit for Posts - see the Dashboard's "Extract
+        Companies from Profiles"). A lead whose location is confidently classified outside what you choose
+        below gets marked Irrelevant automatically - reviewable and reversible, exactly like a Negative
+        Topic below, never a silent delete. A lead with no location data yet, or text that can't be
+        confidently classified, is never touched. This makes a Topic's own location keywords unnecessary
+        going forward (existing topics are untouched either way).
+      </p>
+      <label for="location-filter-mode-select">Filter mode</label>
+      <select id="location-filter-mode-select">
+        <option value="off">Off</option>
+        <option value="continent">By continent</option>
+        <option value="country">By country</option>
+      </select>
+      <div id="location-filter-continents-wrap">
+        <label><input type="checkbox" class="location-continent-checkbox" value="northAmerica" /> North America</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="latinAmerica" /> Latin America</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="europe" /> Europe (including UK and Switzerland)</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="africa" /> Africa</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="middleEast" /> Middle East</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="southEastAsia" /> South East Asia</label>
+      </div>
+      <div id="location-filter-countries-wrap">
+        <label for="location-filter-countries-input">Countries (one per line)</label>
+        <textarea id="location-filter-countries-input" placeholder="Switzerland&#10;Germany&#10;Austria"></textarea>
+      </div>
+      <div class="settings-buttons-row">
+        <button id="apply-location-filter-btn" type="button" title="Re-check every existing lead against the current location filter, right now, without a new scan">Apply Location Filter</button>
+      </div>
+      <p id="apply-location-filter-status" class="field-hint"></p>
+
       <h3>Prioritization Rules</h3>
       <p class="field-hint">
         These layer on top of the Sales Mentor's own judgment for a lead whose company qualifies as a Target

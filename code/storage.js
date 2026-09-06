@@ -412,7 +412,8 @@ const DEFAULT_NEGATIVE_TOPICS = [
     // good leads. Keep this to firms that actually compete for the same
     // consulting/services work.
     keywords: [
-      "BCG Platinion", "Deloitte", "EY", "Zühlke", "Eraneos", "valantic", "Capco", "Artefact", "Techyon",
+      "BCG Platinion", "Deloitte", "EY", "PwC", "KPMG", "Accenture", "McKinsey", "Bain", "Zühlke", "Eraneos",
+      "valantic", "Capco", "Artefact", "Techyon",
     ],
     andKeywords: [],
     enabled: true,
@@ -569,12 +570,24 @@ export function applyNegativeTopicsToResultsMap(resultsMap, negativeTopics) {
       }
     } else if (lead.status === "Irrelevant") {
       const detail = matchingNegativeTopicDetail(lead, negativeTopics);
-      if (!detail) {
+      // A lead can independently be Irrelevant for a location mismatch too
+      // (locationFilterReason, applyLocationFilterToResultsMap below) - only
+      // restore to New once NEITHER reason still applies, so clearing one
+      // can never silently un-hide a lead the other filter still wants
+      // hidden.
+      if (!detail && !lead.locationFilterReason) {
         lead.status = "New";
         delete lead.irrelevantReason;
         lead.statusUpdatedAt = now;
         restoredCount++;
         anyChanged = true;
+      } else if (!detail) {
+        // Still Irrelevant via the location filter alone - just drop the
+        // now-stale negative-topic reason so nothing dangling remains.
+        if (lead.irrelevantReason) {
+          delete lead.irrelevantReason;
+          anyChanged = true;
+        }
       } else {
         // Still Irrelevant, but refresh the reason in case a DIFFERENT
         // keyword/topic is what's matching now - e.g. the one that first
@@ -603,6 +616,175 @@ export function applyNegativeTopicsToResultsMap(resultsMap, negativeTopics) {
 export async function reapplyBlocklist() {
   const [results, negativeTopics] = await Promise.all([getResults(), getNegativeTopics()]);
   const { blockedCount, restoredCount, anyChanged } = applyNegativeTopicsToResultsMap(results, negativeTopics);
+  if (anyChanged) await saveResults(results);
+  return { blockedCount, restoredCount };
+}
+
+// ---------------------------------------------------------------------
+// Location Filter (6.14) - reviewable/reversible auto-filter by continent
+// or country, using a lead's own location (Job leads: from the scrape;
+// Post leads: from an opt-in profile visit, see applyExtractedCompanies'
+// location parameter and profile-content-script.js). Deliberately parallel
+// to Negative Topics above, not merged into it - a different input (a fixed
+// geography choice, not free-text keywords) and a different confidence
+// model (silence is never treated as a mismatch, whereas an empty Negative
+// Topic keyword list simply never matches either, so the two already agree
+// on "no data/no configured rule -> untouched").
+// ---------------------------------------------------------------------
+
+// Continent groupings shown in Settings (6.7) - modeled on the standard
+// Americas/EMEA/APAC sales-territory split, with each of those three broken
+// down one level further (Americas -> North America + Latin America; EMEA ->
+// Europe + Africa + Middle East; APAC stays whole as "South East Asia").
+// Deliberately not exhaustive of every country/territory on Earth - South
+// Asia, East Asia, Central Asia, and Oceania have no separate bucket of
+// their own and are folded into "South East Asia" (i.e. APAC, confirmed)
+// rather than adding a 7th "Other" bucket, so these 6 checkboxes fully
+// partition the globe. A location that still matches none of them is simply
+// left unclassified (classifyLocation returns null) rather than guessed at.
+const CONTINENT_COUNTRIES = {
+  northAmerica: ["United States", "Canada"],
+  latinAmerica: ["Mexico", "Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama", "Cuba", "Dominican Republic", "Haiti", "Jamaica", "Trinidad and Tobago", "Bahamas", "Barbados", "Colombia", "Venezuela", "Ecuador", "Peru", "Brazil", "Bolivia", "Paraguay", "Chile", "Argentina", "Uruguay", "Guyana", "Suriname"],
+  europe: ["United Kingdom", "Switzerland", "Germany", "France", "Italy", "Spain", "Portugal", "Netherlands", "Belgium", "Luxembourg", "Ireland", "Austria", "Sweden", "Norway", "Denmark", "Finland", "Iceland", "Poland", "Czech Republic", "Slovakia", "Hungary", "Romania", "Bulgaria", "Greece", "Croatia", "Slovenia", "Serbia", "Bosnia and Herzegovina", "Montenegro", "North Macedonia", "Albania", "Kosovo", "Estonia", "Latvia", "Lithuania", "Ukraine", "Belarus", "Moldova", "Malta", "Cyprus", "Liechtenstein", "Monaco", "San Marino", "Andorra", "Russia"],
+  africa: ["Nigeria", "Egypt", "South Africa", "Kenya", "Morocco", "Algeria", "Tunisia", "Libya", "Ethiopia", "Ghana", "Tanzania", "Uganda", "Angola", "Mozambique", "Cameroon", "Ivory Coast", "Senegal", "Zimbabwe", "Zambia", "Rwanda", "Botswana", "Namibia", "Mali", "Niger", "Chad", "Sudan", "South Sudan", "Somalia", "Madagascar", "Malawi", "Burkina Faso", "Benin", "Togo", "Sierra Leone", "Liberia", "Mauritius", "Gabon", "Congo", "Democratic Republic of the Congo", "Guinea", "Eritrea", "Djibouti", "Lesotho", "Eswatini", "Gambia", "Burundi", "Central African Republic"],
+  middleEast: ["Saudi Arabia", "United Arab Emirates", "Qatar", "Kuwait", "Bahrain", "Oman", "Yemen", "Iraq", "Iran", "Israel", "Jordan", "Lebanon", "Syria", "Palestine", "Turkey"],
+  southEastAsia: ["Indonesia", "Malaysia", "Singapore", "Thailand", "Vietnam", "Philippines", "Myanmar", "Cambodia", "Laos", "Brunei", "Timor-Leste", "India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan", "Maldives", "Afghanistan", "China", "Japan", "South Korea", "North Korea", "Taiwan", "Hong Kong", "Mongolia", "Macau", "Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan", "Australia", "New Zealand", "Papua New Guinea", "Fiji"],
+};
+
+export const CONTINENT_LABELS = {
+  northAmerica: "North America",
+  latinAmerica: "Latin America",
+  europe: "Europe (including UK and Switzerland)",
+  africa: "Africa",
+  middleEast: "Middle East",
+  southEastAsia: "South East Asia",
+};
+
+// A few common alternate names LinkedIn location text actually uses,
+// mapped to the canonical country name in CONTINENT_COUNTRIES above.
+const COUNTRY_ALIASES = {
+  usa: "United States", us: "United States", "u.s.": "United States", "u.s.a.": "United States",
+  uk: "United Kingdom", "great britain": "United Kingdom", england: "United Kingdom",
+  scotland: "United Kingdom", wales: "United Kingdom", "northern ireland": "United Kingdom",
+  uae: "United Arab Emirates", czechia: "Czech Republic",
+  "côte d'ivoire": "Ivory Coast", "cote d'ivoire": "Ivory Coast",
+  drc: "Democratic Republic of the Congo", "congo-kinshasa": "Democratic Republic of the Congo",
+};
+
+// LinkedIn sometimes shows "Greater Zurich Area" with no country name at
+// all - a fallback specifically for the user's own primary market, not an
+// attempt at exhaustive city coverage for every country.
+const SWISS_CITIES = ["zurich", "geneva", "basel", "bern", "lausanne", "lucerne", "winterthur", "st. gallen", "st gallen", "lugano", "biel", "zug"];
+
+let countryToContinentTable = null;
+function countryToContinent() {
+  if (!countryToContinentTable) {
+    countryToContinentTable = {};
+    for (const [continent, countries] of Object.entries(CONTINENT_COUNTRIES)) {
+      for (const country of countries) countryToContinentTable[country.toLowerCase()] = { country, continent };
+    }
+  }
+  return countryToContinentTable;
+}
+
+// Single source of truth for turning a raw LinkedIn location string into a
+// {country, continent} pair - the content script only needs a much smaller
+// local heuristic to find candidate text to report, not this full table.
+// Returns null (never a guess) if nothing recognizable is found, so an
+// unparseable or unfamiliar location is treated as "no data," not "no match."
+export function classifyLocation(text) {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  const table = countryToContinent();
+
+  for (const [countryLower, entry] of Object.entries(table)) {
+    if (containsWholeWord(lower, countryLower)) return entry;
+  }
+  for (const [alias, canonical] of Object.entries(COUNTRY_ALIASES)) {
+    if (containsWholeWord(lower, alias)) {
+      const entry = table[canonical.toLowerCase()];
+      if (entry) return entry;
+    }
+  }
+  for (const city of SWISS_CITIES) {
+    if (containsWholeWord(lower, city)) return { country: "Switzerland", continent: "europe" };
+  }
+  return null;
+}
+
+const LOCATION_FILTER_CONFIG_KEY = "locationFilterConfig";
+const DEFAULT_LOCATION_FILTER_CONFIG = { mode: "off", continents: [], countries: [] };
+
+export async function getLocationFilterConfig() {
+  const data = await chrome.storage.local.get(LOCATION_FILTER_CONFIG_KEY);
+  return { ...DEFAULT_LOCATION_FILTER_CONFIG, ...(data[LOCATION_FILTER_CONFIG_KEY] || {}) };
+}
+
+export async function saveLocationFilterConfig(config) {
+  await chrome.storage.local.set({ [LOCATION_FILTER_CONFIG_KEY]: config });
+}
+
+// Returns a reason string for a CONFIDENT, configured mismatch only - null
+// whenever the filter is off, the lead has no location yet, or the location
+// text couldn't be classified. Never returns a reason for "we don't know,"
+// only for "we know, and it doesn't match."
+export function matchesLocationFilter(lead, config) {
+  if (!config || config.mode === "off" || !lead.location) return null;
+  const classified = classifyLocation(lead.location);
+  if (!classified) return null;
+
+  const isMatch = config.mode === "continent"
+    ? (config.continents || []).includes(classified.continent)
+    : (config.countries || []).some((c) => c.trim().toLowerCase() === classified.country.toLowerCase());
+
+  return isMatch ? null : `Location outside target region: ${lead.location} (${classified.country})`;
+}
+
+// Mirrors applyNegativeTopicsToResultsMap's New<->Irrelevant transition
+// logic exactly, using a parallel locationFilterReason field so the two
+// filters can compose without clobbering each other (see the restore-branch
+// patch in applyNegativeTopicsToResultsMap above).
+export function applyLocationFilterToResultsMap(resultsMap, config) {
+  const now = Date.now();
+  let blockedCount = 0;
+  let restoredCount = 0;
+  let anyChanged = false;
+  for (const lead of Object.values(resultsMap)) {
+    if (lead.status === "New") {
+      const reason = matchesLocationFilter(lead, config);
+      if (reason) {
+        lead.status = "Irrelevant";
+        lead.locationFilterReason = reason;
+        lead.statusUpdatedAt = now;
+        blockedCount++;
+        anyChanged = true;
+      }
+    } else if (lead.status === "Irrelevant" && lead.locationFilterReason) {
+      const reason = matchesLocationFilter(lead, config);
+      if (!reason && !lead.irrelevantReason) {
+        lead.status = "New";
+        delete lead.locationFilterReason;
+        lead.statusUpdatedAt = now;
+        restoredCount++;
+        anyChanged = true;
+      } else if (!reason) {
+        delete lead.locationFilterReason;
+        anyChanged = true;
+      } else if (lead.locationFilterReason !== reason) {
+        lead.locationFilterReason = reason;
+        anyChanged = true;
+      }
+    }
+  }
+  return { blockedCount, restoredCount, anyChanged };
+}
+
+// The Dashboard's on-demand "Apply Location Filter" button - the
+// standalone, no-profile-visit-needed way to re-run the check above (e.g.
+// after changing the continent/country selection in Settings).
+export async function reapplyLocationFilter() {
+  const [results, config] = await Promise.all([getResults(), getLocationFilterConfig()]);
+  const { blockedCount, restoredCount, anyChanged } = applyLocationFilterToResultsMap(results, config);
   if (anyChanged) await saveResults(results);
   return { blockedCount, restoredCount };
 }
@@ -1030,21 +1212,39 @@ export function tagPrioritiesWithTargetAccountSignal(priorities, leads) {
 }
 
 // Applied by background.js after the batched AI company-extraction pass
-// (agent-shared.js's extractCompaniesForLeads) - never overwrites a lead
-// that already has a company, whether it was scraped (Job leads), extracted
-// here before, or manually assigned via setLeadCompany below, so a scan can
-// never clobber a human's correction.
+// (agent-shared.js's extractCompaniesForLeads), and by dashboard.js after a
+// profile-visit pass (code/profile-content-script.js) - never overwrites a
+// lead that already has a company/location, whether scraped (Job leads),
+// extracted here before, or manually assigned via setLeadCompany below, so
+// neither a scan nor a re-run of profile extraction can clobber a human's
+// correction or an earlier result. `location` is optional - the AI headline
+// extraction never has one to offer, only a profile visit does (see PRD
+// 6.14) - and is written independently of company, so a profile that states
+// one but not the other still saves whichever it found.
 export async function applyExtractedCompanies(entries) {
   const results = await getResults();
   const extractedAt = Date.now();
   let changed = 0;
-  for (const { key, company } of entries) {
-    const trimmed = (company || "").trim();
-    if (results[key] && !results[key].company && trimmed) {
-      results[key].company = trimmed;
-      results[key].companyExtractedAt = extractedAt;
-      changed++;
+  for (const { key, company, location } of entries) {
+    const lead = results[key];
+    if (!lead) continue;
+    let leadChanged = false;
+
+    const trimmedCompany = (company || "").trim();
+    if (!lead.company && trimmedCompany) {
+      lead.company = trimmedCompany;
+      lead.companyExtractedAt = extractedAt;
+      leadChanged = true;
     }
+
+    const trimmedLocation = (location || "").trim();
+    if (!lead.location && trimmedLocation) {
+      lead.location = trimmedLocation;
+      lead.locationExtractedAt = extractedAt;
+      leadChanged = true;
+    }
+
+    if (leadChanged) changed++;
   }
   if (changed > 0) await saveResults(results);
   return changed;

@@ -23,6 +23,12 @@ import {
   getPrioritizationRules,
   savePrioritizationRuleOverride,
   appendActivityLog,
+  getNegativeTopics,
+  saveNegativeTopics,
+  getLocationFilterConfig,
+  saveLocationFilterConfig,
+  reapplyLocationFilter,
+  CONTINENT_LABELS,
 } from "./storage.js";
 import { sanitizeApiKey } from "./agent-shared.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
@@ -52,8 +58,15 @@ const importTargetAccountsBtn = document.getElementById("import-target-accounts-
 const importTargetAccountsFileInput = document.getElementById("import-target-accounts-file-input");
 const targetAccountThresholdInput = document.getElementById("target-account-threshold-input");
 const prioritizationRulesTbodyEl = document.getElementById("prioritization-rules-tbody");
+const locationFilterModeSelect = document.getElementById("location-filter-mode-select");
+const locationFilterContinentsWrap = document.getElementById("location-filter-continents-wrap");
+const locationFilterCountriesWrap = document.getElementById("location-filter-countries-wrap");
+const locationFilterCountriesInput = document.getElementById("location-filter-countries-input");
+const applyLocationFilterBtn = document.getElementById("apply-location-filter-btn");
+const applyLocationFilterStatusEl = document.getElementById("apply-location-filter-status");
 
 let messageTemplates = [];
+let negativeTopics = [];
 
 function renderMessageTemplates() {
   messageTemplatesListEl.innerHTML = "";
@@ -197,6 +210,83 @@ logOnBlur(targetAccountThresholdInput, {
   labelFor: (oldVal, newVal) => `Target Account score threshold changed (${oldVal} → ${newVal})`,
 });
 
+function renderLocationFilterModeVisibility() {
+  locationFilterContinentsWrap.style.display = locationFilterModeSelect.value === "continent" ? "" : "none";
+  locationFilterCountriesWrap.style.display = locationFilterModeSelect.value === "country" ? "" : "none";
+}
+
+async function saveLocationFilterFromForm({ action, label, prevValue }) {
+  const config = {
+    mode: locationFilterModeSelect.value,
+    continents: Array.from(document.querySelectorAll(".location-continent-checkbox:checked")).map((cb) => cb.value),
+    countries: locationFilterCountriesInput.value.split("\n").map((line) => line.trim()).filter(Boolean),
+  };
+  await saveLocationFilterConfig(config);
+  if (action) appendActivityLog({ actor: "user", action, label, prevValue, newValue: config });
+  // The Prioritization Rules table's own "Location Filter" row shows
+  // whether mode !== "off" - keep it in sync even when the mode changes via
+  // this form rather than that row's own checkbox.
+  await renderPrioritizationRules();
+  return config;
+}
+
+locationFilterModeSelect.addEventListener("change", async () => {
+  const prevValue = locationFilterModeSelect.dataset.prevValue || "off";
+  renderLocationFilterModeVisibility();
+  await saveLocationFilterFromForm({
+    action: "location_filter_mode_changed",
+    label: `Location Filter mode changed to "${locationFilterModeSelect.value}"`,
+    prevValue,
+  });
+  locationFilterModeSelect.dataset.prevValue = locationFilterModeSelect.value;
+});
+
+for (const checkbox of document.querySelectorAll(".location-continent-checkbox")) {
+  checkbox.addEventListener("change", async () => {
+    const config = await saveLocationFilterFromForm({});
+    appendActivityLog({
+      actor: "user",
+      action: "location_filter_continents_changed",
+      label: `Location Filter continents changed (${config.continents.map((c) => CONTINENT_LABELS[c]).join(", ") || "none"})`,
+      newValue: config.continents,
+    });
+  });
+}
+
+locationFilterCountriesInput.addEventListener("input", () => {
+  saveLocationFilterFromForm({});
+});
+logOnBlur(locationFilterCountriesInput, {
+  action: "location_filter_countries_changed",
+  labelFor: (oldVal, newVal) => {
+    const oldCount = oldVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+    const newCount = newVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
+    return `Location Filter countries changed (${oldCount} → ${newCount} countries)`;
+  },
+});
+
+applyLocationFilterBtn.addEventListener("click", async () => {
+  applyLocationFilterBtn.disabled = true;
+  try {
+    const { blockedCount, restoredCount } = await reapplyLocationFilter();
+    if (blockedCount === 0 && restoredCount === 0) {
+      applyLocationFilterStatusEl.textContent = "Done - no leads needed to change.";
+    } else {
+      const parts = [];
+      if (blockedCount > 0) parts.push(`${blockedCount} lead${blockedCount === 1 ? "" : "s"} newly marked Irrelevant`);
+      if (restoredCount > 0) parts.push(`${restoredCount} lead${restoredCount === 1 ? "" : "s"} restored to New`);
+      applyLocationFilterStatusEl.textContent = `Done - ${parts.join(", ")}.`;
+    }
+    appendActivityLog({
+      actor: "user", action: "location_filter_applied",
+      label: `Applied Location Filter: ${blockedCount} marked Irrelevant, ${restoredCount} restored to New`,
+      newValue: { blockedCount, restoredCount },
+    });
+  } finally {
+    applyLocationFilterBtn.disabled = false;
+  }
+});
+
 // Short display names for storage.js's PRIORITIZATION_RULE_CATALOG ids -
 // the catalog's own `id` is a stable key, not meant as UI text.
 const PRIORITIZATION_RULE_LABELS = {
@@ -242,6 +332,33 @@ function emptyValueCell() {
   return td;
 }
 
+// Builds a row for a rule that isn't part of PRIORITIZATION_RULE_CATALOG -
+// it doesn't set a P-level, it excludes a lead to Irrelevant outright - but
+// the user explicitly asked these show up here too, for the same
+// transparency/toggle-in-one-place reason, since they equally override
+// whatever the Sales Mentor would have said.
+function exclusionRuleRow({ name, description, enabled, onToggle }) {
+  const tr = document.createElement("tr");
+
+  const nameTd = document.createElement("td");
+  nameTd.textContent = name;
+
+  const descTd = document.createElement("td");
+  descTd.className = "rule-description";
+  descTd.textContent = description;
+
+  const enabledTd = document.createElement("td");
+  const enabledCheckbox = document.createElement("input");
+  enabledCheckbox.type = "checkbox";
+  enabledCheckbox.checked = enabled;
+  enabledCheckbox.title = "Disable to let the Sales Mentor decide these leads entirely on its own";
+  enabledCheckbox.addEventListener("change", () => onToggle(enabledCheckbox.checked));
+  enabledTd.appendChild(enabledCheckbox);
+
+  tr.append(nameTd, descTd, emptyValueCell(), emptyValueCell(), emptyValueCell(), enabledTd);
+  return tr;
+}
+
 async function renderPrioritizationRules() {
   const rules = await getPrioritizationRules();
   prioritizationRulesTbodyEl.innerHTML = "";
@@ -281,6 +398,52 @@ async function renderPrioritizationRules() {
     tr.append(nameTd, descTd, ceilingTd, floorTd, decisiveTd, enabledTd);
     prioritizationRulesTbodyEl.appendChild(tr);
   }
+
+  const competitorTopic = negativeTopics.find((t) => t.id === "builtin-competitors");
+  if (competitorTopic) {
+    prioritizationRulesTbodyEl.appendChild(exclusionRuleRow({
+      name: "Competitor Blocklist",
+      description: `A lead whose company or content matches the Competitor Blocklist (in the side panel's Negative Topics) is marked Irrelevant outright - it's not a buyer. Currently: ${competitorTopic.keywords.join(", ")}.`,
+      enabled: competitorTopic.enabled,
+      onToggle: async (checked) => {
+        const wasEnabled = competitorTopic.enabled;
+        competitorTopic.enabled = checked;
+        await saveNegativeTopics(negativeTopics);
+        appendActivityLog({
+          actor: "user",
+          action: "prioritization_rule_toggled",
+          label: `Prioritization rule "Competitor Blocklist" ${checked ? "enabled" : "disabled"}`,
+          prevValue: wasEnabled,
+          newValue: checked,
+        });
+      },
+    }));
+  }
+
+  const locationConfig = await getLocationFilterConfig();
+  prioritizationRulesTbodyEl.appendChild(exclusionRuleRow({
+    name: "Location Filter",
+    description: "A lead whose location is confidently classified outside your configured target geography (above) is marked Irrelevant outright. A lead with no location data, or unclassifiable text, is never touched.",
+    enabled: locationConfig.mode !== "off",
+    onToggle: async (checked) => {
+      const wasOn = locationConfig.mode !== "off";
+      if (!checked) {
+        locationConfig.mode = "off";
+      } else {
+        locationConfig.mode = locationFilterModeSelect.value !== "off" ? locationFilterModeSelect.value : "continent";
+      }
+      await saveLocationFilterConfig(locationConfig);
+      locationFilterModeSelect.value = locationConfig.mode;
+      renderLocationFilterModeVisibility();
+      appendActivityLog({
+        actor: "user",
+        action: "prioritization_rule_toggled",
+        label: `Prioritization rule "Location Filter" ${checked ? "enabled" : "disabled"}`,
+        prevValue: wasOn,
+        newValue: checked,
+      });
+    },
+  }));
 }
 
 async function init() {
@@ -299,6 +462,18 @@ async function init() {
 
   targetAccountThresholdInput.value = await getTargetAccountScoreThreshold();
   await renderTargetAccountsStatus();
+
+  negativeTopics = await getNegativeTopics();
+
+  const locationConfig = await getLocationFilterConfig();
+  locationFilterModeSelect.value = locationConfig.mode;
+  locationFilterModeSelect.dataset.prevValue = locationConfig.mode;
+  for (const checkbox of document.querySelectorAll(".location-continent-checkbox")) {
+    checkbox.checked = locationConfig.continents.includes(checkbox.value);
+  }
+  locationFilterCountriesInput.value = locationConfig.countries.join("\n");
+  renderLocationFilterModeVisibility();
+
   await renderPrioritizationRules();
 }
 

@@ -28,6 +28,7 @@ import {
   partitionLeadsByTargetAccount,
   tagPrioritiesWithTargetAccountSignal,
   appendActivityLog,
+  reapplyLocationFilter,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
@@ -77,6 +78,8 @@ const extractCompaniesBtn = document.getElementById("extract-companies-btn");
 const extractCompaniesStatusEl = document.getElementById("extract-companies-status");
 const extractCompaniesProfilesBtn = document.getElementById("extract-companies-profiles-btn");
 const extractCompaniesProfilesStatusEl = document.getElementById("extract-companies-profiles-status");
+const applyLocationFilterBtn = document.getElementById("apply-location-filter-btn");
+const applyLocationFilterStatusEl = document.getElementById("apply-location-filter-status");
 
 const SHOW_IRRELEVANT_STORAGE_KEY = "salesteam-dashboard-show-irrelevant";
 let showIrrelevant = false;
@@ -1641,7 +1644,7 @@ function waitForProfileScrapeResult(expectedUrl) {
         settled = true;
         clearTimeout(timeout);
         chrome.runtime.onMessage.removeListener(listener);
-        resolve(message.company || null);
+        resolve({ company: message.company || null, location: message.location || null });
       }
     }
     chrome.runtime.onMessage.addListener(listener);
@@ -1649,16 +1652,20 @@ function waitForProfileScrapeResult(expectedUrl) {
 }
 
 extractCompaniesProfilesBtn.addEventListener("click", async () => {
-  const toVisit = allLeads.filter((l) => l.type !== "job" && !l.company && l.profileUrl);
+  // Visits a lead missing EITHER field, not just company - the same page
+  // visit reads both (profile-content-script.js), so a lead that already
+  // has a company (e.g. from headline extraction) but no location would
+  // otherwise never get one.
+  const toVisit = allLeads.filter((l) => l.type !== "job" && (!l.company || !l.location) && l.profileUrl);
   if (toVisit.length === 0) {
-    extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is both missing a company and has a profile URL to visit.";
+    extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is missing a company or location with a profile URL to visit.";
     return;
   }
   const estMinutes = Math.ceil((toVisit.length * (MIN_PROFILE_DELAY_MS + MAX_PROFILE_DELAY_MS)) / 2 / 60000);
   if (!confirm(
     `This will visit ${toVisit.length} individual LinkedIn profile page${toVisit.length === 1 ? "" : "s"} one at a time ` +
     `(roughly ${estMinutes} minute${estMinutes === 1 ? "" : "s"}, paced to avoid rapid-fire requests) to look for a stated ` +
-    "current employer. Continue?"
+    "current employer and location. Continue?"
   )) {
     return;
   }
@@ -1673,16 +1680,22 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
       const lead = toVisit[i];
       extractCompaniesProfilesStatusEl.textContent = `Visiting profile ${i + 1} of ${toVisit.length}…`;
       await navigateAndWaitProfile(tab.id, lead.profileUrl);
-      const company = await waitForProfileScrapeResult(lead.profileUrl);
-      if (company) {
-        found += await applyExtractedCompanies([{ key: lead.key, company }]);
+      const { company, location } = await waitForProfileScrapeResult(lead.profileUrl);
+      if (company || location) {
+        found += await applyExtractedCompanies([{ key: lead.key, company, location }]);
       }
       if (i < toVisit.length - 1) await sleep(randomProfileDelay());
     }
+    // Fresh location data just arrived - re-check it against the Location
+    // Filter (6.14) right away, same courtesy as a scan re-applying Negative
+    // Topics, so the user doesn't have to separately click Apply Location
+    // Filter after every profile-extraction run.
+    const { blockedCount: locationBlockedCount } = await reapplyLocationFilter();
     await loadLeads();
     renderTable();
-    extractCompaniesProfilesStatusEl.textContent = `Done - ${found} lead${found === 1 ? "" : "s"} got a company from their profile.`;
-    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: `Extract Companies from Profiles: ${found} lead${found === 1 ? "" : "s"} got a company`, newValue: found });
+    extractCompaniesProfilesStatusEl.textContent = `Done - ${found} lead${found === 1 ? "" : "s"} got a company/location from their profile` +
+      (locationBlockedCount > 0 ? `, ${locationBlockedCount} newly marked Irrelevant by the Location Filter.` : ".");
+    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: `Extract Companies from Profiles: ${found} lead${found === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter`, newValue: { found, locationBlockedCount } });
   } catch (err) {
     extractCompaniesProfilesStatusEl.textContent = `Something went wrong: ${err.message}`;
     appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies from Profiles failed", error: true, errorMessage: err.message });
@@ -1690,6 +1703,35 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
     await chrome.storage.local.remove("profileExtractionActive").catch(() => {});
     if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
     extractCompaniesProfilesBtn.disabled = false;
+  }
+});
+
+// Re-checks every lead against Settings' Location Filter config right now,
+// without a new scan or a profile-extraction run - the same "Apply
+// Negative Filters" idea, for after a Settings change (e.g. adding a
+// country) rather than after fresh data arrives (that case is handled
+// automatically above).
+applyLocationFilterBtn.addEventListener("click", async () => {
+  applyLocationFilterBtn.disabled = true;
+  try {
+    const { blockedCount, restoredCount } = await reapplyLocationFilter();
+    await loadLeads();
+    renderTable();
+    if (blockedCount === 0 && restoredCount === 0) {
+      applyLocationFilterStatusEl.textContent = "Done - no leads needed to change.";
+    } else {
+      const parts = [];
+      if (blockedCount > 0) parts.push(`${blockedCount} lead${blockedCount === 1 ? "" : "s"} newly marked Irrelevant`);
+      if (restoredCount > 0) parts.push(`${restoredCount} lead${restoredCount === 1 ? "" : "s"} restored to New`);
+      applyLocationFilterStatusEl.textContent = `Done - ${parts.join(", ")}.`;
+    }
+    appendActivityLog({
+      actor: "user", action: "location_filter_applied",
+      label: `Applied Location Filter: ${blockedCount} marked Irrelevant, ${restoredCount} restored to New`,
+      newValue: { blockedCount, restoredCount },
+    });
+  } finally {
+    applyLocationFilterBtn.disabled = false;
   }
 });
 
