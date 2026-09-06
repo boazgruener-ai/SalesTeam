@@ -1,3 +1,15 @@
+# SalesTeam — v0.29.1
+
+## New (opt-in): Extract Companies from Profiles
+
+- Reported with a real example: "Extract Companies" found 0 companies for a batch of Post leads, but a couple of those posters clearly show a real employer on their actual LinkedIn profile (e.g. Ameer Hamza → The Bank of Punjab) - just not in their headline text, which is all the search-results-feed scrape ever sees. The AI extraction step can only find what's already in the scraped headline; it has no access to a page never fetched.
+- New Dashboard button, **"Extract Companies from Profiles…"**, separate from the existing headline-based one: visits each remaining company-less Post lead's own profile page, one at a time, in a background tab, looking for their current employer. Confirms first, naming exactly how many profiles it's about to visit and a rough time estimate.
+- Deliberately **not** part of the automatic per-scan pipeline, and deliberately paced with a randomized 4-9s delay between visits (not a fixed bot-like interval) - individually visiting profile pages is a meaningfully bigger LinkedIn scraping footprint than reading a search-results feed, so this stays a manual, explicit, opt-in action. Each lead is only ever visited once, the same way headline extraction already never re-touches a lead that already has a company.
+- New content script (`profile-content-script.js`, matches `linkedin.com/in/*`) only ever runs during this explicit action (gated on a storage flag), so a profile visited during ordinary browsing is never scraped.
+- **Known limitation**: this session's tooling has no authenticated LinkedIn session, so the new scraping selectors could not be verified against a real, live profile page before shipping - unlike everything else this session, which was fully harness-tested. The orchestration (confirmation, pacing, tab lifecycle, writing results) was fully verified; the actual DOM selectors are a first attempt and may need a live-tuning pass.
+
+---
+
 # SalesTeam — v0.29.0
 
 ## New: Target Accounts Explorer - browse the full company workbook

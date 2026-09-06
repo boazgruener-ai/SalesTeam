@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.0.")
+p.add_run("Living document, reflects the shipped product as of v0.29.1.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -284,6 +284,11 @@ p.add_run(
     "or previously-extracted company is never touched again by the automatic pass - companyExtractedAt is "
     "only ever set for an AI guess, cleared on manual assignment, so a scan can never silently overwrite a "
     "human's correction."
+)
+p = doc.add_paragraph()
+r = p.add_run("Extract Companies from Profiles (v0.29.1, opt-in, Dashboard-only): "); r.bold = True
+p.add_run(
+    "the AI extraction above can only find a company that's actually present in the scraped headline text - and a LinkedIn search-results feed only ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page often shows a structured current employer that the person's headline never mentions at all. Fixing that requires visiting the person's own profile page, a materially bigger LinkedIn scraping footprint than reading a search-results feed - so this is a separate, explicit, manual Dashboard button, never part of the automatic per-scan pipeline. Filters to Post leads still missing a company with a profileUrl; confirms first, naming the real scope; visits one profile at a time in a background tab, paced with a randomized 4-9s delay between visits; reuses the same never-overwrite write path (applyExtractedCompanies) as headline extraction. A new content script (profile-content-script.js) only runs during this explicit action, gated on a profileExtractionActive flag, so ordinary profile browsing is never scraped - its selectors could not be verified against a live LinkedIn profile before shipping and may need a live-tuning pass."
 )
 
 doc.add_heading("6.4 Automatic lead prioritization", level=3)
@@ -649,7 +654,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.0."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.1."
 )
 
 for section in doc.sections:

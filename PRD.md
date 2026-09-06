@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.0.
+**Status:** Living document, reflects the shipped product as of v0.29.1.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -181,6 +181,30 @@ pattern as prioritization), with a "🏢 Assign Company" row action to search ev
 (native browser autocomplete) or type a new one, or clear it. A manually-set or previously-extracted company
 is never touched again by the automatic pass — `companyExtractedAt` is only ever set for an AI guess, cleared
 on manual assignment, so a scan can never silently overwrite a human's correction.
+
+**Extract Companies from Profiles (v0.29.1, opt-in, Dashboard-only).** The AI extraction above can only find
+a company that's actually present in the scraped headline text — and a LinkedIn search-results feed only
+ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page
+often shows a structured current employer (e.g. "The Bank of Punjab") that the person's headline never
+mentions at all (it may just list skill tags or past employers). Fixing that for real requires visiting the
+person's own profile page, which is a materially bigger LinkedIn scraping footprint than reading a
+search-results feed (individual profile visits are more detectable) — so this is a **separate, explicit,
+manual Dashboard button**, never part of the automatic per-scan pipeline:
+- Filters to Post leads still missing a company (after the headline-based pass) that have a `profileUrl`.
+- Confirms first, naming exactly how many individual profile pages it's about to visit and a rough time
+  estimate, before doing anything.
+- Visits one profile at a time in a background tab, paced with a randomized 4–9s delay between visits
+  (mimicking how a person naturally clicks through search results one by one, not a fixed-interval bot
+  cadence) — reuses the same never-overwrite-an-existing-company write path (`applyExtractedCompanies`) as
+  the headline-based extraction.
+- New content script `profile-content-script.js` (matches `linkedin.com/in/*`) only ever runs during this
+  explicit action — gated on a `profileExtractionActive` storage flag it checks before doing anything, so a
+  LinkedIn profile visited during ordinary browsing is never scraped. Looks for the person's current
+  employer via a link to a Company Page (`a[href*="/company/"]`) inside the profile's Experience section
+  (anchored by the profile's own `id="experience"` landmark, falling back to a Company Page link anywhere
+  in the page's top card) — same durable-marker philosophy as `content-script.js` (hashed class names
+  aren't stable hooks), though **this file's selectors could not be verified against a live, logged-in
+  LinkedIn profile before shipping** and may need a live-tuning pass if they come back empty/wrong.
 
 ### 6.4 Automatic lead prioritization
 
@@ -517,4 +541,4 @@ company via `Company_ID`. This page browses all of it.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.1**.

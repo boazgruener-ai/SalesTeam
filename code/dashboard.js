@@ -75,6 +75,8 @@ const rescoreAllBtn = document.getElementById("rescore-all-btn");
 const rescoreAllStatusEl = document.getElementById("rescore-all-status");
 const extractCompaniesBtn = document.getElementById("extract-companies-btn");
 const extractCompaniesStatusEl = document.getElementById("extract-companies-status");
+const extractCompaniesProfilesBtn = document.getElementById("extract-companies-profiles-btn");
+const extractCompaniesProfilesStatusEl = document.getElementById("extract-companies-profiles-status");
 
 const SHOW_IRRELEVANT_STORAGE_KEY = "salesteam-dashboard-show-irrelevant";
 let showIrrelevant = false;
@@ -1565,6 +1567,129 @@ extractCompaniesBtn.addEventListener("click", async () => {
     appendActivityLog({ actor: "user", action: "companies_extracted_manual", label: "Extract Companies failed", error: true, errorMessage: err.message });
   } finally {
     extractCompaniesBtn.disabled = false;
+  }
+});
+
+// Fills the gap the headline-only extraction above can't: a LinkedIn search-
+// results feed only ever shows a poster's self-written headline text, which
+// often doesn't name an employer at all even though their full profile page
+// clearly does (confirmed live - a headline of skill tags/past employers
+// with the real current company only visible on the profile itself). This
+// visits each such lead's own profile page, one at a time, paced with a
+// human-like random delay between visits - deliberately NOT part of the
+// automatic per-scan pipeline, and deliberately slower/heavier than the
+// button above, since individually visiting profile pages is a bigger
+// LinkedIn scraping footprint than reading a search-results feed. Confirms
+// first, naming the real scope, same as Bulk Change/Re-score All Priorities.
+const PROFILE_NAV_TIMEOUT_MS = 20000;
+const PROFILE_SCRAPE_TIMEOUT_MS = 15000;
+const MIN_PROFILE_DELAY_MS = 4000;
+const MAX_PROFILE_DELAY_MS = 9000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomProfileDelay() {
+  return MIN_PROFILE_DELAY_MS + Math.random() * (MAX_PROFILE_DELAY_MS - MIN_PROFILE_DELAY_MS);
+}
+
+function navigateAndWaitProfile(tabId, url) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }, PROFILE_NAV_TIMEOUT_MS);
+    function listener(updatedTabId, changeInfo) {
+      if (updatedTabId === tabId && changeInfo.status === "complete" && !settled) {
+        settled = true;
+        clearTimeout(timeout);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.update(tabId, { url });
+  });
+}
+
+// Filters by profileUrl, not just "the next message that arrives" - a
+// separate, unrelated tab the user happens to have open on a LinkedIn
+// profile at the same time would otherwise be able to race this and resolve
+// it with the wrong company.
+function normalizeProfileUrl(url) {
+  return (url || "").split("?")[0].replace(/\/$/, "");
+}
+
+function waitForProfileScrapeResult(expectedUrl) {
+  const expected = normalizeProfileUrl(expectedUrl);
+  return new Promise((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve(null);
+      }
+    }, PROFILE_SCRAPE_TIMEOUT_MS);
+    function listener(message) {
+      if (message?.type === "PROFILE_SCRAPE_RESULT" && normalizeProfileUrl(message.profileUrl) === expected && !settled) {
+        settled = true;
+        clearTimeout(timeout);
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve(message.company || null);
+      }
+    }
+    chrome.runtime.onMessage.addListener(listener);
+  });
+}
+
+extractCompaniesProfilesBtn.addEventListener("click", async () => {
+  const toVisit = allLeads.filter((l) => l.type !== "job" && !l.company && l.profileUrl);
+  if (toVisit.length === 0) {
+    extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is both missing a company and has a profile URL to visit.";
+    return;
+  }
+  const estMinutes = Math.ceil((toVisit.length * (MIN_PROFILE_DELAY_MS + MAX_PROFILE_DELAY_MS)) / 2 / 60000);
+  if (!confirm(
+    `This will visit ${toVisit.length} individual LinkedIn profile page${toVisit.length === 1 ? "" : "s"} one at a time ` +
+    `(roughly ${estMinutes} minute${estMinutes === 1 ? "" : "s"}, paced to avoid rapid-fire requests) to look for a stated ` +
+    "current employer. Continue?"
+  )) {
+    return;
+  }
+
+  extractCompaniesProfilesBtn.disabled = true;
+  let tab;
+  let found = 0;
+  try {
+    await chrome.storage.local.set({ profileExtractionActive: true });
+    tab = await chrome.tabs.create({ url: "about:blank", active: false });
+    for (let i = 0; i < toVisit.length; i++) {
+      const lead = toVisit[i];
+      extractCompaniesProfilesStatusEl.textContent = `Visiting profile ${i + 1} of ${toVisit.length}…`;
+      await navigateAndWaitProfile(tab.id, lead.profileUrl);
+      const company = await waitForProfileScrapeResult(lead.profileUrl);
+      if (company) {
+        found += await applyExtractedCompanies([{ key: lead.key, company }]);
+      }
+      if (i < toVisit.length - 1) await sleep(randomProfileDelay());
+    }
+    await loadLeads();
+    renderTable();
+    extractCompaniesProfilesStatusEl.textContent = `Done - ${found} lead${found === 1 ? "" : "s"} got a company from their profile.`;
+    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: `Extract Companies from Profiles: ${found} lead${found === 1 ? "" : "s"} got a company`, newValue: found });
+  } catch (err) {
+    extractCompaniesProfilesStatusEl.textContent = `Something went wrong: ${err.message}`;
+    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies from Profiles failed", error: true, errorMessage: err.message });
+  } finally {
+    await chrome.storage.local.remove("profileExtractionActive").catch(() => {});
+    if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
+    extractCompaniesProfilesBtn.disabled = false;
   }
 });
 
