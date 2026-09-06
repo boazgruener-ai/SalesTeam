@@ -789,17 +789,66 @@ export function evaluateTargetAccountMatch(company, targetAccounts, threshold) {
   return { match, qualifies: confidentLabel && match.score >= threshold };
 }
 
-function targetAccountMatchReason(match) {
-  return `Target Account match: ${match.company} scored ${Math.round(match.score)}/100 (${match.priorityLabel}) on the Swiss AI target-account list${match.topInitiatives ? " — " + match.topInitiatives.slice(0, 100) : ""}.`;
+function describeMatch(match) {
+  return `${match.company} scored ${Math.round(match.score)}/100 (${match.priorityLabel})`;
+}
+
+// A real, named individual (Post leads, including an in-post job ad) with
+// one of these in their own headline is a decision-maker worth an automatic
+// top priority regardless of anything else - reported as a real gap after a
+// batch of Job listings (no individual at all) outranked genuine people in
+// these roles. Deliberately matched against free text (case-insensitive
+// substring), not an exact-title equality check - real headlines combine
+// titles with company names, other roles, and formatting LinkedIn users
+// commonly add ("CTO @ Acme | ex-Google").
+const HIGH_VALUE_TITLE_KEYWORDS = [
+  "cto", "chief technology officer",
+  "cio", "chief information officer",
+  "caio", "chief ai officer", "chief artificial intelligence officer",
+  "cdo", "chief digital officer",
+  "head of ai", "vp of ai", "vice president of ai",
+  "head of artificial intelligence", "vp of artificial intelligence",
+  "head of digital transformation", "vp of digital transformation",
+  "head of automation", "vp of automation",
+  "head of innovation", "vp of innovation",
+];
+
+function matchingHighValueTitle(headline) {
+  if (!headline) return null;
+  const lower = headline.toLowerCase();
+  return HIGH_VALUE_TITLE_KEYWORDS.find((kw) => lower.includes(kw)) || null;
+}
+
+// A lead found via the "AI Transformation" topic is itself a signal worth
+// treating like a title match, even when the poster's own headline doesn't
+// name a qualifying role - matched by substring against the topic's name
+// (not an exact match) since this project's own topics are typically named
+// with a language/variant suffix (e.g. "AI Transformation (EN)", "AI
+// Transformation (EN + DE)").
+function matchesAiTransformationTopic(matchedTopics) {
+  return (matchedTopics || []).some((t) => (t.topicName || "").toLowerCase().includes("ai transformation"));
 }
 
 // Splits a list of not-yet-(re)scored leads against the imported Target
-// Accounts list: those that qualify for the deterministic Priority 1
-// override go into autoPriorities, ready for applyLeadPriorities below (or an
-// equivalent inline write). Everything else comes back in toScore, unchanged
-// except a lead that still matched (just not confidently enough) gets a
-// shallow-cloned copy with a targetAccountSignal attached, so prioritizeLeads
-// (agent-shared.js) can fold it into the Sales Mentor's own judgment - a
+// Accounts list: those that qualify for a deterministic priority go into
+// autoPriorities, ready for applyLeadPriorities below (or an equivalent
+// inline write) - no AI call involved for these at all, so the outcome is
+// guaranteed and the reason is always an exact, quotable sentence rather
+// than something the model chose (or didn't choose) to mention:
+//   - A Job lead (no individual to contact, nothing beyond the hiring
+//     itself) is fixed at Priority 3 - the company match can't earn it
+//     better than that, no matter how highly the company scored.
+//   - A Post lead (including an in-post job ad - a real, named individual
+//     exists either way) whose own headline names a high-value role, or
+//     that came from the "AI Transformation" topic, is fixed at Priority 1.
+// Everything else comes back in toScore, unchanged except a lead that still
+// matched (just not confidently enough, or a Post that qualifies without a
+// title/topic hit) gets a shallow-cloned copy with a targetAccountSignal
+// attached (and, for the latter case, a targetAccountFloor: 2 - a real
+// contact at a confidently-scored company should never end up below
+// Priority 2, but the Sales Mentor's own judgment still picks between 1 and
+// 2 within that range) so prioritizeLeads (agent-shared.js) can fold it
+// into the Sales Mentor's own judgment - a
 // clone, not a mutation, so this transient hint is never accidentally
 // persisted onto the real stored lead object. Shared by background.js's
 // automatic post-scan pass and the Dashboard's manual Prioritize Unscored /
@@ -815,18 +864,53 @@ export async function partitionLeadsByTargetAccount(leads) {
   const toScore = [];
   for (const lead of leads) {
     const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, threshold);
-    // The hard Priority-1 override is deliberately Post-only. A Job lead's
-    // "creator" is the company itself, not an individual - there's no real
-    // person to message, and a job ad alone (no named contact, no stated
-    // initiative beyond "we're hiring") doesn't earn a top priority just
-    // because the employer is a confirmed target account. A confident match
-    // on a Job lead is still real signal, just a moderate one - it's left
-    // for the Sales Mentor to weigh alongside the ad's own content (see
-    // buildPrioritizationPrompt's job-specific guidance), same as any
-    // Provisional/below-threshold match already is for Posts.
-    if (qualifies && lead.type !== "job") {
-      autoPriorities.push({ key: lead.key, priority: 1, reason: targetAccountMatchReason(match) });
-    } else if (match) {
+
+    if (qualifies && lead.type === "job") {
+      // A Job lead's "creator" is the company itself, not an individual -
+      // there's no real person to message, and a job ad alone (no named
+      // contact, no stated initiative beyond "we're hiring") never earns
+      // better than Priority 3, however highly the employer scored. Fixed
+      // here rather than sent to the AI - there's nothing else for the
+      // model to weigh for this specific decision.
+      autoPriorities.push({
+        key: lead.key,
+        priority: 3,
+        reason: `Target Account match: ${describeMatch(match)} - capped at Priority 3, since this is a Job listing with no individual contact to follow up with.`,
+      });
+      continue;
+    }
+
+    if (qualifies) {
+      // A Post lead (including an in-post job ad) has a real, named
+      // individual behind it - a stronger signal than a Job listing. A
+      // qualifying company plus a headline naming a real decision-maker
+      // role, or a lead sourced from the "AI Transformation" topic, earns
+      // an automatic Priority 1 - fixed here, not left to the AI, so the
+      // outcome is guaranteed regardless of how the model would have
+      // phrased it.
+      const titleKeyword = matchingHighValueTitle(lead.headline);
+      const topicMatch = !titleKeyword && matchesAiTransformationTopic(lead.matchedTopics);
+      if (titleKeyword || topicMatch) {
+        const why = titleKeyword
+          ? `the post creator's own headline names a key AI/digital-transformation role ("${titleKeyword}")`
+          : 'it was found via the "AI Transformation" topic';
+        autoPriorities.push({
+          key: lead.key,
+          priority: 1,
+          reason: `Target Account match: ${describeMatch(match)} - automatic Priority 1, since ${why}.`,
+        });
+        continue;
+      }
+      // Still a real contact at a confidently-scored company - guaranteed
+      // at least Priority 2 (targetAccountFloor, applied in
+      // tagPrioritiesWithTargetAccountSignal below once the AI has scored
+      // it), but the Sales Mentor's own judgment still picks between 1 and
+      // 2 within that range based on the actual content.
+      toScore.push({ ...lead, targetAccountSignal: match, targetAccountFloor: 2 });
+      continue;
+    }
+
+    if (match) {
       toScore.push({ ...lead, targetAccountSignal: match });
     } else {
       toScore.push(lead);
@@ -844,13 +928,26 @@ export async function partitionLeadsByTargetAccount(leads) {
 // always-present tag to any AI-returned priority whose lead carried a signal
 // (matched against `leads` - the same array passed to prioritizeLeads, so a
 // signal attached by partitionLeadsByTargetAccount above is still present).
+// Also enforces targetAccountFloor (set on a qualifying Post lead by
+// partitionLeadsByTargetAccount) - a real contact at a confidently-scored
+// company is never allowed to end up worse than the floor, whatever the AI
+// itself returned, with the clamp itself stated plainly in the reason.
 export function tagPrioritiesWithTargetAccountSignal(priorities, leads) {
-  const signalByKey = new Map(leads.filter((l) => l.targetAccountSignal).map((l) => [l.key, l.targetAccountSignal]));
+  const leadByKey = new Map(leads.filter((l) => l.targetAccountSignal).map((l) => [l.key, l]));
   return priorities.map((p) => {
-    const signal = signalByKey.get(p.key);
-    if (!signal) return p;
+    const lead = leadByKey.get(p.key);
+    if (!lead) return p;
+    const signal = lead.targetAccountSignal;
     const tag = `[Target Account signal: ${signal.company} scored ${Math.round(signal.score)}/100 (${signal.priorityLabel})] `;
-    return { ...p, reason: tag + (p.reason || "") };
+    const baseReason = tag + (p.reason || "");
+    if (lead.targetAccountFloor && p.priority > lead.targetAccountFloor) {
+      return {
+        ...p,
+        priority: lead.targetAccountFloor,
+        reason: `${baseReason} (raised from Priority ${p.priority} to ${lead.targetAccountFloor} - a floor for a real contact at a confidently-scored Target Account.)`,
+      };
+    }
+    return { ...p, reason: baseReason };
   });
 }
 

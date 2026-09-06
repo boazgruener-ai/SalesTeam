@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.1.")
+p.add_run("Living document, reflects the shipped product as of v0.29.2.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -538,7 +538,7 @@ add_bullets(doc, [
     "cron.",
 ])
 
-doc.add_heading("6.11 Target Accounts (v0.28.0, extended through v0.28.5)", level=3)
+doc.add_heading("6.11 Target Accounts (v0.28.0, extended through v0.29.2)", level=3)
 doc.add_paragraph(
     "A curated, externally-researched list of target companies - one row per company, scored 0-100 for "
     "AI-consulting sales fit (AI_Priority_Score), with a categorical label (Very High, Very High - "
@@ -558,29 +558,32 @@ add_bullets(doc, [
     "path, but isn't part of the normal workflow anymore. Matched against a lead's company field via the "
     "existing normalizeCompanyName() (already used for company grouping elsewhere), so exact legal-suffix/"
     "punctuation differences don't block a match.",
-    "Deterministic Priority 1 - Post leads only - a “New” Post lead with no priority yet, whose "
-    "company matches a target account labeled Very High or High (never a Provisional/Insufficient "
-    "Evidence/Out of Scope one) at or above a configurable score threshold (Settings, default 70), is "
-    "automatically set to Priority 1 before any batch AI prioritization call runs, so it's never "
-    "double-scored. The tooltip on the Dashboard's priority pill names the match, its score, and its top "
-    "AI initiative. The lead also gets a targetAccountMatch: true flag, so it stays distinguishable from a "
-    "Mentor-scored lead even though both render the same way.",
-    "Job leads never get this hard override (v0.28.5) - reported: top-priority leads were nearly all Job "
-    "listings, boosted purely by their employer's score even though a job ad's “creator” is "
-    "the company itself, not a real, contactable individual, and typically states nothing beyond the "
-    "hiring itself. A Job lead's company match - confident or not - is now always routed to the AI "
-    "prioritization pass as a signal only, never a hard override; the Mentor is explicitly instructed to "
-    "weigh a job's target-account signal much more conservatively than a post's (roughly one priority "
-    "level of lift over what the ad's own content would otherwise justify, not straight to 1 or 2 on the "
-    "company's strength alone).",
-    "Soft signal otherwise (Posts below the bar, and every Job lead) - passed into the "
-    "same batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it "
-    "alongside its usual judgment rather than ignoring it outright. The Mentor is told to mention it in its "
-    "own reason when it influenced the call, but that's free-text AI writing, not a guaranteed template - it "
-    "didn't reliably say so, which made it look like the list wasn't being used at all even when it was. "
-    "Fixed in v0.28.4: every AI-returned priority for a lead that carried a signal now gets a fixed "
-    "[Target Account signal: Company scored N/100 (Label)] tag deterministically prepended to its reason, "
-    "regardless of what the model itself wrote.",
+    "Job leads: fixed at Priority 3, always (v0.29.2, tightened from v0.28.5) - a Job lead's "
+    "“creator” is the company itself, not a real, contactable individual, and a job ad typically "
+    "states nothing beyond the hiring itself. A Job listing at a qualifying company never does better than "
+    "Priority 3 no matter how highly the employer scored - set directly, no AI call. A Job lead whose "
+    "company is only Provisional/below-threshold still gets the older soft-signal treatment below.",
+    "Post leads (including an in-post job ad): Priority 1 when the headline names a decision-maker role, "
+    "or the lead came from the “AI Transformation” topic (v0.29.2) - a real person is a "
+    "fundamentally stronger signal than an employer name alone. matchingHighValueTitle() in storage.js "
+    "checks the lead's own headline against a curated list: CTO/CIO/CAIO/CDO and spelled-out forms, "
+    "Head/VP of AI, Head/VP of Digital Transformation, Head/VP of Automation, Head/VP of Innovation. "
+    "Independently, a lead from a topic named “AI Transformation” also qualifies - a title match "
+    "takes precedence when both apply. Fixed, no AI call, so the reason is always an exact sentence naming "
+    "which condition fired. The lead also gets a targetAccountMatch: true flag.",
+    "Post leads otherwise: floor of Priority 2 (v0.29.2) - a qualifying company with no title/topic match "
+    "is still a real contact worth more than average, just not automatically the top priority. Sent to the "
+    "AI as a signal (targetAccountFloor: 2), and the returned priority is clamped up to 2 if the model "
+    "itself returned 3-5 - the Mentor's own judgment still picks between 1 and 2 within that range. The "
+    "clamp is stated plainly in the reason whenever it actually changes the value.",
+    "Soft signal otherwise (a Provisional/below-threshold match on either lead type) - passed into the "
+    "same batch AI prioritization call (6.4) as context, weighted per the Post/Job distinction (a Job's "
+    "signal is explicitly weighted more conservatively - roughly one priority level of lift, not straight "
+    "to 1 or 2). The Mentor is told to mention it in its own reason when it influenced the call, but "
+    "that's free-text AI writing, not a guaranteed template - it didn't reliably say so. Fixed in v0.28.4: "
+    "every AI-returned priority for a lead that carried a signal now gets a fixed [Target Account signal: "
+    "Company scored N/100 (Label)] tag deterministically prepended to its reason, regardless of what the "
+    "model itself wrote.",
     "Applies everywhere prioritization runs (v0.28.2) - the same split "
     "(partitionLeadsByTargetAccount in storage.js) runs during a scan's automatic pass and both "
     "Dashboard buttons (6.4), not just at scan time. Concretely: importing a new/updated Target "
@@ -654,7 +657,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.1."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.2."
 )
 
 for section in doc.sections:

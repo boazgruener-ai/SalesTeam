@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.1.
+**Status:** Living document, reflects the shipped product as of v0.29.2.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -420,7 +420,7 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   is exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the
   next day — a predictable, permission-free approximation of a daily export, not a true cron.
 
-### 6.11 Target Accounts (v0.28.0, extended through v0.28.5)
+### 6.11 Target Accounts (v0.28.0, extended through v0.29.2)
 
 A curated, externally-researched list of target companies — one row per company, scored 0-100 for AI-
 consulting sales fit (`AI_Priority_Score`), with a categorical label (`Very High`, `Very High - Provisional`,
@@ -439,30 +439,45 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
   part of the normal workflow anymore. Matched against a lead's `company` field via the existing
   `normalizeCompanyName()` (already used for company grouping elsewhere), so exact legal-suffix/punctuation
   differences don't block a match.
-- **Deterministic Priority 1 — Post leads only** — a "New" Post lead with no priority yet, whose company
-  matches a target account labeled `Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/
-  `Out of Scope` one) at or above a configurable score threshold (Settings, default 70), is automatically set
-  to Priority 1 before any batch AI prioritization call runs, so it's never double-scored. The tooltip on the
-  Dashboard's priority pill names the match, its score, and its top AI initiative. The lead also gets a
-  `targetAccountMatch: true` flag, so it stays distinguishable from a Mentor-scored lead even though both
+A "New" lead qualifies for the deterministic logic below when its company matches a target account labeled
+`Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/`Out of Scope` one) at or above a
+configurable score threshold (Settings, default 70). None of the rules below ever involve an AI call for the
+leads they apply to — the outcome is guaranteed and the reason is always an exact, quotable sentence, not
+something a model chose (or didn't choose) to mention:
+
+- **Job leads: fixed at Priority 3, always (v0.29.2, tightened from v0.28.5)** — a Job lead's "creator" is the
+  company itself, not a real, contactable individual, and a job ad typically states nothing beyond the hiring
+  itself. Reported directly: even a moderate cap wasn't enough — a Job listing at a qualifying company should
+  never do *better* than Priority 3 no matter how highly the employer scored, full stop. This is set directly
+  (no AI call), replacing v0.28.5's "send to the AI with conservative guidance" approach for a *qualifying*
+  match — a Job lead whose company is only Provisional/below-threshold still gets the older soft-signal
+  treatment (below).
+- **Post leads (including an in-post job ad — a real, named individual exists either way): Priority 1 when the
+  headline names a decision-maker role, or the lead came from the "AI Transformation" topic (v0.29.2)** — a
+  real person is a fundamentally stronger signal than an employer name alone. `matchingHighValueTitle()` in
+  `storage.js` checks the lead's own headline (case-insensitive substring) against a curated list: CTO/CIO/
+  CAIO/CDO and their spelled-out forms, Head/VP of AI, Head/VP of Digital Transformation, Head/VP of
+  Automation, Head/VP of Innovation. Independently, a lead sourced from a topic whose name contains
+  "AI Transformation" also qualifies — a title match takes precedence when both apply (the reason names
+  whichever one actually fired). The tooltip on the Dashboard's priority pill (and the Priority Reason column,
+  6.5) names the match, its score, and which condition triggered the automatic Priority 1. The lead also gets
+  a `targetAccountMatch: true` flag, so it stays distinguishable from a Mentor-scored lead even though both
   render the same way.
-- **Job leads never get this hard override (v0.28.5)** — reported: top-priority leads were nearly all Job
-  listings, boosted purely by their employer's score even though a job ad's "creator" is the company itself,
-  not a real, contactable individual, and typically states nothing beyond the hiring itself. A Job lead's
-  company match — confident or not — is now always routed to the AI prioritization pass as a signal only,
-  never a hard override; the Mentor is explicitly instructed to weigh a job's target-account signal much more
-  conservatively than a post's (roughly one priority level of lift over what the ad's own content would
-  otherwise justify, not straight to 1 or 2 on the company's strength alone) — a real, named individual on a
-  Post lead is a different, stronger kind of signal than an employer name on a job ad.
-- **Soft signal otherwise (Posts below the bar, and every Job lead)** — passed into the same batch AI
-  prioritization call (6.4) as context, so the Sales Mentor weighs it alongside its usual judgment rather than
-  ignoring it outright, weighted per the Post/Job distinction above. The Mentor is told to mention it in its
-  own reason when it influenced the call, but that's free-text AI writing, not a guaranteed template — it
-  didn't reliably say so, which made it look like the list wasn't being used at all even when it was. **Fixed
-  in v0.28.4**: every AI-returned priority for a lead that carried a signal now gets a fixed
-  `[Target Account signal: Company scored N/100 (Label)]` tag deterministically prepended to its reason,
-  regardless of what the model itself wrote — the connection to the workbook is now always visible, not
-  dependent on the model's phrasing.
+- **Post leads otherwise: floor of Priority 2 (v0.29.2)** — a qualifying company with no title/topic match is
+  still a real contact worth more than average, just not automatically the top priority. Sent to the AI as a
+  signal (`targetAccountFloor: 2` attached), and the returned priority is clamped up to 2 if the model itself
+  returned 3-5 — the Mentor's own judgment still picks between 1 and 2 within that range based on the actual
+  content. The clamp is stated plainly in the reason whenever it actually changes the value
+  (`tagPrioritiesWithTargetAccountSignal` in `storage.js`).
+- **Soft signal otherwise (a Provisional/below-threshold match on either lead type)** — passed into the same
+  batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it alongside its usual judgment
+  rather than ignoring it outright — a Job lead's signal is explicitly weighted more conservatively here than
+  a Post's (roughly one priority level of lift over what the content alone would justify, not straight to 1
+  or 2). The Mentor is told to mention it in its own reason when it influenced the call, but that's free-text
+  AI writing, not a guaranteed template — it didn't reliably say so, which made it look like the list wasn't
+  being used at all even when it was. **Fixed in v0.28.4**: every AI-returned priority for a lead that carried
+  a signal now gets a fixed `[Target Account signal: Company scored N/100 (Label)]` tag deterministically
+  prepended to its reason, regardless of what the model itself wrote.
 - **Applies everywhere prioritization runs (v0.28.2)** — the same split (`partitionLeadsByTargetAccount` in
   `storage.js`) runs during a scan's automatic pass *and* both Dashboard buttons (6.4), not just at scan time.
   Concretely: importing a new/updated Target Accounts list and then clicking "Re-score All Priorities"
@@ -541,4 +556,4 @@ company via `Company_ID`. This page browses all of it.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.1**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.2**.

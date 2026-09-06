@@ -1,3 +1,16 @@
+# SalesTeam — v0.29.2
+
+## Changed: sharper, fully deterministic Target Account priority rules
+
+- Reported: even after v0.28.5 (Job leads no longer forced to P1), Job listings were still routinely outranking real people because their conservative-but-still-AI-judged signal could land anywhere. Also asked for Post leads to be judged on more than just the company - a real decision-maker's own title, or the topic that surfaced them, should matter too - and for all of it to be transparent, not just an AI black box.
+- **Job leads at a qualifying (70+, non-Provisional) company are now fixed at Priority 3, full stop** - no AI call involved, never better regardless of the ad's own content, since there's no individual to contact and nothing else to weigh.
+- **Post leads (including in-post job ads) get an automatic Priority 1** when the poster's own headline names a decision-maker role (CTO, CIO, CAIO, CDO and spelled-out forms, Head/VP of AI, Head/VP of Digital Transformation, Head/VP of Automation, Head/VP of Innovation) or the lead was found via a topic named "AI Transformation" - also fixed, no AI call, so the reason is always an exact sentence naming which condition fired.
+- **Post leads that qualify without a title/topic match get a floor of Priority 2** - still sent to the Sales Mentor for judgment (it can still say P1 if the content itself is strong), but the returned priority is clamped up to 2 if the model said worse, with the clamp stated plainly in the reason.
+- Provisional/below-threshold matches on either lead type are unaffected - still just a soft signal into the existing AI pass, unchanged from v0.28.4/v0.28.5.
+- Verified via harness: all five new/changed paths (Job fixed-P3, Post title-match, Post topic-match, Post floor-clamp when the AI scores low, Post floor-clamp correctly *not* firing when the AI already meets it) plus the untouched Provisional soft-signal path - 17 assertions, all passing.
+
+---
+
 # SalesTeam — v0.29.1
 
 ## New (opt-in): Extract Companies from Profiles
