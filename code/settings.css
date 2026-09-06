@@ -118,6 +118,50 @@ textarea {
   resize: vertical;
 }
 
+#prioritization-rules-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+
+#prioritization-rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  background: #fff;
+}
+
+#prioritization-rules-table th {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 2px solid var(--border);
+  color: var(--gray);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+#prioritization-rules-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+
+#prioritization-rules-table td.rule-description {
+  color: var(--gray);
+  max-width: 360px;
+}
+
+#prioritization-rules-table input[type="number"] {
+  width: 55px;
+  margin-bottom: 0;
+  padding: 4px 6px;
+}
+
+#prioritization-rules-table .rule-value-empty {
+  color: var(--gray-light);
+}
+
 .template-card {
   border: 1px solid #ddd;
   border-radius: 6px;

@@ -775,6 +775,71 @@ export function normalizeCompanyName(name) {
   return collapsed.replace(COMPANY_SUFFIX_RE, "").trim();
 }
 
+// The fixed catalog of deterministic rules layered on top of the Sales
+// Mentor for a qualifying Target Account match (see 6.11/6.13 in PRD.md) -
+// each rule uses exactly one of the three effect types, matching the
+// Settings page's own Ceiling/Floor/Decisive columns:
+//   - "decisive": the rule sets the priority outright - no AI call at all
+//     for that lead (the Sales Mentor never gets a say for it).
+//   - "floor": the lead still goes to the Sales Mentor, but the returned
+//     priority is clamped up to at least this value if the model said worse.
+// The Sales Mentor's own judgment is always the base decision and can never
+// itself be disabled - these rules only ever constrain or override it for
+// leads that satisfy their specific condition. `description` and `type` are
+// fixed in code, never stored/edited, so a saved override can never drift
+// into describing behavior the code doesn't actually implement - only
+// `enabled` and `value` are user-adjustable (see
+// getPrioritizationRules/savePrioritizationRuleOverride below).
+export const PRIORITIZATION_RULE_CATALOG = [
+  {
+    id: "job_company_cap",
+    description: "Job listing at a qualifying Target Account company - there's no individual to contact, so the company match alone is capped.",
+    type: "decisive",
+    defaultValue: 3,
+  },
+  {
+    id: "post_title_match",
+    description: 'Post (or in-post job ad) whose own headline names a decision-maker role (CTO, CIO, CAIO, Head/VP of AI, etc.) at a qualifying Target Account company.',
+    type: "decisive",
+    defaultValue: 1,
+  },
+  {
+    id: "post_topic_match",
+    description: 'Post (or in-post job ad) sourced from a topic named "AI Transformation", at a qualifying Target Account company (checked only if the title-match rule above didn\'t already fire).',
+    type: "decisive",
+    defaultValue: 1,
+  },
+  {
+    id: "post_company_floor",
+    description: "Post (or in-post job ad) at a qualifying Target Account company that matched neither rule above - guaranteed a minimum priority, but the Sales Mentor can still say better.",
+    type: "floor",
+    defaultValue: 2,
+  },
+];
+
+const PRIORITIZATION_RULE_OVERRIDES_KEY = "prioritizationRuleOverrides";
+
+export async function getPrioritizationRules() {
+  const data = await chrome.storage.local.get(PRIORITIZATION_RULE_OVERRIDES_KEY);
+  const overrides = data[PRIORITIZATION_RULE_OVERRIDES_KEY] || {};
+  return PRIORITIZATION_RULE_CATALOG.map((rule) => ({
+    ...rule,
+    enabled: overrides[rule.id]?.enabled !== undefined ? overrides[rule.id].enabled : true,
+    value: overrides[rule.id]?.value !== undefined ? overrides[rule.id].value : rule.defaultValue,
+  }));
+}
+
+export async function savePrioritizationRuleOverride(id, { enabled, value } = {}) {
+  const data = await chrome.storage.local.get(PRIORITIZATION_RULE_OVERRIDES_KEY);
+  const overrides = data[PRIORITIZATION_RULE_OVERRIDES_KEY] || {};
+  overrides[id] = {
+    ...overrides[id],
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(value !== undefined ? { value } : {}),
+  };
+  await chrome.storage.local.set({ [PRIORITIZATION_RULE_OVERRIDES_KEY]: overrides });
+}
+
 // Pure decision function behind background.js's Target Account auto-priority
 // step (see 6.11 in PRD.md) - kept separate/side-effect-free so it's directly
 // unit-testable without running a whole scan. "Confident" deliberately
@@ -830,28 +895,24 @@ function matchesAiTransformationTopic(matchedTopics) {
 }
 
 // Splits a list of not-yet-(re)scored leads against the imported Target
-// Accounts list: those that qualify for a deterministic priority go into
-// autoPriorities, ready for applyLeadPriorities below (or an equivalent
-// inline write) - no AI call involved for these at all, so the outcome is
-// guaranteed and the reason is always an exact, quotable sentence rather
-// than something the model chose (or didn't choose) to mention:
-//   - A Job lead (no individual to contact, nothing beyond the hiring
-//     itself) is fixed at Priority 3 - the company match can't earn it
-//     better than that, no matter how highly the company scored.
-//   - A Post lead (including an in-post job ad - a real, named individual
-//     exists either way) whose own headline names a high-value role, or
-//     that came from the "AI Transformation" topic, is fixed at Priority 1.
+// Accounts list, applying PRIORITIZATION_RULE_CATALOG (above) - a rule that
+// qualifies and is enabled goes into autoPriorities, ready for
+// applyLeadPriorities below (or an equivalent inline write) - no AI call
+// involved for a "decisive" rule at all, so the outcome is guaranteed and
+// the reason is always an exact, quotable sentence naming which rule fired,
+// rather than something the model chose (or didn't choose) to mention.
 // Everything else comes back in toScore, unchanged except a lead that still
-// matched (just not confidently enough, or a Post that qualifies without a
-// title/topic hit) gets a shallow-cloned copy with a targetAccountSignal
-// attached (and, for the latter case, a targetAccountFloor: 2 - a real
-// contact at a confidently-scored company should never end up below
-// Priority 2, but the Sales Mentor's own judgment still picks between 1 and
-// 2 within that range) so prioritizeLeads (agent-shared.js) can fold it
-// into the Sales Mentor's own judgment - a
-// clone, not a mutation, so this transient hint is never accidentally
-// persisted onto the real stored lead object. Shared by background.js's
-// automatic post-scan pass and the Dashboard's manual Prioritize Unscored /
+// matched (just not confidently enough, a disabled rule's condition, or a
+// Post that qualifies without a title/topic hit) gets a shallow-cloned copy
+// with a targetAccountSignal attached (and, for a qualifying Post with the
+// floor rule enabled, a targetAccountFloor at that rule's configured value)
+// so prioritizeLeads (agent-shared.js) can fold it into the Sales Mentor's
+// own judgment - the Mentor's own judgment is always the base decision and
+// is never itself disabled; these rules only ever constrain or override it
+// for leads that satisfy their specific condition. A clone, not a mutation,
+// so this transient hint is never accidentally persisted onto the real
+// stored lead object. Shared by background.js's automatic post-scan pass
+// and the Dashboard's manual Prioritize Unscored /
 // Re-score All Priorities buttons, so every path applies the same rule -
 // importing/updating the Target Accounts list retroactively affects leads
 // re-scored afterward without requiring a fresh scan.
@@ -860,6 +921,9 @@ export async function partitionLeadsByTargetAccount(leads) {
   if (Object.keys(targetAccounts).length === 0) return { autoPriorities: [], toScore: leads };
 
   const threshold = await getTargetAccountScoreThreshold();
+  const rules = await getPrioritizationRules();
+  const ruleById = Object.fromEntries(rules.map((r) => [r.id, r]));
+
   const autoPriorities = [];
   const toScore = [];
   for (const lead of leads) {
@@ -869,14 +933,21 @@ export async function partitionLeadsByTargetAccount(leads) {
       // A Job lead's "creator" is the company itself, not an individual -
       // there's no real person to message, and a job ad alone (no named
       // contact, no stated initiative beyond "we're hiring") never earns
-      // better than Priority 3, however highly the employer scored. Fixed
-      // here rather than sent to the AI - there's nothing else for the
-      // model to weigh for this specific decision.
-      autoPriorities.push({
-        key: lead.key,
-        priority: 3,
-        reason: `Target Account match: ${describeMatch(match)} - capped at Priority 3, since this is a Job listing with no individual contact to follow up with.`,
-      });
+      // better than this rule's value, however highly the employer scored.
+      // Applied directly rather than sent to the AI - there's nothing else
+      // for the model to weigh for this specific decision. Disabling the
+      // rule (Settings 6.7) leaves the lead to the Sales Mentor entirely,
+      // same as a non-qualifying match already does.
+      const rule = ruleById.job_company_cap;
+      if (rule.enabled) {
+        autoPriorities.push({
+          key: lead.key,
+          priority: rule.value,
+          reason: `Target Account match: ${describeMatch(match)} - capped at Priority ${rule.value} (rule: Job company cap), since this is a Job listing with no individual contact to follow up with.`,
+        });
+        continue;
+      }
+      toScore.push({ ...lead, targetAccountSignal: match });
       continue;
     }
 
@@ -885,28 +956,35 @@ export async function partitionLeadsByTargetAccount(leads) {
       // individual behind it - a stronger signal than a Job listing. A
       // qualifying company plus a headline naming a real decision-maker
       // role, or a lead sourced from the "AI Transformation" topic, earns
-      // an automatic Priority 1 - fixed here, not left to the AI, so the
-      // outcome is guaranteed regardless of how the model would have
-      // phrased it.
-      const titleKeyword = matchingHighValueTitle(lead.headline);
-      const topicMatch = !titleKeyword && matchesAiTransformationTopic(lead.matchedTopics);
+      // an automatic top priority - applied directly, not left to the AI,
+      // so the outcome is guaranteed regardless of how the model would have
+      // phrased it. Either rule can be independently disabled in Settings.
+      const titleRule = ruleById.post_title_match;
+      const topicRule = ruleById.post_topic_match;
+      const titleKeyword = titleRule.enabled ? matchingHighValueTitle(lead.headline) : null;
+      const topicMatch = !titleKeyword && topicRule.enabled && matchesAiTransformationTopic(lead.matchedTopics);
       if (titleKeyword || topicMatch) {
+        const rule = titleKeyword ? titleRule : topicRule;
         const why = titleKeyword
           ? `the post creator's own headline names a key AI/digital-transformation role ("${titleKeyword}")`
           : 'it was found via the "AI Transformation" topic';
         autoPriorities.push({
           key: lead.key,
-          priority: 1,
-          reason: `Target Account match: ${describeMatch(match)} - automatic Priority 1, since ${why}.`,
+          priority: rule.value,
+          reason: `Target Account match: ${describeMatch(match)} - automatic Priority ${rule.value} (rule: ${titleKeyword ? "Post title match" : "Post topic match"}), since ${why}.`,
         });
         continue;
       }
       // Still a real contact at a confidently-scored company - guaranteed
-      // at least Priority 2 (targetAccountFloor, applied in
+      // at least this rule's floor value (targetAccountFloor, applied in
       // tagPrioritiesWithTargetAccountSignal below once the AI has scored
       // it), but the Sales Mentor's own judgment still picks between 1 and
-      // 2 within that range based on the actual content.
-      toScore.push({ ...lead, targetAccountSignal: match, targetAccountFloor: 2 });
+      // the floor within that range based on the actual content. Disabling
+      // the rule sends the lead to the AI as a plain signal with no floor.
+      const floorRule = ruleById.post_company_floor;
+      toScore.push(floorRule.enabled
+        ? { ...lead, targetAccountSignal: match, targetAccountFloor: floorRule.value }
+        : { ...lead, targetAccountSignal: match });
       continue;
     }
 

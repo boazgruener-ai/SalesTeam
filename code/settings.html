@@ -56,8 +56,32 @@
         <button id="import-target-accounts-btn" type="button" title="Import the Swiss AI prospects .xlsx workbook directly (its 'Companies' sheet)">Import Target Accounts</button>
         <input type="file" id="import-target-accounts-file-input" accept=".xlsx,application/json" hidden />
       </div>
-      <label for="target-account-threshold-input">Auto-Priority-1 score threshold</label>
-      <input type="number" id="target-account-threshold-input" min="0" max="100" title="Companies scored at or above this (and labeled Very High/High, non-provisional) automatically get Priority 1" />
+      <label for="target-account-threshold-input">Target Account confidence threshold</label>
+      <input type="number" id="target-account-threshold-input" min="0" max="100" title="Companies scored at or above this (and labeled Very High/High, non-provisional) 'qualify' - see the Prioritization Rules below for exactly what that triggers" />
+
+      <h3>Prioritization Rules</h3>
+      <p class="field-hint">
+        These layer on top of the Sales Mentor's own judgment for a lead whose company qualifies as a Target
+        Account (above). A <strong>Decisive</strong> rule fixes the priority outright - the Sales Mentor
+        never sees that lead. A <strong>Ceiling</strong>/<strong>Floor</strong> rule instead caps or raises
+        whatever the Mentor itself would have said. The Sales Mentor is always the base decision and can't be
+        disabled - disable a rule here to let it decide those leads entirely on its own instead.
+      </p>
+      <div id="prioritization-rules-wrap">
+        <table id="prioritization-rules-table">
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>Description</th>
+              <th>Ceiling</th>
+              <th>Floor</th>
+              <th>Decisive</th>
+              <th>Enabled</th>
+            </tr>
+          </thead>
+          <tbody id="prioritization-rules-tbody"></tbody>
+        </table>
+      </div>
 
       <label for="anthropic-api-key-input">Anthropic API key</label>
       <input type="password" id="anthropic-api-key-input" placeholder="sk-ant-..." />

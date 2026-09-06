@@ -1,3 +1,15 @@
+# SalesTeam — v0.29.4
+
+## New: configurable Prioritization Rules table on Settings
+
+- Requested: "Can we store, and also display in settings, the rules for prioritization? This way, the user can also see what is driving the prioritization and can also decide to disable any of them." Also asked for the Sales Mentor to always remain the base decision - these rules should only ever constrain or override it, never replace it, and it can't itself be disabled.
+- The four deterministic rules added in v0.29.2 (Job company cap, Post title match, Post topic match, Post company floor) are now data-driven instead of hardcoded constants, and shown as a real table on Settings: Rule, Description, Ceiling, Floor, Decisive, Enabled - each rule occupies exactly one of the three value columns, matching its fixed effect type.
+- A rule's description and effect type are fixed in code and never stored or edited - only its value and enabled state are user-adjustable, so a saved change can never drift into describing behavior the code doesn't actually implement.
+- Disabling a rule leaves those leads to the Sales Mentor's own judgment as a plain signal, exactly like a non-qualifying company match already works. The Mentor's own judgment is always the base decision for every lead and can't itself be disabled.
+- Verified via harness: changing a rule's value takes effect immediately (including a live example - editing the Job company cap from 3 to 4 and confirming the next partition call reflects it), disabling a rule correctly routes those leads to the AI-signal path instead of auto-prioritizing them, and the Settings UI's number/checkbox inputs round-trip correctly (including rejecting an out-of-range value and reverting the input).
+
+---
+
 # SalesTeam — v0.29.3
 
 ## Changed: Target Accounts Explorer gets all 44 company columns, filtering, and full sub-tables

@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.3.")
+p.add_run("Living document, reflects the shipped product as of v0.29.4.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -432,7 +432,7 @@ doc.add_paragraph(
     "both together - not used by Customer Voice, which has no reason to reason about who the seller "
     "targets), Anthropic API key, message templates (auto-picked per lead by connection status "
     "/ job-ad detection, or chosen manually), value-add offers (a fixed list the AI may mention, never "
-    "invents). Target Accounts (v0.28.0 - imported list plus the auto-Priority-1 score threshold; see 6.11). "
+    "invents). Target Accounts (v0.28.0 - imported list, confidence threshold, and the configurable Prioritization Rules table, v0.29.4; see 6.11). "
     "Opened via its own blue button in the Scanner tile. The Advisors page reads these live (via "
     "chrome.storage.onChanged) rather than caching a stale copy, since editing now happens on a separate page."
 )
@@ -538,7 +538,7 @@ add_bullets(doc, [
     "cron.",
 ])
 
-doc.add_heading("6.11 Target Accounts (v0.28.0, extended through v0.29.2)", level=3)
+doc.add_heading("6.11 Target Accounts (v0.28.0, extended through v0.29.4)", level=3)
 doc.add_paragraph(
     "A curated, externally-researched list of target companies - one row per company, scored 0-100 for "
     "AI-consulting sales fit (AI_Priority_Score), with a categorical label (Very High, Very High - "
@@ -591,6 +591,14 @@ add_bullets(doc, [
     "eligible existing lead - no new scan needed.",
     "Threshold and the imported list itself live in Settings (6.7) and travel with a Settings export/import "
     "(6.8), so a fresh install or a restored backup doesn't lose them.",
+    "Every rule above is configurable, and the whole set is visible in one place (v0.29.4) - a "
+    "Prioritization Rules table on Settings (6.7) lists the four rules above with columns for "
+    "Ceiling/Floor/Decisive value and Enabled - each rule occupies exactly one of those three value "
+    "columns, matching its fixed effect type. A rule's own description and effect type are fixed in "
+    "code (PRIORITIZATION_RULE_CATALOG in storage.js), never stored or edited - only its value and "
+    "enabled state are user-adjustable. Disabling a rule leaves those leads to the Sales Mentor's own "
+    "judgment as a plain signal. The Mentor's own judgment is always the base decision for every lead "
+    "and can't itself be disabled, only constrained or overridden by an enabled rule that applies.",
 ])
 
 doc.add_heading("6.12 Target Accounts Explorer (v0.29.0, extended v0.29.3)", level=3)
@@ -666,7 +674,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.3."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.4."
 )
 
 for section in doc.sections:

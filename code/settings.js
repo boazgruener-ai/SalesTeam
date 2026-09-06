@@ -20,6 +20,8 @@ import {
   getTargetAccountScoreThreshold,
   saveTargetAccountScoreThreshold,
   importTargetAccountsWorkbook,
+  getPrioritizationRules,
+  savePrioritizationRuleOverride,
   appendActivityLog,
 } from "./storage.js";
 import { sanitizeApiKey } from "./agent-shared.js";
@@ -49,6 +51,7 @@ const targetAccountsStatusEl = document.getElementById("target-accounts-status")
 const importTargetAccountsBtn = document.getElementById("import-target-accounts-btn");
 const importTargetAccountsFileInput = document.getElementById("import-target-accounts-file-input");
 const targetAccountThresholdInput = document.getElementById("target-account-threshold-input");
+const prioritizationRulesTbodyEl = document.getElementById("prioritization-rules-tbody");
 
 let messageTemplates = [];
 
@@ -194,6 +197,92 @@ logOnBlur(targetAccountThresholdInput, {
   labelFor: (oldVal, newVal) => `Target Account score threshold changed (${oldVal} → ${newVal})`,
 });
 
+// Short display names for storage.js's PRIORITIZATION_RULE_CATALOG ids -
+// the catalog's own `id` is a stable key, not meant as UI text.
+const PRIORITIZATION_RULE_LABELS = {
+  job_company_cap: "Job company cap",
+  post_title_match: "Post title match",
+  post_topic_match: "Post topic match",
+  post_company_floor: "Post company floor",
+};
+
+function ruleValueCell(rule) {
+  const td = document.createElement("td");
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "1";
+  input.max = "5";
+  input.value = rule.value;
+  input.title = `${rule.type === "decisive" ? "Decisive" : rule.type === "floor" ? "Floor" : "Ceiling"} value for this rule`;
+  input.addEventListener("change", async () => {
+    const value = Number(input.value);
+    if (!Number.isInteger(value) || value < 1 || value > 5) {
+      input.value = rule.value;
+      return;
+    }
+    const prevValue = rule.value;
+    rule.value = value;
+    await savePrioritizationRuleOverride(rule.id, { value });
+    appendActivityLog({
+      actor: "user",
+      action: "prioritization_rule_value_changed",
+      label: `Prioritization rule "${PRIORITIZATION_RULE_LABELS[rule.id] || rule.id}" value changed`,
+      prevValue,
+      newValue: value,
+    });
+  });
+  td.appendChild(input);
+  return td;
+}
+
+function emptyValueCell() {
+  const td = document.createElement("td");
+  td.className = "rule-value-empty";
+  td.textContent = "—";
+  return td;
+}
+
+async function renderPrioritizationRules() {
+  const rules = await getPrioritizationRules();
+  prioritizationRulesTbodyEl.innerHTML = "";
+  for (const rule of rules) {
+    const tr = document.createElement("tr");
+
+    const nameTd = document.createElement("td");
+    nameTd.textContent = PRIORITIZATION_RULE_LABELS[rule.id] || rule.id;
+
+    const descTd = document.createElement("td");
+    descTd.className = "rule-description";
+    descTd.textContent = rule.description;
+
+    const ceilingTd = rule.type === "ceiling" ? ruleValueCell(rule) : emptyValueCell();
+    const floorTd = rule.type === "floor" ? ruleValueCell(rule) : emptyValueCell();
+    const decisiveTd = rule.type === "decisive" ? ruleValueCell(rule) : emptyValueCell();
+
+    const enabledTd = document.createElement("td");
+    const enabledCheckbox = document.createElement("input");
+    enabledCheckbox.type = "checkbox";
+    enabledCheckbox.checked = rule.enabled;
+    enabledCheckbox.title = "Disable to let the Sales Mentor decide these leads entirely on its own";
+    enabledCheckbox.addEventListener("change", async () => {
+      const wasEnabled = rule.enabled;
+      rule.enabled = enabledCheckbox.checked;
+      await savePrioritizationRuleOverride(rule.id, { enabled: enabledCheckbox.checked });
+      appendActivityLog({
+        actor: "user",
+        action: "prioritization_rule_toggled",
+        label: `Prioritization rule "${PRIORITIZATION_RULE_LABELS[rule.id] || rule.id}" ${enabledCheckbox.checked ? "enabled" : "disabled"}`,
+        prevValue: wasEnabled,
+        newValue: enabledCheckbox.checked,
+      });
+    });
+    enabledTd.appendChild(enabledCheckbox);
+
+    tr.append(nameTd, descTd, ceilingTd, floorTd, decisiveTd, enabledTd);
+    prioritizationRulesTbodyEl.appendChild(tr);
+  }
+}
+
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -210,6 +299,7 @@ async function init() {
 
   targetAccountThresholdInput.value = await getTargetAccountScoreThreshold();
   await renderTargetAccountsStatus();
+  await renderPrioritizationRules();
 }
 
 init();

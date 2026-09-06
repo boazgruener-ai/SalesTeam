@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.3.
+**Status:** Living document, reflects the shipped product as of v0.29.4.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -334,8 +334,8 @@ investing in; deliberately a separate field from "What We Offer" since the produ
 are different concepts, even though every relevant AI feature reads both together — not used by Customer
 Voice, which has no reason to reason about who the seller targets), Anthropic API key, message templates
 (auto-picked per lead by connection status / job-ad detection, or chosen manually), value-add offers (a fixed
-list the AI may mention, never invents). **Target Accounts** (v0.28.0 — imported list plus the auto-Priority-1
-score threshold; see 6.11). Opened via its own blue button in the Scanner tile. The Advisors page reads these
+list the AI may mention, never invents). **Target Accounts** (v0.28.0 — imported list, confidence threshold, and the
+configurable Prioritization Rules table, v0.29.4; see 6.11). Opened via its own blue button in the Scanner tile. The Advisors page reads these
 live (via `chrome.storage.onChanged`) rather than caching a stale copy, since editing now happens on a
 separate page.
 
@@ -420,7 +420,7 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   is exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the
   next day — a predictable, permission-free approximation of a daily export, not a true cron.
 
-### 6.11 Target Accounts (v0.28.0, extended through v0.29.2)
+### 6.11 Target Accounts (v0.28.0, extended through v0.29.4)
 
 A curated, externally-researched list of target companies — one row per company, scored 0-100 for AI-
 consulting sales fit (`AI_Priority_Score`), with a categorical label (`Very High`, `Very High - Provisional`,
@@ -484,6 +484,17 @@ something a model chose (or didn't choose) to mention:
   immediately re-prioritizes every eligible existing lead — no new scan needed.
 - Threshold and the imported list itself live in Settings (6.7) and travel with a Settings export/import
   (6.8), so a fresh install or a restored backup doesn't lose them.
+- **Every rule above is configurable, and the whole set is visible in one place (v0.29.4)** — reported: "the
+  user can also see what is driving the prioritization and can also decide to disable any of them." A
+  **Prioritization Rules** table on Settings (6.7) lists the four rules above (Job company cap, Post title
+  match, Post topic match, Post company floor) with columns for Ceiling/Floor/Decisive value and Enabled —
+  each rule occupies exactly one of those three value columns, matching its fixed effect type. The rule's
+  own description and effect type are fixed in code (`PRIORITIZATION_RULE_CATALOG` in `storage.js`), never
+  stored or edited, so a saved change can only ever be its **value** or whether it's **enabled** — never
+  what the rule actually means. Disabling a rule leaves those leads to the Sales Mentor's own judgment as a
+  plain signal, exactly as a non-qualifying match already works; the Mentor's own judgment is always the
+  base decision for every lead and can't itself be disabled, only constrained or overridden by an enabled
+  rule that applies.
 
 ### 6.12 Target Accounts Explorer (v0.29.0, extended v0.29.3)
 
@@ -569,4 +580,4 @@ company via `Company_ID`. This page browses all of it.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.3**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.4**.
