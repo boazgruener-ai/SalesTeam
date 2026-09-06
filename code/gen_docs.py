@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.2.")
+p.add_run("Living document, reflects the shipped product as of v0.29.3.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -593,7 +593,7 @@ add_bullets(doc, [
     "(6.8), so a fresh install or a restored backup doesn't lose them.",
 ])
 
-doc.add_heading("6.12 Target Accounts Explorer (v0.29.0)", level=3)
+doc.add_heading("6.12 Target Accounts Explorer (v0.29.0, extended v0.29.3)", level=3)
 doc.add_paragraph(
     "The lightweight targetAccounts map (6.11) only carries what auto-prioritization needs - a score, "
     "label, and top initiative per company. The source workbook has real relational depth beyond that: "
@@ -610,12 +610,21 @@ add_bullets(doc, [
     "populates the lightweight map.",
     "New page - code/target-accounts.html/.js/.css, opened via a “Target Accounts ↗” "
     "button next to Activity Log in the side panel (same no-manifest-entry pattern as Activity Log/Help).",
-    "Master table: every company (Company, Industry, Type, Swiss Employees, Global Revenue, AI Score, "
-    "AI Priority pill, Research Status), sortable per column and filterable by a free-text search across "
-    "company name and industry. Sorted by AI Score descending by default.",
-    "Row click expands a detail panel in place: the company's fuller record plus its related Contacts "
-    "and AI Initiatives - filtered client-side by matching companyId - and AI Investment/Sources "
-    "sub-tables when a company has either.",
+    "Master table, all 44 Companies columns (v0.29.3) - every field the sheet has is a real, toggleable "
+    "table column (43 columns cover all 44 raw fields - two currency fields are folded into their "
+    "paired amount column's display). Twelve start visible (Company, Industry, Type, Global/Swiss "
+    "Employees, Global/Swiss Revenue, AI Score, AI Priority pill, Evidence Coverage, Research Status, "
+    "Priority Rationale) - the rest start hidden. Same Columns button + per-column “Hide This "
+    "Column” menu item as the Dashboard (6.5). Sortable per column, plus a free-text search box "
+    "across company name/industry. Sorted by AI Score descending by default.",
+    "Per-column filtering with an exclude mode (v0.29.3) - each column's menu has a text filter plus "
+    "an “Exclude matches” checkbox, so filtering out companies whose AI Priority contains "
+    "“Insufficient Evidence” is one click rather than impossible with a plain "
+    "contains-only search.",
+    "Row click expands a detail panel in place: a primary-source link, plus the company's related "
+    "Contacts and AI Initiatives (every column of each sheet, v0.29.3) - filtered client-side by "
+    "matching companyId - and AI Investment/Sources sub-tables (unchanged, curated columns) when a "
+    "company has either.",
     "Deliberately not included in Settings export/import (6.8) - the full dataset (~700 rows across "
     "five sheets) would otherwise get rewritten into every automatic pre-scan backup. Re-picking the "
     "same .xlsx file in Settings is the recovery path if storage is ever wiped.",
@@ -657,7 +666,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.2."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.3."
 )
 
 for section in doc.sections:

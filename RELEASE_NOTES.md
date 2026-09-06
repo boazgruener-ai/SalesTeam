@@ -1,3 +1,15 @@
+# SalesTeam — v0.29.3
+
+## Changed: Target Accounts Explorer gets all 44 company columns, filtering, and full sub-tables
+
+- Reported: "Columns should support filtering - example: I would almost always want to filter out the companies with AI Priority containing 'Insufficient Evidence'" and "Many columns in the main sheet (Companies) are missing from the excel."
+- The master table now exposes every Companies-sheet field as a real, toggleable column (43 columns covering all 44 raw fields - the two currency fields are folded into their paired revenue column's display). Twelve start visible: Company, Industry, Type, Global/Swiss Employees, Global/Swiss Revenue, AI Score, AI Priority, Evidence Coverage, Research Status, and (newly promoted to the main table) Priority Rationale. The rest start hidden, one click away via the same **Columns** button and per-column **"Hide This Column"** item already built for the Dashboard (v0.28.6).
+- New per-column filtering, including an **exclude mode** - a checkbox next to each column's text filter to hide matching rows instead of narrowing to them, so filtering out "Insufficient Evidence" (409 of 500 companies) is one click.
+- The Contacts and AI Initiatives sub-tables in a company's detail panel now show every column of those sheets, not a curated subset.
+- Verified via harness: default column set and full 43-column availability, exclude-mode filtering (confirmed a company correctly disappears/reappears), the Columns panel toggling a hidden column on, and both expanded sub-tables rendering all their columns correctly.
+
+---
+
 # SalesTeam — v0.29.2
 
 ## Changed: sharper, fully deterministic Target Account priority rules

@@ -25,23 +25,14 @@
 
     <div id="explorer-controls" hidden>
       <input id="search-input" type="text" placeholder="Search company or industry…" />
+      <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
       <span id="result-count"></span>
     </div>
 
     <div id="table-wrap" hidden>
       <table id="companies-table">
-        <thead>
-          <tr>
-            <th data-sort="company">Company</th>
-            <th data-sort="industry">Industry</th>
-            <th data-sort="companyType">Type</th>
-            <th data-sort="swissEmployees">Swiss Employees</th>
-            <th data-sort="globalRevenue">Global Revenue</th>
-            <th data-sort="aiPriorityScore">AI Score</th>
-            <th data-sort="aiPriority">AI Priority</th>
-            <th data-sort="researchStatus">Research Status</th>
-          </tr>
-        </thead>
+        <colgroup id="companies-colgroup"></colgroup>
+        <thead id="companies-thead"></thead>
         <tbody id="companies-tbody"></tbody>
       </table>
     </div>

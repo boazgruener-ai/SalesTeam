@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.2.
+**Status:** Living document, reflects the shipped product as of v0.29.3.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -485,7 +485,7 @@ something a model chose (or didn't choose) to mention:
 - Threshold and the imported list itself live in Settings (6.7) and travel with a Settings export/import
   (6.8), so a fresh install or a restored backup doesn't lose them.
 
-### 6.12 Target Accounts Explorer (v0.29.0)
+### 6.12 Target Accounts Explorer (v0.29.0, extended v0.29.3)
 
 The lightweight `targetAccounts` map above (6.11) only carries what auto-prioritization needs — a score,
 label, and top initiative per company. The source workbook has real relational depth beyond that:
@@ -503,14 +503,27 @@ company via `Company_ID`. This page browses all of it.
 - **New page** — `code/target-accounts.html`/`.js`/`.css`, opened via a **"Target Accounts ↗"** button next
   to Activity Log in the side panel (same no-manifest-entry pattern as Activity Log/Help: no `content_scripts`
   or `web_accessible_resources` entry needed, just `chrome.tabs.create` + `chrome.runtime.getURL`).
-- **Master table**: every company (Company, Industry, Type, Swiss Employees, Global Revenue, AI Score, AI
-  Priority pill, Research Status), sortable per column (click toggles desc → asc) and filterable by a
-  free-text search across company name and industry. Sorted by AI Score descending by default.
-- **Row click expands a detail panel** in place: the company's fuller record (type, decision authority, HQ,
-  revenue/employee figures, AI investment/portfolio fields, priority rationale, primary source link), plus
-  its related **Contacts** and **AI Initiatives** — filtered client-side by matching `companyId`, which is
-  all a "join" needs to mean at this data volume (500 companies, under 200 total related rows across every
-  sheet). **AI Investment** and **Sources** sub-tables appear too when a company has either.
+- **Master table, all 44 Companies columns (v0.29.3)** — every field the sheet has is a real, toggleable
+  table column, not just a fixed handful; the two currency fields (`revenueCurrency`/`swissRevenueCurrency`)
+  are folded into their paired amount column's display rather than shown separately, so all 44 raw fields
+  are represented in 43 columns. Twelve start visible (Company, Industry, Type, Global/Swiss Employees,
+  Global/Swiss Revenue, AI Score, AI Priority pill, Evidence Coverage, Research Status, Priority Rationale)
+  — the rest (mostly confidence/period/scoring-methodology fields, useful for judging data quality rather
+  than day-to-day triage) start hidden. Same **Columns** button + per-column **"Hide This Column"** menu
+  item as the Dashboard (6.5) — including the "always leave at least one column visible" safeguard.
+  Sortable per column (click toggles desc → asc), plus a free-text search box across company name/industry.
+  Sorted by AI Score descending by default.
+- **Per-column filtering with an exclude mode (v0.29.3)** — reported directly: "I would almost always want
+  to filter out the companies with AI Priority containing 'Insufficient Evidence.'" Each column's menu (the
+  same one used for sort/hide) has a text filter plus an **"Exclude matches"** checkbox — the plain search
+  box can only narrow *to* matches, so excluding a value (like the 409 Insufficient-Evidence companies)
+  needed its own control. A filtered column shows a small dot next to its header.
+- **Row click expands a detail panel** in place: a primary-source link, plus the company's related
+  **Contacts** and **AI Initiatives** (every column of each sheet, v0.29.3 — reported: these were
+  previously trimmed to a curated subset) — filtered client-side by matching `companyId`, which is all a
+  "join" needs to mean at this data volume (500 companies, under 200 total related rows across every
+  sheet). **AI Investment** and **Sources** sub-tables (unchanged, curated column subsets) appear too when
+  a company has either.
 - Sheets without a per-company shape (`README`, `Dashboard`, `Scoring_Model`, `Lookup_Lists`,
   `Prospect_List` — presentation/methodology content, not records) aren't imported here.
 - Excel date-formatted cells (e.g. `Last_Verified`, `Announced_Date`) arrive from the parser as raw numeric
@@ -556,4 +569,4 @@ company via `Company_ID`. This page browses all of it.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.2**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.3**.
