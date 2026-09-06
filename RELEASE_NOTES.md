@@ -1,3 +1,15 @@
+# SalesTeam — v0.28.6
+
+## New: show/hide Dashboard columns (Excel-style)
+
+- Requested: the growing column count (Matched Keywords, Company, Priority Reason, etc.) meant the table no longer fit on screen without scrolling right.
+- New **"Columns"** button (next to Group by Company) opens a checklist of every column - checked means visible. Each column's existing sort/filter dropdown also gets a quick **"Hide This Column"** item.
+- At least one column always stays visible - the last one can't be hidden, so there's never a dead end with no menu left to bring anything back from.
+- A hidden column's width and any active filter are preserved and just re-apply once it's shown again. Visibility is remembered per-browser, same as column widths.
+- Verified via harness: hiding/showing a column via both the panel and the per-column shortcut correctly updates the header, colgroup, and every row in lockstep; the choice survives a page reload; attempting to hide the last visible column is a no-op and the checkbox correctly stays checked.
+
+---
+
 # SalesTeam — v0.28.5
 
 ## Fixed: Job listings no longer get an automatic P1/P2 purely from their employer's Target Account score

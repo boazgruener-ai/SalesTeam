@@ -763,7 +763,8 @@ table#results-table {
    table rather than the main controls row - a bulk status change touches
    every currently-filtered lead at once, so this isn't meant to be a
    one-click-away action the way Export/Dismiss are. */
-#open-bulk-change-btn {
+#open-bulk-change-btn,
+#columns-btn {
   background: none;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -773,9 +774,32 @@ table#results-table {
   cursor: pointer;
 }
 
-#open-bulk-change-btn:hover {
+#open-bulk-change-btn:hover,
+#columns-btn:hover {
   color: var(--gray);
   border-color: var(--gray-light);
+}
+
+.columns-panel {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.columns-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: normal;
+  text-transform: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.columns-panel-row:hover {
+  background: var(--blue-light);
 }
 
 #bulk-change-dialog,

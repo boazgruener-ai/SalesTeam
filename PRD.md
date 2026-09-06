@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.28.5.
+**Status:** Living document, reflects the shipped product as of v0.28.6.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -253,6 +253,12 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
   Activity, Actions (Open/Edit, Consult Mentor, Send Message, 🏢 Assign Company, Dismiss). Every sortable column
   supports click-to-sort and an Excel-style per-column dropdown (sort asc/desc, free-text filter). Column
   widths are user-resizable and persisted. CSV export (both variants) includes Priority Reason too.
+- **Column show/hide (v0.28.6)** — a growing column count meant the table couldn't fit on screen without
+  horizontal scrolling. A **"Columns"** button opens an Excel-style checklist of every column (checked =
+  visible); each column's existing sort/filter dropdown also gets a **"Hide This Column"** shortcut. At least
+  one column always stays visible, so there's never a dead end with nothing left to click. A hidden column's
+  width and any active filter are preserved and simply re-apply once it's shown again; visibility is
+  per-browser (`localStorage`, same as column widths), not per-lead-dataset.
 - **"Group by Company"** checkbox — Excel-style outline grouping inside this same table (not a separate view):
   a collapsible header row per company (name, lead count, expand/collapse caret) with its leads nested
   underneath; leads with no company yet collect into a trailing "Unknown company" group. Each company header
@@ -471,4 +477,4 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.5**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.6**.

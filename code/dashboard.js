@@ -60,6 +60,7 @@ const searchInput = document.getElementById("search-input");
 const statusFilterSelect = document.getElementById("status-filter-select");
 const showIrrelevantCheckbox = document.getElementById("show-irrelevant-checkbox");
 const groupByCompanyCheckbox = document.getElementById("group-by-company-checkbox");
+const columnsBtn = document.getElementById("columns-btn");
 const bulkChangeDialog = document.getElementById("bulk-change-dialog");
 const openBulkChangeBtn = document.getElementById("open-bulk-change-btn");
 const bulkStatusSelect = document.getElementById("bulk-status-select");
@@ -329,6 +330,7 @@ function renderAllPieCharts() {
 
 const MIN_COL_WIDTH = 70;
 const COL_WIDTHS_STORAGE_KEY = "salesteam-dashboard-column-widths";
+const HIDDEN_COLUMNS_STORAGE_KEY = "salesteam-dashboard-hidden-columns";
 
 // "NEW" here means "first appeared in the most recent scan" - a different
 // concept from status "New" (meaning "not yet acted on"), see the storage.js
@@ -513,6 +515,14 @@ let columnFilters = {}; // { [columnId]: "filter text" }
 let sortColumn = "date";
 let sortDirection = "desc";
 let openMenuColumnId = null;
+let hiddenColumns = new Set();
+
+// A hidden column's own filter/sort (if it had one set before being hidden)
+// stays in effect - this only controls what's rendered, not what's applied
+// to applyFilterSortSearch, which still iterates every column in COLUMNS.
+function visibleColumns() {
+  return COLUMNS.filter((c) => !hiddenColumns.has(c.id));
+}
 
 function loadPageSize() {
   const saved = localStorage.getItem(PAGE_SIZE_STORAGE_KEY);
@@ -557,6 +567,36 @@ function saveColumnWidths() {
   } catch {
     // best-effort only - a column-width preference isn't worth surfacing an error for
   }
+}
+
+function loadHiddenColumns() {
+  try {
+    hiddenColumns = new Set(JSON.parse(localStorage.getItem(HIDDEN_COLUMNS_STORAGE_KEY) || "[]"));
+  } catch {
+    hiddenColumns = new Set();
+  }
+}
+
+function saveHiddenColumns() {
+  try {
+    localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify([...hiddenColumns]));
+  } catch {
+    // best-effort only, same as column widths above
+  }
+}
+
+// Always leaves at least one column visible - hiding every column would
+// leave a table with an unrecoverable, empty-looking header and no menu to
+// bring anything back from.
+function setColumnHidden(columnId, hidden) {
+  if (hidden && COLUMNS.length - hiddenColumns.size <= 1) return false;
+  if (hidden) hiddenColumns.add(columnId);
+  else hiddenColumns.delete(columnId);
+  saveHiddenColumns();
+  renderColgroup();
+  renderTableHead();
+  renderTable();
+  return true;
 }
 
 function applyFilterSortSearch() {
@@ -682,6 +722,17 @@ function toggleColumnMenu(column, anchorEl) {
     popup.append(filterInput, actionsRow);
   }
 
+  if (column.getSortValue || column.getFilterText) popup.appendChild(document.createElement("hr"));
+  const hideBtn = document.createElement("button");
+  hideBtn.className = "col-menu-item";
+  hideBtn.title = `Hide the ${column.label} column - bring it back from the Columns button`;
+  hideBtn.textContent = "Hide This Column";
+  hideBtn.addEventListener("click", () => {
+    closeColumnMenu();
+    setColumnHidden(column.id, true);
+  });
+  popup.appendChild(hideBtn);
+
   // Positioned after being appended (so its real rendered width is known),
   // clamped so it can't render off the right edge of the viewport.
   document.body.appendChild(popup);
@@ -694,13 +745,56 @@ function toggleColumnMenu(column, anchorEl) {
 }
 
 function onDocumentClickCloseMenu(event) {
-  if (!event.target.closest(".col-menu-popup") && !event.target.closest(".col-menu-btn")) {
+  if (!event.target.closest(".col-menu-popup") && !event.target.closest(".col-menu-btn") && !event.target.closest("#columns-btn")) {
     closeColumnMenu();
-  } else if (openMenuColumnId) {
+  } else if (openMenuColumnId || document.querySelector(".columns-panel")) {
     // clicked back into the still-open menu/trigger - keep listening for the next real outside click
     document.addEventListener("click", onDocumentClickCloseMenu, { once: true });
   }
 }
+
+// Excel-style column chooser: every column, checked = visible. Also the only
+// way to bring back a column hidden via its own per-column "Hide This
+// Column" item above, since a fully-hidden column has no header left to
+// click. Reuses col-menu-popup's positioning/close-on-outside-click, plus its
+// own columns-panel class for the checklist layout.
+function toggleColumnsPanel() {
+  if (document.querySelector(".columns-panel")) {
+    closeColumnMenu();
+    return;
+  }
+  closeColumnMenu();
+
+  const anchorRect = columnsBtn.getBoundingClientRect();
+  const popup = document.createElement("div");
+  popup.className = "col-menu-popup columns-panel";
+
+  for (const column of COLUMNS) {
+    const row = document.createElement("label");
+    row.className = "columns-panel-row";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = !hiddenColumns.has(column.id);
+    checkbox.addEventListener("change", () => {
+      if (!setColumnHidden(column.id, !checkbox.checked)) checkbox.checked = true;
+    });
+    row.append(checkbox, document.createTextNode(column.label));
+    popup.appendChild(row);
+  }
+
+  document.body.appendChild(popup);
+  const popupWidth = popup.offsetWidth;
+  const left = Math.min(anchorRect.right - popupWidth, window.innerWidth - popupWidth - 8);
+  popup.style.left = `${Math.max(8, left)}px`;
+  popup.style.top = `${anchorRect.bottom + 2}px`;
+
+  setTimeout(() => document.addEventListener("click", onDocumentClickCloseMenu, { once: true }), 0);
+}
+
+columnsBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleColumnsPanel();
+});
 
 function startColumnResize(event, column) {
   event.preventDefault();
@@ -725,7 +819,7 @@ function startColumnResize(event, column) {
 function renderColgroup() {
   const colgroup = document.getElementById("results-colgroup");
   colgroup.innerHTML = "";
-  for (const col of COLUMNS) {
+  for (const col of visibleColumns()) {
     const colEl = document.createElement("col");
     colEl.dataset.colId = col.id;
     colEl.style.width = columnWidths[col.id] + "px";
@@ -738,7 +832,7 @@ function renderTableHead() {
   thead.innerHTML = "";
   const tr = document.createElement("tr");
 
-  for (const column of COLUMNS) {
+  for (const column of visibleColumns()) {
     const th = document.createElement("th");
     th.className = "resizable-th";
 
@@ -796,7 +890,7 @@ function renderTableHead() {
 
 function buildRow(lead) {
   const tr = document.createElement("tr");
-  for (const column of COLUMNS) {
+  for (const column of visibleColumns()) {
     const td = document.createElement("td");
     column.render(td, lead);
     tr.appendChild(td);
@@ -885,7 +979,7 @@ function buildGroupHeaderRow(group) {
   const tr = document.createElement("tr");
   tr.className = "company-group-header";
   const td = document.createElement("td");
-  td.colSpan = COLUMNS.length;
+  td.colSpan = visibleColumns().length;
 
   const isCollapsed = collapsedCompanyGroups.has(group.key);
   const caret = document.createElement("button");
@@ -925,7 +1019,7 @@ function buildGroupSummaryRow(group) {
   const tr = document.createElement("tr");
   tr.className = "company-group-summary-row";
   const td = document.createElement("td");
-  td.colSpan = COLUMNS.length;
+  td.colSpan = visibleColumns().length;
   td.textContent = loadingAccountSummaries.has(group.key) ? "Thinking…" : (accountSummaryCache.get(group.key) || "");
   tr.appendChild(td);
   return tr;
@@ -946,7 +1040,7 @@ function renderTable() {
   if (leads.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = COLUMNS.length;
+    td.colSpan = visibleColumns().length;
     td.className = "empty-state";
     td.textContent = allLeads.length === 0 ? "No leads yet. Run a scan from the side panel." : "No leads match your filters.";
     tr.appendChild(td);
@@ -1709,6 +1803,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
   loadColumnWidths();
+  loadHiddenColumns();
   loadPageSize();
   loadGroupByCompany();
   loadShowIrrelevant();

@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.28.5.")
+p.add_run("Living document, reflects the shipped product as of v0.28.6.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -364,6 +364,13 @@ add_bullets(doc, [
     "Assign Company, Dismiss). Every sortable column supports click-to-sort and an Excel-style per-column "
     "dropdown (sort asc/desc, free-text filter). Column widths are user-resizable and persisted. CSV export "
     "(both variants) includes Priority Reason too.",
+    "Column show/hide (v0.28.6) - a growing column count meant the table couldn't fit on screen without "
+    "horizontal scrolling. A “Columns” button opens an Excel-style checklist of every column "
+    "(checked = visible); each column's existing sort/filter dropdown also gets a “Hide This "
+    "Column” shortcut. At least one column always stays visible, so there's never a dead end with "
+    "nothing left to click. A hidden column's width and any active filter are preserved and simply "
+    "re-apply once it's shown again; visibility is per-browser (localStorage, same as column widths), "
+    "not per-lead-dataset.",
     "\u201cGroup by Company\u201d checkbox - Excel-style outline grouping inside this same table (not a "
     "separate view): a collapsible header row per company (name, lead count, expand/collapse caret) with "
     "its leads nested underneath; leads with no company yet collect into a trailing \u201cUnknown "
@@ -614,7 +621,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.5."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.6."
 )
 
 for section in doc.sections:
