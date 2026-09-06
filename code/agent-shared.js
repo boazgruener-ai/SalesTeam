@@ -441,9 +441,14 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
     "A lead may carry a `targetAccountSignal` - independent research on that company's AI investment/maturity " +
     "from a separate Swiss AI target-account list, with a priorityLabel (e.g. \"Very High\", " +
-    "\"High - Provisional\") and a 0-100 score. Treat it as a real, meaningful positive signal toward a " +
-    "higher priority - weigh it more heavily when the label isn't marked Provisional and the score is high - " +
-    "but it's still just one input alongside the person's own seniority and post/job content, not an " +
+    "\"High - Provisional\") and a 0-100 score. For a post lead (a real, named individual you can actually " +
+    "message), treat it as a real, meaningful positive signal toward a higher priority - weigh it more " +
+    "heavily when the label isn't marked Provisional and the score is high. For a job lead specifically, " +
+    "weigh it much more conservatively: the \"creator\" is the company itself, not an individual, so there is " +
+    "no real person to contact yet - a job ad naming no initiative beyond the hiring itself should rarely " +
+    "reach 1 or 2 on the strength of the company alone, however highly it scored. Let the signal move a job " +
+    "lead's priority up by roughly one level from what the ad's own content would otherwise justify, not " +
+    "further. Either way it's one input alongside the person's own seniority and post/job content, not an " +
     "automatic override. When it materially influenced your call, say so plainly in the reason (e.g. " +
     "\"also a Very High-scored Target Account\"). " +
     "Call assign_priorities exactly once, with one entry (priority plus a short, specific reason) for EVERY " +

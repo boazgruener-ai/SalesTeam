@@ -780,7 +780,16 @@ export async function partitionLeadsByTargetAccount(leads) {
   const toScore = [];
   for (const lead of leads) {
     const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, threshold);
-    if (qualifies) {
+    // The hard Priority-1 override is deliberately Post-only. A Job lead's
+    // "creator" is the company itself, not an individual - there's no real
+    // person to message, and a job ad alone (no named contact, no stated
+    // initiative beyond "we're hiring") doesn't earn a top priority just
+    // because the employer is a confirmed target account. A confident match
+    // on a Job lead is still real signal, just a moderate one - it's left
+    // for the Sales Mentor to weigh alongside the ad's own content (see
+    // buildPrioritizationPrompt's job-specific guidance), same as any
+    // Provisional/below-threshold match already is for Posts.
+    if (qualifies && lead.type !== "job") {
       autoPriorities.push({ key: lead.key, priority: 1, reason: targetAccountMatchReason(match) });
     } else if (match) {
       toScore.push({ ...lead, targetAccountSignal: match });

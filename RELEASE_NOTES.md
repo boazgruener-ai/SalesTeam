@@ -1,3 +1,13 @@
+# SalesTeam — v0.28.5
+
+## Fixed: Job listings no longer get an automatic P1/P2 purely from their employer's Target Account score
+
+- Reported: the top-priority leads were nearly all Job listings, boosted purely by their employer's score even though a job ad's "creator" is the company itself, not a real, contactable person - and the ad typically says nothing beyond the hiring itself. A Post lead is different: there's a real, named individual to follow up with, sometimes a key role (CTO/CIO/Head of AI) in their own right - a genuinely strong lead.
+- Job leads no longer get the deterministic Priority 1 override at all, regardless of how confidently their company matches. A Job lead's company match - confident or not - is now always routed to the Sales Mentor as a signal instead, with explicit instructions to weigh it much more conservatively than a Post's: roughly one priority level of lift over what the ad's own content alone would justify, not a jump straight to 1 or 2 on the company's strength alone. Post leads are unaffected - a confident match still gets the deterministic Priority 1, since there's a real person to act on.
+- Verified via harness: a Post and a Job lead at the same confidently-scored company are partitioned differently - only the Post gets the hard override; the Job lead is routed to the AI path with the signal still attached.
+
+---
+
 # SalesTeam — v0.28.4
 
 ## Changed: Priority reasons are now visible/copyable, and always name a Target Account signal

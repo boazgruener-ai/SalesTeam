@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.28.4.
+**Status:** Living document, reflects the shipped product as of v0.28.5.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -390,7 +390,7 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   is exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the
   next day — a predictable, permission-free approximation of a daily export, not a true cron.
 
-### 6.11 Target Accounts (v0.28.0, extended v0.28.1/v0.28.2)
+### 6.11 Target Accounts (v0.28.0, extended through v0.28.5)
 
 A curated, externally-researched list of target companies — one row per company, scored 0-100 for AI-
 consulting sales fit (`AI_Priority_Score`), with a categorical label (`Very High`, `Very High - Provisional`,
@@ -409,18 +409,27 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
   part of the normal workflow anymore. Matched against a lead's `company` field via the existing
   `normalizeCompanyName()` (already used for company grouping elsewhere), so exact legal-suffix/punctuation
   differences don't block a match.
-- **Deterministic Priority 1** — a "New" lead with no priority yet, whose company matches a target account
-  labeled `Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/`Out of Scope` one) at or above a
-  configurable score threshold (Settings, default 70), is automatically set to Priority 1 before any batch AI
-  prioritization call runs, so it's never double-scored. The tooltip on the Dashboard's priority pill names the
-  match, its score, and its top AI initiative. The lead also gets a `targetAccountMatch: true` flag, so it
-  stays distinguishable from a Mentor-scored lead even though both render the same way.
-- **Soft signal otherwise** — a match that doesn't clear the bar above (Provisional, or below threshold) is
-  still passed into the same batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it
-  alongside its usual judgment rather than ignoring it outright. The Mentor is told to mention it in its own
-  reason when it influenced the call, but that's free-text AI writing, not a guaranteed template — it didn't
-  reliably say so, which made it look like the list wasn't being used at all even when it was. **Fixed in
-  v0.28.4**: every AI-returned priority for a lead that carried a signal now gets a fixed
+- **Deterministic Priority 1 — Post leads only** — a "New" Post lead with no priority yet, whose company
+  matches a target account labeled `Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/
+  `Out of Scope` one) at or above a configurable score threshold (Settings, default 70), is automatically set
+  to Priority 1 before any batch AI prioritization call runs, so it's never double-scored. The tooltip on the
+  Dashboard's priority pill names the match, its score, and its top AI initiative. The lead also gets a
+  `targetAccountMatch: true` flag, so it stays distinguishable from a Mentor-scored lead even though both
+  render the same way.
+- **Job leads never get this hard override (v0.28.5)** — reported: top-priority leads were nearly all Job
+  listings, boosted purely by their employer's score even though a job ad's "creator" is the company itself,
+  not a real, contactable individual, and typically states nothing beyond the hiring itself. A Job lead's
+  company match — confident or not — is now always routed to the AI prioritization pass as a signal only,
+  never a hard override; the Mentor is explicitly instructed to weigh a job's target-account signal much more
+  conservatively than a post's (roughly one priority level of lift over what the ad's own content would
+  otherwise justify, not straight to 1 or 2 on the company's strength alone) — a real, named individual on a
+  Post lead is a different, stronger kind of signal than an employer name on a job ad.
+- **Soft signal otherwise (Posts below the bar, and every Job lead)** — passed into the same batch AI
+  prioritization call (6.4) as context, so the Sales Mentor weighs it alongside its usual judgment rather than
+  ignoring it outright, weighted per the Post/Job distinction above. The Mentor is told to mention it in its
+  own reason when it influenced the call, but that's free-text AI writing, not a guaranteed template — it
+  didn't reliably say so, which made it look like the list wasn't being used at all even when it was. **Fixed
+  in v0.28.4**: every AI-returned priority for a lead that carried a signal now gets a fixed
   `[Target Account signal: Company scored N/100 (Label)]` tag deterministically prepended to its reason,
   regardless of what the model itself wrote — the connection to the workbook is now always visible, not
   dependent on the model's phrasing.
@@ -462,4 +471,4 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.4**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.5**.

@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.28.4.")
+p.add_run("Living document, reflects the shipped product as of v0.28.5.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -526,7 +526,7 @@ add_bullets(doc, [
     "cron.",
 ])
 
-doc.add_heading("6.11 Target Accounts (v0.28.0, extended v0.28.1/v0.28.2)", level=3)
+doc.add_heading("6.11 Target Accounts (v0.28.0, extended through v0.28.5)", level=3)
 doc.add_paragraph(
     "A curated, externally-researched list of target companies - one row per company, scored 0-100 for "
     "AI-consulting sales fit (AI_Priority_Score), with a categorical label (Very High, Very High - "
@@ -546,15 +546,23 @@ add_bullets(doc, [
     "path, but isn't part of the normal workflow anymore. Matched against a lead's company field via the "
     "existing normalizeCompanyName() (already used for company grouping elsewhere), so exact legal-suffix/"
     "punctuation differences don't block a match.",
-    "Deterministic Priority 1 - a scanned “New” lead with no priority yet, whose company matches "
-    "a target account labeled Very High or High (never a Provisional/Insufficient Evidence/Out of Scope "
-    "one) at or above a configurable score threshold (Settings, default 70), is automatically set to "
-    "Priority 1 during the scan's post-processing - before the batch AI prioritization pass runs, so it's "
-    "never double-scored. The tooltip on the Dashboard's priority pill names the match, its score, and its "
-    "top AI initiative. The lead also gets a targetAccountMatch: true flag, so it stays distinguishable "
-    "from a Mentor-scored lead even though both render the same way.",
-    "Soft signal otherwise - a match that doesn't clear the bar above (Provisional, or below threshold) is "
-    "still passed into the same batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it "
+    "Deterministic Priority 1 - Post leads only - a “New” Post lead with no priority yet, whose "
+    "company matches a target account labeled Very High or High (never a Provisional/Insufficient "
+    "Evidence/Out of Scope one) at or above a configurable score threshold (Settings, default 70), is "
+    "automatically set to Priority 1 before any batch AI prioritization call runs, so it's never "
+    "double-scored. The tooltip on the Dashboard's priority pill names the match, its score, and its top "
+    "AI initiative. The lead also gets a targetAccountMatch: true flag, so it stays distinguishable from a "
+    "Mentor-scored lead even though both render the same way.",
+    "Job leads never get this hard override (v0.28.5) - reported: top-priority leads were nearly all Job "
+    "listings, boosted purely by their employer's score even though a job ad's “creator” is "
+    "the company itself, not a real, contactable individual, and typically states nothing beyond the "
+    "hiring itself. A Job lead's company match - confident or not - is now always routed to the AI "
+    "prioritization pass as a signal only, never a hard override; the Mentor is explicitly instructed to "
+    "weigh a job's target-account signal much more conservatively than a post's (roughly one priority "
+    "level of lift over what the ad's own content would otherwise justify, not straight to 1 or 2 on the "
+    "company's strength alone).",
+    "Soft signal otherwise (Posts below the bar, and every Job lead) - passed into the "
+    "same batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it "
     "alongside its usual judgment rather than ignoring it outright. The Mentor is told to mention it in its "
     "own reason when it influenced the call, but that's free-text AI writing, not a guaranteed template - it "
     "didn't reliably say so, which made it look like the list wasn't being used at all even when it was. "
@@ -606,7 +614,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.4."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.5."
 )
 
 for section in doc.sections:
