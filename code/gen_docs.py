@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.28.1.")
+p.add_run("Living document, reflects the shipped product as of v0.28.2.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -316,10 +316,14 @@ add_bullets(doc, [
     "Never re-scores an already-scored lead, or a lead that isn't \u201cNew.\u201d",
     "\u201cPrioritize Unscored Leads\u201d button (Dashboard) catches up anything the automatic pass never "
     "reached — leads that predate the feature, or a scan that ran with no API key — scoring every unscored "
-    "\u201cNew\u201d lead across the entire list, not just what's currently filtered on screen.",
+    "\u201cNew\u201d lead across the entire list, not just what's currently filtered on screen. Target "
+
+    "Account matches (6.11) are applied first, deterministically, before whatever's left goes to the AI.",
     "\u201cRe-score All Priorities\u201d button (Dashboard, v0.24.0) re-runs the Mentor on every already-"
-    "scored \u201cNew\u201d lead too, not just unscored ones - lets a prompt fix or a new/changed Ideal "
-    "Customer Profile retroactively apply to leads scored before it existed. Same manual-override protection "
+    "scored \u201cNew\u201d lead too, not just unscored ones - lets a prompt fix, a new/changed Ideal "
+
+    "Customer Profile, or a freshly imported/updated Target Accounts list (6.11) retroactively apply to leads "
+    "scored before it existed, with no new scan required. Same manual-override protection "
     "as everywhere else: a lead whose priority was set by hand (no priorityScoredAt) is never touched or "
     "resent to the AI. Confirms before running, since it overwrites existing AI-assigned priorities. The "
     "completion message reports two numbers: how many leads were successfully re-scored, and how many of "
@@ -339,8 +343,10 @@ add_bullets(doc, [
     "that's already scored, both get re-scored together in the same batch - a second signal from the same "
     "account can change the right priority. Still only ever touches \u201cNew\u201d leads; anything already "
     "acted on is never re-scored.",
-    "Target Account matches (v0.28.0) are folded in before this batch call runs - see 6.11 for the full "
-    "deterministic-vs-signal split.",
+    "Target Account matches (v0.28.0) are folded in before every batch call runs - during a scan, and in both "
+    "Dashboard buttons above (v0.28.2, partitionLeadsByTargetAccount in storage.js) - so importing or "
+    "updating the Target Accounts list retroactively re-prioritizes already-scanned leads via “Re-score "
+    "All Priorities” without needing a fresh scan. See 6.11 for the full deterministic-vs-signal split.",
 ])
 
 doc.add_heading("6.5 Dashboard", level=3)
@@ -505,7 +511,7 @@ add_bullets(doc, [
     "cron.",
 ])
 
-doc.add_heading("6.11 Target Accounts (v0.28.0)", level=3)
+doc.add_heading("6.11 Target Accounts (v0.28.0, extended v0.28.1/v0.28.2)", level=3)
 doc.add_paragraph(
     "A curated, externally-researched list of target companies - one row per company, scored 0-100 for "
     "AI-consulting sales fit (AI_Priority_Score), with a categorical label (Very High, Very High - "
@@ -530,11 +536,17 @@ add_bullets(doc, [
     "one) at or above a configurable score threshold (Settings, default 70), is automatically set to "
     "Priority 1 during the scan's post-processing - before the batch AI prioritization pass runs, so it's "
     "never double-scored. The tooltip on the Dashboard's priority pill names the match, its score, and its "
-    "top AI initiative.",
+    "top AI initiative. The lead also gets a targetAccountMatch: true flag, so it stays distinguishable "
+    "from a Mentor-scored lead even though both render the same way.",
     "Soft signal otherwise - a match that doesn't clear the bar above (Provisional, or below threshold) is "
     "still passed into the same batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it "
     "alongside its usual judgment rather than ignoring it outright; when it materially affects the call, the "
     "Mentor's own reason text (also shown as the pill's tooltip) says so explicitly.",
+    "Applies everywhere prioritization runs (v0.28.2) - the same split "
+    "(partitionLeadsByTargetAccount in storage.js) runs during a scan's automatic pass and both "
+    "Dashboard buttons (6.4), not just at scan time. Concretely: importing a new/updated Target "
+    "Accounts list and then clicking Re-score All Priorities immediately re-prioritizes every "
+    "eligible existing lead - no new scan needed.",
     "Threshold and the imported list itself live in Settings (6.7) and travel with a Settings export/import "
     "(6.8), so a fresh install or a restored backup doesn't lose them.",
 ])
@@ -575,7 +587,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.1."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.2."
 )
 
 for section in doc.sections:

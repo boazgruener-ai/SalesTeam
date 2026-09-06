@@ -1,3 +1,15 @@
+# SalesTeam — v0.28.2
+
+## Fixed: Target Account matches now also apply via Prioritize Unscored/Re-score All Priorities
+
+- Reported: after importing the Target Accounts workbook, clicking "Re-score All Priorities" on the Dashboard didn't apply the new company priorities - only a fresh scan did, since the Target Account matching logic only lived inside background.js's scan flow.
+- Both "Prioritize Unscored Leads" and "Re-score All Priorities" now run the same Target Account check first (`partitionLeadsByTargetAccount`, new shared function in `storage.js`): a confidently-scored match gets Priority 1 immediately, with no AI call and no scan needed; everything else still goes to the Sales Mentor, with a softer match (if any) folded in as a signal, exactly like a scan already did. Importing or updating the Target Accounts list now retroactively re-prioritizes existing leads on demand.
+- Found and fixed a real bug in the same code path while refactoring it: the "soft signal" case was mutating the actual stored lead object before sending it to the AI, so a transient `targetAccountSignal` hint was ending up permanently saved on the lead. It's now attached to a throwaway clone instead - verified via a direct test that the original stored object is untouched after re-scoring.
+- Also gives a lead auto-prioritized via either Dashboard button the same `targetAccountMatch: true` flag a scan-time match already got, so it stays distinguishable from a Mentor-scored lead regardless of which of the three paths set it.
+- Verified via browser harness: re-scoring a seeded batch (one confident match, one Provisional match, one non-match) sets Priority 1 immediately and correctly on the confident match with no API key required, leaves the Provisional one for the AI path, and leaves the non-match untouched; confirmed the original lead object is never mutated by the soft-signal path.
+
+---
+
 # SalesTeam — v0.28.1
 
 ## Changed: Target Accounts now imports the .xlsx workbook directly - no conversion step

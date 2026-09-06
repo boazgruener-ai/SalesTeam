@@ -18,12 +18,14 @@ import {
   getValueAddOffers,
   getLastScanStartedAt,
   applyLeadPriorities,
+  applyTargetAccountPriorities,
   setLeadPriority,
   getLastBulkChange,
   undoLastBulkChange,
   setLeadCompany,
   applyExtractedCompanies,
   normalizeCompanyName,
+  partitionLeadsByTargetAccount,
   appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -1333,15 +1335,27 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
   prioritizeUnscoredBtn.disabled = true;
   prioritizeStatusEl.textContent = `Prioritizing ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
   try {
-    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
-    if (!apiKey) {
-      prioritizeStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
-      return;
+    // Target Account matches (6.11) are applied first, deterministically -
+    // this is also how importing/updating the Target Accounts list
+    // retroactively affects already-scanned leads, since it doesn't require
+    // a fresh scan. The rest still goes to the AI, with a softer match (if
+    // any) folded in as a signal.
+    const { autoPriorities, toScore: leadsForAI } = await partitionLeadsByTargetAccount(toScore);
+    let changed = autoPriorities.length > 0 ? await applyTargetAccountPriorities(autoPriorities) : 0;
+    if (autoPriorities.length > 0) {
+      appendActivityLog({ actor: "user", action: "target_account_priority_set", label: `Prioritize Unscored Leads: auto-set Priority 1 for ${autoPriorities.length} lead${autoPriorities.length === 1 ? "" : "s"} via Target Account match`, newValue: autoPriorities.length });
     }
-    const settings = { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage };
-    const changed = await prioritizeLeadsInChunks(toScore, settings, (done, total) => {
-      prioritizeStatusEl.textContent = `Prioritizing ${done} of ${total} lead${total === 1 ? "" : "s"} with the Sales Mentor…`;
-    });
+    if (leadsForAI.length > 0) {
+      const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+      if (!apiKey) {
+        prioritizeStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
+        return;
+      }
+      const settings = { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage };
+      changed += await prioritizeLeadsInChunks(leadsForAI, settings, (done, total) => {
+        prioritizeStatusEl.textContent = `Prioritizing ${done} of ${total} lead${total === 1 ? "" : "s"} with the Sales Mentor…`;
+      });
+    }
     prioritizeStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} scored.`;
     await loadLeads();
     renderAllPieCharts();
@@ -1374,15 +1388,27 @@ rescoreAllBtn.addEventListener("click", async () => {
   const oldPriorities = new Map(toScore.map((l) => [l.key, l.priority || null]));
   rescoreAllStatusEl.textContent = `Re-scoring ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
   try {
-    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
-    if (!apiKey) {
-      rescoreAllStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
-      return;
+    // Target Account matches (6.11) are applied first, deterministically -
+    // this is also how importing/updating the Target Accounts list
+    // retroactively applies to leads already scored, without needing a new
+    // scan. The rest still goes to the AI, with a softer match (if any)
+    // folded in as a signal.
+    const { autoPriorities, toScore: leadsForAI } = await partitionLeadsByTargetAccount(toScore);
+    let changed = autoPriorities.length > 0 ? await applyTargetAccountPriorities(autoPriorities) : 0;
+    if (autoPriorities.length > 0) {
+      appendActivityLog({ actor: "user", action: "target_account_priority_set", label: `Re-score All Priorities: auto-set Priority 1 for ${autoPriorities.length} lead${autoPriorities.length === 1 ? "" : "s"} via Target Account match`, newValue: autoPriorities.length });
     }
-    const settings = { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage };
-    const changed = await prioritizeLeadsInChunks(toScore, settings, (done, total) => {
-      rescoreAllStatusEl.textContent = `Re-scoring ${done} of ${total} lead${total === 1 ? "" : "s"} with the Sales Mentor…`;
-    });
+    if (leadsForAI.length > 0) {
+      const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+      if (!apiKey) {
+        rescoreAllStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
+        return;
+      }
+      const settings = { apiKey, mentorPersona, companyContext, idealCustomerProfile, outputLanguage };
+      changed += await prioritizeLeadsInChunks(leadsForAI, settings, (done, total) => {
+        rescoreAllStatusEl.textContent = `Re-scoring ${done} of ${total} lead${total === 1 ? "" : "s"} with the Sales Mentor…`;
+      });
+    }
     await loadLeads();
     const priorityChangedCount = toScore.filter((lead) => {
       const updated = allLeads.find((u) => u.key === lead.key);

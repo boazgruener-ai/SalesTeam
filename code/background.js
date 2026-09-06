@@ -28,9 +28,7 @@ import {
   getMentorPersona,
   getOutputLanguage,
   normalizeCompanyName,
-  getTargetAccounts,
-  getTargetAccountScoreThreshold,
-  evaluateTargetAccountMatch,
+  partitionLeadsByTargetAccount,
   appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -563,36 +561,31 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
 
     // Deterministic Priority 1 for leads at a confidently-scored Target
     // Account (imported via Settings from the external Swiss AI prospects
-    // workbook - see importTargetAccounts in storage.js). Only "Very High"/
-    // "High" (non-provisional) labels at or above the configured threshold
-    // qualify for this hard override - a "Provisional" or low-evidence match
-    // is a real signal but not a guarantee, so it's left for the Sales
-    // Mentor's own judgment below (see targetAccountSignal a few lines down)
-    // rather than auto-set here. Runs after company extraction above so a
-    // company extracted this very scan is still eligible to match.
-    const targetAccounts = await getTargetAccounts();
-    if (Object.keys(targetAccounts).length > 0) {
-      const threshold = await getTargetAccountScoreThreshold();
-      let targetAccountCount = 0;
-      for (const lead of Object.values(existingResults)) {
-        if (lead.status !== "New" || lead.priority || !lead.company) continue;
-        const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, threshold);
-        if (!qualifies) continue;
-        lead.priority = 1;
-        lead.priorityReason = `Target Account match: ${match.company} scored ${Math.round(match.score)}/100 (${match.priorityLabel}) on the Swiss AI target-account list${match.topInitiatives ? " — " + match.topInitiatives.slice(0, 100) : ""}.`;
-        lead.priorityScoredAt = Date.now();
-        lead.targetAccountMatch = true;
-        targetAccountCount++;
+    // workbook - see importTargetAccounts/partitionLeadsByTargetAccount in
+    // storage.js). Only "Very High"/"High" (non-provisional) labels at or
+    // above the configured threshold qualify for this hard override - a
+    // "Provisional" or low-evidence match is a real signal but not a
+    // guarantee, so it's left for the Sales Mentor's own judgment below (see
+    // targetAccountSignal a few lines down) rather than auto-set here. Runs
+    // after company extraction above so a company extracted this very scan
+    // is still eligible to match.
+    const targetAccountEligible = Object.values(existingResults).filter((r) => r.status === "New" && !r.priority && r.company);
+    const { autoPriorities: targetAccountPriorities } = await partitionLeadsByTargetAccount(targetAccountEligible);
+    if (targetAccountPriorities.length > 0) {
+      const scoredAt = Date.now();
+      for (const { key, priority, reason } of targetAccountPriorities) {
+        existingResults[key].priority = priority;
+        existingResults[key].priorityReason = reason;
+        existingResults[key].priorityScoredAt = scoredAt;
+        existingResults[key].targetAccountMatch = true;
       }
-      if (targetAccountCount > 0) {
-        await saveResults(existingResults);
-        appendActivityLog({
-          actor: "extension",
-          action: "target_account_priority_set",
-          label: `Auto-set Priority 1 for ${targetAccountCount} lead${targetAccountCount === 1 ? "" : "s"} via Target Account match`,
-          newValue: targetAccountCount,
-        });
-      }
+      await saveResults(existingResults);
+      appendActivityLog({
+        actor: "extension",
+        action: "target_account_priority_set",
+        label: `Auto-set Priority 1 for ${targetAccountPriorities.length} lead${targetAccountPriorities.length === 1 ? "" : "s"} via Target Account match`,
+        newValue: targetAccountPriorities.length,
+      });
     }
 
     // Post-processing, after every search (and the negative-topic blocking
@@ -631,22 +624,38 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     }
 
     // A Target Account match that didn't qualify for the deterministic
-    // Priority 1 above (Provisional label, or below threshold) is still real
-    // research - attach it so prioritizeLeads (agent-shared.js) can fold it
-    // into the Sales Mentor's own judgment and reflect it in the `reason`
-    // text it returns (which becomes priorityReason, shown as the Dashboard
-    // pill's tooltip either way).
-    if (Object.keys(targetAccounts).length > 0) {
-      for (const lead of toPrioritize) {
-        const match = targetAccounts[normalizeCompanyName(lead.company)];
-        if (match && match.score != null) lead.targetAccountSignal = match;
+    // Priority 1 above (Provisional label, or below threshold, or only
+    // showed up here via correlated re-scoring) is still real research -
+    // fold it in so prioritizeLeads (agent-shared.js) can weigh it in the
+    // Sales Mentor's own judgment and reflect it in the `reason` text it
+    // returns (which becomes priorityReason, shown as the Dashboard pill's
+    // tooltip either way). Any lead that newly qualifies for the hard
+    // override at this point (a correlated re-score reintroducing an already-
+    // scored lead) gets it applied directly instead, same as above - it's
+    // never sent to the AI with a stale priority left in place.
+    const { autoPriorities: correlatedTargetAccountPriorities, toScore: leadsForAI } =
+      await partitionLeadsByTargetAccount(toPrioritize);
+    if (correlatedTargetAccountPriorities.length > 0) {
+      const scoredAt = Date.now();
+      for (const { key, priority, reason } of correlatedTargetAccountPriorities) {
+        existingResults[key].priority = priority;
+        existingResults[key].priorityReason = reason;
+        existingResults[key].priorityScoredAt = scoredAt;
+        existingResults[key].targetAccountMatch = true;
       }
+      await saveResults(existingResults);
+      appendActivityLog({
+        actor: "extension",
+        action: "target_account_priority_set",
+        label: `Auto-set Priority 1 for ${correlatedTargetAccountPriorities.length} lead${correlatedTargetAccountPriorities.length === 1 ? "" : "s"} via Target Account match`,
+        newValue: correlatedTargetAccountPriorities.length,
+      });
     }
 
-    if (toPrioritize.length > 0) {
+    if (leadsForAI.length > 0) {
       const apiKey = await getAnthropicApiKey();
       if (apiKey) {
-        chrome.runtime.sendMessage({ type: "SCAN_PRIORITIZING", count: toPrioritize.length }).catch(() => {});
+        chrome.runtime.sendMessage({ type: "SCAN_PRIORITIZING", count: leadsForAI.length }).catch(() => {});
         try {
           const settings = {
             apiKey,
@@ -655,7 +664,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
             idealCustomerProfile: await getIdealCustomerProfile(),
             outputLanguage: await getOutputLanguage(),
           };
-          const priorities = await prioritizeLeads(toPrioritize, settings);
+          const priorities = await prioritizeLeads(leadsForAI, settings);
           const scoredAt = Date.now();
           let scoredCount = 0;
           for (const { key, priority, reason } of priorities) {

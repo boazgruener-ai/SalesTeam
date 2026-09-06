@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.28.1.
+**Status:** Living document, reflects the shipped product as of v0.28.2.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -211,14 +211,15 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
 - Never re-scores an already-scored lead, or a lead that isn't `"New"`.
 - **"Prioritize Unscored Leads" button** (Dashboard) catches up anything the automatic pass never reached —
   leads that predate the feature, or a scan that ran with no API key — scoring every unscored `"New"` lead
-  across the *entire* list, not just what's currently filtered on screen.
+  across the *entire* list, not just what's currently filtered on screen. Target Account matches (6.11) are
+  applied first, deterministically, before whatever's left goes to the AI.
 - **"Re-score All Priorities" button** (Dashboard, v0.24.0) re-runs the Mentor on every already-scored `"New"`
-  lead too, not just unscored ones — lets a prompt fix or a new/changed Ideal Customer Profile retroactively
-  apply to leads scored before it existed. Same manual-override protection as everywhere else: a lead whose
-  priority was set by hand (no `priorityScoredAt`) is never touched or resent to the AI. Confirms before
-  running, since it overwrites existing AI-assigned priorities. The completion message reports two numbers:
-  how many leads were successfully re-scored, and how many of those actually ended up with a different
-  priority than before.
+  lead too, not just unscored ones — lets a prompt fix, a new/changed Ideal Customer Profile, or a freshly
+  imported/updated Target Accounts list (6.11) retroactively apply to leads scored before it existed, with no
+  new scan required. Same manual-override protection as everywhere else: a lead whose priority was set by hand
+  (no `priorityScoredAt`) is never touched or resent to the AI. Confirms before running, since it overwrites
+  existing AI-assigned priorities. The completion message reports two numbers: how many leads were
+  successfully re-scored, and how many of those actually ended up with a different priority than before.
 - **Chunked batch prioritization** (v0.24.2, applies to both buttons above): a single `prioritize_leads` call
   is capped at 8192 output tokens, which a large-enough batch (each lead needs a priority plus a written
   reason) could exceed mid-generation — coming back truncated/invalid and silently scoring nothing, with no
@@ -232,8 +233,10 @@ on manual assignment, so a scan can never silently overwrite a human's correctio
   URL) or same company (Job leads, matched by normalized company) as an existing `"New"` lead that's already
   scored, both get re-scored together in the same batch — a second signal from the same account can change
   the right priority. Still only ever touches `"New"` leads; anything already acted on is never re-scored.
-- **Target Account matches (v0.28.0)** are folded in before this batch call runs — see 6.11 for the full
-  deterministic-vs-signal split.
+- **Target Account matches (v0.28.0)** are folded in before every batch call runs — during a scan, and in both
+  Dashboard buttons above (v0.28.2, `partitionLeadsByTargetAccount` in `storage.js`) — so importing or updating
+  the Target Accounts list retroactively re-prioritizes already-scanned leads via "Re-score All Priorities"
+  without needing a fresh scan. See 6.11 for the full deterministic-vs-signal split.
 
 ### 6.5 Dashboard
 
@@ -376,7 +379,7 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   is exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the
   next day — a predictable, permission-free approximation of a daily export, not a true cron.
 
-### 6.11 Target Accounts (v0.28.0)
+### 6.11 Target Accounts (v0.28.0, extended v0.28.1/v0.28.2)
 
 A curated, externally-researched list of target companies — one row per company, scored 0-100 for AI-
 consulting sales fit (`AI_Priority_Score`), with a categorical label (`Very High`, `Very High - Provisional`,
@@ -395,15 +398,20 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
   part of the normal workflow anymore. Matched against a lead's `company` field via the existing
   `normalizeCompanyName()` (already used for company grouping elsewhere), so exact legal-suffix/punctuation
   differences don't block a match.
-- **Deterministic Priority 1** — a scanned "New" lead with no priority yet, whose company matches a target
-  account labeled `Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/`Out of Scope` one) at
-  or above a configurable score threshold (Settings, default 70), is automatically set to Priority 1 during the
-  scan's post-processing — before the batch AI prioritization pass runs, so it's never double-scored. The
-  tooltip on the Dashboard's priority pill names the match, its score, and its top AI initiative.
+- **Deterministic Priority 1** — a "New" lead with no priority yet, whose company matches a target account
+  labeled `Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/`Out of Scope` one) at or above a
+  configurable score threshold (Settings, default 70), is automatically set to Priority 1 before any batch AI
+  prioritization call runs, so it's never double-scored. The tooltip on the Dashboard's priority pill names the
+  match, its score, and its top AI initiative. The lead also gets a `targetAccountMatch: true` flag, so it
+  stays distinguishable from a Mentor-scored lead even though both render the same way.
 - **Soft signal otherwise** — a match that doesn't clear the bar above (Provisional, or below threshold) is
   still passed into the same batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it
   alongside its usual judgment rather than ignoring it outright; when it materially affects the call, the
   Mentor's own reason text (also shown as the pill's tooltip) says so explicitly.
+- **Applies everywhere prioritization runs (v0.28.2)** — the same split (`partitionLeadsByTargetAccount` in
+  `storage.js`) runs during a scan's automatic pass *and* both Dashboard buttons (6.4), not just at scan time.
+  Concretely: importing a new/updated Target Accounts list and then clicking "Re-score All Priorities"
+  immediately re-prioritizes every eligible existing lead — no new scan needed.
 - Threshold and the imported list itself live in Settings (6.7) and travel with a Settings export/import
   (6.8), so a fresh install or a restored backup doesn't lose them.
 
@@ -438,4 +446,4 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.1**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.2**.

@@ -681,6 +681,30 @@ export async function applyLeadPriorities(priorities) {
   return changed;
 }
 
+// Same write path as applyLeadPriorities above, plus a targetAccountMatch
+// flag so a lead auto-set this way (via partitionLeadsByTargetAccount's
+// autoPriorities) stays distinguishable from one the Sales Mentor actually
+// scored - used by the Dashboard's Prioritize Unscored/Re-score All
+// Priorities buttons. background.js's scan-time pass sets the same flag
+// itself inline instead of calling this, since it already holds one
+// in-memory results object across the whole scan and writes it directly.
+export async function applyTargetAccountPriorities(autoPriorities) {
+  const results = await getResults();
+  const scoredAt = Date.now();
+  let changed = 0;
+  for (const { key, priority, reason } of autoPriorities) {
+    if (results[key] && Number.isInteger(priority) && priority >= 1 && priority <= 5) {
+      results[key].priority = priority;
+      results[key].priorityReason = reason || "";
+      results[key].priorityScoredAt = scoredAt;
+      results[key].targetAccountMatch = true;
+      changed++;
+    }
+  }
+  if (changed > 0) await saveResults(results);
+  return changed;
+}
+
 // Lets the salesperson override a priority the Mentor got wrong (or set one
 // on a lead that never got scored). Deliberately leaves priorityScoredAt
 // unset/cleared - that field means "the AI scored this," and both the
@@ -728,6 +752,43 @@ export function evaluateTargetAccountMatch(company, targetAccounts, threshold) {
   if (!match || match.score == null) return { match: null, qualifies: false };
   const confidentLabel = match.priorityLabel === "Very High" || match.priorityLabel === "High";
   return { match, qualifies: confidentLabel && match.score >= threshold };
+}
+
+function targetAccountMatchReason(match) {
+  return `Target Account match: ${match.company} scored ${Math.round(match.score)}/100 (${match.priorityLabel}) on the Swiss AI target-account list${match.topInitiatives ? " — " + match.topInitiatives.slice(0, 100) : ""}.`;
+}
+
+// Splits a list of not-yet-(re)scored leads against the imported Target
+// Accounts list: those that qualify for the deterministic Priority 1
+// override go into autoPriorities, ready for applyLeadPriorities below (or an
+// equivalent inline write). Everything else comes back in toScore, unchanged
+// except a lead that still matched (just not confidently enough) gets a
+// shallow-cloned copy with a targetAccountSignal attached, so prioritizeLeads
+// (agent-shared.js) can fold it into the Sales Mentor's own judgment - a
+// clone, not a mutation, so this transient hint is never accidentally
+// persisted onto the real stored lead object. Shared by background.js's
+// automatic post-scan pass and the Dashboard's manual Prioritize Unscored /
+// Re-score All Priorities buttons, so every path applies the same rule -
+// importing/updating the Target Accounts list retroactively affects leads
+// re-scored afterward without requiring a fresh scan.
+export async function partitionLeadsByTargetAccount(leads) {
+  const targetAccounts = await getTargetAccounts();
+  if (Object.keys(targetAccounts).length === 0) return { autoPriorities: [], toScore: leads };
+
+  const threshold = await getTargetAccountScoreThreshold();
+  const autoPriorities = [];
+  const toScore = [];
+  for (const lead of leads) {
+    const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, threshold);
+    if (qualifies) {
+      autoPriorities.push({ key: lead.key, priority: 1, reason: targetAccountMatchReason(match) });
+    } else if (match) {
+      toScore.push({ ...lead, targetAccountSignal: match });
+    } else {
+      toScore.push(lead);
+    }
+  }
+  return { autoPriorities, toScore };
 }
 
 // Applied by background.js after the batched AI company-extraction pass
