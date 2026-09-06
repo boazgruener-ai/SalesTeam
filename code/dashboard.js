@@ -1636,7 +1636,7 @@ function waitForProfileScrapeResult(expectedUrl) {
       if (!settled) {
         settled = true;
         chrome.runtime.onMessage.removeListener(listener);
-        resolve(null);
+        resolve({ company: null, location: null });
       }
     }, PROFILE_SCRAPE_TIMEOUT_MS);
     function listener(message) {

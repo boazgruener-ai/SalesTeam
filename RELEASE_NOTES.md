@@ -1,3 +1,13 @@
+# SalesTeam — v0.29.6
+
+## Fixed: "Extract Companies from Profiles" crashing after a few profiles
+
+- Reported: a run stopped after 3 of 55 profiles with "Cannot destructure property 'company' of '(intermediate value)' as it is null." "Apply Location Filter" then correctly found 0 leads to change - not a separate bug, just a symptom of extraction having crashed before almost any lead got a location.
+- Root cause: the per-profile wait resolved a bare `null` when a profile didn't respond within its 15-second timeout, and `const { company, location } = ...` destructuring `null` throws - aborting the entire run instead of just skipping that one unresponsive profile.
+- Fixed: the timeout path now resolves `{ company: null, location: null }`, so one slow/unresponsive profile is skipped like any other miss and the run continues through the rest of the list.
+
+---
+
 # SalesTeam — v0.29.5
 
 ## New: Location Filter (by continent or country) + two more transparency rows on Prioritization Rules

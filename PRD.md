@@ -221,6 +221,12 @@ manual Dashboard button**, never part of the automatic per-scan pipeline:
   hint-word list, restricted to text before the Experience section — this half is still unverified against
   a live sample), feeding the new Location Filter (6.13) — same never-overwrite write path, extended to
   accept `location` alongside `company`.
+  **Fixed in v0.29.6**: a real run still crashed after 3 of 55 profiles — the orchestration in
+  `dashboard.js` resolved the per-profile wait with a bare `null` on a timeout (a profile that never
+  responds within 15s), and `const { company, location } = ...` destructuring a `null` throws, aborting the
+  whole loop rather than just skipping that one lead. The timeout path now resolves `{ company: null,
+  location: null }`, so a single slow/unresponsive profile is skipped like any other miss instead of ending
+  the run.
 
 ### 6.4 Automatic lead prioritization
 

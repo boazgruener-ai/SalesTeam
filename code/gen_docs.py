@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.5.")
+p.add_run("Living document, reflects the shipped product as of v0.29.6.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -288,7 +288,7 @@ p.add_run(
 p = doc.add_paragraph()
 r = p.add_run("Extract Companies from Profiles (v0.29.1, opt-in, Dashboard-only): "); r.bold = True
 p.add_run(
-    "the AI extraction above can only find a company that's actually present in the scraped headline text - and a LinkedIn search-results feed only ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page often shows a structured current employer that the person's headline never mentions at all. Fixing that requires visiting the person's own profile page, a materially bigger LinkedIn scraping footprint than reading a search-results feed - so this is a separate, explicit, manual Dashboard button, never part of the automatic per-scan pipeline. Filters to Post leads still missing a company with a profileUrl; confirms first, naming the real scope; visits one profile at a time in a background tab, paced with a randomized 4-9s delay between visits; reuses the same never-overwrite write path (applyExtractedCompanies) as headline extraction. A new content script (profile-content-script.js) only runs during this explicit action, gated on a profileExtractionActive flag, so ordinary profile browsing is never scraped. Fixed in v0.29.5 after a real 20-profile run returned 0 companies: LinkedIn's current profile page hydrates its Experience section in after the page's load event, so the extractor now polls for up to ~6s for it to appear; also, the company-page link wraps both the job title and company name as one text block, so it now reads the specific line holding the company name and strips the trailing employment-type suffix. The Experience-section lookup itself was also hardened to anchor on the section's own literal 'Experience' heading text rather than an id/class guess. Extended in v0.29.5 to also extract the person's stated location from the same visit (still unverified against a live sample), feeding the new Location Filter (6.13)."
+    "the AI extraction above can only find a company that's actually present in the scraped headline text - and a LinkedIn search-results feed only ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page often shows a structured current employer that the person's headline never mentions at all. Fixing that requires visiting the person's own profile page, a materially bigger LinkedIn scraping footprint than reading a search-results feed - so this is a separate, explicit, manual Dashboard button, never part of the automatic per-scan pipeline. Filters to Post leads still missing a company with a profileUrl; confirms first, naming the real scope; visits one profile at a time in a background tab, paced with a randomized 4-9s delay between visits; reuses the same never-overwrite write path (applyExtractedCompanies) as headline extraction. A new content script (profile-content-script.js) only runs during this explicit action, gated on a profileExtractionActive flag, so ordinary profile browsing is never scraped. Fixed in v0.29.5 after a real 20-profile run returned 0 companies: LinkedIn's current profile page hydrates its Experience section in after the page's load event, so the extractor now polls for up to ~6s for it to appear; also, the company-page link wraps both the job title and company name as one text block, so it now reads the specific line holding the company name and strips the trailing employment-type suffix. The Experience-section lookup itself was also hardened to anchor on the section's own literal 'Experience' heading text rather than an id/class guess. Extended in v0.29.5 to also extract the person's stated location from the same visit (still unverified against a live sample), feeding the new Location Filter (6.13). Fixed in v0.29.6: a real run still crashed after 3 of 55 profiles - the orchestration resolved a bare null on a per-profile timeout, and destructuring null throws, aborting the whole run instead of skipping that one unresponsive profile; the timeout path now resolves an empty company/location pair instead."
 )
 
 doc.add_heading("6.4 Automatic lead prioritization", level=3)
@@ -705,7 +705,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.5."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.6."
 )
 
 for section in doc.sections:
