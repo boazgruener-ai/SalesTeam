@@ -1,3 +1,14 @@
+# SalesTeam — v0.29.8
+
+## Fixed: "Extract Companies from Profiles" time estimate badly undercounted the real total
+
+- Reported: a real 55-profile run took roughly 15 minutes, well past the "1.5-3 minutes" implied by the confirmation dialog and by an earlier explanation I gave - some individual profiles were taking 25+ seconds, apparently past the "15 second" figure mentioned for the scrape wait.
+- That 15-second figure was only ever the wait for the page's *already-loaded* content to appear - it never included the time to navigate to and load the profile page itself (up to a 20-second ceiling), which is the dominant, most variable real-world cost and was missing from both the time estimate and my explanation entirely.
+- The confirmation dialog's estimate now folds in a rough typical page-load time alongside the deliberate pacing delay, instead of only counting the pacing - much closer to the real total, and the dialog itself now notes that real page-load time varies.
+- No change to the actual extraction behavior or timeouts - this only corrects the estimate shown before starting, so expectations match what actually happens.
+
+---
+
 # SalesTeam — v0.29.7
 
 ## Changed: Location Filter country picker + a page-wide "Saved" indicator on Settings

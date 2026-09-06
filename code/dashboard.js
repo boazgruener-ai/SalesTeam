@@ -1588,6 +1588,15 @@ const PROFILE_NAV_TIMEOUT_MS = 20000;
 const PROFILE_SCRAPE_TIMEOUT_MS = 15000;
 const MIN_PROFILE_DELAY_MS = 4000;
 const MAX_PROFILE_DELAY_MS = 9000;
+// A rough, typical (not worst-case) combined page-navigation + scrape-poll
+// time, for the confirmation dialog's estimate only - the actual per-profile
+// cost is dominated by real LinkedIn page-load time (up to the
+// PROFILE_NAV_TIMEOUT_MS ceiling), which varies a lot and isn't knowable in
+// advance. An earlier version of this estimate only counted the pacing
+// delay below and badly undercounted the real total (reported directly:
+// a real run of 55 profiles took ~15 minutes, not the 1.5-3 the old
+// estimate implied).
+const TYPICAL_PROFILE_LOAD_MS = 10000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1661,11 +1670,12 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
     extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is missing a company or location with a profile URL to visit.";
     return;
   }
-  const estMinutes = Math.ceil((toVisit.length * (MIN_PROFILE_DELAY_MS + MAX_PROFILE_DELAY_MS)) / 2 / 60000);
+  const avgPacingMs = (MIN_PROFILE_DELAY_MS + MAX_PROFILE_DELAY_MS) / 2;
+  const estMinutes = Math.ceil((toVisit.length * (avgPacingMs + TYPICAL_PROFILE_LOAD_MS)) / 60000);
   if (!confirm(
     `This will visit ${toVisit.length} individual LinkedIn profile page${toVisit.length === 1 ? "" : "s"} one at a time ` +
-    `(roughly ${estMinutes} minute${estMinutes === 1 ? "" : "s"}, paced to avoid rapid-fire requests) to look for a stated ` +
-    "current employer and location. Continue?"
+    `(roughly ${estMinutes} minute${estMinutes === 1 ? "" : "s"} - real page-load time varies, paced to avoid rapid-fire ` +
+    "requests) to look for a stated current employer and location. Continue?"
   )) {
     return;
   }

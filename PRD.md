@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.7.
+**Status:** Living document, reflects the shipped product as of v0.29.8.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -192,7 +192,11 @@ search-results feed (individual profile visits are more detectable) — so this 
 manual Dashboard button**, never part of the automatic per-scan pipeline:
 - Filters to Post leads still missing a company (after the headline-based pass) that have a `profileUrl`.
 - Confirms first, naming exactly how many individual profile pages it's about to visit and a rough time
-  estimate, before doing anything.
+  estimate, before doing anything. **Corrected in v0.29.8**: the estimate originally only counted the
+  pacing delay below, badly undercounting the real total — reported directly, a real 55-profile run took
+  ~15 minutes, not the 1.5–3 the old estimate implied. Real page-load time (the dominant, most variable
+  cost) is now folded in too, using a rough typical (not worst-case) assumption, and the dialog itself notes
+  that real page-load time varies.
 - Visits one profile at a time in a background tab, paced with a randomized 4–9s delay between visits
   (mimicking how a person naturally clicks through search results one by one, not a fixed-interval bot
   cadence) — reuses the same never-overwrite-an-existing-company write path (`applyExtractedCompanies`) as
@@ -668,4 +672,4 @@ never a silent delete.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.7**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.8**.
