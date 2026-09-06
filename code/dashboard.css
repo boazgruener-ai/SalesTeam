@@ -376,6 +376,19 @@ table#results-table {
   margin-bottom: 6px;
 }
 
+.col-filter-empty-only {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  margin: 6px 0;
+}
+
+.col-filter-empty-only input[type="checkbox"] {
+  margin: 0;
+}
+
 .col-menu-actions {
   display: flex;
   gap: 6px;

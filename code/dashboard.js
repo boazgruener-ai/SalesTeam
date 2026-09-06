@@ -43,6 +43,7 @@ import {
   extractCompaniesForLeads,
   buildAccountSummaryPrompt,
 } from "./agent-shared.js";
+import { leadsMissingProfileData, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -386,6 +387,10 @@ function companyCell(td, lead) {
   td.textContent = lead.company || "—";
 }
 
+function locationCell(td, lead) {
+  td.textContent = lead.location || "—";
+}
+
 // A lead can match more than one Topic (e.g. re-scanning with an edited
 // keyword list) - matchedTopics is one entry per topic it matched, each
 // carrying its own matchedKeywords. These two flatten that for the table so
@@ -506,6 +511,7 @@ const COLUMNS = [
   { id: "content", label: "Content", width: 280, getFilterText: leadContent, render: contentCell },
   { id: "creator", label: "Creator", width: 160, getSortValue: leadCreatorName, getFilterText: leadCreatorName, render: creatorCell },
   { id: "company", label: "Company", width: 150, getSortValue: (l) => l.company || "", getFilterText: (l) => l.company || "", render: companyCell },
+  { id: "location", label: "Location", width: 150, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
   { id: "connection", label: "Connection", width: 110, getSortValue: (l) => l.connectionDegree || "", getFilterText: (l) => l.connectionDegree || "", render: connectionCell },
   { id: "status", label: "Status", width: 110, getSortValue: (l) => l.status || "New", getFilterText: (l) => l.status || "New", render: statusCell },
   { id: "priority", label: "Priority", width: 100, getSortValue: leadPrioritySortValue, getFilterText: (l) => leadPriorityLabel(l) || "not scored", render: priorityCell },
@@ -516,7 +522,15 @@ const COLUMNS = [
 ];
 
 let columnWidths = {};
-let columnFilters = {}; // { [columnId]: "filter text" }
+let columnFilters = {}; // { [columnId]: { text: "filter text", emptyOnly: boolean } }
+
+// A filter object only actually filters anything if it has real text or the
+// "Empty only" toggle on - reported directly: there was no way to isolate
+// rows with nothing in a column (e.g. Company) since a blank filter box was
+// (correctly) treated as "no filter."
+function hasActiveFilter(filter) {
+  return Boolean(filter && (filter.text || filter.emptyOnly));
+}
 let sortColumn = "date";
 let sortDirection = "desc";
 let openMenuColumnId = null;
@@ -626,10 +640,14 @@ function applyFilterSortSearch() {
   }
 
   for (const col of COLUMNS) {
-    const filterVal = (columnFilters[col.id] || "").trim();
-    if (filterVal && col.getFilterText) {
-      const q = filterVal.toLowerCase();
-      leads = leads.filter((l) => String(col.getFilterText(l) || "").toLowerCase().includes(q));
+    const filter = columnFilters[col.id];
+    if (hasActiveFilter(filter) && col.getFilterText) {
+      if (filter.emptyOnly) {
+        leads = leads.filter((l) => String(col.getFilterText(l) || "").trim() === "");
+      } else {
+        const q = filter.text.trim().toLowerCase();
+        leads = leads.filter((l) => String(col.getFilterText(l) || "").toLowerCase().includes(q));
+      }
     }
   }
 
@@ -696,13 +714,26 @@ function toggleColumnMenu(column, anchorEl) {
 
   if (column.getFilterText) {
     if (column.getSortValue) popup.appendChild(document.createElement("hr"));
+    const existingFilter = columnFilters[column.id];
     const filterInput = document.createElement("input");
     filterInput.type = "text";
     filterInput.className = "col-filter-input";
     filterInput.placeholder = `Filter ${column.label}…`;
-    filterInput.value = columnFilters[column.id] || "";
+    filterInput.value = existingFilter?.text || "";
+
+    const emptyOnlyLabel = document.createElement("label");
+    emptyOnlyLabel.className = "col-filter-empty-only";
+    const emptyOnlyCheckbox = document.createElement("input");
+    emptyOnlyCheckbox.type = "checkbox";
+    emptyOnlyCheckbox.checked = Boolean(existingFilter?.emptyOnly);
+    emptyOnlyCheckbox.addEventListener("change", () => {
+      filterInput.disabled = emptyOnlyCheckbox.checked;
+    });
+    filterInput.disabled = emptyOnlyCheckbox.checked;
+    emptyOnlyLabel.append(emptyOnlyCheckbox, document.createTextNode(` Empty ${column.label} only`));
+
     const applyFilter = () => {
-      columnFilters[column.id] = filterInput.value.trim();
+      columnFilters[column.id] = { text: filterInput.value.trim(), emptyOnly: emptyOnlyCheckbox.checked };
       closeColumnMenu();
       renderTableFromScratch();
     };
@@ -719,12 +750,12 @@ function toggleColumnMenu(column, anchorEl) {
     clearBtn.title = `Remove this column's filter`;
     clearBtn.textContent = "Clear";
     clearBtn.addEventListener("click", () => {
-      columnFilters[column.id] = "";
+      columnFilters[column.id] = null;
       closeColumnMenu();
       renderTableFromScratch();
     });
     actionsRow.append(applyBtn, clearBtn);
-    popup.append(filterInput, actionsRow);
+    popup.append(filterInput, emptyOnlyLabel, actionsRow);
   }
 
   if (column.getSortValue || column.getFilterText) popup.appendChild(document.createElement("hr"));
@@ -862,10 +893,10 @@ function renderTableHead() {
       th.appendChild(arrow);
     }
 
-    if (columnFilters[column.id]) {
+    if (hasActiveFilter(columnFilters[column.id])) {
       const filterDot = document.createElement("span");
       filterDot.className = "filter-active-dot";
-      filterDot.title = `Filtered: "${columnFilters[column.id]}"`;
+      filterDot.title = columnFilters[column.id].emptyOnly ? "Filtered: empty only" : `Filtered: "${columnFilters[column.id].text}"`;
       th.appendChild(filterDot);
     }
 
@@ -1035,7 +1066,7 @@ function renderTable() {
   renderTableHead();
 
   const leads = applyFilterSortSearch();
-  const anyColumnFilter = Object.values(columnFilters).some((v) => v && v.trim());
+  const anyColumnFilter = Object.values(columnFilters).some(hasActiveFilter);
   const filtered = anyColumnFilter || statusFilter !== "all" || searchText.trim() || !showIrrelevant;
   resultCountEl.textContent = `${leads.length} of ${allLeads.length} leads${filtered ? " (filtered)" : ""}`;
 
@@ -1584,118 +1615,22 @@ extractCompaniesBtn.addEventListener("click", async () => {
 // button above, since individually visiting profile pages is a bigger
 // LinkedIn scraping footprint than reading a search-results feed. Confirms
 // first, naming the real scope, same as Bulk Change/Re-score All Priorities.
-const PROFILE_NAV_TIMEOUT_MS = 20000;
-const PROFILE_SCRAPE_TIMEOUT_MS = 15000;
-const MIN_PROFILE_DELAY_MS = 4000;
-const MAX_PROFILE_DELAY_MS = 9000;
-// A rough, typical (not worst-case) combined page-navigation + scrape-poll
-// time, for the confirmation dialog's estimate only - the actual per-profile
-// cost is dominated by real LinkedIn page-load time (up to the
-// PROFILE_NAV_TIMEOUT_MS ceiling), which varies a lot and isn't knowable in
-// advance. An earlier version of this estimate only counted the pacing
-// delay below and badly undercounted the real total (reported directly:
-// a real run of 55 profiles took ~15 minutes, not the 1.5-3 the old
-// estimate implied).
-const TYPICAL_PROFILE_LOAD_MS = 10000;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function randomProfileDelay() {
-  return MIN_PROFILE_DELAY_MS + Math.random() * (MAX_PROFILE_DELAY_MS - MIN_PROFILE_DELAY_MS);
-}
-
-function navigateAndWaitProfile(tabId, url) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    }, PROFILE_NAV_TIMEOUT_MS);
-    function listener(updatedTabId, changeInfo) {
-      if (updatedTabId === tabId && changeInfo.status === "complete" && !settled) {
-        settled = true;
-        clearTimeout(timeout);
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    }
-    chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tabId, { url });
-  });
-}
-
-// Filters by profileUrl, not just "the next message that arrives" - a
-// separate, unrelated tab the user happens to have open on a LinkedIn
-// profile at the same time would otherwise be able to race this and resolve
-// it with the wrong company.
-function normalizeProfileUrl(url) {
-  return (url || "").split("?")[0].replace(/\/$/, "");
-}
-
-function waitForProfileScrapeResult(expectedUrl) {
-  const expected = normalizeProfileUrl(expectedUrl);
-  return new Promise((resolve) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        chrome.runtime.onMessage.removeListener(listener);
-        resolve({ company: null, location: null });
-      }
-    }, PROFILE_SCRAPE_TIMEOUT_MS);
-    function listener(message) {
-      if (message?.type === "PROFILE_SCRAPE_RESULT" && normalizeProfileUrl(message.profileUrl) === expected && !settled) {
-        settled = true;
-        clearTimeout(timeout);
-        chrome.runtime.onMessage.removeListener(listener);
-        resolve({ company: message.company || null, location: message.location || null });
-      }
-    }
-    chrome.runtime.onMessage.addListener(listener);
-  });
-}
-
+// Orchestration itself lives in profile-extraction.js, shared with the side
+// panel's post-scan prompt (6.3) so both entry points behave identically.
 extractCompaniesProfilesBtn.addEventListener("click", async () => {
-  // Visits a lead missing EITHER field, not just company - the same page
-  // visit reads both (profile-content-script.js), so a lead that already
-  // has a company (e.g. from headline extraction) but no location would
-  // otherwise never get one.
-  const toVisit = allLeads.filter((l) => l.type !== "job" && (!l.company || !l.location) && l.profileUrl);
+  const toVisit = leadsMissingProfileData(allLeads);
   if (toVisit.length === 0) {
     extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is missing a company or location with a profile URL to visit.";
     return;
   }
-  const avgPacingMs = (MIN_PROFILE_DELAY_MS + MAX_PROFILE_DELAY_MS) / 2;
-  const estMinutes = Math.ceil((toVisit.length * (avgPacingMs + TYPICAL_PROFILE_LOAD_MS)) / 60000);
-  if (!confirm(
-    `This will visit ${toVisit.length} individual LinkedIn profile page${toVisit.length === 1 ? "" : "s"} one at a time ` +
-    `(roughly ${estMinutes} minute${estMinutes === 1 ? "" : "s"} - real page-load time varies, paced to avoid rapid-fire ` +
-    "requests) to look for a stated current employer and location. Continue?"
-  )) {
-    return;
-  }
+  if (!confirm(profileVisitConfirmText(toVisit.length))) return;
 
   extractCompaniesProfilesBtn.disabled = true;
-  let tab;
-  let found = 0;
   try {
-    await chrome.storage.local.set({ profileExtractionActive: true });
-    tab = await chrome.tabs.create({ url: "about:blank", active: false });
-    for (let i = 0; i < toVisit.length; i++) {
-      const lead = toVisit[i];
-      extractCompaniesProfilesStatusEl.textContent = `Visiting profile ${i + 1} of ${toVisit.length}…`;
-      await navigateAndWaitProfile(tab.id, lead.profileUrl);
-      const { company, location } = await waitForProfileScrapeResult(lead.profileUrl);
-      if (company || location) {
-        found += await applyExtractedCompanies([{ key: lead.key, company, location }]);
-      }
-      if (i < toVisit.length - 1) await sleep(randomProfileDelay());
-    }
+    const { found: scraped, debugSamples } = await runProfileExtraction(toVisit, {
+      onProgress: (i, total) => { extractCompaniesProfilesStatusEl.textContent = `Visiting profile ${i} of ${total}…`; },
+    });
+    const found = scraped.length > 0 ? await applyExtractedCompanies(scraped) : 0;
     // Fresh location data just arrived - re-check it against the Location
     // Filter (6.14) right away, same courtesy as a scan re-applying Negative
     // Topics, so the user doesn't have to separately click Apply Location
@@ -1703,15 +1638,20 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
     const { blockedCount: locationBlockedCount } = await reapplyLocationFilter();
     await loadLeads();
     renderTable();
-    extractCompaniesProfilesStatusEl.textContent = `Done - ${found} lead${found === 1 ? "" : "s"} got a company/location from their profile` +
+    const missed = toVisit.length - found;
+    extractCompaniesProfilesStatusEl.textContent = `Done - ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} got a company/location from their profile` +
       (locationBlockedCount > 0 ? `, ${locationBlockedCount} newly marked Irrelevant by the Location Filter.` : ".");
-    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: `Extract Companies from Profiles: ${found} lead${found === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter`, newValue: { found, locationBlockedCount } });
+    appendActivityLog({
+      actor: "user",
+      action: "companies_extracted_from_profiles",
+      label: `Extract Companies from Profiles: ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter` +
+        (missed > 0 && debugSamples.length > 0 ? ` - ${debugSamples.length} failure sample(s) attached for diagnosis` : ""),
+      newValue: { found, total: toVisit.length, locationBlockedCount, debugSamples },
+    });
   } catch (err) {
     extractCompaniesProfilesStatusEl.textContent = `Something went wrong: ${err.message}`;
     appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies from Profiles failed", error: true, errorMessage: err.message });
   } finally {
-    await chrome.storage.local.remove("profileExtractionActive").catch(() => {});
-    if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
     extractCompaniesProfilesBtn.disabled = false;
   }
 });

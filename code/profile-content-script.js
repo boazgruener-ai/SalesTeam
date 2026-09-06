@@ -61,9 +61,32 @@ function findExperienceSection() {
   return document.getElementById("experience") || document.querySelector('[id*="experience" i]');
 }
 
+// Each Experience list entry (confirmed against a real profile, 2026-09) is
+// wrapped in an element carrying componentkey="entity-collection-item-...",
+// REGARDLESS of whether the company itself is linked to a Company Page -
+// e.g. a person's employer that has no LinkedIn Company Page at all still
+// renders as the same <p>Title</p><p>Company · Type</p> pair inside one of
+// these, just without the wrapping <a href="/company/...">. The earlier,
+// link-only selector only ever found a company for someone whose employer
+// happens to have a Company Page - which a real run confirmed is a small
+// minority (5 of 55) - so this reads the entry structurally first and only
+// falls back to the link-only approach for a profile variant that doesn't
+// use this markup at all.
+function companyNameFromEntry(entry) {
+  if (!entry) return null;
+  const paragraphs = entry.querySelectorAll("p");
+  if (paragraphs.length < 2) return null;
+  const text = paragraphs[1].textContent.split("·")[0].replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
 function extractCurrentCompany() {
   const experience = findExperienceSection();
   if (experience) {
+    const entry = experience.querySelector('[componentkey^="entity-collection-item-"]');
+    const entryCompany = companyNameFromEntry(entry);
+    if (entryCompany) return entryCompany;
+
     const companyLink = experience.querySelector('a[href*="/company/"]');
     const company = companyNameFromLink(companyLink);
     if (company) return company;
@@ -125,6 +148,23 @@ function extractPersonLocation() {
   return null;
 }
 
+// A small diagnostic bundle attached only when extraction still finds
+// nothing after the poll below - lets the run be diagnosed from the
+// Activity Log (dashboard.js/sidepanel.js collect a few of these) instead
+// of needing to catch a background tab's live DevTools console during a
+// fast, unattended multi-profile run.
+function collectDiagnostics() {
+  const experience = findExperienceSection();
+  return {
+    title: document.title,
+    url: location.href.split("?")[0],
+    headings: Array.from(document.querySelectorAll("h1, h2, h3")).slice(0, 8).map((h) => h.textContent.trim()),
+    experienceSectionFound: Boolean(experience),
+    entryCount: experience ? experience.querySelectorAll('[componentkey^="entity-collection-item-"]').length : 0,
+    anyCompanyLinkOnPage: Boolean(document.querySelector('a[href*="/company/"]')),
+  };
+}
+
 const EXTRACTION_POLL_INTERVAL_MS = 500;
 const EXTRACTION_POLL_MAX_ATTEMPTS = 12; // ~6s total - see run()'s comment for why this exists.
 
@@ -160,6 +200,7 @@ async function run() {
     profileUrl: location.href.split("?")[0],
     company,
     location: personLocation,
+    debug: (!company && !personLocation) ? collectDiagnostics() : null,
   });
 }
 

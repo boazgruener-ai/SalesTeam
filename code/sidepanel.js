@@ -40,9 +40,12 @@ import {
   getCompanyContext,
   getIdealCustomerProfile,
   appendActivityLog,
+  applyExtractedCompanies,
+  reapplyLocationFilter,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { sanitizeApiKey, suggestLookalikeTopics, analyzePostSearch } from "./agent-shared.js";
+import { leadsMissingProfileData, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -1374,6 +1377,50 @@ scanBtn.addEventListener("click", async () => {
   appendActivityLog({ actor: "user", action: "scan_started", label: "Started a scan" });
 });
 
+// A scan's own "topic X of Y" progress is a different, much shorter phase
+// than visiting individual profiles - reported directly: folding profile
+// visits into the scan's own progress counter would be misleading (the
+// scan can look "done" while a much longer phase is still silently
+// running). Kept as a distinct, explicitly-confirmed second phase instead,
+// scoped the same way as the Dashboard's own button (any Post/job-ad lead
+// still missing a company or location, not just this scan's new ones - the
+// backlog matters just as much as fresh leads, per the same report).
+async function promptAndRunProfileExtraction(results) {
+  const toVisit = leadsMissingProfileData(results);
+  if (toVisit.length === 0) return;
+  if (!confirm(
+    `${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} (including any from before this scan) ` +
+    `${toVisit.length === 1 ? "is" : "are"} missing a company or location. ` + profileVisitConfirmText(toVisit.length)
+  )) {
+    return;
+  }
+
+  scanBtn.disabled = true;
+  try {
+    const { found: scraped, debugSamples } = await runProfileExtraction(toVisit, {
+      onProgress: (i, total) => { progressTextEl.textContent = `Visiting profile ${i} of ${total}…`; },
+    });
+    const found = scraped.length > 0 ? await applyExtractedCompanies(scraped) : 0;
+    const { blockedCount: locationBlockedCount } = await reapplyLocationFilter();
+    await renderResultsFromStorage();
+    const missed = toVisit.length - found;
+    progressTextEl.textContent = `Done - ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} got a company/location from their profile` +
+      (locationBlockedCount > 0 ? `, ${locationBlockedCount} newly marked Irrelevant by the Location Filter.` : ".");
+    appendActivityLog({
+      actor: "user",
+      action: "companies_extracted_from_profiles",
+      label: `Extract Companies from Profiles: ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter` +
+        (missed > 0 && debugSamples.length > 0 ? ` - ${debugSamples.length} failure sample(s) attached for diagnosis` : ""),
+      newValue: { found, total: toVisit.length, locationBlockedCount, debugSamples },
+    });
+  } catch (err) {
+    progressTextEl.textContent = `Something went wrong visiting profiles: ${err.message}`;
+    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies from Profiles failed", error: true, errorMessage: err.message });
+  } finally {
+    scanBtn.disabled = false;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "SCAN_PROGRESS") {
     progressTextEl.textContent = `Searching: ${message.topicName} (${message.current} of ${message.total})…`;
@@ -1385,6 +1432,7 @@ chrome.runtime.onMessage.addListener((message) => {
       `Scan complete — ${message.results.length} total leads (${newCount} new).`;
     scanBtn.disabled = false;
     renderResults(message.results);
+    promptAndRunProfileExtraction(message.results);
   } else if (message?.type === "SCAN_ERROR") {
     progressTextEl.textContent = message.message;
     scanBtn.disabled = false;

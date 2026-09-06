@@ -1,3 +1,17 @@
+# SalesTeam — v0.29.9
+
+## Fixed: company extraction only worked for employers with a Company Page; post-scan profile-visiting phase; Location column + Empty-only filter
+
+- Reported with real data: a 55-profile run found a company for only 5. A second real DOM sample showed why - Experience entries are wrapped in a `componentkey="entity-collection-item-..."` element regardless of whether the employer has a Company Page, but the extractor only ever looked for a link to one. It now reads the entry structurally first (works for both linked and unlinked employers) and only falls back to the link-only approach otherwise.
+- Also added: when a profile still yields nothing after the poll, the content script now attaches a small diagnostic bundle (headings found, whether an Experience section/entry/company-link exists at all) - up to 3 samples per run are attached to the run's Activity Log entry, so a still-mostly-failing run can be diagnosed without catching a background tab's console live.
+- New: after every scan, the side panel now checks the same backlog the Dashboard's "Extract Companies from Profiles" button does (any Post/job-ad lead - from this scan or earlier - missing a company or location) and, if any qualify, prompts to visit their profiles right there, with its own distinct "Visiting profile X of Y…" progress phase - kept separate from the scan's own "topic X of Y" counter rather than folded into or silently running after it. Requested directly: "we risk that the number of leads without company and location will grow and become a real problem" - this is scoped to the whole backlog, not just this scan's new leads, specifically so it can't quietly regrow.
+- The visiting/pacing/timeout orchestration moved out of `dashboard.js` into a new shared `profile-extraction.js`, used by both entry points so they can never drift apart.
+- New Dashboard **Location** column, next to Company.
+- New **"Empty [Column] only"** checkbox in every column's filter menu (Dashboard) - reported directly: there was no way to isolate rows with nothing in a column (e.g. every lead still missing a Company), since a blank filter box was correctly treated as "no filter."
+- Verified via harness: the new structural entry extraction against both a linked and an unlinked real-sample entry, the diagnostic bundle's fields on a total failure, the shared module's batch results/progress-callback/debug-sample behavior end-to-end with a mocked `chrome.tabs`/`chrome.runtime`, and a full `dashboard.js` load confirming the Location column renders and the Empty-only filter correctly narrows the table.
+
+---
+
 # SalesTeam — v0.29.8
 
 ## Fixed: "Extract Companies from Profiles" time estimate badly undercounted the real total

@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.8.
+**Status:** Living document, reflects the shipped product as of v0.29.9.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -231,6 +231,28 @@ manual Dashboard button**, never part of the automatic per-scan pipeline:
   whole loop rather than just skipping that one lead. The timeout path now resolves `{ company: null,
   location: null }`, so a single slow/unresponsive profile is skipped like any other miss instead of ending
   the run.
+  **Fixed in v0.29.9** after a real 55-profile run found a company for only 5: a second real DOM sample
+  showed each Experience entry (`<p>Title</p><p>Company · Type</p>`) is wrapped in an element carrying
+  `componentkey="entity-collection-item-..."` **regardless of whether the company itself links to a Company
+  Page** — the v0.29.5 fix only ever found a company when the employer happened to have one. The extractor
+  now reads this entry structurally first (works for both linked and unlinked employers) and only falls back
+  to the link-only approach for a profile variant that doesn't use this markup. **Also added**: when a
+  profile still yields neither field after the poll, `profile-content-script.js` attaches a small diagnostic
+  bundle (page title, headings found, whether an Experience section/entry/company-link exists at all) to its
+  message; the orchestration keeps up to 3 such samples per run and attaches them to the run's Activity Log
+  entry, so a still-mostly-failing run can be diagnosed without needing to catch a background tab's live
+  console during an unattended multi-profile run.
+- **Shared orchestration, two entry points (v0.29.9)** — the visiting/pacing/timeout logic moved out of
+  `dashboard.js` into `profile-extraction.js`, used by both the Dashboard's button above and a new **side
+  panel post-scan prompt**: reported directly, showing only the scan's own "topic X of Y" progress was
+  misleading once a much longer profile-visiting phase could run right after — the scan looks done while a
+  ~15-minute phase silently continues. After every scan, the side panel now checks the same criterion as the
+  Dashboard button (any Post/job-ad lead — from this scan or the existing backlog — missing a company or
+  location, with a `profileUrl`) and, if any qualify, confirms before starting a distinct second phase with
+  its own "Visiting profile X of Y…" progress text in the same progress area, rather than folding it into or
+  silently running after the scan's own counter. Scoped to the whole backlog, not just this scan's new
+  leads, specifically so it can't quietly regrow — reported directly: "we risk that the number of leads
+  without company and location will grow and become a real problem."
 
 ### 6.4 Automatic lead prioritization
 
@@ -296,13 +318,17 @@ manual Dashboard button**, never part of the automatic per-scan pipeline:
   this lead matched and the specific keyword(s) that triggered each, deduplicated across topics; the same data
   the CSV export already carried, now visible and filterable directly in the table so "which topic/keyword is
   triggering this" doesn't require exporting first), Title, Content (3-line clamp, click to expand), Creator
-  (link), **Company**, Connection, Status (with Irrelevant-reason tooltip), **Priority** (P1–P5 colored pill,
+  (link), **Company**, **Location** (v0.29.9 — a lead's own scraped/extracted location, same source as the
+  Location Filter, 6.13), Connection, Status (with Irrelevant-reason tooltip), **Priority** (P1–P5 colored pill,
   tooltip shows the reason), **Priority Reason** (v0.28.4 — the same reason as real, selectable table text,
   3-line clamp/click-to-expand like Content; the hover tooltip alone couldn't be copied, screenshotted, or seen
   without a mouse, which made it hard to actually discuss/verify what a lead's priority was based on), Last
   Activity, Actions (Open/Edit, Consult Mentor, Send Message, 🏢 Assign Company, Dismiss). Every sortable column
-  supports click-to-sort and an Excel-style per-column dropdown (sort asc/desc, free-text filter). Column
-  widths are user-resizable and persisted. CSV export (both variants) includes Priority Reason too.
+  supports click-to-sort and an Excel-style per-column dropdown (sort asc/desc, free-text filter, and an
+  **"Empty [Column] only"** checkbox, v0.29.9 — reported directly: there was no way to isolate rows with
+  nothing in a column, e.g. every lead still missing a Company, since a blank filter box was correctly treated
+  as "no filter" rather than "match empty"). Column widths are user-resizable and persisted. CSV export (both
+  variants) includes Priority Reason too.
 - **Column show/hide (v0.28.6)** — a growing column count meant the table couldn't fit on screen without
   horizontal scrolling. A **"Columns"** button opens an Excel-style checklist of every column (checked =
   visible); each column's existing sort/filter dropdown also gets a **"Hide This Column"** shortcut. At least
@@ -672,4 +698,4 @@ never a silent delete.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.8**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.9**.

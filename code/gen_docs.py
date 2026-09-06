@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.8.")
+p.add_run("Living document, reflects the shipped product as of v0.29.9.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -288,7 +288,7 @@ p.add_run(
 p = doc.add_paragraph()
 r = p.add_run("Extract Companies from Profiles (v0.29.1, opt-in, Dashboard-only): "); r.bold = True
 p.add_run(
-    "the AI extraction above can only find a company that's actually present in the scraped headline text - and a LinkedIn search-results feed only ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page often shows a structured current employer that the person's headline never mentions at all. Fixing that requires visiting the person's own profile page, a materially bigger LinkedIn scraping footprint than reading a search-results feed - so this is a separate, explicit, manual Dashboard button, never part of the automatic per-scan pipeline. Filters to Post leads still missing a company with a profileUrl; confirms first, naming the real scope; visits one profile at a time in a background tab, paced with a randomized 4-9s delay between visits; reuses the same never-overwrite write path (applyExtractedCompanies) as headline extraction. A new content script (profile-content-script.js) only runs during this explicit action, gated on a profileExtractionActive flag, so ordinary profile browsing is never scraped. Fixed in v0.29.5 after a real 20-profile run returned 0 companies: LinkedIn's current profile page hydrates its Experience section in after the page's load event, so the extractor now polls for up to ~6s for it to appear; also, the company-page link wraps both the job title and company name as one text block, so it now reads the specific line holding the company name and strips the trailing employment-type suffix. The Experience-section lookup itself was also hardened to anchor on the section's own literal 'Experience' heading text rather than an id/class guess. Extended in v0.29.5 to also extract the person's stated location from the same visit (still unverified against a live sample), feeding the new Location Filter (6.13). Fixed in v0.29.6: a real run still crashed after 3 of 55 profiles - the orchestration resolved a bare null on a per-profile timeout, and destructuring null throws, aborting the whole run instead of skipping that one unresponsive profile; the timeout path now resolves an empty company/location pair instead. Fixed in v0.29.8: the confirmation dialog's time estimate only ever counted the pacing delay, not real page-load time (the dominant, most variable cost) - a real 55-profile run took ~15 minutes against an estimate implying 1.5-3; the estimate now folds in a rough typical page-load time too."
+    "the AI extraction above can only find a company that's actually present in the scraped headline text - and a LinkedIn search-results feed only ever shows a poster's own short headline, never their full profile. Confirmed live: a real profile page often shows a structured current employer that the person's headline never mentions at all. Fixing that requires visiting the person's own profile page, a materially bigger LinkedIn scraping footprint than reading a search-results feed - so this is a separate, explicit, manual Dashboard button, never part of the automatic per-scan pipeline. Filters to Post leads still missing a company with a profileUrl; confirms first, naming the real scope; visits one profile at a time in a background tab, paced with a randomized 4-9s delay between visits; reuses the same never-overwrite write path (applyExtractedCompanies) as headline extraction. A new content script (profile-content-script.js) only runs during this explicit action, gated on a profileExtractionActive flag, so ordinary profile browsing is never scraped. Fixed in v0.29.5 after a real 20-profile run returned 0 companies: LinkedIn's current profile page hydrates its Experience section in after the page's load event, so the extractor now polls for up to ~6s for it to appear; also, the company-page link wraps both the job title and company name as one text block, so it now reads the specific line holding the company name and strips the trailing employment-type suffix. The Experience-section lookup itself was also hardened to anchor on the section's own literal 'Experience' heading text rather than an id/class guess. Extended in v0.29.5 to also extract the person's stated location from the same visit (still unverified against a live sample), feeding the new Location Filter (6.13). Fixed in v0.29.6: a real run still crashed after 3 of 55 profiles - the orchestration resolved a bare null on a per-profile timeout, and destructuring null throws, aborting the whole run instead of skipping that one unresponsive profile; the timeout path now resolves an empty company/location pair instead. Fixed in v0.29.8: the confirmation dialog's time estimate only ever counted the pacing delay, not real page-load time (the dominant, most variable cost) - a real 55-profile run took ~15 minutes against an estimate implying 1.5-3; the estimate now folds in a rough typical page-load time too. Fixed in v0.29.9 after a real 55-profile run found a company for only 5: Experience entries are wrapped in a componentkey=\"entity-collection-item-...\" element regardless of whether the employer has a Company Page, but the extractor only ever looked for a link to one - it now reads the entry structurally first, working for both linked and unlinked employers. A profile that still yields nothing now attaches a small diagnostic bundle, surfaced via the Activity Log, so a still-mostly-failing run can be diagnosed without live DevTools access. The orchestration itself also moved into a shared profile-extraction.js module, used by both this button and a new side panel post-scan prompt (same backlog check, its own distinct progress phase, kept separate from the scan's own progress counter)."
 )
 
 doc.add_heading("6.4 Automatic lead prioritization", level=3)
@@ -362,12 +362,14 @@ add_bullets(doc, [
     "lead matched and the specific keyword(s) that triggered each, deduplicated across topics; the same data "
     "the CSV export already carried, now visible and filterable directly in the table), Title, Content "
     "(3-line clamp, click to expand), Creator "
-    "(link), Company, Connection, Status (with Irrelevant-reason tooltip), Priority (P1\u2013P5 colored pill, "
+    "(link), Company, Location (v0.29.9 - a lead's own scraped/extracted location, same source as the "
+    "Location Filter, 6.13), Connection, Status (with Irrelevant-reason tooltip), Priority (P1\u2013P5 colored pill, "
     "tooltip shows the reason), Priority Reason (v0.28.4 - the same reason as real, selectable table text, "
     "3-line clamp/click-to-expand like Content; the hover tooltip alone couldn't be copied, screenshotted, "
     "or seen without a mouse), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, "
     "Assign Company, Dismiss). Every sortable column supports click-to-sort and an Excel-style per-column "
-    "dropdown (sort asc/desc, free-text filter). Column widths are user-resizable and persisted. CSV export "
+    "dropdown (sort asc/desc, free-text filter, and an 'Empty [Column] only' checkbox, v0.29.9, to isolate "
+    "rows with nothing in a column). Column widths are user-resizable and persisted. CSV export "
     "(both variants) includes Priority Reason too.",
     "Column show/hide (v0.28.6) - a growing column count meant the table couldn't fit on screen without "
     "horizontal scrolling. A “Columns” button opens an Excel-style checklist of every column "
@@ -713,7 +715,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.8."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.9."
 )
 
 for section in doc.sections:
