@@ -791,6 +791,25 @@ export async function partitionLeadsByTargetAccount(leads) {
   return { autoPriorities, toScore };
 }
 
+// prioritizeLeads (agent-shared.js) is told to mention a lead's
+// targetAccountSignal in its own reason text when it influenced the call,
+// but that's free-text AI writing, not a guaranteed template - it doesn't
+// reliably say so every time, which made it look like the Target Accounts
+// list wasn't being used at all even when it was. This makes the connection
+// deterministic instead of relying on the model's phrasing: prepends a fixed,
+// always-present tag to any AI-returned priority whose lead carried a signal
+// (matched against `leads` - the same array passed to prioritizeLeads, so a
+// signal attached by partitionLeadsByTargetAccount above is still present).
+export function tagPrioritiesWithTargetAccountSignal(priorities, leads) {
+  const signalByKey = new Map(leads.filter((l) => l.targetAccountSignal).map((l) => [l.key, l.targetAccountSignal]));
+  return priorities.map((p) => {
+    const signal = signalByKey.get(p.key);
+    if (!signal) return p;
+    const tag = `[Target Account signal: ${signal.company} scored ${Math.round(signal.score)}/100 (${signal.priorityLabel})] `;
+    return { ...p, reason: tag + (p.reason || "") };
+  });
+}
+
 // Applied by background.js after the batched AI company-extraction pass
 // (agent-shared.js's extractCompaniesForLeads) - never overwrites a lead
 // that already has a company, whether it was scraped (Job leads), extracted

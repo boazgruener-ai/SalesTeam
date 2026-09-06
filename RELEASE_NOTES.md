@@ -1,3 +1,14 @@
+# SalesTeam — v0.28.4
+
+## Changed: Priority reasons are now visible/copyable, and always name a Target Account signal
+
+- Reported after running Re-score All Priorities: "I do not understand most of the tool tips for the priorities" and "since the tool tips reasons are not a column in the table, I cannot copy paste it or screenshot them" - the reason was only ever shown as a native hover tooltip on the priority pill, which can't be selected, copied, or captured cleanly.
+- New **Priority Reason** column on the Dashboard table - the same text as the tooltip, but real, selectable content with the same 3-line clamp/click-to-expand as the Content column. Also added to both CSV exports.
+- Found and fixed the actual root cause of the confusing tooltips: for a lead that only had a *soft* Target Account signal (Provisional label, or below the score threshold - see 6.11), the Sales Mentor was merely *told* to mention it in its own reason text when relevant, but that's free-text AI writing, not a guaranteed template - it didn't reliably say so, making it look like the Excel data wasn't being used at all even when it was. Every AI-returned priority for a signaled lead now gets a fixed `[Target Account signal: Company scored N/100 (Label)]` tag deterministically prepended to its reason, regardless of the model's own phrasing - the connection to the workbook is now always visible.
+- Verified via harness: a lead with a signal gets the fixed tag prepended ahead of the AI's own reason; a lead without one is completely unaffected.
+
+---
+
 # SalesTeam — v0.28.3
 
 ## New: warns when the extension has data but no Anthropic API key configured

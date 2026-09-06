@@ -26,6 +26,7 @@ import {
   applyExtractedCompanies,
   normalizeCompanyName,
   partitionLeadsByTargetAccount,
+  tagPrioritiesWithTargetAccountSignal,
   appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -437,6 +438,18 @@ function priorityCell(td, lead) {
   td.appendChild(pill);
 }
 
+// The pill's hover tooltip (above) can't be copied, screenshotted cleanly,
+// or seen without a mouse - this makes the same text real, selectable table
+// content, same clamp/click-to-expand pattern as the Content column.
+function priorityReasonCell(td, lead) {
+  td.className = "content-cell";
+  td.textContent = lead.priorityReason || "—";
+  if (lead.priorityReason) {
+    td.title = "Click to expand/collapse";
+    td.addEventListener("click", () => td.classList.toggle("expanded"));
+  }
+}
+
 function makeIconBtn(icon, title, onClick, extraClass) {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -489,6 +502,7 @@ const COLUMNS = [
   { id: "connection", label: "Connection", width: 110, getSortValue: (l) => l.connectionDegree || "", getFilterText: (l) => l.connectionDegree || "", render: connectionCell },
   { id: "status", label: "Status", width: 110, getSortValue: (l) => l.status || "New", getFilterText: (l) => l.status || "New", render: statusCell },
   { id: "priority", label: "Priority", width: 100, getSortValue: leadPrioritySortValue, getFilterText: (l) => leadPriorityLabel(l) || "not scored", render: priorityCell },
+  { id: "priorityReason", label: "Priority Reason", width: 240, getFilterText: (l) => l.priorityReason || "", render: priorityReasonCell },
   { id: "lastActivity", label: "Last Activity", width: 150, getSortValue: leadLastActivity, getFilterText: (l) => formatDateTime(leadLastActivity(l)),
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(leadLastActivity(l)); } },
   { id: "actions", label: "Actions", width: 150, render: actionsCell },
@@ -1269,7 +1283,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     alert("No leads to export.");
     return;
   }
-  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Connection", "Status", "Priority", "URL"];
+  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Connection", "Status", "Priority", "Priority Reason", "URL"];
   const rows = leads.map((lead) => [
     formatDateTime(leadDate(lead)),
     formatDateTime(lead.firstSeenAt),
@@ -1280,6 +1294,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     lead.connectionDegree || "",
     lead.status || "New",
     leadPriorityLabel(lead),
+    lead.priorityReason || "",
     leadCreatorUrl(lead) || (lead.type === "job" ? lead.jobUrl : lead.postUrl) || "",
   ]);
   const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\r\n");
@@ -1315,7 +1330,7 @@ async function prioritizeLeadsInChunks(leads, settings, onProgress) {
     // chunk actively in flight ("Re-scoring 20 of 136…") rather than
     // starting at 0 and only moving once a chunk has already finished.
     onProgress?.(Math.min(i + chunk.length, leads.length), leads.length);
-    const priorities = await prioritizeLeads(chunk, settings);
+    const priorities = tagPrioritiesWithTargetAccountSignal(await prioritizeLeads(chunk, settings), chunk);
     totalChanged += await applyLeadPriorities(priorities);
   }
   return totalChanged;

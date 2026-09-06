@@ -29,6 +29,7 @@ import {
   getOutputLanguage,
   normalizeCompanyName,
   partitionLeadsByTargetAccount,
+  tagPrioritiesWithTargetAccountSignal,
   appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -664,7 +665,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
             idealCustomerProfile: await getIdealCustomerProfile(),
             outputLanguage: await getOutputLanguage(),
           };
-          const priorities = await prioritizeLeads(leadsForAI, settings);
+          const priorities = tagPrioritiesWithTargetAccountSignal(await prioritizeLeads(leadsForAI, settings), leadsForAI);
           const scoredAt = Date.now();
           let scoredCount = 0;
           for (const { key, priority, reason } of priorities) {

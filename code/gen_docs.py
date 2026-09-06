@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.28.3.")
+p.add_run("Living document, reflects the shipped product as of v0.28.4.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -358,9 +358,12 @@ add_bullets(doc, [
     "the CSV export already carried, now visible and filterable directly in the table), Title, Content "
     "(3-line clamp, click to expand), Creator "
     "(link), Company, Connection, Status (with Irrelevant-reason tooltip), Priority (P1\u2013P5 colored pill, "
-    "tooltip shows the Mentor's reason), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, "
+    "tooltip shows the reason), Priority Reason (v0.28.4 - the same reason as real, selectable table text, "
+    "3-line clamp/click-to-expand like Content; the hover tooltip alone couldn't be copied, screenshotted, "
+    "or seen without a mouse), Last Activity, Actions (Open/Edit, Consult Mentor, Send Message, "
     "Assign Company, Dismiss). Every sortable column supports click-to-sort and an Excel-style per-column "
-    "dropdown (sort asc/desc, free-text filter). Column widths are user-resizable and persisted.",
+    "dropdown (sort asc/desc, free-text filter). Column widths are user-resizable and persisted. CSV export "
+    "(both variants) includes Priority Reason too.",
     "\u201cGroup by Company\u201d checkbox - Excel-style outline grouping inside this same table (not a "
     "separate view): a collapsible header row per company (name, lead count, expand/collapse caret) with "
     "its leads nested underneath; leads with no company yet collect into a trailing \u201cUnknown "
@@ -552,8 +555,12 @@ add_bullets(doc, [
     "from a Mentor-scored lead even though both render the same way.",
     "Soft signal otherwise - a match that doesn't clear the bar above (Provisional, or below threshold) is "
     "still passed into the same batch AI prioritization call (6.4) as context, so the Sales Mentor weighs it "
-    "alongside its usual judgment rather than ignoring it outright; when it materially affects the call, the "
-    "Mentor's own reason text (also shown as the pill's tooltip) says so explicitly.",
+    "alongside its usual judgment rather than ignoring it outright. The Mentor is told to mention it in its "
+    "own reason when it influenced the call, but that's free-text AI writing, not a guaranteed template - it "
+    "didn't reliably say so, which made it look like the list wasn't being used at all even when it was. "
+    "Fixed in v0.28.4: every AI-returned priority for a lead that carried a signal now gets a fixed "
+    "[Target Account signal: Company scored N/100 (Label)] tag deterministically prepended to its reason, "
+    "regardless of what the model itself wrote.",
     "Applies everywhere prioritization runs (v0.28.2) - the same split "
     "(partitionLeadsByTargetAccount in storage.js) runs during a scan's automatic pass and both "
     "Dashboard buttons (6.4), not just at scan time. Concretely: importing a new/updated Target "
@@ -599,7 +606,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.3."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.4."
 )
 
 for section in doc.sections:
