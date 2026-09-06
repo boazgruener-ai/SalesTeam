@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.5.
+**Status:** Living document, reflects the shipped product as of v0.29.7.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -360,6 +360,15 @@ list the AI may mention, never invents). **Target Accounts** (v0.28.0 — import
 configurable Prioritization Rules table, v0.29.4; see 6.11). Opened via its own blue button in the Scanner tile. The Advisors page reads these
 live (via `chrome.storage.onChanged`) rather than caching a stale copy, since editing now happens on a
 separate page.
+- **Persistent "Saved" indicator (v0.29.7)** — reported directly: every field here already auto-saves on
+  change (kept deliberately — an explicit Save-everywhere model risks losing an edit if the user navigates
+  away without clicking it), but that auto-save is invisible, which "feels weird, unsure if it was saved or
+  not." A fixed, page-wide badge now flashes "Saved" on every write across the whole page (any text field,
+  checkbox, dropdown, or rule toggle) and settles back to "All changes saved" a moment later — one shared
+  confirmation mechanism rather than per-field feedback that would need its own indicator everywhere. The
+  Location Filter's country picker (6.13) is the one exception: it stages changes and requires its own
+  explicit Save click, so it also gets its own local "Unsaved changes"/"Saved" status alongside this
+  page-wide one.
 
 ### 6.8 Backup / portability
 
@@ -584,8 +593,16 @@ never a silent delete.
 
 - **Configuration lives in Settings (6.7)**, one of three modes: **Off** (default — untouched), **By
   continent** (six checkboxes: North America, Latin America, Europe — including UK and Switzerland, Africa,
-  Middle East, South East Asia), or **By country** (a free-text list, one country per line, matching this
-  project's established list-editing convention for user-typed lists). The six continents deliberately mirror
+  Middle East, South East Asia), or **By country** — a dual-listbox picker (v0.29.7, replacing an initial
+  free-text textarea): a searchable, alphabetized list of every country `classifyLocation` recognizes on the
+  left, an arrow pair to move a selection into the filter on the right, double-click as a shortcut for a
+  single country either direction. Reported directly: free-text entry risked a misspelling or an unrecognized
+  alternate name failing to match silently — the picker only ever offers names from `ALL_COUNTRIES` (the same
+  flattened list `classifyLocation` itself matches against), so a selected country is guaranteed to match
+  exactly, by construction, rather than needing to fuzzy-match free text later. Also reported: moving several
+  countries shouldn't each take effect immediately while still building up the list, so the picker stages
+  changes in memory and only writes them (and logs one activity entry) when its own **Save Countries**
+  button is clicked — disabled until there's an actual pending change. The six continents deliberately mirror
   standard Americas/EMEA/APAC sales-territory conventions, broken down one level further (North America +
   Latin America split out of Americas; Africa + Middle East split out of EMEA) — reported directly by the
   user as the intentional rationale. They don't geographically partition the globe on their own (South,
@@ -651,4 +668,4 @@ never a silent delete.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.5**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.7**.

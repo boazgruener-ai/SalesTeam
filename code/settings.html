@@ -13,6 +13,7 @@
       Shared by the Sales Mentor, Customer Voice, and the Dashboard's per-lead Draft Message — configure once
       here. Any other general (non-lead-specific) settings added later will live on this page too.
     </p>
+    <div id="settings-save-status">All changes saved</div>
   </header>
 
   <main id="settings-main">
@@ -84,8 +85,26 @@
         <label><input type="checkbox" class="location-continent-checkbox" value="southEastAsia" /> South East Asia</label>
       </div>
       <div id="location-filter-countries-wrap">
-        <label for="location-filter-countries-input">Countries (one per line)</label>
-        <textarea id="location-filter-countries-input" placeholder="Switzerland&#10;Germany&#10;Austria"></textarea>
+        <div class="dual-listbox">
+          <div class="dual-listbox-col">
+            <label for="location-filter-countries-search">All countries</label>
+            <input type="text" id="location-filter-countries-search" placeholder="Search…" />
+            <select id="location-filter-countries-available" multiple size="10"></select>
+          </div>
+          <div class="dual-listbox-buttons">
+            <button type="button" id="location-filter-country-add-btn" title="Add the selected countries to the filter">→</button>
+            <button type="button" id="location-filter-country-remove-btn" title="Remove the selected countries from the filter">←</button>
+          </div>
+          <div class="dual-listbox-col">
+            <label>In the filter (<span id="location-filter-countries-count">0</span>)</label>
+            <select id="location-filter-countries-selected" multiple size="10"></select>
+          </div>
+        </div>
+        <p class="field-hint">Double-click a country to move it, or select one or more (Ctrl/Shift-click) and use the arrows. Nothing here takes effect until you click Save.</p>
+        <div class="settings-buttons-row">
+          <button type="button" id="location-filter-countries-save-btn">Save Countries</button>
+        </div>
+        <p id="location-filter-countries-save-status" class="field-hint"></p>
       </div>
       <div class="settings-buttons-row">
         <button id="apply-location-filter-btn" type="button" title="Re-check every existing lead against the current location filter, right now, without a new scan">Apply Location Filter</button>

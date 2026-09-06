@@ -651,6 +651,16 @@ const CONTINENT_COUNTRIES = {
   southEastAsia: ["Indonesia", "Malaysia", "Singapore", "Thailand", "Vietnam", "Philippines", "Myanmar", "Cambodia", "Laos", "Brunei", "Timor-Leste", "India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan", "Maldives", "Afghanistan", "China", "Japan", "South Korea", "North Korea", "Taiwan", "Hong Kong", "Mongolia", "Macau", "Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan", "Australia", "New Zealand", "Papua New Guinea", "Fiji"],
 };
 
+// Flattened, alphabetized list of every country CONTINENT_COUNTRIES/
+// classifyLocation actually recognizes - the single source Settings' country
+// picker (6.7) draws from, so a selected country can only ever be a name
+// that's guaranteed to match a classified lead exactly. Reported directly:
+// free-text country entry is error-prone (misspelling, an unrecognized
+// alternate name) and failed silently - a picker limited to this exact list
+// removes that failure mode by construction instead of trying to fuzzy-match
+// free text later.
+export const ALL_COUNTRIES = Object.values(CONTINENT_COUNTRIES).flat().sort((a, b) => a.localeCompare(b));
+
 export const CONTINENT_LABELS = {
   northAmerica: "North America",
   latinAmerica: "Latin America",

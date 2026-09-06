@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.29.6.")
+p.add_run("Living document, reflects the shipped product as of v0.29.7.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -436,6 +436,14 @@ doc.add_paragraph(
     "Opened via its own blue button in the Scanner tile. The Advisors page reads these live (via "
     "chrome.storage.onChanged) rather than caching a stale copy, since editing now happens on a separate page."
 )
+add_bullets(doc, [
+    "Persistent \u201cSaved\u201d indicator (v0.29.7) - every field here already auto-saves on change "
+    "(kept deliberately - an explicit Save-everywhere model risks losing an edit if the user navigates away "
+    "without clicking it), but that auto-save is invisible. A fixed, page-wide badge now flashes Saved on "
+    "every write across the whole page and settles back to All changes saved a moment later. The Location "
+    "Filter's country picker (6.13) is the one exception: it stages changes and requires its own explicit "
+    "Save click, so it also gets its own local Unsaved changes/Saved status alongside this page-wide one.",
+])
 
 doc.add_heading("6.8 Backup / portability", level=3)
 doc.add_paragraph(
@@ -650,7 +658,7 @@ doc.add_paragraph(
 add_bullets(doc, [
     "Configuration lives in Settings (6.7), one of three modes: Off (default), By continent (six "
     "checkboxes: North America, Latin America, Europe including UK and Switzerland, Africa, Middle East, "
-    "South East Asia), or By country (a free-text list, one per line). The six continents mirror standard "
+    "South East Asia), or By country - a dual-listbox picker (v0.29.7, replacing an initial free-text textarea): a searchable, alphabetized list of every recognized country on the left, an arrow pair (or double-click) to move a selection into the filter on the right. Only ever offers names from ALL_COUNTRIES (the same list classifyLocation matches against), so a selected country is guaranteed to match exactly - a misspelling is no longer possible. Stages changes locally and only saves (one write, one activity-log entry) when its own Save Countries button is clicked. The six continents mirror standard "
     "Americas/EMEA/APAC sales territories, split one level further; since they don't geographically cover "
     "the whole world on their own, the remaining regions fold into South East Asia rather than adding a "
     "seventh Other bucket.",
@@ -705,7 +713,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.6."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.29.7."
 )
 
 for section in doc.sections:

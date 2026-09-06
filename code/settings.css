@@ -26,6 +26,27 @@ h1 {
   gap: 8px;
 }
 
+#settings-save-status {
+  position: fixed;
+  top: 16px;
+  right: 24px;
+  padding: 5px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray);
+  background: #eee;
+  border: 1px solid var(--border);
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  z-index: 10;
+}
+
+#settings-save-status.flash {
+  background: #e6f4ea;
+  color: #1e7e34;
+  border-color: #b7e1c2;
+}
+
 #version-text {
   font-size: 12px;
   font-weight: normal;
@@ -137,10 +158,58 @@ textarea {
   margin: 0;
 }
 
-#location-filter-countries-input {
-  min-height: 64px;
-  resize: vertical;
+.dual-listbox {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
   margin-top: 6px;
+}
+
+.dual-listbox-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dual-listbox-col label {
+  font-size: 11px;
+  color: var(--gray);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+
+.dual-listbox-col input[type="text"] {
+  margin-bottom: 4px;
+  padding: 6px 8px;
+}
+
+.dual-listbox-col select[multiple] {
+  flex: 1;
+  padding: 4px;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.dual-listbox-buttons {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 20px;
+}
+
+.dual-listbox-buttons button {
+  width: 34px;
+  height: 30px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f7f7f7;
+  cursor: pointer;
+  font-size: 14px;
 }
 
 #prioritization-rules-wrap {

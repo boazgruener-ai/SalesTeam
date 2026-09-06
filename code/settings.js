@@ -29,6 +29,7 @@ import {
   saveLocationFilterConfig,
   reapplyLocationFilter,
   CONTINENT_LABELS,
+  ALL_COUNTRIES,
 } from "./storage.js";
 import { sanitizeApiKey } from "./agent-shared.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
@@ -47,6 +48,23 @@ function logOnBlur(el, { action, labelFor }) {
   });
 }
 
+// Reported directly: auto-save "feels weird, unsure if it saved" - this
+// page still auto-saves on every change (safer than requiring an explicit
+// Save everywhere, which would risk losing an edit if the user navigates
+// away), but every save now flashes this one persistent, page-wide
+// indicator so there's always visible confirmation it actually happened.
+const saveStatusEl = document.getElementById("settings-save-status");
+let saveStatusTimeout = null;
+function flashSaved() {
+  saveStatusEl.textContent = "Saved";
+  saveStatusEl.classList.add("flash");
+  clearTimeout(saveStatusTimeout);
+  saveStatusTimeout = setTimeout(() => {
+    saveStatusEl.textContent = "All changes saved";
+    saveStatusEl.classList.remove("flash");
+  }, 1500);
+}
+
 const outputLanguageSelect = document.getElementById("output-language-select");
 const companyContextInput = document.getElementById("company-context-input");
 const idealCustomerProfileInput = document.getElementById("ideal-customer-profile-input");
@@ -61,12 +79,28 @@ const prioritizationRulesTbodyEl = document.getElementById("prioritization-rules
 const locationFilterModeSelect = document.getElementById("location-filter-mode-select");
 const locationFilterContinentsWrap = document.getElementById("location-filter-continents-wrap");
 const locationFilterCountriesWrap = document.getElementById("location-filter-countries-wrap");
-const locationFilterCountriesInput = document.getElementById("location-filter-countries-input");
+const locationFilterCountriesSearch = document.getElementById("location-filter-countries-search");
+const locationFilterCountriesAvailable = document.getElementById("location-filter-countries-available");
+const locationFilterCountriesSelected = document.getElementById("location-filter-countries-selected");
+const locationFilterCountryAddBtn = document.getElementById("location-filter-country-add-btn");
+const locationFilterCountryRemoveBtn = document.getElementById("location-filter-country-remove-btn");
+const locationFilterCountriesCountEl = document.getElementById("location-filter-countries-count");
+const locationFilterCountriesSaveBtn = document.getElementById("location-filter-countries-save-btn");
+const locationFilterCountriesSaveStatusEl = document.getElementById("location-filter-countries-save-status");
 const applyLocationFilterBtn = document.getElementById("apply-location-filter-btn");
 const applyLocationFilterStatusEl = document.getElementById("apply-location-filter-status");
 
 let messageTemplates = [];
 let negativeTopics = [];
+// Only ever populated from ALL_COUNTRIES (the picker below draws from that
+// same list) - a selected entry can only ever be a name guaranteed to match
+// classifyLocation()'s canonical output exactly. Reported directly: moving
+// countries in/out of the filter shouldn't take effect on every single
+// click while the user is still building up their list - so this is a
+// staged, in-memory selection that only actually saves (and logs one
+// activity entry) when the dedicated Save Countries button is clicked.
+let selectedCountries = [];
+let savedCountriesSnapshot = [];
 
 function renderMessageTemplates() {
   messageTemplatesListEl.innerHTML = "";
@@ -81,6 +115,7 @@ function renderMessageTemplates() {
     textarea.addEventListener("input", () => {
       template.instructions = textarea.value;
       saveMessageTemplates(messageTemplates);
+      flashSaved();
     });
     logOnBlur(textarea, { action: "message_template_changed", labelFor: () => `Message Template "${template.name}" changed` });
     wrap.append(label, textarea);
@@ -91,17 +126,20 @@ function renderMessageTemplates() {
 outputLanguageSelect.addEventListener("change", () => {
   const prevValue = outputLanguageSelect.dataset.prevValue || null;
   saveOutputLanguage(outputLanguageSelect.value);
+  flashSaved();
   appendActivityLog({ actor: "user", action: "output_language_changed", label: `Output language changed to "${outputLanguageSelect.value}"`, prevValue, newValue: outputLanguageSelect.value });
   outputLanguageSelect.dataset.prevValue = outputLanguageSelect.value;
 });
 
 companyContextInput.addEventListener("input", () => {
   saveCompanyContext(companyContextInput.value);
+  flashSaved();
 });
 logOnBlur(companyContextInput, { action: "company_context_changed", labelFor: () => "Company Context (\"What We Offer\") changed" });
 
 idealCustomerProfileInput.addEventListener("input", () => {
   saveIdealCustomerProfile(idealCustomerProfileInput.value);
+  flashSaved();
 });
 logOnBlur(idealCustomerProfileInput, { action: "ideal_customer_profile_changed", labelFor: () => "Ideal Customer Profile changed" });
 
@@ -111,6 +149,7 @@ valueAddOffersInput.addEventListener("input", () => {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   saveValueAddOffers(offers);
+  flashSaved();
 });
 logOnBlur(valueAddOffersInput, {
   action: "value_add_offers_changed",
@@ -123,6 +162,7 @@ logOnBlur(valueAddOffersInput, {
 
 anthropicApiKeyInput.addEventListener("input", () => {
   saveAnthropicApiKey(sanitizeApiKey(anthropicApiKeyInput.value));
+  flashSaved();
 });
 anthropicApiKeyInput.addEventListener("blur", () => {
   // Deliberately never logs the actual key value, before or after - only
@@ -192,6 +232,7 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
   const { count } = await importTargetAccounts(list);
   if (fullWorkbook) await importTargetAccountsWorkbook(fullWorkbook);
   await renderTargetAccountsStatus();
+  flashSaved();
   appendActivityLog({
     actor: "user",
     action: "target_accounts_imported",
@@ -203,7 +244,10 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
 
 targetAccountThresholdInput.addEventListener("input", () => {
   const value = Number(targetAccountThresholdInput.value);
-  if (Number.isFinite(value)) saveTargetAccountScoreThreshold(value);
+  if (Number.isFinite(value)) {
+    saveTargetAccountScoreThreshold(value);
+    flashSaved();
+  }
 });
 logOnBlur(targetAccountThresholdInput, {
   action: "target_account_threshold_changed",
@@ -215,13 +259,51 @@ function renderLocationFilterModeVisibility() {
   locationFilterCountriesWrap.style.display = locationFilterModeSelect.value === "country" ? "" : "none";
 }
 
+function renderCountryLists() {
+  const query = locationFilterCountriesSearch.value.trim().toLowerCase();
+  const selectedSet = new Set(selectedCountries);
+
+  locationFilterCountriesAvailable.innerHTML = "";
+  for (const country of ALL_COUNTRIES) {
+    if (selectedSet.has(country)) continue;
+    if (query && !country.toLowerCase().includes(query)) continue;
+    const option = document.createElement("option");
+    option.value = country;
+    option.textContent = country;
+    locationFilterCountriesAvailable.appendChild(option);
+  }
+
+  locationFilterCountriesSelected.innerHTML = "";
+  for (const country of [...selectedCountries].sort((a, b) => a.localeCompare(b))) {
+    const option = document.createElement("option");
+    option.value = country;
+    option.textContent = country;
+    locationFilterCountriesSelected.appendChild(option);
+  }
+  locationFilterCountriesCountEl.textContent = String(selectedCountries.length);
+  renderCountriesSaveState();
+}
+
+function countriesAreDirty() {
+  if (selectedCountries.length !== savedCountriesSnapshot.length) return true;
+  const saved = new Set(savedCountriesSnapshot);
+  return selectedCountries.some((c) => !saved.has(c));
+}
+
+function renderCountriesSaveState() {
+  const dirty = countriesAreDirty();
+  locationFilterCountriesSaveBtn.disabled = !dirty;
+  locationFilterCountriesSaveStatusEl.textContent = dirty ? "Unsaved changes." : "";
+}
+
 async function saveLocationFilterFromForm({ action, label, prevValue }) {
   const config = {
     mode: locationFilterModeSelect.value,
     continents: Array.from(document.querySelectorAll(".location-continent-checkbox:checked")).map((cb) => cb.value),
-    countries: locationFilterCountriesInput.value.split("\n").map((line) => line.trim()).filter(Boolean),
+    countries: [...selectedCountries],
   };
   await saveLocationFilterConfig(config);
+  flashSaved();
   if (action) appendActivityLog({ actor: "user", action, label, prevValue, newValue: config });
   // The Prioritization Rules table's own "Location Filter" row shows
   // whether mode !== "off" - keep it in sync even when the mode changes via
@@ -253,16 +335,46 @@ for (const checkbox of document.querySelectorAll(".location-continent-checkbox")
   });
 }
 
-locationFilterCountriesInput.addEventListener("input", () => {
-  saveLocationFilterFromForm({});
+function addSelectedCountries(countries) {
+  const toAdd = countries.filter((c) => !selectedCountries.includes(c));
+  if (toAdd.length === 0) return;
+  selectedCountries = [...selectedCountries, ...toAdd];
+  renderCountryLists();
+}
+
+function removeSelectedCountries(countries) {
+  const before = selectedCountries.length;
+  const toRemove = new Set(countries);
+  selectedCountries = selectedCountries.filter((c) => !toRemove.has(c));
+  if (selectedCountries.length === before) return;
+  renderCountryLists();
+}
+
+locationFilterCountriesSearch.addEventListener("input", renderCountryLists);
+
+locationFilterCountryAddBtn.addEventListener("click", () => {
+  addSelectedCountries(Array.from(locationFilterCountriesAvailable.selectedOptions).map((o) => o.value));
 });
-logOnBlur(locationFilterCountriesInput, {
-  action: "location_filter_countries_changed",
-  labelFor: (oldVal, newVal) => {
-    const oldCount = oldVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
-    const newCount = newVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
-    return `Location Filter countries changed (${oldCount} → ${newCount} countries)`;
-  },
+locationFilterCountryRemoveBtn.addEventListener("click", () => {
+  removeSelectedCountries(Array.from(locationFilterCountriesSelected.selectedOptions).map((o) => o.value));
+});
+locationFilterCountriesAvailable.addEventListener("dblclick", (e) => {
+  if (e.target.tagName === "OPTION") addSelectedCountries([e.target.value]);
+});
+locationFilterCountriesSelected.addEventListener("dblclick", (e) => {
+  if (e.target.tagName === "OPTION") removeSelectedCountries([e.target.value]);
+});
+
+locationFilterCountriesSaveBtn.addEventListener("click", async () => {
+  const before = savedCountriesSnapshot.length;
+  const config = await saveLocationFilterFromForm({
+    action: "location_filter_countries_changed",
+    label: `Location Filter countries changed (${before} → ${selectedCountries.length} countries)`,
+    prevValue: savedCountriesSnapshot,
+  });
+  savedCountriesSnapshot = [...config.countries];
+  renderCountriesSaveState();
+  locationFilterCountriesSaveStatusEl.textContent = "Saved.";
 });
 
 applyLocationFilterBtn.addEventListener("click", async () => {
@@ -313,6 +425,7 @@ function ruleValueCell(rule) {
     const prevValue = rule.value;
     rule.value = value;
     await savePrioritizationRuleOverride(rule.id, { value });
+    flashSaved();
     appendActivityLog({
       actor: "user",
       action: "prioritization_rule_value_changed",
@@ -385,6 +498,7 @@ async function renderPrioritizationRules() {
       const wasEnabled = rule.enabled;
       rule.enabled = enabledCheckbox.checked;
       await savePrioritizationRuleOverride(rule.id, { enabled: enabledCheckbox.checked });
+      flashSaved();
       appendActivityLog({
         actor: "user",
         action: "prioritization_rule_toggled",
@@ -409,6 +523,7 @@ async function renderPrioritizationRules() {
         const wasEnabled = competitorTopic.enabled;
         competitorTopic.enabled = checked;
         await saveNegativeTopics(negativeTopics);
+        flashSaved();
         appendActivityLog({
           actor: "user",
           action: "prioritization_rule_toggled",
@@ -433,6 +548,7 @@ async function renderPrioritizationRules() {
         locationConfig.mode = locationFilterModeSelect.value !== "off" ? locationFilterModeSelect.value : "continent";
       }
       await saveLocationFilterConfig(locationConfig);
+      flashSaved();
       locationFilterModeSelect.value = locationConfig.mode;
       renderLocationFilterModeVisibility();
       appendActivityLog({
@@ -471,7 +587,9 @@ async function init() {
   for (const checkbox of document.querySelectorAll(".location-continent-checkbox")) {
     checkbox.checked = locationConfig.continents.includes(checkbox.value);
   }
-  locationFilterCountriesInput.value = locationConfig.countries.join("\n");
+  selectedCountries = [...locationConfig.countries];
+  savedCountriesSnapshot = [...locationConfig.countries];
+  renderCountryLists();
   renderLocationFilterModeVisibility();
 
   await renderPrioritizationRules();

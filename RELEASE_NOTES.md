@@ -1,3 +1,15 @@
+# SalesTeam — v0.29.7
+
+## Changed: Location Filter country picker + a page-wide "Saved" indicator on Settings
+
+- Reported: free-text country entry for the Location Filter is error-prone - a misspelling or an unrecognized alternate name just fails to match silently, with no feedback that anything's wrong.
+- The country textarea is replaced with a dual-listbox picker: a searchable, alphabetized list of every recognized country on the left, an arrow pair (or double-click) to move countries into the filter on the right. The picker only ever offers names guaranteed to match exactly, so a misspelling is no longer possible.
+- Also reported: moving several countries in/out shouldn't each take effect on the spot while still building up the list. The picker now stages changes locally and only saves (one write, one activity-log entry) when its own **Save Countries** button is clicked - disabled until there's an actual pending change, with its own "Unsaved changes"/"Saved" status.
+- Separately reported: Settings already auto-saves every field, but that "feels weird, unsure if it was saved or not." Kept auto-save (an explicit Save-everywhere model risks losing an edit if you navigate away without clicking it) but added one persistent, page-wide "Saved" badge that flashes on every write across the whole page, then settles back to "All changes saved."
+- Verified via harness: the country picker's search/add/remove/double-click interactions, staged-vs-persisted state before and after clicking Save Countries, and the page-wide save indicator flashing both for the staged country-picker save and for an ordinary auto-saved field.
+
+---
+
 # SalesTeam — v0.29.6
 
 ## Fixed: "Extract Companies from Profiles" crashing after a few profiles
