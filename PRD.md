@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.28.0.
+**Status:** Living document, reflects the shipped product as of v0.28.1.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -385,12 +385,16 @@ feeding directly into lead prioritization (6.4) so a scanned lead at a well-rese
 doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar name.
 
 - **Source & import**: maintained externally as an Excel workbook (ChatGPT-researched, updated roughly every
-  few months — not something the extension reads live, since it has no xlsx-parsing dependency). A one-off
-  Python script, `code/convert_target_accounts.py`, converts the workbook's `Companies` sheet to
-  `exports/target-accounts.json`; the Settings page's **"Import Target Accounts"** button loads that JSON,
-  same file-picker pattern as Import Settings/Import Leads (6.8). Matched against a lead's `company` field via
-  the existing `normalizeCompanyName()` (already used for company grouping elsewhere), so exact legal-suffix/
-  punctuation differences don't block a match.
+  few months). The Settings page's **"Import Target Accounts"** button (same file-picker pattern as Import
+  Settings/Import Leads, 6.8) reads the `.xlsx` file directly — no conversion step. `code/xlsx-lite.js` is a
+  small, dependency-free in-browser reader (v0.28.1) purpose-built for this one sheet: it unzips the workbook
+  (native `DecompressionStream`) and reads its `Companies` sheet's XML (native `DOMParser`) rather than
+  bundling a third-party xlsx library into an extension that already holds LinkedIn/Anthropic host
+  permissions. `code/convert_target_accounts.py` (the original v0.28.0 approach, converting to
+  `exports/target-accounts.json` first) still works and is kept as an optional offline/CLI path, but isn't
+  part of the normal workflow anymore. Matched against a lead's `company` field via the existing
+  `normalizeCompanyName()` (already used for company grouping elsewhere), so exact legal-suffix/punctuation
+  differences don't block a match.
 - **Deterministic Priority 1** — a scanned "New" lead with no priority yet, whose company matches a target
   account labeled `Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/`Out of Scope` one) at
   or above a configurable score threshold (Settings, default 70), is automatically set to Priority 1 during the
@@ -434,4 +438,4 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.1**.

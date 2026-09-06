@@ -45,16 +45,16 @@
 
       <h3>Target Accounts</h3>
       <p class="field-hint">
-        Import a curated list of target companies (name, AI-priority score, industry, initiatives) from an
-        external research workbook, converted to JSON separately. A scanned lead whose company matches a
-        "Very High" or "High" (non-provisional) entry at or above the threshold below automatically gets
-        Priority 1. Provisional or lower-scoring matches are still shown to the Sales Mentor as a signal when
-        it prioritizes leads, not a guarantee.
+        Import a curated list of target companies (name, AI-priority score, industry, initiatives) straight
+        from the .xlsx research workbook - pick the file below, no conversion step needed. A scanned lead
+        whose company matches a "Very High" or "High" (non-provisional) entry at or above the threshold below
+        automatically gets Priority 1. Provisional or lower-scoring matches are still shown to the Sales
+        Mentor as a signal when it prioritizes leads, not a guarantee.
       </p>
       <p id="target-accounts-status" class="field-hint">No target accounts imported yet.</p>
       <div class="settings-buttons-row">
-        <button id="import-target-accounts-btn" type="button" title="Import a target-accounts JSON file exported from the Swiss AI prospects workbook">Import Target Accounts</button>
-        <input type="file" id="import-target-accounts-file-input" accept="application/json" hidden />
+        <button id="import-target-accounts-btn" type="button" title="Import the Swiss AI prospects .xlsx workbook directly (its 'Companies' sheet)">Import Target Accounts</button>
+        <input type="file" id="import-target-accounts-file-input" accept=".xlsx,application/json" hidden />
       </div>
       <label for="target-account-threshold-input">Auto-Priority-1 score threshold</label>
       <input type="number" id="target-account-threshold-input" min="0" max="100" title="Companies scored at or above this (and labeled Very High/High, non-provisional) automatically get Priority 1" />

@@ -1,3 +1,15 @@
+# SalesTeam — v0.28.1
+
+## Changed: Target Accounts now imports the .xlsx workbook directly - no conversion step
+
+- Reported right after v0.28.0 shipped: pointing the "Import Target Accounts" file picker at the .xlsx workbook showed no files, since the button only accepted `.json` - the intended flow was to run `convert_target_accounts.py` first, but that's an easy step to forget or not know how to run, especially without Claude Code open.
+- Removed that step entirely. New `code/xlsx-lite.js` is a small, dependency-free in-browser `.xlsx` reader purpose-built for this one workbook: it unzips the file with the browser's native `DecompressionStream` and reads the `Companies` sheet's XML with the native `DOMParser` - no third-party parsing library added to an extension that already holds LinkedIn/Anthropic host permissions.
+- The Import button now accepts `.xlsx` directly (still also accepts the old `.json` export, for anyone who kept using the Python script). `code/convert_target_accounts.py` still works as an optional offline/CLI path, just no longer required.
+- One real bug found and fixed along the way: the actual workbook uses a non-default XML namespace prefix (`<x:sheet>` rather than `<sheet>`) and package-root-relative paths in its relationships file (`/xl/worksheets/sheet3.xml` rather than `worksheets/sheet3.xml`) - both are valid per the OOXML spec but less common, and the first version of the parser (written and tested against the spec, not yet the real file) missed both. Fixed with namespace-aware element lookups and OPC-correct path resolution.
+- Verified: parsed the real 500-company workbook directly in a browser and diffed every field of all 490 scored companies against the already-verified Python-script output - exact match. Re-ran the full Settings import flow (real file picker → real workbook → status line) with no console errors.
+
+---
+
 # SalesTeam — v0.28.0
 
 ## New: Target Accounts - auto-Priority-1 from an externally-researched company list

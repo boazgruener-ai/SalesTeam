@@ -66,7 +66,7 @@ doc.add_heading("SalesTeam — Product Requirements Document", level=1)
 
 p = doc.add_paragraph()
 r = p.add_run("Status: "); r.bold = True
-p.add_run("Living document, reflects the shipped product as of v0.28.0.")
+p.add_run("Living document, reflects the shipped product as of v0.28.1.")
 p = doc.add_paragraph()
 r = p.add_run("Note: "); r.bold = True
 p.add_run(
@@ -515,12 +515,16 @@ doc.add_paragraph(
 )
 add_bullets(doc, [
     "Source & import: maintained externally as an Excel workbook (ChatGPT-researched, updated roughly every "
-    "few months - not something the extension reads live, since it has no xlsx-parsing dependency). A "
-    "one-off Python script, code/convert_target_accounts.py, converts the workbook's Companies sheet to "
-    "exports/target-accounts.json; the Settings page's “Import Target Accounts” button loads "
-    "that JSON, same file-picker pattern as Import Settings/Import Leads (6.8). Matched against a lead's "
-    "company field via the existing normalizeCompanyName() (already used for company grouping elsewhere), "
-    "so exact legal-suffix/punctuation differences don't block a match.",
+    "few months). The Settings page's “Import Target Accounts” button (same file-picker pattern "
+    "as Import Settings/Import Leads, 6.8) reads the .xlsx file directly - no conversion step. "
+    "code/xlsx-lite.js is a small, dependency-free in-browser reader (v0.28.1) purpose-built for this one "
+    "sheet: it unzips the workbook (native DecompressionStream) and reads its Companies sheet's XML (native "
+    "DOMParser) rather than bundling a third-party xlsx library into an extension that already holds "
+    "LinkedIn/Anthropic host permissions. code/convert_target_accounts.py (the original v0.28.0 approach, "
+    "converting to exports/target-accounts.json first) still works and is kept as an optional offline/CLI "
+    "path, but isn't part of the normal workflow anymore. Matched against a lead's company field via the "
+    "existing normalizeCompanyName() (already used for company grouping elsewhere), so exact legal-suffix/"
+    "punctuation differences don't block a match.",
     "Deterministic Priority 1 - a scanned “New” lead with no priority yet, whose company matches "
     "a target account labeled Very High or High (never a Provisional/Insufficient Evidence/Out of Scope "
     "one) at or above a configurable score threshold (Settings, default 70), is automatically set to "
@@ -571,7 +575,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.0."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 0.28.1."
 )
 
 for section in doc.sections:

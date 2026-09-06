@@ -22,6 +22,7 @@ import {
   appendActivityLog,
 } from "./storage.js";
 import { sanitizeApiKey } from "./agent-shared.js";
+import { parseTargetAccountsWorkbook } from "./xlsx-lite.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -138,13 +139,17 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
 
   let list;
   try {
-    list = JSON.parse(await file.text());
-  } catch {
-    alert("That file isn't valid JSON - couldn't import it.");
+    if (file.name.toLowerCase().endsWith(".json")) {
+      list = JSON.parse(await file.text());
+    } else {
+      list = await parseTargetAccountsWorkbook(await file.arrayBuffer());
+    }
+  } catch (err) {
+    alert(`Couldn't import that file: ${err.message}`);
     return;
   }
   if (!Array.isArray(list)) {
-    alert("That file doesn't look like a target-accounts export (expected a JSON array).");
+    alert("That file doesn't look like a target-accounts export (expected a list of companies).");
     return;
   }
 
