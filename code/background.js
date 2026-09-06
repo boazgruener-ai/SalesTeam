@@ -28,6 +28,9 @@ import {
   getMentorPersona,
   getOutputLanguage,
   normalizeCompanyName,
+  getTargetAccounts,
+  getTargetAccountScoreThreshold,
+  evaluateTargetAccountMatch,
   appendActivityLog,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -558,12 +561,48 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
       }
     }
 
+    // Deterministic Priority 1 for leads at a confidently-scored Target
+    // Account (imported via Settings from the external Swiss AI prospects
+    // workbook - see importTargetAccounts in storage.js). Only "Very High"/
+    // "High" (non-provisional) labels at or above the configured threshold
+    // qualify for this hard override - a "Provisional" or low-evidence match
+    // is a real signal but not a guarantee, so it's left for the Sales
+    // Mentor's own judgment below (see targetAccountSignal a few lines down)
+    // rather than auto-set here. Runs after company extraction above so a
+    // company extracted this very scan is still eligible to match.
+    const targetAccounts = await getTargetAccounts();
+    if (Object.keys(targetAccounts).length > 0) {
+      const threshold = await getTargetAccountScoreThreshold();
+      let targetAccountCount = 0;
+      for (const lead of Object.values(existingResults)) {
+        if (lead.status !== "New" || lead.priority || !lead.company) continue;
+        const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, threshold);
+        if (!qualifies) continue;
+        lead.priority = 1;
+        lead.priorityReason = `Target Account match: ${match.company} scored ${Math.round(match.score)}/100 (${match.priorityLabel}) on the Swiss AI target-account list${match.topInitiatives ? " — " + match.topInitiatives.slice(0, 100) : ""}.`;
+        lead.priorityScoredAt = Date.now();
+        lead.targetAccountMatch = true;
+        targetAccountCount++;
+      }
+      if (targetAccountCount > 0) {
+        await saveResults(existingResults);
+        appendActivityLog({
+          actor: "extension",
+          action: "target_account_priority_set",
+          label: `Auto-set Priority 1 for ${targetAccountCount} lead${targetAccountCount === 1 ? "" : "s"} via Target Account match`,
+          newValue: targetAccountCount,
+        });
+      }
+    }
+
     // Post-processing, after every search (and the negative-topic blocking
     // baked into mergeTopicPosts/mergeJobPosts above, plus the optional
     // re-apply pass just above) is done - only ever scores leads that are
     // still "New" and don't already have a priority, so a lead a person
     // already acted on, or already scored in an earlier scan, is never
-    // re-scored or overwritten.
+    // re-scored or overwritten. Target-Account leads that were just
+    // deterministically set to Priority 1 above already have a priority, so
+    // this filter naturally excludes them without any extra bookkeeping.
     const toPrioritize = Object.values(existingResults).filter((r) => r.status === "New" && !r.priority);
 
     // A brand-new lead this scan might be a second signal about someone/
@@ -589,6 +628,19 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         return Boolean(existing.profileUrl) && existing.profileUrl === fresh.profileUrl;
       });
       if (correlates) toPrioritize.push(existing);
+    }
+
+    // A Target Account match that didn't qualify for the deterministic
+    // Priority 1 above (Provisional label, or below threshold) is still real
+    // research - attach it so prioritizeLeads (agent-shared.js) can fold it
+    // into the Sales Mentor's own judgment and reflect it in the `reason`
+    // text it returns (which becomes priorityReason, shown as the Dashboard
+    // pill's tooltip either way).
+    if (Object.keys(targetAccounts).length > 0) {
+      for (const lead of toPrioritize) {
+        const match = targetAccounts[normalizeCompanyName(lead.company)];
+        if (match && match.score != null) lead.targetAccountSignal = match;
+      }
     }
 
     if (toPrioritize.length > 0) {

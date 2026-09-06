@@ -439,10 +439,31 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "problem, or hire happening at that company right now. " +
     "Use the full 1-5 range across the batch rather than clustering everyone in the middle - these are meant " +
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
+    "A lead may carry a `targetAccountSignal` - independent research on that company's AI investment/maturity " +
+    "from a separate Swiss AI target-account list, with a priorityLabel (e.g. \"Very High\", " +
+    "\"High - Provisional\") and a 0-100 score. Treat it as a real, meaningful positive signal toward a " +
+    "higher priority - weigh it more heavily when the label isn't marked Provisional and the score is high - " +
+    "but it's still just one input alongside the person's own seniority and post/job content, not an " +
+    "automatic override. When it materially influenced your call, say so plainly in the reason (e.g. " +
+    "\"also a Very High-scored Target Account\"). " +
     "Call assign_priorities exactly once, with one entry (priority plus a short, specific reason) for EVERY " +
     "lead listed below - do not skip any, and do not invent a lead that isn't listed.\n" +
     languageInstruction(outputLanguage)
   );
+}
+
+// Present only when background.js matched the lead's company against an
+// imported Target Account that didn't already qualify for the deterministic
+// Priority 1 override (see background.js) - a Provisional label or a score
+// below the configured threshold. Passed through as real research context,
+// not a guarantee.
+function summarizeTargetAccountSignal(signal) {
+  if (!signal) return undefined;
+  return {
+    priorityLabel: signal.priorityLabel,
+    score: signal.score,
+    topInitiatives: signal.topInitiatives || undefined,
+  };
 }
 
 function summarizeLeadForPrioritization(lead) {
@@ -454,6 +475,7 @@ function summarizeLeadForPrioritization(lead) {
         company: lead.company,
         location: lead.location,
         matchedTopics: lead.matchedTopics.map((t) => t.topicName),
+        targetAccountSignal: summarizeTargetAccountSignal(lead.targetAccountSignal),
       }
     : {
         key: lead.key,
@@ -470,6 +492,7 @@ function summarizeLeadForPrioritization(lead) {
         isHiringPost: Boolean(lead.isHiringPost),
         isFreelancePost: Boolean(lead.isFreelancePost),
         matchedTopics: lead.matchedTopics.map((t) => t.topicName),
+        targetAccountSignal: summarizeTargetAccountSignal(lead.targetAccountSignal),
       };
 }
 

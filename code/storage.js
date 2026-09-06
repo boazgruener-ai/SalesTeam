@@ -222,6 +222,58 @@ export async function saveOutputLanguage(language) {
   await chrome.storage.local.set({ [OUTPUT_LANGUAGE_KEY]: language });
 }
 
+// A curated, slow-moving list of target companies (name, AI-priority score/
+// label, industry, top AI initiatives) imported from an external research
+// workbook, converted to JSON via code/convert_target_accounts.py. Keyed by
+// normalizeCompanyName() (below) so a scanned lead's company field - however
+// it was capitalized/punctuated - can be looked up directly. Re-imported
+// wholesale every time the source workbook is refreshed (every few months),
+// never merged incrementally.
+const TARGET_ACCOUNTS_KEY = "targetAccounts";
+const TARGET_ACCOUNTS_IMPORTED_AT_KEY = "targetAccountsImportedAt";
+const TARGET_ACCOUNT_SCORE_THRESHOLD_KEY = "targetAccountScoreThreshold";
+const DEFAULT_TARGET_ACCOUNT_SCORE_THRESHOLD = 70;
+
+export async function importTargetAccounts(list) {
+  const map = {};
+  for (const entry of list || []) {
+    const key = normalizeCompanyName(entry.company);
+    if (!key) continue;
+    map[key] = {
+      company: entry.company,
+      industry: entry.industry || null,
+      score: typeof entry.score === "number" ? entry.score : null,
+      priorityLabel: entry.priorityLabel || null,
+      researchStatus: entry.researchStatus || null,
+      topInitiatives: entry.topInitiatives || null,
+    };
+  }
+  const importedAt = Date.now();
+  await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map, [TARGET_ACCOUNTS_IMPORTED_AT_KEY]: importedAt });
+  return { count: Object.keys(map).length, importedAt };
+}
+
+export async function getTargetAccounts() {
+  const data = await chrome.storage.local.get(TARGET_ACCOUNTS_KEY);
+  return data[TARGET_ACCOUNTS_KEY] || {};
+}
+
+export async function getTargetAccountsMeta() {
+  const data = await chrome.storage.local.get([TARGET_ACCOUNTS_KEY, TARGET_ACCOUNTS_IMPORTED_AT_KEY]);
+  const map = data[TARGET_ACCOUNTS_KEY] || {};
+  return { count: Object.keys(map).length, importedAt: data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null };
+}
+
+export async function getTargetAccountScoreThreshold() {
+  const data = await chrome.storage.local.get(TARGET_ACCOUNT_SCORE_THRESHOLD_KEY);
+  const value = data[TARGET_ACCOUNT_SCORE_THRESHOLD_KEY];
+  return typeof value === "number" ? value : DEFAULT_TARGET_ACCOUNT_SCORE_THRESHOLD;
+}
+
+export async function saveTargetAccountScoreThreshold(threshold) {
+  await chrome.storage.local.set({ [TARGET_ACCOUNT_SCORE_THRESHOLD_KEY]: threshold });
+}
+
 // AI message drafting settings. The API key is deliberately excluded from
 // exportSettings/importSettings below - each installer (e.g. the wife's
 // laptop) should use their own Anthropic key, not inherit whoever's key
@@ -664,6 +716,20 @@ export function normalizeCompanyName(name) {
   return collapsed.replace(COMPANY_SUFFIX_RE, "").trim();
 }
 
+// Pure decision function behind background.js's Target Account auto-priority
+// step (see 6.11 in PRD.md) - kept separate/side-effect-free so it's directly
+// unit-testable without running a whole scan. "Confident" deliberately
+// excludes any Provisional/Insufficient Evidence/Out of Scope label, even at
+// a very high score - the real workbook's highest scores cluster in a large
+// Provisional bucket (thin evidence, not confirmed fit), so score alone
+// isn't a safe basis for an automatic override.
+export function evaluateTargetAccountMatch(company, targetAccounts, threshold) {
+  const match = targetAccounts[normalizeCompanyName(company)];
+  if (!match || match.score == null) return { match: null, qualifies: false };
+  const confidentLabel = match.priorityLabel === "Very High" || match.priorityLabel === "High";
+  return { match, qualifies: confidentLabel && match.score >= threshold };
+}
+
 // Applied by background.js after the batched AI company-extraction pass
 // (agent-shared.js's extractCompaniesForLeads) - never overwrites a lead
 // that already has a company, whether it was scraped (Job leads), extracted
@@ -994,6 +1060,9 @@ export async function exportSettings(includeApiKey = false) {
     mentorPersona,
     customerPersona,
     outputLanguage,
+    targetAccounts,
+    targetAccountsImportedAt,
+    targetAccountScoreThreshold,
     anthropicApiKey,
   ] = await Promise.all([
     getTopics(),
@@ -1015,6 +1084,9 @@ export async function exportSettings(includeApiKey = false) {
     getMentorPersona(),
     getCustomerPersona(),
     getOutputLanguage(),
+    getTargetAccounts(),
+    getTargetAccountsMeta().then((meta) => meta.importedAt),
+    getTargetAccountScoreThreshold(),
     includeApiKey ? getAnthropicApiKey() : Promise.resolve(undefined),
   ]);
   return {
@@ -1039,6 +1111,9 @@ export async function exportSettings(includeApiKey = false) {
     mentorPersona,
     customerPersona,
     outputLanguage,
+    targetAccounts,
+    targetAccountsImportedAt,
+    targetAccountScoreThreshold,
     ...(anthropicApiKey !== undefined ? { anthropicApiKey } : {}),
   };
 }
@@ -1090,6 +1165,15 @@ export async function importSettings(data) {
     ...(data.mentorPersona ? [saveMentorPersona(data.mentorPersona)] : []),
     saveCustomerPersona(data.customerPersona || ""),
     saveOutputLanguage(data.outputLanguage || "english"),
+    ...(data.targetAccounts
+      ? [chrome.storage.local.set({
+          [TARGET_ACCOUNTS_KEY]: data.targetAccounts,
+          [TARGET_ACCOUNTS_IMPORTED_AT_KEY]: data.targetAccountsImportedAt || null,
+        })]
+      : []),
+    ...(typeof data.targetAccountScoreThreshold === "number"
+      ? [saveTargetAccountScoreThreshold(data.targetAccountScoreThreshold)]
+      : []),
     // Only present if the exporter deliberately chose to include it (e.g.
     // sharing one spend-capped trial key across a small team) - never
     // overwrites an existing key with nothing if the import doesn't have one.

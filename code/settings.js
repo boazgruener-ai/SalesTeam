@@ -15,6 +15,10 @@ import {
   saveIdealCustomerProfile,
   getOutputLanguage,
   saveOutputLanguage,
+  importTargetAccounts,
+  getTargetAccountsMeta,
+  getTargetAccountScoreThreshold,
+  saveTargetAccountScoreThreshold,
   appendActivityLog,
 } from "./storage.js";
 import { sanitizeApiKey } from "./agent-shared.js";
@@ -39,6 +43,10 @@ const idealCustomerProfileInput = document.getElementById("ideal-customer-profil
 const anthropicApiKeyInput = document.getElementById("anthropic-api-key-input");
 const messageTemplatesListEl = document.getElementById("message-templates-list");
 const valueAddOffersInput = document.getElementById("value-add-offers-input");
+const targetAccountsStatusEl = document.getElementById("target-accounts-status");
+const importTargetAccountsBtn = document.getElementById("import-target-accounts-btn");
+const importTargetAccountsFileInput = document.getElementById("import-target-accounts-file-input");
+const targetAccountThresholdInput = document.getElementById("target-account-threshold-input");
 
 let messageTemplates = [];
 
@@ -108,6 +116,59 @@ anthropicApiKeyInput.addEventListener("blur", () => {
 anthropicApiKeyInput.addEventListener("focus", () => { anthropicApiKeyInput.dataset.touched = ""; });
 anthropicApiKeyInput.addEventListener("input", () => { anthropicApiKeyInput.dataset.touched = "1"; });
 
+function formatImportedAt(ms) {
+  return new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+async function renderTargetAccountsStatus() {
+  const { count, importedAt } = await getTargetAccountsMeta();
+  targetAccountsStatusEl.textContent = count > 0
+    ? `${count} companies imported · ${formatImportedAt(importedAt)}`
+    : "No target accounts imported yet.";
+}
+
+importTargetAccountsBtn.addEventListener("click", () => {
+  importTargetAccountsFileInput.click();
+});
+
+importTargetAccountsFileInput.addEventListener("change", async () => {
+  const file = importTargetAccountsFileInput.files[0];
+  importTargetAccountsFileInput.value = "";
+  if (!file) return;
+
+  let list;
+  try {
+    list = JSON.parse(await file.text());
+  } catch {
+    alert("That file isn't valid JSON - couldn't import it.");
+    return;
+  }
+  if (!Array.isArray(list)) {
+    alert("That file doesn't look like a target-accounts export (expected a JSON array).");
+    return;
+  }
+
+  const prevMeta = await getTargetAccountsMeta();
+  const { count } = await importTargetAccounts(list);
+  await renderTargetAccountsStatus();
+  appendActivityLog({
+    actor: "user",
+    action: "target_accounts_imported",
+    label: `Imported Target Accounts list (${count} companies)`,
+    prevValue: prevMeta.count,
+    newValue: count,
+  });
+});
+
+targetAccountThresholdInput.addEventListener("input", () => {
+  const value = Number(targetAccountThresholdInput.value);
+  if (Number.isFinite(value)) saveTargetAccountScoreThreshold(value);
+});
+logOnBlur(targetAccountThresholdInput, {
+  action: "target_account_threshold_changed",
+  labelFor: (oldVal, newVal) => `Target Account score threshold changed (${oldVal} → ${newVal})`,
+});
+
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -121,6 +182,9 @@ async function init() {
   renderMessageTemplates();
 
   valueAddOffersInput.value = (await getValueAddOffers()).join("\n");
+
+  targetAccountThresholdInput.value = await getTargetAccountScoreThreshold();
+  await renderTargetAccountsStatus();
 }
 
 init();

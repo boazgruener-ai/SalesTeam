@@ -80,6 +80,7 @@ label {
 select,
 input[type="text"],
 input[type="password"],
+input[type="number"],
 textarea {
   width: 100%;
   padding: 8px;
@@ -89,6 +90,26 @@ textarea {
   box-sizing: border-box;
   font-family: inherit;
   font-size: 13px;
+}
+
+#target-account-threshold-input {
+  max-width: 120px;
+}
+
+.settings-buttons-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.settings-buttons-row button {
+  padding: 7px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f7f7f7;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 #company-context-input,

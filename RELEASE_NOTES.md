@@ -1,3 +1,18 @@
+# SalesTeam — v0.28.0
+
+## New: Target Accounts - auto-Priority-1 from an externally-researched company list
+
+- The first piece of a two-part idea: a separately-maintained Excel workbook (ChatGPT-researched) scores 500 Swiss companies for AI-consulting sales fit — a 0-100 score plus a label (`Very High`, `Very High - Provisional`, `High`, `High - Provisional`, `Out of Scope`, `Insufficient Evidence`). The goal: a scanned lead at a well-researched, high-scoring company shouldn't have to wait on the AI's own judgment of an unfamiliar name.
+- New `code/convert_target_accounts.py` script converts the workbook's `Companies` sheet to `exports/target-accounts.json` — re-run manually whenever the workbook is refreshed (every few months); the extension never reads the `.xlsx` directly.
+- New Settings section: **Import Target Accounts** button (same file-picker pattern as Import Settings/Leads) plus a configurable auto-Priority-1 score threshold (default 70).
+- **Deterministic Priority 1**: a "New" lead with no priority yet, whose company matches a target account labeled `Very High` or `High` (never a `Provisional`/`Insufficient Evidence`/`Out of Scope` one) at or above the threshold, is automatically set to Priority 1 during the scan's post-processing, before the batch AI prioritization pass runs. Deliberately excludes Provisional/low-evidence matches from this hard override — inspecting the real workbook found the *highest* scores concentrated in a large "Provisional" cluster (thin evidence, not confirmed fit), so a blind score-only threshold would have auto-prioritized speculative matches with full confidence.
+- **Soft signal otherwise**: a match that doesn't clear that bar is still passed into the existing AI prioritization call as context, so the Sales Mentor weighs it alongside its usual judgment. Either way, the priority pill's tooltip (`priorityReason`) names the match and its score, so it's always clear when the target-account list influenced a call.
+- Company matching reuses the existing `normalizeCompanyName()` (already used for company grouping elsewhere) rather than adding new matching logic.
+- The imported list and threshold travel with a Settings export/import, so they survive a fresh install or restored backup like every other setting.
+- Verified: ran the conversion script against the real workbook (490 companies with a score, matching the expected per-label distribution); browser-harness test confirmed a confident high-score match gets auto-Priority-1 with the expected tooltip text, a Provisional match is left for the AI pass with the signal attached, and a non-matching company is untouched.
+
+---
+
 # SalesTeam — v0.27.1
 
 ## New: warns when the extension comes up completely empty
