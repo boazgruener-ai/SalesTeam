@@ -1,0 +1,195 @@
+:root {
+  --blue: #0a66c2;
+  --blue-light: #eef4fb;
+  --ink: #1a1a1a;
+  --gray: #555;
+  --gray-light: #888;
+  --border: #ddd;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  margin: 0;
+  padding: 24px 32px 60px;
+  background: #fafafa;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#version-text {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--gray-light);
+}
+
+#page-header {
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--blue);
+}
+
+.page-subtitle {
+  color: var(--gray);
+  font-size: 13px;
+  margin: 6px 0 0;
+  max-width: 900px;
+}
+
+.empty-state {
+  color: var(--gray-light);
+  font-size: 13px;
+  padding: 24px 0;
+}
+
+#explorer-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+#search-input {
+  flex: 1 1 320px;
+  min-width: 200px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+#result-count {
+  color: var(--gray-light);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+#table-wrap {
+  overflow-x: auto;
+}
+
+#companies-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: #fff;
+}
+
+#companies-table th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border);
+  color: var(--gray);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+#companies-table th:hover {
+  color: var(--blue);
+}
+
+#companies-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+
+.company-row {
+  cursor: pointer;
+}
+
+.company-row:hover td {
+  background: var(--blue-light);
+}
+
+.company-row.expanded td {
+  background: var(--blue-light);
+  font-weight: 600;
+}
+
+.priority-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.priority-pill-veryhigh { background: #fde2e2; color: #b3261e; }
+.priority-pill-high { background: #fdead1; color: #a05a00; }
+.priority-pill-other { background: #f1f1f1; color: var(--gray); }
+
+.detail-row td {
+  background: #f7f9fc;
+  padding: 16px 20px;
+  border-bottom: 2px solid var(--border);
+}
+
+.detail-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px 20px;
+  margin-bottom: 16px;
+  font-size: 12.5px;
+}
+
+.detail-field-label {
+  color: var(--gray-light);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.detail-field-value {
+  color: var(--ink);
+}
+
+.detail-section-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--gray);
+  margin: 14px 0 6px;
+}
+
+.detail-subtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  background: #fff;
+  margin-bottom: 10px;
+}
+
+.detail-subtable th {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--gray);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.detail-subtable td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.detail-empty-note {
+  color: var(--gray-light);
+  font-size: 12px;
+  font-style: italic;
+}

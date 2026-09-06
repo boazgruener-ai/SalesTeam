@@ -19,10 +19,11 @@ import {
   getTargetAccountsMeta,
   getTargetAccountScoreThreshold,
   saveTargetAccountScoreThreshold,
+  importTargetAccountsWorkbook,
   appendActivityLog,
 } from "./storage.js";
 import { sanitizeApiKey } from "./agent-shared.js";
-import { parseTargetAccountsWorkbook } from "./xlsx-lite.js";
+import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -138,11 +139,29 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
   if (!file) return;
 
   let list;
+  let fullWorkbook = null;
   try {
     if (file.name.toLowerCase().endsWith(".json")) {
+      // Legacy path (convert_target_accounts.py output) - no Contacts/AI
+      // Initiatives/etc. to derive, so the Explorer (PRD 6.12) only gets
+      // populated by a direct .xlsx import.
       list = JSON.parse(await file.text());
     } else {
-      list = await parseTargetAccountsWorkbook(await file.arrayBuffer());
+      // One parse of the whole relational workbook covers both storage keys:
+      // the lightweight score/label projection prioritization needs (6.11)
+      // is just a re-shape of fullWorkbook.companies, so there's no need to
+      // separately re-parse the Companies sheet a second time.
+      fullWorkbook = await parseFullTargetAccountsWorkbook(await file.arrayBuffer());
+      list = fullWorkbook.companies
+        .filter((c) => c.aiPriorityScore != null)
+        .map((c) => ({
+          company: c.company,
+          industry: c.industry,
+          score: c.aiPriorityScore,
+          priorityLabel: c.aiPriority,
+          researchStatus: c.researchStatus,
+          topInitiatives: c.topAiInitiatives,
+        }));
     }
   } catch (err) {
     alert(`Couldn't import that file: ${err.message}`);
@@ -155,11 +174,12 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
 
   const prevMeta = await getTargetAccountsMeta();
   const { count } = await importTargetAccounts(list);
+  if (fullWorkbook) await importTargetAccountsWorkbook(fullWorkbook);
   await renderTargetAccountsStatus();
   appendActivityLog({
     actor: "user",
     action: "target_accounts_imported",
-    label: `Imported Target Accounts list (${count} companies)`,
+    label: `Imported Target Accounts list (${count} companies)${fullWorkbook ? " plus full Explorer data (Contacts, AI Initiatives, etc.)" : ""}`,
     prevValue: prevMeta.count,
     newValue: count,
   });

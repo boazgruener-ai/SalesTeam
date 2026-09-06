@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam Target Accounts</title>
+  <link rel="icon" href="icons/icon16.png" />
+  <link rel="stylesheet" href="target-accounts.css" />
+</head>
+<body>
+  <header id="page-header">
+    <h1>SalesTeam Target Accounts <span id="version-text"></span></h1>
+    <p class="page-subtitle">
+      The full externally-researched company workbook - every company, plus its known contacts and AI
+      initiatives, linked by the workbook's own Company ID. Click a row to expand it. Import or refresh
+      the underlying .xlsx on the Settings page - it also drives automatic lead prioritization (see the
+      Dashboard's Priority column).
+    </p>
+  </header>
+
+  <main id="explorer-main">
+    <p id="empty-state" class="empty-state" hidden>
+      No Target Accounts data imported yet. Go to <strong>Settings</strong> and use
+      <strong>Import Target Accounts</strong> to load the workbook.
+    </p>
+
+    <div id="explorer-controls" hidden>
+      <input id="search-input" type="text" placeholder="Search company or industry…" />
+      <span id="result-count"></span>
+    </div>
+
+    <div id="table-wrap" hidden>
+      <table id="companies-table">
+        <thead>
+          <tr>
+            <th data-sort="company">Company</th>
+            <th data-sort="industry">Industry</th>
+            <th data-sort="companyType">Type</th>
+            <th data-sort="swissEmployees">Swiss Employees</th>
+            <th data-sort="globalRevenue">Global Revenue</th>
+            <th data-sort="aiPriorityScore">AI Score</th>
+            <th data-sort="aiPriority">AI Priority</th>
+            <th data-sort="researchStatus">Research Status</th>
+          </tr>
+        </thead>
+        <tbody id="companies-tbody"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script type="module" src="target-accounts.js"></script>
+</body>
+</html>

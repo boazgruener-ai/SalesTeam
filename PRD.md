@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.28.6.
+**Status:** Living document, reflects the shipped product as of v0.29.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -446,6 +446,46 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
 - Threshold and the imported list itself live in Settings (6.7) and travel with a Settings export/import
   (6.8), so a fresh install or a restored backup doesn't lose them.
 
+### 6.12 Target Accounts Explorer (v0.29.0)
+
+The lightweight `targetAccounts` map above (6.11) only carries what auto-prioritization needs — a score,
+label, and top initiative per company. The source workbook has real relational depth beyond that:
+`Companies` (the hub) plus `Contacts`, `AI_Initiatives`, `AI_Investment`, and `Sources`, each referencing a
+company via `Company_ID`. This page browses all of it.
+
+- **One import, two datasets** — the same **"Import Target Accounts"** `.xlsx` pick on Settings (6.7)
+  populates both the lightweight map (6.11) and the full relational dataset here, via
+  `xlsx-lite.js`'s `parseFullTargetAccountsWorkbook` (a generic per-sheet reader, `parseGenericSheetRows`,
+  that keeps every column instead of `parseCompanyRows`' six named ones) and `storage.js`'s
+  `importTargetAccountsWorkbook`/`getTargetAccountsWorkbook`. Column headers are camelCased
+  (`Company_ID` → `companyId`) for normal JS property access. A `.json` import (the legacy
+  `convert_target_accounts.py` path) only ever populates the lightweight map — there's no relational data
+  in that smaller file to derive this from.
+- **New page** — `code/target-accounts.html`/`.js`/`.css`, opened via a **"Target Accounts ↗"** button next
+  to Activity Log in the side panel (same no-manifest-entry pattern as Activity Log/Help: no `content_scripts`
+  or `web_accessible_resources` entry needed, just `chrome.tabs.create` + `chrome.runtime.getURL`).
+- **Master table**: every company (Company, Industry, Type, Swiss Employees, Global Revenue, AI Score, AI
+  Priority pill, Research Status), sortable per column (click toggles desc → asc) and filterable by a
+  free-text search across company name and industry. Sorted by AI Score descending by default.
+- **Row click expands a detail panel** in place: the company's fuller record (type, decision authority, HQ,
+  revenue/employee figures, AI investment/portfolio fields, priority rationale, primary source link), plus
+  its related **Contacts** and **AI Initiatives** — filtered client-side by matching `companyId`, which is
+  all a "join" needs to mean at this data volume (500 companies, under 200 total related rows across every
+  sheet). **AI Investment** and **Sources** sub-tables appear too when a company has either.
+- Sheets without a per-company shape (`README`, `Dashboard`, `Scoring_Model`, `Lookup_Lists`,
+  `Prospect_List` — presentation/methodology content, not records) aren't imported here.
+- Excel date-formatted cells (e.g. `Last_Verified`, `Announced_Date`) arrive from the parser as raw numeric
+  serials, since `xlsx-lite.js` deliberately doesn't read `styles.xml` (no number-format awareness) — this
+  page converts the specific fields known to be dates back to a real date for display
+  (`formatExcelDate`, Excel's day-count-since-1899-12-30 epoch), rather than guessing at every number.
+- **Deliberately not included in Settings export/import (6.8)** — unlike the lightweight `targetAccounts`
+  map (6.11), which is small and travels with every Settings backup. The full dataset is bigger (~700
+  rows across five sheets) and Settings exports fire automatically before every scan; bundling it in would
+  mean re-writing that whole blob to disk on every single scan for data that only changes when the
+  workbook itself is refreshed (every few months). If storage is ever wiped (e.g. the empty-install
+  scenario in 6.8), the recovery path is the same one manual action: re-pick the same `.xlsx` file in
+  Settings again — it's the user's own external file, not something only a backup file could restore.
+
 ## 7. Non-functional requirements
 
 - **Manual-trigger only** — no `alarms`, no background scanning, ever.
@@ -477,4 +517,4 @@ doesn't have to wait on/rely purely on the AI's own judgment of an unfamiliar na
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.28.6**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.0**.

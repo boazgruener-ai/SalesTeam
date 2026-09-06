@@ -1,3 +1,16 @@
+# SalesTeam — v0.29.0
+
+## New: Target Accounts Explorer - browse the full company workbook
+
+- Requested: the lightweight Target Accounts import (v0.28.0) only ever kept a score/label/top-initiative slice of the workbook - the user wanted to actually see the full data: every company, its known contacts, and its AI initiatives, linked the same way the workbook itself links them (via Company_ID).
+- One import now populates two datasets from the same file pick: the existing lightweight map that drives auto-prioritization, and a new full relational dataset (Companies/Contacts/AI_Initiatives/AI_Investment/Sources) for browsing.
+- New **"Target Accounts ↗"** page (button next to Activity Log in the side panel): a sortable/filterable Companies table; click a row to expand it and see its full record plus its related Contacts and AI Initiatives (and AI Investment/Sources when present), filtered by Company_ID.
+- `code/xlsx-lite.js` gained a generic per-sheet reader (keeps every column, camelCased) alongside the existing six-column Companies-only one, so the full workbook - not just a fixed handful of fields - is available in the browser without a third-party parsing library.
+- Deliberately not bundled into Settings export/import - that data is small, but the full workbook (~700 rows across five sheets) would otherwise get rewritten into every automatic pre-scan backup. Re-picking the same `.xlsx` file in Settings is the recovery path if storage is ever wiped.
+- Verified: parsed the real 500-company workbook end-to-end (500/43/91/7/116 rows across all five sheets, matching ground truth exactly) and confirmed the Settings import path populates both datasets from one file pick; harness-tested the new page's sorting, search filtering, and company → contacts/initiatives drill-down against seeded data.
+
+---
+
 # SalesTeam — v0.28.6
 
 ## New: show/hide Dashboard columns (Excel-style)

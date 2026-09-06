@@ -65,6 +65,7 @@ const openAdvisorsBtn = document.getElementById("open-advisors-btn");
 const openSettingsBtn = document.getElementById("open-settings-btn");
 const openHelpBtn = document.getElementById("open-help-btn");
 const openActivityLogBtn = document.getElementById("open-activity-log-btn");
+const openTargetAccountsBtn = document.getElementById("open-target-accounts-btn");
 const topicsListEl = document.getElementById("topics-list");
 const addTopicBtn = document.getElementById("add-topic-btn");
 const suggestTopicsBtn = document.getElementById("suggest-topics-btn");
@@ -372,6 +373,10 @@ openHelpBtn.addEventListener("click", () => {
 
 openActivityLogBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: chrome.runtime.getURL("activity-log.html") });
+});
+
+openTargetAccountsBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("target-accounts.html") });
 });
 
 addTopicBtn.addEventListener("click", () => {

@@ -274,6 +274,41 @@ export async function saveTargetAccountScoreThreshold(threshold) {
   await chrome.storage.local.set({ [TARGET_ACCOUNT_SCORE_THRESHOLD_KEY]: threshold });
 }
 
+// The full relational slice of the workbook (Companies/Contacts/
+// AI_Initiatives/AI_Investment/Sources - see xlsx-lite.js's
+// parseFullTargetAccountsWorkbook and PRD 6.12), for the Target Accounts
+// Explorer page. Deliberately separate from targetAccounts above: that map
+// is the small, normalized-name-keyed projection auto-prioritization
+// actually needs (6.11); this is the full browsable dataset, keyed by
+// Company_ID as the workbook itself does, for the Explorer's company ->
+// contacts/initiatives drill-down. Both are populated from the same Settings
+// import action, in one pass over the same file.
+const TARGET_ACCOUNTS_WORKBOOK_KEY = "targetAccountsWorkbook";
+const TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY = "targetAccountsWorkbookImportedAt";
+
+export async function importTargetAccountsWorkbook(sheets) {
+  const importedAt = Date.now();
+  await chrome.storage.local.set({
+    [TARGET_ACCOUNTS_WORKBOOK_KEY]: sheets,
+    [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: importedAt,
+  });
+  return { count: (sheets.companies || []).length, importedAt };
+}
+
+export async function getTargetAccountsWorkbook() {
+  const data = await chrome.storage.local.get(TARGET_ACCOUNTS_WORKBOOK_KEY);
+  return data[TARGET_ACCOUNTS_WORKBOOK_KEY] || { companies: [], contacts: [], aiInitiatives: [], aiInvestment: [], sources: [] };
+}
+
+export async function getTargetAccountsWorkbookMeta() {
+  const data = await chrome.storage.local.get([TARGET_ACCOUNTS_WORKBOOK_KEY, TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]);
+  const sheets = data[TARGET_ACCOUNTS_WORKBOOK_KEY];
+  return {
+    count: sheets ? (sheets.companies || []).length : 0,
+    importedAt: data[TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY] || null,
+  };
+}
+
 // AI message drafting settings. The API key is deliberately excluded from
 // exportSettings/importSettings below - each installer (e.g. the wife's
 // laptop) should use their own Anthropic key, not inherit whoever's key

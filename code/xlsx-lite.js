@@ -129,6 +129,33 @@ function resolveSheetTarget(workbookXml, relsXml, sheetName) {
   return relEl ? relEl.getAttribute("Target") : null;
 }
 
+// A Relationship Target starting with "/" is already package-root-relative
+// (confirmed with a real workbook that writes targets this way, e.g.
+// "/xl/worksheets/sheet3.xml"); otherwise it's relative to the referencing
+// part's own folder, which for workbook.xml.rels is "xl/" (the more common
+// form, e.g. "worksheets/sheet3.xml").
+function resolveSheetPath(workbookXml, relsXml, sheetName) {
+  const target = resolveSheetTarget(workbookXml, relsXml, sheetName);
+  if (!target) return null;
+  return target.startsWith("/") ? target.slice(1) : "xl/" + target.replace(/^\.?\/*/, "");
+}
+
+// "Global_HQ_City" -> "globalHqCity", "Company_ID" -> "companyId" - a
+// predictable, reversible-enough mapping from the workbook's own
+// ALL_CAPS_WITH_UNDERSCORES header convention to normal JS property names,
+// used by the generic multi-sheet reader below (unlike parseCompanyRows,
+// which only ever needed six specific, already-known headers).
+function camelCaseHeader(header) {
+  return header
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((word, i) => {
+      const lower = word.toLowerCase();
+      return i === 0 ? lower : lower[0].toUpperCase() + lower.slice(1);
+    })
+    .join("");
+}
+
 function columnLetters(cellRef) {
   const m = /^([A-Z]+)\d+$/.exec(cellRef || "");
   return m ? m[1] : null;
@@ -213,19 +240,82 @@ export async function parseTargetAccountsWorkbook(arrayBuffer) {
 
   const workbookXml = await zip.readText("xl/workbook.xml");
   const relsXml = await zip.readText("xl/_rels/workbook.xml.rels");
-  const sheetTarget = resolveSheetTarget(workbookXml, relsXml, "Companies");
-  if (!sheetTarget) throw new Error('Could not find a "Companies" sheet in this workbook.');
+  const sheetPath = resolveSheetPath(workbookXml, relsXml, "Companies");
+  if (!sheetPath) throw new Error('Could not find a "Companies" sheet in this workbook.');
 
   const sharedStrings = zip.has("xl/sharedStrings.xml")
     ? parseSharedStrings(await zip.readText("xl/sharedStrings.xml"))
     : [];
 
-  // A Relationship Target starting with "/" is already package-root-relative
-  // (confirmed with a real workbook that writes targets this way, e.g.
-  // "/xl/worksheets/sheet3.xml"); otherwise it's relative to the referencing
-  // part's own folder, which for workbook.xml.rels is "xl/" (the more common
-  // form, e.g. "worksheets/sheet3.xml").
-  const sheetPath = sheetTarget.startsWith("/") ? sheetTarget.slice(1) : "xl/" + sheetTarget.replace(/^\.?\/*/, "");
   const sheetXml = await zip.readText(sheetPath);
   return parseCompanyRows(sheetXml, sharedStrings);
+}
+
+// Keeps every column (unlike parseCompanyRows' six named ones), camelCased -
+// used for the full Target Accounts Explorer (PRD 6.12), which needs the
+// whole row per sheet, not just the handful of fields Idea 1's prioritization
+// logic cares about. A row with every cell blank is dropped; anything with
+// at least one real value is kept, even if some of its columns are empty.
+function parseGenericSheetRows(sheetXml, sharedStrings) {
+  const doc = parseXml(sheetXml);
+  const rows = Array.from(tag(doc, "row"));
+  if (rows.length === 0) return [];
+
+  const headerByCol = {};
+  for (const c of Array.from(rows[0].getElementsByTagNameNS(SML_NS, "c"))) {
+    const col = columnLetters(c.getAttribute("r"));
+    if (!col) continue;
+    const value = cellValue(c, sharedStrings);
+    if (value != null) headerByCol[col] = camelCaseHeader(String(value).trim());
+  }
+
+  const entries = [];
+  for (let i = 1; i < rows.length; i++) {
+    const rowValues = {};
+    let hasAny = false;
+    for (const c of Array.from(rows[i].getElementsByTagNameNS(SML_NS, "c"))) {
+      const col = columnLetters(c.getAttribute("r"));
+      const header = col && headerByCol[col];
+      if (!header) continue;
+      const value = cellValue(c, sharedStrings);
+      rowValues[header] = value;
+      if (value != null) hasAny = true;
+    }
+    if (hasAny) entries.push(rowValues);
+  }
+  return entries;
+}
+
+// The workbook's relational sheets, each referencing Companies via
+// Company_ID (camelCased to companyId) - see PRD 6.12. Sheets not listed
+// here (README, Dashboard, Scoring_Model, Lookup_Lists, Prospect_List) are
+// presentation/methodology content, not per-company records, so the
+// Explorer has no use for them.
+const RELATIONAL_SHEETS = {
+  companies: "Companies",
+  contacts: "Contacts",
+  aiInitiatives: "AI_Initiatives",
+  aiInvestment: "AI_Investment",
+  sources: "Sources",
+};
+
+// Reads the full relational slice of the workbook - every column of every
+// row in Companies/Contacts/AI_Initiatives/AI_Investment/Sources - for the
+// Target Accounts Explorer page. A sheet that isn't present in a given
+// workbook (e.g. an older export without AI_Investment) comes back as an
+// empty array rather than failing the whole import.
+export async function parseFullTargetAccountsWorkbook(arrayBuffer) {
+  const zip = ZipReader.fromArrayBuffer(arrayBuffer);
+  const workbookXml = await zip.readText("xl/workbook.xml");
+  const relsXml = await zip.readText("xl/_rels/workbook.xml.rels");
+  const sharedStrings = zip.has("xl/sharedStrings.xml")
+    ? parseSharedStrings(await zip.readText("xl/sharedStrings.xml"))
+    : [];
+
+  const result = {};
+  for (const [key, sheetName] of Object.entries(RELATIONAL_SHEETS)) {
+    const sheetPath = resolveSheetPath(workbookXml, relsXml, sheetName);
+    result[key] = sheetPath ? parseGenericSheetRows(await zip.readText(sheetPath), sharedStrings) : [];
+  }
+  return result;
 }
