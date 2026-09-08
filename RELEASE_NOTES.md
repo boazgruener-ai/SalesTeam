@@ -1,3 +1,105 @@
+# SalesTeam — v0.29.34
+
+## Fixed: resolver was searching the wrong LinkedIn tab, matching unrelated companies; switched to the Companies-only tab
+
+- Reported directly, with real HTML the user shared (not guessed): the v0.29.33 warm-up run surfaced two new, genuinely distinct patterns after the cold-start fix removed the previous hard-timeouts. "Aargauische Kantonalbank" got a real ID (`97930`) but `heroName` came back `null`; "Acino" got a confident `heroName` but `currentCompanyIdFound: null`. Both were previously invisible failure modes, not guessed at.
+- For "Aargauische Kantonalbank": the old content script (`company-resolve-content-script.js`) searched for the hero's name and its `currentCompany` ID independently, each as its own page-wide first-match lookup - safe only as long as the hero card happens to be first in DOM order for both searches, with no guarantee they're pulling from the same entity. Confirmed against the real hero-card HTML: the name (`<p>`) and the ID-carrying "X connections/alumni work here" link are both genuinely nested inside the SAME `a[href*="linkedin.com/company/..."]` anchor - LinkedIn builds its DOM via direct element creation rather than HTML parsing, so nested `<a>` elements are real here, not a parsing artifact. `findCurrentCompanyIdWithin` now scopes the ID regex to that confirmed hero anchor's own subtree instead of `document.body.innerHTML`, tying both to the same entity by construction.
+- For "Acino": confirmed against the real HTML of Acino's own LinkedIn page that a company page (not the search-results page) carries its own `currentCompany=` link, under the org-top-card's "X employees" link - though that one can list several IDs in one array (`currentCompany=%5B%22255145%22%2C%22145413%22%2C%222360196%22%5D`), unlike the hero card's single-ID array. When the search page yields a confident name but no ID anywhere, the content script now reports the hero's own company-page URL; `runCompanyIdResolution` (`company-resolve-extraction.js`) navigates there as a second step and `runCompanyPageFallback` reads the first ID off that page's own link. Manifest gains a matching `linkedin.com/company/*` content-script registration, gated the same inert-during-normal-browsing way as every other extraction content script.
+- Debug samples now also record `usedFallback` so a future diagnosis can tell which path a company took.
+- **Not yet confirmed working**: a follow-up 10-company test run resolved 0. Notably, "Aargauische Kantonalbank" - the exact company whose hero card was used to build the anchor-scoping fix above - came back with both `heroName` and `currentCompanyIdFound` null this time, not the "confident name, no id" pattern the fallback targets. Since real evidence already proves a hero card exists for this company, this reads as either a timing issue (the hero anchor hadn't rendered within the poll window this run) or the anchor genuinely wasn't found at all - `heroName`/`currentCompanyIdFound` alone can't tell those apart from "hero anchor found but nothing extracted from within it" (a real bug in the scoped extraction). Added `heroLinkFound`/`heroLinkHref` to the debug output to disambiguate on the next run before changing any extraction logic further.
+- **Suspected cause, tried, disproven by the next run**: `heroLinkFound: true`, but `heroLinkHref` pointed at an entirely unrelated company ("Digiterra powered by Crealogix") - proof that `document.querySelector('a[href*="linkedin.com/company/"]')` (first match anywhere on the page) isn't reliably the hero card at all. First hypothesis: a sidebar/suggested-companies widget rendering ahead of the real hero card. Tried scoping `findHeroLink` to `section[aria-label="Primary content"] a[href*="linkedin.com/company/"]` first, on the theory that the sidebar lives in a preceding `<aside>` outside that section. **This did not fix it** - the very next run returned the exact same "Digiterra" result for the same company, plus a new unrelated company ("Intercargo") for "Accelleron Industries," meaning the real cause was something the section scoping couldn't touch.
+- **Actual root cause, confirmed via a user-shared screenshot**: the "All" tab (`results/all/`) this resolver searched doesn't reliably lead with a company "hero card" at all - it leads with whatever category ranks first, and that's often Posts. Any company merely MENTIONED inside a post's body text (or its author's own company link) matches `a[href*="linkedin.com/company/"]` just as well as a genuine top company match would. Confirmed concretely: the top hit for "Aargauische Kantonalbank" was a Digiterra post whose text read "...customer story with Aargauische Kantonalbank (AKB)" - that mention's own link is what kept getting picked up, consistently, run after run.
+- **Fixed**: switched the search target from LinkedIn's "All" tab to its Companies-only tab (`results/companies/?keywords=<name>`), confirmed live to show ONLY company results with no Posts/People/Jobs noise. Its result card turned out to be the exact same DOM shape as the original "hero card" (same nested-anchor structure, same "X works here · Y followers" line) - so none of the extraction logic itself needed to change, only `buildCompanyResolveUrl` (`company-resolve-extraction.js`) and the matching manifest content-script registration (`linkedin.com/company/*` search results → `linkedin.com/search/results/companies/*`). The "Primary content" section scoping from the disproven attempt above is left in place as harmless defense-in-depth, not because it turned out to matter.
+- **Confirmed working**: a follow-up 10-company test run against the Companies tab resolved 4 (up from 0 on every "All"-tab run before this fix), with the one non-timeout failure ("Accelleron Industries," `heroLinkFound: false`) being a clean "no result" - correctly declining to guess rather than matching something wrong, not a bug.
+- **A separate, still-open issue, now with more evidence**: hard timeouts, unrelated to the tab fix above, remain the dominant failure mode - 5 of 10 in this same run. "Aevis Victoria" hard-timed-out on the search page itself, the same zero-diagnostic pattern previously flagged in v0.29.31/33 as still-unexplained (now seen for a third distinct company, after "Accelleron Industries" and others). "Acino" hard-timed-out for a *second* time specifically on the company-page fallback navigation (`usedFallback: true`) - no longer a single data point. Given the sheer volume of resolver runs fired against LinkedIn in one session while debugging this, throttling/rate-limiting on LinkedIn's side is a real possibility worth ruling out before writing more extraction code against what might just be slow or degraded responses - not yet investigated.
+
+---
+
+# SalesTeam — v0.29.33
+
+## Tried: a cold-start warm-up navigation for the Company ID resolver's hard timeouts
+
+- Reported directly with strong repeat evidence: after confirming the v0.29.31 error-catching fix was actually loaded (reloaded the extension, re-ran), the exact same three companies (Aargauische Kantonalbank, Accelleron Industries, Acino) still hard-timed-out with zero diagnostic info (`navCompleted: true`, nothing else) - no `caughtError` ever appeared, ruling out an uncaught exception as the cause entirely. Since these never resolve, they never leave the "still missing" pool and land back at the front of every future run's queue - pointing at a cold-start problem with the freshly-created background tab rather than anything about those specific companies: the very first navigation right after `chrome.tabs.create` may not reliably get the content script running before the orchestration's own 15-second timeout gives up, while every later navigation in the same run works fine once the tab is "warmed up."
+- Tried a throwaway warm-up navigation (to `linkedin.com/feed/`) right after creating the resolver's tab, before the real per-company loop starts - so the first real company lookup is never also the tab's first navigation ever. Marked as a try, not a confirmed fix, since the exact mechanism (if this hypothesis is even right) hasn't been directly observed - worth checking whether these same three companies finally succeed or produce different diagnostic info on the next run.
+
+---
+
+# SalesTeam — v0.29.32
+
+## Added: resolved-ID progress indicator on Target Accounts, and a fixed completion message that hid a real third outcome
+
+- Reported directly: "Done - 4 of 20 companies resolved, 6 failed due to an error... what about the remaining 10?" The completion message only ever accounted for resolved and hard-timed-out counts, silently omitting a real third outcome - the content script responded fine and quickly, but couldn't confidently confirm a match (no hero card, or the hero name didn't match well enough), correctly declining to guess but invisible in the summary. `runCompanyIdResolution` (`company-resolve-extraction.js`) now also returns `notConfidentCount`, and the completion message/Activity Log entry (`settings.js`) account for all three outcomes so every company in a run is explained.
+- Reported directly: since a resolver run happens in small chunks over many sessions ("Limit to N," v0.29.29), there was no way to see overall progress without re-checking the Activity Log after every run. Added a "LinkedIn company IDs resolved: X of Y" indicator to the Target Accounts Explorer page (`target-accounts.html`/`.js`), updating live if a resolver run happens while the page stays open.
+
+---
+
+# SalesTeam — v0.29.31
+
+## Fixed: resolver hard-timeouts had zero diagnostic info - a silent, uncaught exception was the likely cause
+
+- Reported directly with a 20-company test run after the v0.29.28 fix: 9 resolved, 6 hard-timed-out with the exact same empty-info pattern as before (`navCompleted: true`, nothing else) - confirmed reproducible across three unrelated real company names (Aargauische Kantonalbank, Accelleron Industries, Acino), none sharing the country-qualifier issue already fixed. `navCompleted: true` with no message ever received at all means the content script itself never reached its own `sendMessage` call - the only way that happens is an uncaught exception somewhere in its polling/extraction logic, silently killing it before it could report anything, previously invisible and previously costing the full 15-second orchestration timeout to even notice.
+- Wrapped the polling loop in `company-resolve-content-script.js` in a try/catch that still sends a real result immediately if something throws, with the actual error message attached (`debug.caughtError`) - converts a mystery 15-second hang into an instant, informative failure. Added a second, outer catch around the whole script as a last resort in case even the initial setup throws.
+- Doesn't fix the underlying cause yet (whatever specific error these companies' pages trigger) - but the next run's `debugSamples` should finally show what it actually is, instead of nothing at all.
+
+---
+
+# SalesTeam — v0.29.30
+
+## Added: Import/Export Target Accounts buttons on the Target Accounts Explorer page too
+
+- Reported directly: having to leave the Explorer page and go to Settings to back up or refresh the very data it's showing was an unnecessary detour. Added the same "Import Target Accounts…"/"Export Target Accounts…" buttons to the top of `target-accounts.html`, calling the exact same `storage.js` functions Settings already uses (`importTargetAccounts`/`importTargetAccountsWorkbook`/`importTargetAccountsBackup`/`exportTargetAccountsBackup`) - Settings remains the source of truth for the score threshold and other Target Account configuration, but the actual import/export actions now work from either page. Import works even before any data has been loaded (from the empty state), and Export only appears once there's something to back up.
+
+---
+
+# SalesTeam — v0.29.29
+
+## Added: a "Limit to N companies" option for the Company ID resolver
+
+- Reported directly: after a full day-long resolver run, iterating on a fix by re-running against all ~486 companies each time isn't productive - a quick way to validate a fix on a small sample first was needed. Added an optional "Limit to N" number field next to the "Resolve LinkedIn Company IDs" button (Settings) - leave it blank to resolve everything still missing an ID (unchanged default), or set it to test against just the first N still-unresolved companies, completing in a couple of minutes instead of hours.
+
+---
+
+# SalesTeam — v0.29.28
+
+## Fixed: Company ID resolver failed for 89% of companies - country-qualified names broke the hero-card match
+
+- Reported directly: a full day-long resolver run reported "28 of 486 companies resolved, 434 failed due to an error." Diagnosed from the run's own `debugSamples` (Activity Log): most failures weren't timeouts at all - a real `currentCompany=` ID was found on the page, but the hero-card name extraction came back `null`, so the resolution was correctly rejected (never guessed) but never counted as a success either.
+- Root cause, confirmed live with real examples ("3M Switzerland," "AbbVie Switzerland"): the Target Accounts sheet marks which subsidiary was researched by appending a country qualifier to the company name, but LinkedIn's own company page is just the global brand ("3M," not "3M Switzerland"). Searching the qualified name never produces LinkedIn's confident "hero card" the resolver depends on - confirmed two ways: LinkedIn's own Companies search tab returned a literal "No results found" for "3M Switzerland," and the general search showed no hero card for it either, while searching "3M" alone produced a clean, verified hero card immediately.
+- Fixed by stripping a trailing country qualifier (" Switzerland," " Schweiz," " Suisse," " Svizzera") from the company name before searching (`stripCountryQualifier`, `company-resolve-extraction.js`) - the resolved ID still gets written back onto the original Target Account entry regardless of this transformation, only the search query itself changes. Doesn't help a company whose failure was a genuine timeout (e.g. "Aargauische Kantonalbank," a real Swiss-native name with no qualifier to strip) - that's a separate, smaller category not yet addressed.
+
+---
+
+# SalesTeam — v0.29.27
+
+## Fixed: Target Accounts import silently dropped score-less companies, and re-importing would have wiped resolved LinkedIn IDs
+
+- Reported directly: the Company ID resolver (v0.29.25) reported "486" instead of the expected 500 companies. Root cause: the `.xlsx` import (`settings.js`) only ever included a company in the lightweight `targetAccounts` map if it had a non-null AI Priority score - the 14 companies deliberately marked "Out of Scope" (competitors/AI vendors, with no score by design) were silently excluded entirely, so they could never be resolved to a LinkedIn ID or included in the Target Account-scoped Post search (6.16/6.17), for a reason that had nothing to do with search scoping. Verified safe before fixing: `evaluateTargetAccountMatch` (`storage.js`) already nulls out any match whose score is null, so including these companies has zero effect on the P1 auto-boost or the AI's signal-weighting - they'll still never qualify. Now imports every company with a name, regardless of score.
+- Caught before it could bite: `importTargetAccounts` (`storage.js`) rebuilds this map from scratch on every import (by design - the workbook is the source of truth for score/label/etc.), but its entries never carried a `linkedinCompanyId` field forward. Re-importing to pick up the fix above - or any future refresh of the research workbook - would have silently discarded every LinkedIn ID a resolver run had already found, forcing a full re-resolution of the entire list every single time. Now carries a company's resolved ID forward across a re-import, matched by company name - durable data that has nothing to do with whatever changed in a refreshed workbook.
+
+---
+
+# SalesTeam — v0.29.26
+
+## Added: experimental Target Account-scoped Post search, attacking the Post-vs-Job imbalance at the root
+
+- Completes the plan built up over the last few versions (6.15's diagnosis, 6.16's company-ID resolver): every scan now also searches Posts scoped to resolved Target Account companies via LinkedIn's `authorCompany` filter, instead of relying purely on each Topic's own unscoped global keyword search - the actual root-cause fix for the imbalance, not just a comparison tool.
+- Every enabled Topic's keywords (both groups, deduplicated) are merged into ONE search per company-chunk - deliberately not one search per Topic per chunk, so this phase's cost depends on total keyword/company volume, not on how many Topics exist (a dedicated search per Topic would multiply instead of add). Resolved company IDs are chunked at 50 per search (`AUTHOR_COMPANY_CHUNK_SIZE`, `background.js`) - confirmed live that 52 works in one search, staying comfortably under that rather than chasing the exact ceiling.
+- Since a post found this way didn't come from any single Topic's own dedicated search, it's checked locally against every enabled Topic's own full rule (`localTopicMatch`, `background.js`) - any keyword for a plain OR-topic, or at least one keyword from BOTH groups for an AND-topic. This is a genuine text-based double-check, more rigorous than the existing two-separate-searches-then-join approach used elsewhere in this file, which only ever trusts that both searches happened to surface the same post rather than confirming its text actually contains both kinds of terms.
+- Only activates once at least one Target Account company has a resolved LinkedIn ID (v0.29.25's resolver) - nothing changes for an install that hasn't run that yet.
+
+---
+
+# SalesTeam — v0.29.25
+
+## Added: experimental LinkedIn Company ID resolver (Settings)
+
+- Follow-up to a new idea for fixing the Post-vs-Job imbalance at the root: rather than searching People by title, search Companies located in Switzerland (from the existing Target Accounts list), then scope Post search to just those companies' employees via LinkedIn's `authorCompany` filter - confirmed live to genuinely restrict results (a 52-company test list correctly narrowed the results, chip and all). But `authorCompany` needs LinkedIn's own numeric company IDs, and the Target Accounts data only ever had company names.
+- The missing piece was found in real HTML the user shared, not guessed: navigating to `https://www.linkedin.com/search/results/all/?keywords=<name>` (a plain URL, no autocomplete interaction needed) shows a "hero card" for the best-matching company, and that card's own "X connections/alumni work here" link always encodes `currentCompany=["<id>"]` - reliably the *first* such occurrence anywhere on the page, before any unrelated "People also viewed" sidebar company. Cross-confirmed twice: Swiss Re's hero card gave `3845` this way, exactly matching the `heroEntityKey` LinkedIn's own search-suggestion dropdown had already produced for the same company.
+- New "Resolve LinkedIn Company IDs…" button (Settings, next to Target Accounts) looks up each Target Account company missing an ID this way (`company-resolve-extraction.js`/`company-resolve-content-script.js`, matching `linkedin.com/search/results/all/*`, same gating/pacing/timeout pattern as the other extraction modules) and writes the resolved ID onto that company's Target Account record (`linkedinCompanyId`, `applyResolvedCompanyIds`, `storage.js`). A resolution only counts if the hero card's own displayed name loosely matches the company being searched for - a mismatch is left unresolved, not guessed.
+- This is a prerequisite, not the finished feature - the actual company-scoped Post search (chunking resolved IDs into `authorCompany` batches, merging keywords across topics so search count stays roughly constant regardless of topic count) is separate work, not yet built.
+
+---
+
 # SalesTeam — v0.29.9
 
 ## Fixed: company extraction only worked for employers with a Company Page; post-scan profile-visiting phase; Location column + Empty-only filter

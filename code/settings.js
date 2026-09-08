@@ -20,6 +20,8 @@ import {
   getTargetAccountScoreThreshold,
   saveTargetAccountScoreThreshold,
   importTargetAccountsWorkbook,
+  getTargetAccountsMissingLinkedinId,
+  applyResolvedCompanyIds,
   getPrioritizationRules,
   savePrioritizationRuleOverride,
   appendActivityLog,
@@ -33,6 +35,7 @@ import {
 } from "./storage.js";
 import { sanitizeApiKey } from "./agent-shared.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
+import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -74,6 +77,8 @@ const valueAddOffersInput = document.getElementById("value-add-offers-input");
 const targetAccountsStatusEl = document.getElementById("target-accounts-status");
 const importTargetAccountsBtn = document.getElementById("import-target-accounts-btn");
 const importTargetAccountsFileInput = document.getElementById("import-target-accounts-file-input");
+const resolveCompanyIdsBtn = document.getElementById("resolve-company-ids-btn");
+const resolveCompanyIdsStatusEl = document.getElementById("resolve-company-ids-status");
 const targetAccountThresholdInput = document.getElementById("target-account-threshold-input");
 const prioritizationRulesTbodyEl = document.getElementById("prioritization-rules-tbody");
 const locationFilterModeSelect = document.getElementById("location-filter-mode-select");
@@ -240,6 +245,53 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
     prevValue: prevMeta.count,
     newValue: count,
   });
+});
+
+// EXPERIMENTAL (v0.29.25, see PRD 6.16): resolves each Target Account
+// company's LinkedIn numeric company ID, needed for a future feature that
+// scopes Post search to only these companies' employees (authorCompany).
+const resolveCompanyIdsLimitInput = document.getElementById("resolve-company-ids-limit-input");
+
+resolveCompanyIdsBtn.addEventListener("click", async () => {
+  let toResolve = await getTargetAccountsMissingLinkedinId();
+  const limit = parseInt(resolveCompanyIdsLimitInput.value, 10);
+  if (Number.isFinite(limit) && limit > 0 && limit < toResolve.length) {
+    toResolve = toResolve.slice(0, limit);
+  }
+  if (toResolve.length === 0) {
+    resolveCompanyIdsStatusEl.textContent = "Nothing to do - every Target Account company already has a resolved LinkedIn company ID.";
+    return;
+  }
+  if (!confirm(resolveConfirmText(toResolve.length))) return;
+
+  resolveCompanyIdsBtn.disabled = true;
+  try {
+    const { results: resolved, debugSamples, hardTimeoutCount, notConfidentCount } = await runCompanyIdResolution(toResolve, {
+      onProgress: (i, total) => { resolveCompanyIdsStatusEl.textContent = `Resolving company ${i} of ${total}…`; },
+    });
+    const updated = await applyResolvedCompanyIds(resolved);
+    // Reported directly: the old message only ever accounted for resolved +
+    // hard-timed-out, silently leaving a gap for a real third outcome (no
+    // confident match found, but no error either) with no explanation -
+    // every company in the run is now accounted for in this one line.
+    resolveCompanyIdsStatusEl.textContent = `Done - ${updated} of ${toResolve.length} compan${toResolve.length === 1 ? "y" : "ies"} resolved` +
+      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error (will retry next run)` : "") +
+      (notConfidentCount > 0 ? `, ${notConfidentCount} found no confident match (will retry next run)` : "") + ".";
+    appendActivityLog({
+      actor: "user",
+      action: "company_ids_resolved",
+      label: `Resolve LinkedIn Company IDs: ${updated} of ${toResolve.length} resolved` +
+        (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
+        (notConfidentCount > 0 ? `, ${notConfidentCount} found no confident match` : "") +
+        (debugSamples.length > 0 ? ` - ${debugSamples.length} unresolved sample(s) attached for diagnosis` : ""),
+      newValue: { updated, total: toResolve.length, hardTimeoutCount, notConfidentCount, debugSamples },
+    });
+  } catch (err) {
+    resolveCompanyIdsStatusEl.textContent = `Something went wrong: ${err.message}`;
+    appendActivityLog({ actor: "user", action: "company_ids_resolved", label: "Resolve LinkedIn Company IDs failed", error: true, errorMessage: err.message });
+  } finally {
+    resolveCompanyIdsBtn.disabled = false;
+  }
 });
 
 targetAccountThresholdInput.addEventListener("input", () => {

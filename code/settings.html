@@ -60,6 +60,16 @@
       <label for="target-account-threshold-input">Target Account confidence threshold</label>
       <input type="number" id="target-account-threshold-input" min="0" max="100" title="Companies scored at or above this (and labeled Very High/High, non-provisional) 'qualify' - see the Prioritization Rules below for exactly what that triggers" />
 
+      <div class="settings-buttons-row">
+        <button id="resolve-company-ids-btn" type="button" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID - needed for a future feature that scopes Post search to only these companies' employees">Resolve LinkedIn Company IDs…</button>
+        <label for="resolve-company-ids-limit-input" class="field-hint" style="display:inline-flex; align-items:center; gap:4px;">
+          Limit to
+          <input type="number" id="resolve-company-ids-limit-input" min="1" style="width:5em;" title="Only resolve this many companies this run - leave blank to resolve everything still missing an ID. Useful for a quick test before committing to a full run." />
+          (blank = all)
+        </label>
+      </div>
+      <p id="resolve-company-ids-status" class="field-hint"></p>
+
       <h3>Location Filter</h3>
       <p class="field-hint">
         Restrict leads to your actual sales territory, using each lead's own location (filled in from a

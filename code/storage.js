@@ -235,6 +235,16 @@ const TARGET_ACCOUNT_SCORE_THRESHOLD_KEY = "targetAccountScoreThreshold";
 const DEFAULT_TARGET_ACCOUNT_SCORE_THRESHOLD = 70;
 
 export async function importTargetAccounts(list) {
+  // Carries a company's resolved LinkedIn ID (6.16) forward across a
+  // wholesale re-import - reported directly as a real risk: this map is
+  // rebuilt from scratch every import (by design, since the research
+  // workbook itself is the source of truth for score/label/etc.), but a
+  // company's LinkedIn ID is durable data that has nothing to do with
+  // whatever changed in a refreshed workbook. Without this, refreshing the
+  // workbook (or re-importing to pick up a newly-included company) would
+  // silently discard every ID a resolver run had already found, forcing a
+  // full re-resolution of the entire list every time.
+  const previousMap = await getTargetAccounts();
   const map = {};
   for (const entry of list || []) {
     const key = normalizeCompanyName(entry.company);
@@ -246,6 +256,7 @@ export async function importTargetAccounts(list) {
       priorityLabel: entry.priorityLabel || null,
       researchStatus: entry.researchStatus || null,
       topInitiatives: entry.topInitiatives || null,
+      ...(previousMap[key]?.linkedinCompanyId ? { linkedinCompanyId: previousMap[key].linkedinCompanyId } : {}),
     };
   }
   const importedAt = Date.now();
@@ -262,6 +273,31 @@ export async function getTargetAccountsMeta() {
   const data = await chrome.storage.local.get([TARGET_ACCOUNTS_KEY, TARGET_ACCOUNTS_IMPORTED_AT_KEY]);
   const map = data[TARGET_ACCOUNTS_KEY] || {};
   return { count: Object.keys(map).length, importedAt: data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null };
+}
+
+// EXPERIMENTAL (v0.29.25, see PRD 6.16): resolves a Target Account company's
+// name to its LinkedIn numeric company ID (the same kind of ID
+// authorCompany expects on a Post search, and geoUrn expects for a
+// location - confirmed live against a real "currentCompany=[...]" link the
+// user found in a real search results page, not guessed). Companies already
+// resolved are skipped so a run only ever costs one visit per company, ever.
+export async function getTargetAccountsMissingLinkedinId() {
+  const map = await getTargetAccounts();
+  return Object.entries(map)
+    .filter(([, v]) => !v.linkedinCompanyId)
+    .map(([key, v]) => ({ key, company: v.company }));
+}
+
+export async function applyResolvedCompanyIds(resolutions) {
+  const map = await getTargetAccounts();
+  let updated = 0;
+  for (const r of resolutions) {
+    if (!r.linkedinCompanyId || !map[r.key]) continue;
+    map[r.key].linkedinCompanyId = r.linkedinCompanyId;
+    updated++;
+  }
+  if (updated > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map });
+  return updated;
 }
 
 export async function getTargetAccountScoreThreshold() {
