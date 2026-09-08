@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.29.34.
+**Status:** Living document, reflects the shipped product as of v0.29.36.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -780,6 +780,58 @@ results, filter chip and all; LinkedIn accepted at least that many IDs in one se
   fired against LinkedIn in one session while debugging this, throttling/rate-limiting on LinkedIn's side is a
   real possibility worth ruling out before writing more extraction code against what might just be slow or
   degraded responses — not yet investigated.
+- **Fixed in v0.29.35 - a real listener race, found via evidence**: three previous fix attempts at this exact
+  symptom (v0.29.31's try/catch, v0.29.33's warm-up navigation, and this Companies-tab switch itself) had all
+  left it unexplained. Added `finalUrl` (the tab's own URL at the moment `chrome.tabs.onUpdated` reports
+  "complete", read straight off the listener callback's own `tab` argument) to test whether the tab was
+  landing on the intended page at all before guessing further. A follow-up 10-company run showed `finalUrl`
+  exactly matching the intended URL for 4 of 5 hard timeouts — the tab genuinely landed on the right page,
+  "complete" fired correctly, and the content script's message still never arrived. The real bug:
+  `waitForResolveResult` (the message listener) was only ever registered AFTER `navigateAndWaitResolve`
+  resolved — i.e. only after the tab's "complete" event, which reflects the full page load including
+  subresources. But a `document_idle` content script typically runs around `DOMContentLoaded`, which on a
+  JS-heavy SPA like LinkedIn usually fires BEFORE "complete" — so the content script could find its result
+  and call `sendMessage` before this file's own listener was even registered, and that message was simply
+  lost, with no error anywhere. Fixed by calling `waitForResolveResult` before starting navigation (for both
+  the main search and the company-page fallback), so its listener is live for the entire navigation instead
+  of only after; `RESOLVE_TIMEOUT_MS` bumped accordingly (derived from `NAV_TIMEOUT_MS` plus a buffer, not
+  picked arbitrarily) so slower-loading pages don't lose extraction time to the earlier registration. A
+  fifth case ("Arbonia") showed a genuinely different failure — the company-page fallback navigation itself
+  never completed within 20s — not addressed by this fix. **Confirmed working**: a follow-up 5-company run
+  resolved 3, with zero hard timeouts for the first time in this entire investigation — the other 2 came back
+  as clean, correctly-diagnosed "no confident match" rather than silent failures. The company-page fallback
+  path (Arbonia's failure mode) wasn't exercised in that run, so that specific case remains unconfirmed
+  either way. Reported directly with a screenshot: "Accelleron Industries" genuinely has "No results found"
+  on LinkedIn's own Companies tab — its "no confident match" wasn't a bug, just an accurate reflection that
+  this company isn't on LinkedIn at all, and it'll correctly keep finding nothing on every future run by
+  design.
+- **Fixed in v0.29.36**: with hard timeouts gone, a follow-up 10-company run still had 8 "no confident
+  matches." Two were confirmed genuine (see above), but the rest included real, large, listed Swiss companies
+  ("ARYZTA AG," "Ascom Holding," "Avolta AG") unlikely to have zero LinkedIn presence — worth checking rather
+  than assuming. Confirmed live, not guessed: searching "ARYZTA AG" (the Target Accounts sheet's full legal
+  name) gets no confident match, but "ARYZTA" alone finds the real, verified company page immediately;
+  "Ascom" alone likewise finds the real company where "Ascom Holding" didn't. The exact same underlying
+  problem as the country-qualifier fix (v0.29.28, "3M Switzerland" vs "3M") — just not limited to country
+  words, and `stripCountryQualifier` never handled anything else. Rather than hand-picking new suffix words,
+  reused `storage.js`'s own `COMPANY_SUFFIX_NOISE_WORDS` set (AG, GmbH, Holding, Group, Switzerland, etc.) —
+  already used elsewhere for the exact same class of problem (Negative Topic company matching, 6.9) — now
+  exported and imported into `company-resolve-extraction.js` so the two lists can't drift apart.
+  `stripCountryQualifier` replaced with `stripTrailingCorporateNoise`, which strips every trailing noise word
+  one at a time (a company can carry more than one, e.g. "X Holding AG") rather than just a single country
+  suffix. **Confirmed working**: a follow-up 9-company run resolved 5 (up from 2 of 10 before this fix), still
+  with zero hard timeouts. The remaining 4 "no confident matches" included the two already-confirmed genuine
+  non-matches plus two new, not-yet-checked ones ("Balgrist University Hospital," "Bank Syz") — no wrong
+  matches reported, `namesMatch` doing its job even with the broader stripped query.
+- **A known, deliberately unfixed limitation, registered rather than auto-fixed**: "Balgrist University
+  Hospital" checked live — the real LinkedIn entity is named in German ("Universitätsklinik Balgrist"), not
+  just the English name plus a suffix. Searching "Balgrist" alone returns 7 different companies ("Balgrist
+  Campus AG," "Balgrist Tec AG," "Balgrist Apotheke," etc.), with the correct one ranking first only because
+  it's clearly the largest/most-verified entity — not something `namesMatch` actually confirmed.
+  Generalizing the strip-list to drop words like "University"/"Hospital" the way AG/Holding get dropped would
+  risk real false positives elsewhere (those words can carry genuine distinguishing meaning, unlike pure
+  corporate-boilerplate suffixes) — deliberately not attempted. Left as a correctly-unresolved, narrow edge
+  case; a future fix idea (not yet built) is searching both the English and a German/local-language form of a
+  name rather than broadening what gets stripped.
 - **This is a prerequisite, not the finished feature** — the actual company-scoped Post search (chunking
   resolved IDs into `authorCompany` batches, merging keywords across every enabled Topic into one search per
   chunk so total search count stays roughly constant regardless of how many Topics exist, then classifying
@@ -816,4 +868,4 @@ results, filter chip and all; LinkedIn accepted at least that many IDs in one se
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.34**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.29.36**.

@@ -26,9 +26,29 @@
 // runCompanyIdResolution falls back to the hero's own company page, which
 // carries a currentCompany link of its own (see company-resolve-content-
 // script.js's runCompanyPageFallback).
+//
+// A confident match can also fail for a well-known company that
+// definitely IS on LinkedIn (confirmed live for "ARYZTA AG," a real, large,
+// listed Swiss company) when the Target Accounts sheet's full legal name
+// carries a trailing corporate-suffix word LinkedIn's own page name
+// doesn't: "ARYZTA AG" gets no confident match on the Companies tab, but
+// "ARYZTA" alone finds the real, verified company immediately - the exact
+// same underlying problem the country-qualifier fix (v0.29.28) solved for
+// "3M Switzerland" vs "3M", just not limited to country words. Generalized
+// (v0.29.36) to strip every trailing word storage.js's own
+// COMPANY_SUFFIX_NOISE_WORDS already treats as corporate-boilerplate noise
+// (AG, Holding, Group, Switzerland, etc.) for the exact same reason that
+// list exists elsewhere - reused rather than duplicated, so the two never
+// drift apart.
+
+import { COMPANY_SUFFIX_NOISE_WORDS } from "./storage.js";
 
 const NAV_TIMEOUT_MS = 20000;
-const RESOLVE_TIMEOUT_MS = 15000;
+// Covers the full wait from BEFORE navigation starts (see the listener-race
+// fix below) through the content script's own ~6s polling cap - not just
+// post-load extraction time the way it used to, since the clock now starts
+// earlier. Derived from NAV_TIMEOUT_MS plus a buffer, not picked arbitrarily.
+const RESOLVE_TIMEOUT_MS = NAV_TIMEOUT_MS + 8000;
 const MIN_DELAY_MS = 4000;
 const MAX_DELAY_MS = 9000;
 const TYPICAL_LOAD_MS = 10000;
@@ -41,24 +61,24 @@ function randomDelay() {
   return MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS);
 }
 
-// Confirmed live with real examples: the Target Accounts sheet marks which
-// subsidiary was researched by appending a country qualifier to the company
-// name ("3M Switzerland," "AbbVie Switzerland"), but LinkedIn's own company
-// page is just the global brand name ("3M") - searching the qualified name
-// breaks the "hero card" match that searching the unqualified name gets
-// reliably (verified: "3M Switzerland" got no confident hero card and a
-// literal "No results found" on LinkedIn's own Companies search tab; "3M"
-// alone got a clean one). Stripped only for the search query itself - the
-// resolved ID still gets written back onto the original Target Account
-// entry regardless of this transformation.
-const TRAILING_COUNTRY_QUALIFIERS = [" switzerland", " schweiz", " suisse", " svizzera"];
-
-function stripCountryQualifier(name) {
-  const lower = (name || "").toLowerCase();
-  for (const suffix of TRAILING_COUNTRY_QUALIFIERS) {
-    if (lower.endsWith(suffix)) return name.slice(0, name.length - suffix.length).trim();
+// Strips every trailing corporate-suffix/qualifier word (AG, Holding,
+// Group, Switzerland, etc.) one at a time, repeatedly - a company can carry
+// more than one ("X Holding AG"). Trailing only, never mid-name, same
+// reasoning as the original country-qualifier strip this generalizes: the
+// word is real corporate boilerplate the research spreadsheet appends, not
+// part of the actual searchable brand name. Stripped only for the search
+// query itself - the resolved ID still gets written back onto the original
+// Target Account entry regardless of this transformation.
+function stripTrailingCorporateNoise(name) {
+  let current = (name || "").trim();
+  for (let i = 0; i < 5; i++) {
+    const words = current.split(/\s+/);
+    if (words.length <= 1) break;
+    const lastWord = words[words.length - 1].toLowerCase().replace(/[.,]/g, "");
+    if (!COMPANY_SUFFIX_NOISE_WORDS.has(lastWord)) break;
+    current = words.slice(0, -1).join(" ").trim();
   }
-  return name;
+  return current || name;
 }
 
 // Reported directly with real evidence: searching the "All" tab
@@ -95,6 +115,21 @@ export function resolveConfirmText(count) {
     "rapid-fire requests). Each company is only ever looked up once - already-resolved ones are skipped on future runs. Continue?";
 }
 
+// Reported directly: a genuine, reproducible chunk of companies hard-time
+// out with ZERO diagnostic info (navCompleted: true, nothing else) across
+// three previous fix attempts (v0.29.31's try/catch, v0.29.33's warm-up
+// nav, and again after the v0.29.34 Companies-tab switch) - a real mystery
+// that guessing a fourth time risks repeating. One thing this function has
+// never actually verified: that "complete" fired for the URL it asked for.
+// chrome.tabs.onUpdated resolves on the FIRST complete event for the tab,
+// with no check that the tab's own url matches the intended target - if
+// LinkedIn ever routes through an intermediate page (a checkpoint, an
+// auth re-check) before landing on the real one, this would report
+// navCompleted: true while the content script never runs on the intended
+// page at all, producing exactly this symptom. finalUrl (from the same
+// listener callback's own `tab` argument, no extra API call needed) lets a
+// future debugSamples entry confirm or rule this out before changing any
+// behavior based on it.
 function navigateAndWaitResolve(tabId, url) {
   return new Promise((resolve) => {
     let settled = false;
@@ -102,15 +137,15 @@ function navigateAndWaitResolve(tabId, url) {
       if (!settled) {
         settled = true;
         chrome.tabs.onUpdated.removeListener(listener);
-        resolve({ navCompleted: false });
+        resolve({ navCompleted: false, finalUrl: null });
       }
     }, NAV_TIMEOUT_MS);
-    function listener(updatedTabId, changeInfo) {
+    function listener(updatedTabId, changeInfo, tab) {
       if (updatedTabId === tabId && changeInfo.status === "complete" && !settled) {
         settled = true;
         clearTimeout(timeout);
         chrome.tabs.onUpdated.removeListener(listener);
-        resolve({ navCompleted: true });
+        resolve({ navCompleted: true, finalUrl: tab?.url || null });
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
@@ -118,6 +153,21 @@ function navigateAndWaitResolve(tabId, url) {
   });
 }
 
+// Reported directly with real evidence, after finalUrl (above) ruled out
+// the "wrong page loaded" theory: 4 of 5 hard timeouts in one test run had
+// finalUrl exactly matching the intended URL - the tab genuinely landed on
+// the right page, "complete" fired correctly, and the content script's
+// message still never arrived. The real bug: this used to be called only
+// AFTER navigateAndWaitResolve resolved, i.e. only after the tab's
+// "complete" event (the full load, including subresources). But a
+// document_idle content script typically runs around DOMContentLoaded,
+// which on a JS-heavy SPA like LinkedIn usually fires BEFORE "complete" -
+// so the content script can find its result and call sendMessage before
+// this function's own listener is even registered, and that message is
+// simply lost, with no error anywhere (matches the symptom exactly: no
+// caughtError, no content-script-side timeout, just silence). Callers now
+// invoke this BEFORE starting navigation (see runCompanyIdResolution) so
+// the listener is live for the entire navigation, not just after it.
 function waitForResolveResult(expectedName) {
   const expected = normalizeName(expectedName);
   return new Promise((resolve) => {
@@ -146,7 +196,11 @@ function waitForResolveResult(expectedName) {
   });
 }
 
-const MAX_DEBUG_SAMPLES = 3;
+// Bumped from 3: actively hunting the still-open hard-timeout mystery right
+// now, and a 10-company test run has had up to 5 timeouts in one go - 3
+// samples wasn't enough to see the new finalUrl field across more than a
+// couple of them at once.
+const MAX_DEBUG_SAMPLES = 8;
 
 // Visits each company one at a time, paced like the other extraction
 // modules, and resolves with:
@@ -189,14 +243,19 @@ export async function runCompanyIdResolution(companies, { onProgress } = {}) {
       // stripped form - namesMatch's substring check would likely tolerate
       // either form, but there's no reason to search for one name and
       // compare against a different one when both can be identical.
-      const searchName = stripCountryQualifier(company.company);
+      const searchName = stripTrailingCorporateNoise(company.company);
       await chrome.storage.local.set({
         companyResolveActive: true,
         companyResolveTarget: searchName,
       });
-      const { navCompleted } = await navigateAndWaitResolve(tab.id, buildCompanyResolveUrl(searchName));
-      let { resolved, linkedinCompanyId, debug, companyPageUrl } = await waitForResolveResult(searchName);
+      // Registered BEFORE navigation starts, not after - see
+      // waitForResolveResult's own comment for why (a real listener race,
+      // confirmed via finalUrl evidence, not a guess).
+      const resultPromise = waitForResolveResult(searchName);
+      const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, buildCompanyResolveUrl(searchName));
+      let { resolved, linkedinCompanyId, debug, companyPageUrl } = await resultPromise;
       let usedFallback = false;
+      let fallbackFinalUrl = null;
       // A confident name with no id anywhere on the search page (the
       // "Acino" gap) - retry on the company's own page rather than giving
       // up, since companyPageUrl is only ever set once the name already
@@ -204,8 +263,10 @@ export async function runCompanyIdResolution(companies, { onProgress } = {}) {
       if (!resolved && companyPageUrl) {
         usedFallback = true;
         await sleep(randomDelay());
-        await navigateAndWaitResolve(tab.id, companyPageUrl);
-        const fallbackResult = await waitForResolveResult(searchName);
+        const fallbackResultPromise = waitForResolveResult(searchName);
+        const fallbackNav = await navigateAndWaitResolve(tab.id, companyPageUrl);
+        fallbackFinalUrl = fallbackNav.finalUrl;
+        const fallbackResult = await fallbackResultPromise;
         resolved = fallbackResult.resolved;
         linkedinCompanyId = fallbackResult.linkedinCompanyId;
         debug = fallbackResult.debug || debug;
@@ -215,7 +276,19 @@ export async function runCompanyIdResolution(companies, { onProgress } = {}) {
       else if (!resolved) notConfidentCount++;
       if (resolved && linkedinCompanyId) results.push({ key: company.key, linkedinCompanyId });
       if (!resolved && debug && debugSamples.length < MAX_DEBUG_SAMPLES) {
-        debugSamples.push({ company: company.company, navCompleted, usedFallback, ...debug });
+        // finalUrl/fallbackFinalUrl - see navigateAndWaitResolve's own
+        // comment: lets a hard timeout distinguish "the tab genuinely
+        // landed on the intended page and the content script still never
+        // responded" from "it landed somewhere else entirely" before
+        // changing any behavior based on it.
+        debugSamples.push({
+          company: company.company,
+          navCompleted,
+          finalUrl,
+          usedFallback,
+          ...(usedFallback ? { fallbackFinalUrl } : {}),
+          ...debug,
+        });
       }
       if (i < companies.length - 1) await sleep(randomDelay());
     }

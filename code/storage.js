@@ -519,6 +519,55 @@ export function containsWholeWord(haystackLower, keyword) {
   return new RegExp(`\\b${escapeRegExp(keyword.toLowerCase())}\\b`, "i").test(haystackLower);
 }
 
+// Legal-entity suffixes and generic corporate-structure/regional words that
+// otherwise make an identical company fail to match itself - e.g. a
+// configured "Zühlke" vs a scraped "Zühlke Engineering AG", or a configured
+// "PageGroup Switzerland" vs a scraped plain "PageGroup". Stripped as whole
+// words (never mid-word) from BOTH the configured keyword and the lead's own
+// company text before comparing, in EITHER direction - reported directly:
+// "How do I handle when I put a company name without the AG/Ltd/Inc part,
+// and it appears with, or vice versa? ... <company name> Switzerland, or
+// vice versa? ... <company name> Group, or vice versa?" Deliberately kept to
+// pure corporate-boilerplate tokens (no partial/fuzzy typo tolerance), so it
+// can't accidentally treat two genuinely different companies as the same one.
+// Exported (v0.29.36) - company-resolve-extraction.js reuses this exact list
+// to strip the same kind of noise from a company name before searching for
+// it on LinkedIn: confirmed live that "ARYZTA AG" gets no confident match on
+// LinkedIn's Companies tab, but "ARYZTA" alone finds the real, verified
+// company immediately - the same underlying problem as the country-
+// qualifier fix (v0.29.28) this generalizes, not a new mechanism.
+export const COMPANY_SUFFIX_NOISE_WORDS = new Set([
+  "ag", "gmbh", "sa", "sarl", "ltd", "limited", "llc", "inc", "incorporated", "corp", "corporation",
+  "plc", "co", "kg", "kgaa", "nv", "bv", "oy", "ab", "as", "spa", "srl", "pte", "pty",
+  "group", "holding", "holdings", "international", "switzerland", "schweiz", "suisse", "svizzera",
+]);
+
+function normalizeCompanyForMatch(text) {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[.,()]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word && !COMPANY_SUFFIX_NOISE_WORDS.has(word))
+    .join(" ")
+    .trim();
+}
+
+// Bidirectional: after stripping suffix noise from both sides, matches if
+// EITHER string's remaining words are found (as a whole phrase) inside the
+// other's. Bidirectional specifically because either side could be the
+// "shorter" one - a configured keyword missing "AG" that a scraped company
+// name has, or a configured keyword that spells out "Switzerland"/"Group"
+// that the scraped company name omits. Exported for a settings/sidepanel
+// preview and for tests; storage.js's own callers go through
+// matchesNegativeTopic below.
+export function matchesCompanyKeyword(companyText, keyword) {
+  if (!companyText || !keyword) return false;
+  const normCompany = normalizeCompanyForMatch(companyText);
+  const normKeyword = normalizeCompanyForMatch(keyword);
+  if (!normCompany || !normKeyword) return false;
+  return containsWholeWord(normCompany, normKeyword) || containsWholeWord(normKeyword, normCompany);
+}
+
 // A job lead's searchable text is its title+company; a post lead's is its
 // snippet+headline - the same fields (and the same word-boundary matching)
 // a real search Topic would be checked against, so a negative topic behaves
