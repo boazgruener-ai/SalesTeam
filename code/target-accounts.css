@@ -26,6 +26,17 @@ h1 {
   gap: 8px;
 }
 
+.warning-banner {
+  background: #fff8e1;
+  border: 1px solid #e6b800;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5c4a00;
+}
+
 #version-text {
   font-size: 12px;
   font-weight: normal;

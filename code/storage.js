@@ -158,6 +158,22 @@ export async function saveCompanyContext(context) {
   await chrome.storage.local.set({ [COMPANY_CONTEXT_KEY]: context });
 }
 
+// The salesperson's own company website - added to the onboarding wizard
+// (Phase 2) as groundwork for a future AI-assisted draft of Company
+// Context/Ideal Customer Profile from the site's own content (not built
+// yet - this just captures the URL so that future pass has something to
+// read).
+const COMPANY_WEBSITE_KEY = "companyWebsite";
+
+export async function getCompanyWebsite() {
+  const data = await chrome.storage.local.get(COMPANY_WEBSITE_KEY);
+  return data[COMPANY_WEBSITE_KEY] || "";
+}
+
+export async function saveCompanyWebsite(website) {
+  await chrome.storage.local.set({ [COMPANY_WEBSITE_KEY]: website });
+}
+
 // Deliberately separate from Company Context above - "what we offer" (the
 // product/service) and "who we're targeting" (company size, geography, what
 // they're investing in) are different concepts a salesperson thinks about
@@ -171,6 +187,165 @@ export async function getIdealCustomerProfile() {
 
 export async function saveIdealCustomerProfile(profile) {
   await chrome.storage.local.set({ [IDEAL_CUSTOMER_PROFILE_KEY]: profile });
+}
+
+// ---------------------------------------------------------------------
+// Onboarding wizard (Discovery Phase 1/2) - captures what a Discovery scan
+// (Phase 5/6, not yet built) should search for. Each key below follows this
+// file's existing per-concern get/save pattern; see PRD 6.20 and the plan
+// file for the full feature this scaffolds.
+
+// Which companies to search for. Deliberately reuses locationFilterConfig's
+// own {mode, continents, countries} shape for the location piece (below) -
+// same concept, restricted at the UI level to whatever geo-urn-map.js has a
+// confirmed geoUrn for, since (unlike Location Filter, which only classifies
+// already-scraped text) this one has to build a real LinkedIn search facet.
+const TARGET_UNIVERSE_CONFIG_KEY = "targetUniverseConfig";
+const DEFAULT_TARGET_UNIVERSE_CONFIG = {
+  locationMode: "country", continents: [], countries: [],
+  sizeMode: "topN", topN: 200, minEmployees: null, maxEmployees: null,
+  maxCompanies: 200, industries: [],
+};
+
+export async function getTargetUniverseConfig() {
+  const data = await chrome.storage.local.get(TARGET_UNIVERSE_CONFIG_KEY);
+  return { ...DEFAULT_TARGET_UNIVERSE_CONFIG, ...(data[TARGET_UNIVERSE_CONFIG_KEY] || {}) };
+}
+
+export async function saveTargetUniverseConfig(config) {
+  await chrome.storage.local.set({ [TARGET_UNIVERSE_CONFIG_KEY]: config });
+}
+
+// Who to look for once a target company is found - distinct from Topics'
+// keywords/andKeywords (sidepanel.js), which match post content, not a
+// person's title.
+const TARGET_CONTACT_PROFILE_KEY = "targetContactProfile";
+const DEFAULT_TARGET_CONTACT_PROFILE = { exactTitles: [], titleKeywords: [] };
+
+export async function getTargetContactProfile() {
+  const data = await chrome.storage.local.get(TARGET_CONTACT_PROFILE_KEY);
+  return { ...DEFAULT_TARGET_CONTACT_PROFILE, ...(data[TARGET_CONTACT_PROFILE_KEY] || {}) };
+}
+
+export async function saveTargetContactProfile(profile) {
+  await chrome.storage.local.set({ [TARGET_CONTACT_PROFILE_KEY]: profile });
+}
+
+// The user's own ranked T-shirt-size priority guideline, feeding a future
+// company-scoring pass (PRD 6.20 Phase 8, not yet built).
+const ACCOUNT_PRIORITY_GUIDELINES_KEY = "accountPriorityGuidelines";
+const DEFAULT_ACCOUNT_PRIORITY_GUIDELINES = {
+  criteriaOrder: ["size", "location", "industry"],
+  topSize: null, topLocations: [], topIndustries: [],
+};
+
+export async function getAccountPriorityGuidelines() {
+  const data = await chrome.storage.local.get(ACCOUNT_PRIORITY_GUIDELINES_KEY);
+  return { ...DEFAULT_ACCOUNT_PRIORITY_GUIDELINES, ...(data[ACCOUNT_PRIORITY_GUIDELINES_KEY] || {}) };
+}
+
+export async function saveAccountPriorityGuidelines(guidelines) {
+  await chrome.storage.local.set({ [ACCOUNT_PRIORITY_GUIDELINES_KEY]: guidelines });
+}
+
+// LinkedIn company-page slugs (e.g. "neoxam") to exclude from Discovery
+// results - deliberately identity-based, not name-based, to sidestep the
+// legal-suffix/short-name/misspelling mess 6.16's resolver already had to
+// solve for a different reason. See parseLinkedinCompanySlug below for how
+// a pasted URL becomes one of these.
+const COMPETITOR_COMPANY_SLUGS_KEY = "competitorCompanySlugs";
+
+export async function getCompetitorCompanySlugs() {
+  const data = await chrome.storage.local.get(COMPETITOR_COMPANY_SLUGS_KEY);
+  return data[COMPETITOR_COMPANY_SLUGS_KEY] || [];
+}
+
+export async function saveCompetitorCompanySlugs(slugs) {
+  await chrome.storage.local.set({ [COMPETITOR_COMPANY_SLUGS_KEY]: slugs });
+}
+
+// Same identity-based exclusion as competitorCompanySlugs above, same
+// reason (a recruiter's name is just as prone to legal-suffix/short-name
+// mismatches), but kept as its own separate list rather than merged -
+// mirrors how the *existing* Negative Topics feature (6.2) already keeps
+// "Competitor Blocklist" and "Known Recruiting Firms" as two distinct
+// named lists, not one, so a future "why was this excluded" view stays
+// meaningful. Not the same mechanism as that existing feature, though -
+// this one is for the new Discovery company-search step (Phase 5, not yet
+// built), which scrapes Company Search cards directly; Negative Topics
+// text-matches already-scraped Post/Job leads, a different pipeline
+// entirely.
+const RECRUITER_COMPANY_SLUGS_KEY = "recruiterCompanySlugs";
+
+// Well-known global staffing/recruiting/executive-search firms, seeded so
+// the onboarding wizard's Recruiters step (Phase 2) only asks the user to
+// add local ones - each slug confirmed live against a real LinkedIn company
+// page, per this project's "never guess a LinkedIn URL" discipline (one
+// name, "Panda International," has an unrelated same-named company; the
+// slug here is the verified Staffing and Recruiting one, not a guess).
+export const DEFAULT_RECRUITER_COMPANY_SLUGS = [
+  "adecco", "michael-page", "robert-walters", "hays", "harvey-nash", "manpowergroup",
+  "heidrick-&-struggles", "spencer-stuart", "lionstep", "panda-international", "jobgether",
+];
+
+export async function getRecruiterCompanySlugs() {
+  const data = await chrome.storage.local.get(RECRUITER_COMPANY_SLUGS_KEY);
+  return data[RECRUITER_COMPANY_SLUGS_KEY] || null;
+}
+
+export async function saveRecruiterCompanySlugs(slugs) {
+  await chrome.storage.local.set({ [RECRUITER_COMPANY_SLUGS_KEY]: slugs });
+}
+
+// Gates whether the onboarding wizard is required (background.js's
+// onInstalled) and whether a Discovery scan is allowed to start
+// (sidepanel.js/target-accounts.js). null until every wizard step has been
+// walked through and confirmed at least once.
+const ONBOARDING_COMPLETED_AT_KEY = "onboardingCompletedAt";
+
+export async function getOnboardingCompletedAt() {
+  const data = await chrome.storage.local.get(ONBOARDING_COMPLETED_AT_KEY);
+  return data[ONBOARDING_COMPLETED_AT_KEY] || null;
+}
+
+export async function markOnboardingCompleted() {
+  const completedAt = Date.now();
+  await chrome.storage.local.set({ [ONBOARDING_COMPLETED_AT_KEY]: completedAt });
+  return completedAt;
+}
+
+// Reported directly: a real completed run took "tens of minutes to several
+// hours" (25+ competitor LinkedIn URLs alone was the slowest part), so
+// losing progress on an accidental tab close is a real cost, not a
+// hypothetical one. Every step already auto-saves its own real value as
+// soon as it's entered (below) - this just remembers which step to land on
+// when the wizard is reopened, so a user isn't forced back through steps
+// they already did. Not a distinct "Save Draft" action - consistent with
+// this codebase's existing auto-save-always convention (e.g. Settings),
+// saving happens continuously and reopening the page is itself "resume."
+const ONBOARDING_PROGRESS_STEP_KEY = "onboardingProgressStepIndex";
+
+export async function getOnboardingProgressStepIndex() {
+  const data = await chrome.storage.local.get(ONBOARDING_PROGRESS_STEP_KEY);
+  return data[ONBOARDING_PROGRESS_STEP_KEY] || 0;
+}
+
+export async function saveOnboardingProgressStepIndex(index) {
+  await chrome.storage.local.set({ [ONBOARDING_PROGRESS_STEP_KEY]: index });
+}
+
+// Parses a pasted LinkedIn company-page URL down to its slug ("neoxam" from
+// "https://www.linkedin.com/company/neoxam/about/?trk=..."), tolerating a
+// missing protocol, a trailing sub-path, and query/hash noise. A LinkedIn
+// company page can also be addressed by pure numeric ID instead of a slug
+// (e.g. "/company/1035/") - returned as-is, since Phase 5's own card-scraped
+// "slug" for such a company would equally just be that same numeric string,
+// so the exact-match comparison still works either way. Returns null (never
+// a guess) for anything that isn't recognizably a /company/<id-or-slug>/ URL.
+export function parseLinkedinCompanySlug(url) {
+  if (!url) return null;
+  const match = String(url).trim().match(/linkedin\.com\/company\/([^/?#]+)/i);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 // Describes the desired Sales Mentor character (background, style) - seeded

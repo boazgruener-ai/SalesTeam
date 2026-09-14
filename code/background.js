@@ -81,8 +81,16 @@ const MAX_OR_TERMS = 6;
 // evidence behind it.
 const AUTHOR_COMPANY_CHUNK_SIZE = 100;
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  // A genuinely fresh install has no targeting profile for a future
+  // Discovery scan (PRD 6.20) to read - walk the user through it once,
+  // directly, rather than leaving it to be discovered later as a blocking
+  // banner (sidepanel.js/target-accounts.js still show that banner too, for
+  // anyone who closes this tab without finishing).
+  if (details.reason === "install") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
+  }
 });
 
 function chunk(array, size) {

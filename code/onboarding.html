@@ -1,0 +1,256 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam Setup</title>
+  <link rel="icon" href="icons/icon16.png" />
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <header id="page-header">
+    <h1>SalesTeam Setup <span id="version-text"></span></h1>
+    <p class="page-subtitle">
+      Tell us who you're looking for. This scopes every future Target Account &amp; Contact Discovery scan -
+      you can change any of it later from Settings' "Edit Setup".
+    </p>
+    <div id="step-progress"></div>
+  </header>
+
+  <main id="onboarding-main">
+
+    <!-- Step 1: Location -->
+    <section id="enter-location" class="wizard-step">
+      <h2>Where are your target companies?</h2>
+      <p class="step-intro">
+        This scopes which companies we search for. Only countries with a live-verified LinkedIn location code
+        are offered below - more are added over time.
+      </p>
+      <label for="location-mode-select">Filter by</label>
+      <select id="location-mode-select">
+        <option value="continent">Continent</option>
+        <option value="country">Country</option>
+      </select>
+      <div id="location-continents-wrap">
+        <label><input type="checkbox" class="location-continent-checkbox" value="northAmerica" /> North America</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="latinAmerica" /> Latin America</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="europe" /> Europe (including UK and Switzerland)</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="africa" /> Africa</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="middleEast" /> Middle East</label>
+        <label><input type="checkbox" class="location-continent-checkbox" value="southEastAsia" /> South East Asia</label>
+      </div>
+      <div id="location-countries-wrap">
+        <div class="dual-listbox">
+          <div class="dual-listbox-col">
+            <label for="location-countries-search">Available (confirmed countries only)</label>
+            <input type="text" id="location-countries-search" placeholder="Search…" />
+            <select id="location-countries-available" multiple size="8"></select>
+          </div>
+          <div class="dual-listbox-buttons">
+            <button type="button" id="location-country-add-btn" title="Add the selected countries">→</button>
+            <button type="button" id="location-country-remove-btn" title="Remove the selected countries">←</button>
+          </div>
+          <div class="dual-listbox-col">
+            <label>Targeting (<span id="location-countries-count">0</span>)</label>
+            <select id="location-countries-selected" multiple size="8"></select>
+          </div>
+        </div>
+        <p class="field-hint">Double-click a country to move it, or select one or more (Ctrl/Shift-click) and use the arrows.</p>
+      </div>
+      <p id="location-error" class="step-error" hidden>Choose at least one continent or country.</p>
+      <div class="wizard-buttons">
+        <button type="button" class="step-next-btn" data-step="location">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 2: Size + cap -->
+    <section id="enter-size" class="wizard-step" hidden>
+      <h2>What size companies?</h2>
+      <p class="step-intro">
+        Either target the N largest matching companies, or a specific employee-count range. Either way, a
+        Discovery scan never returns more than the cap below in one run.
+      </p>
+      <label for="size-mode-select">Size targeting</label>
+      <select id="size-mode-select">
+        <option value="topN">Top N largest</option>
+        <option value="range">Employee-count range</option>
+      </select>
+      <div id="size-topn-wrap">
+        <label for="size-topn-input">Top N largest companies</label>
+        <input type="number" id="size-topn-input" min="1" value="200" />
+      </div>
+      <div id="size-range-wrap" hidden>
+        <label for="size-min-input">Minimum employees (optional)</label>
+        <input type="number" id="size-min-input" min="1" />
+        <label for="size-max-input">Maximum employees (optional)</label>
+        <input type="number" id="size-max-input" min="1" />
+      </div>
+      <label for="size-max-companies-input">Maximum companies per Discovery run</label>
+      <input type="number" id="size-max-companies-input" min="1" max="500" value="200" />
+      <p class="field-hint">Hard-capped at 500 to keep any one run's LinkedIn touch-budget cost bounded.</p>
+      <p id="size-error" class="step-error" hidden></p>
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="size">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 3: Industry (optional) -->
+    <section id="enter-industry" class="wizard-step" hidden>
+      <h2>Any specific industries? (optional)</h2>
+      <p class="step-intro">
+        Leave unchecked for no industry restriction. Only industries with a live-verified LinkedIn code are
+        offered below (same reasoning as Location) - more are added over time; LinkedIn's own catalog has
+        200+ entries in total.
+      </p>
+      <div id="industry-checkbox-wrap" class="checkbox-list"></div>
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="industry">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 4: Priority guidelines -->
+    <section id="enter-priority" class="wizard-step" hidden>
+      <h2>How should we prioritize what we find?</h2>
+      <p class="step-intro">
+        Rank the three criteria by importance, then pick your top pick(s) in each - drawn from what you
+        entered on the previous steps. This feeds automatic company scoring once Discovery scanning ships.
+      </p>
+      <label for="priority-rank-1">Most important</label>
+      <select id="priority-rank-1"></select>
+      <label for="priority-rank-2">2nd</label>
+      <select id="priority-rank-2"></select>
+      <label for="priority-rank-3">3rd</label>
+      <select id="priority-rank-3"></select>
+      <p id="priority-rank-error" class="step-error" hidden>Each rank must be a different criterion.</p>
+
+      <label for="priority-top-size">Top size bucket</label>
+      <select id="priority-top-size">
+        <option value="">(no preference)</option>
+        <option value="Small">Small</option>
+        <option value="Medium">Medium</option>
+        <option value="Large">Large</option>
+      </select>
+
+      <label>Top location(s) - up to 3</label>
+      <div id="priority-top-locations-wrap" class="checkbox-list"></div>
+
+      <label>Top industries - up to 2</label>
+      <div id="priority-top-industries-wrap" class="checkbox-list"></div>
+      <p id="priority-top-industries-empty" class="field-hint" hidden>No industries entered on the previous step.</p>
+
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="priority">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 5: Company Context -->
+    <section id="enter-company-context" class="wizard-step" hidden>
+      <h2>What do you sell?</h2>
+      <p class="step-intro">
+        Describe your company and what you actually offer. Shared with AI drafting, the Sales Mentor, and
+        Customer Voice - same field as Settings' "What We Offer".
+      </p>
+      <textarea id="company-context-input" placeholder="e.g. We specialize in AI-based automation and process optimization for mid/large companies, using Microsoft, Google and IBM tooling plus custom-built solutions we've already developed."></textarea>
+      <label for="company-website-input">Company website (optional)</label>
+      <input type="text" id="company-website-input" placeholder="https://yourcompany.com" />
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="company-context">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 6: Ideal Customer Profile -->
+    <section id="enter-icp" class="wizard-step" hidden>
+      <h2>Who's your ideal customer?</h2>
+      <p class="step-intro">
+        Company size, geography, what they're investing in - independent of what you offer. Same field as
+        Settings' "Ideal Customer Profile".
+      </p>
+      <textarea id="icp-input" placeholder="e.g. Mid-to-large Swiss companies actively investing in AI/digital transformation, with a dedicated innovation or digital team."></textarea>
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="icp">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 7: Target-contact profile -->
+    <section id="enter-contacts" class="wizard-step" hidden>
+      <h2>Who should we look for at each company?</h2>
+      <p class="step-intro">
+        Exact job titles, one per line, and/or broader title keywords, one per line. At least one of the two
+        is required - this is who a future contact-discovery scan searches each company for.
+      </p>
+      <label for="contacts-exact-titles-input">Exact titles</label>
+      <textarea id="contacts-exact-titles-input" placeholder="e.g. Chief AI Officer&#10;VP of Digital Transformation"></textarea>
+      <label for="contacts-title-keywords-input">Title keywords</label>
+      <textarea id="contacts-title-keywords-input" placeholder="e.g. AI&#10;Digital Transformation&#10;Innovation"></textarea>
+      <p id="contacts-error" class="step-error" hidden>Enter at least one exact title or title keyword.</p>
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="contacts">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 8: Competitors to exclude (optional) -->
+    <section id="enter-competitors" class="wizard-step" hidden>
+      <h2>Any competitors to exclude? (optional)</h2>
+      <p class="step-intro">
+        One LinkedIn company-page URL per line - not a company name, since names are too easy to mismatch
+        (legal suffixes, short vs. long names, misspellings). Each line is checked as you go.
+      </p>
+      <textarea id="competitors-input" placeholder="https://www.linkedin.com/company/example-competitor/"></textarea>
+      <div id="competitors-parsed-list"></div>
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="competitors">Next</button>
+      </div>
+    </section>
+
+    <!-- Step 9: Recruiters/staffing agencies to exclude (optional) -->
+    <section id="enter-recruiters" class="wizard-step" hidden>
+      <h2>Any recruiters or staffing agencies to exclude? (optional)</h2>
+      <p class="step-intro">
+        Same idea as competitors, and for the same reason - one LinkedIn company-page URL per line, not a
+        name. Pre-filled with well-known global agencies to save you the lookup; add your local ones and
+        remove any that don't apply, or clear the list entirely if you'd rather skip this.
+      </p>
+      <textarea id="recruiters-input" placeholder="https://www.linkedin.com/company/example-agency/"></textarea>
+      <div id="recruiters-parsed-list"></div>
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" class="step-next-btn" data-step="recruiters">Next</button>
+      </div>
+    </section>
+
+    <!-- Shared confirm view (content built per-step by onboarding.js) -->
+    <section id="confirm-view" class="wizard-step" hidden>
+      <h2>Confirm</h2>
+      <div id="confirm-summary"></div>
+      <div class="wizard-buttons">
+        <button type="button" id="confirm-change-btn">Change</button>
+        <button type="button" id="confirm-btn">Confirm</button>
+      </div>
+    </section>
+
+    <!-- Step 9: Finish -->
+    <section id="enter-finish" class="wizard-step" hidden>
+      <h2>Setup complete</h2>
+      <div id="finish-summary"></div>
+      <p class="field-hint">
+        Target Account &amp; Contact Discovery scanning itself isn't available in this build yet - your
+        targeting profile is saved and ready for when it ships. You can revisit any of this any time from
+        Settings' "Edit Setup".
+      </p>
+      <div class="wizard-buttons">
+        <button type="button" class="step-back-btn">Back</button>
+        <button type="button" id="finish-btn">Finish Setup</button>
+      </div>
+    </section>
+
+  </main>
+
+  <script type="module" src="onboarding.js"></script>
+</body>
+</html>

@@ -39,6 +39,7 @@ import {
   getIdealCustomerProfile,
   getOutputLanguage,
   getCustomerPersona,
+  getOnboardingCompletedAt,
 } from "./storage.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import {
@@ -1956,6 +1957,11 @@ function openLeadInDashboard(key) {
   chrome.tabs.create({ url: chrome.runtime.getURL(`dashboard.html#lead=${encodeURIComponent(key)}`) });
 }
 
+document.getElementById("open-onboarding-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
+});
+
 function lastCommunicationFor(leadsForEntity) {
   const contacted = leadsForEntity
     .filter((l) => ["Contacted", "Responded", "Converted"].includes(l.status))
@@ -2371,6 +2377,10 @@ window.addEventListener("hashchange", route);
 
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+  // Same gate as the side panel's own onboarding-required banner - a
+  // Discovery scan (PRD 6.20, not yet built) will need this page too, so
+  // flag the gap here as well rather than only where a scan is triggered.
+  document.getElementById("onboarding-required-banner").hidden = Boolean(await getOnboardingCompletedAt());
   loadHiddenColumns();
   loadFilterSortState();
   loadContactHiddenColumns();

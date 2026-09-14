@@ -1,6 +1,6 @@
 # SalesTeam — Product Requirements Document
 
-**Status:** Living document, reflects the shipped product as of v0.30.0.
+**Status:** Living document, reflects the shipped product as of v0.31.0.
 **Note:** No PRD file existed for this project before this document — it was assembled now from the full
 build history to serve as the canonical, up-to-date spec going forward. Update it alongside future features
 rather than letting it drift from RELEASE_NOTES.md.
@@ -1758,20 +1758,27 @@ Excel work just to reach a usable state. This feature makes the extension able t
 universe itself. Full phased plan on file (`giggly-watching-feather.md`); summarized here as work lands.
 Decided directly with the user: the onboarding wizard's country/region coverage should eventually span
 LinkedIn's full country list (each needing a live-verified geoUrn, added incrementally — no LinkedIn URL
-parameter is ever guessed in this codebase, always confirmed live first); discovered companies/contacts stay
-in their own storage, never merged into the ChatGPT-imported `targetAccountsWorkbook` (dashboards combine
-both sources for display, tagged by origin); every onboarding step (location, size/cap, industry, priority
-guidelines, company context, ideal customer profile, target-contact titles/keywords) must be completed
-before a Discovery scan can start, not just the mechanically-necessary ones, since Company Context/ICP also
-feed the new company-level AI prioritization pass. Planned phases: a required first-run onboarding wizard
-(none exists today); a live-verification spike for LinkedIn's company-search size/industry facets and
-People Search's multi-title/company-scoping support; a resumable multi-day scan queue (company discovery,
-then per-company contact discovery, paced under 6.20's unified touch budget, no `chrome.alarms` — always a
-deliberate "Continue" click); and a lightweight in-extension company-prioritization pass (reusing the
-existing `prioritizeLeads()`/tool-call pattern from 6.11, informed by a simple ranked Size/Location/Industry
+parameter is ever guessed in this codebase, always confirmed live first); discovered companies/contacts merge
+directly into the same ChatGPT-imported `targetAccountsWorkbook` (tagged `source: "discovered"` vs.
+`"imported"`, dashboards show both together) rather than living in separate storage — revised from an
+earlier "keep fully separate" decision once the user raised the real near-term case: his own pilot (his
+wife's sales team, who already has a rich ChatGPT-researched dataset) benefits from one unified view, and a
+brand-new customer with no ChatGPT workbook at all never pays any cost for that either way; every onboarding
+step (location, size/cap, industry, priority guidelines, competitor exclusion, recruiter exclusion, company
+context, ideal customer profile, target-contact titles/keywords) must be completed before a Discovery scan
+can start, not just the mechanically-necessary ones, since Company Context/ICP also feed the new
+company-level AI prioritization pass. Planned phases: a required first-run onboarding wizard; a
+live-verification spike for LinkedIn's company-search size/industry facets and People Search's
+multi-title/company-scoping support; a resumable multi-day scan queue (company discovery, then per-company
+contact discovery, paced under 6.20's unified touch budget, no `chrome.alarms` — always a deliberate
+"Continue" click); and a lightweight in-extension company-prioritization pass (reusing the existing
+`prioritizeLeads()`/tool-call pattern from 6.11, informed by a simple ranked Size/Location/Industry
 "T-shirt size" priority guideline) so discovered companies get a usable priority without needing ChatGPT's
-deep research behind them. v0.30.0 shipped the first, self-contained phase: the unified safety-budget
-enforcement described in Section 7 below.
+deep research behind them. v0.30.0 shipped the first phase (the unified safety-budget enforcement described
+in Section 7 below); v0.31.0 shipped the second — the onboarding wizard itself, fully built and tested
+end-to-end by the user for a real second-team pilot, with company/industry exclusion lists and a real
+starter set of confirmed countries/industries. Phases 4-8 (the resumable scan queue, the actual company/
+contact discovery scan modules, merging into the workbook, and AI prioritization) remain unbuilt.
 
 ## 7. Non-functional requirements
 
@@ -1843,4 +1850,4 @@ enforcement described in Section 7 below.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.30.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.31.0**.

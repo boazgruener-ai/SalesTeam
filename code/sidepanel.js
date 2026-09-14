@@ -37,6 +37,7 @@ import {
   saveNegativeTopics,
   reapplyBlocklist,
   getAnthropicApiKey,
+  getOnboardingCompletedAt,
   getCompanyContext,
   getIdealCustomerProfile,
   appendActivityLog,
@@ -392,6 +393,11 @@ openTargetAccountsBtn.addEventListener("click", () => {
 // user land on Accounts and click the in-page tab every time.
 openTargetContactsBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: chrome.runtime.getURL("target-accounts.html#contacts") });
+});
+
+document.getElementById("open-onboarding-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
 });
 
 addTopicBtn.addEventListener("click", () => {
@@ -1607,6 +1613,12 @@ async function init() {
   const hasApiKey = Boolean((await getAnthropicApiKey()) || "");
   const hasSomeData = !noTopicsConfigured || !noLeadsFound;
   document.getElementById("missing-api-key-banner").hidden = hasApiKey || !hasSomeData;
+
+  // Setup (PRD 6.20 Phase 1/2) walks a fresh install through this
+  // automatically (background.js's onInstalled), but a user who closed that
+  // tab without finishing, or upgraded from a version that predates it,
+  // needs a way back in too.
+  document.getElementById("onboarding-required-banner").hidden = Boolean(await getOnboardingCompletedAt());
 }
 
 init();
