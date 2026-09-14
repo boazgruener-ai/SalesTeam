@@ -23,12 +23,18 @@ import {
   getLastBulkChange,
   undoLastBulkChange,
   setLeadCompany,
+  setLeadLocation,
   applyExtractedCompanies,
   normalizeCompanyName,
   partitionLeadsByTargetAccount,
   tagPrioritiesWithTargetAccountSignal,
   appendActivityLog,
   reapplyLocationFilter,
+  classifyLocation,
+  applyPeopleSearchComparison,
+  getTargetAccountsWorkbook,
+  findTargetContactMatch,
+  contactKeyFor,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
@@ -43,7 +49,13 @@ import {
   extractCompaniesForLeads,
   buildAccountSummaryPrompt,
 } from "./agent-shared.js";
-import { leadsMissingProfileData, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
+import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
+import {
+  leadsForPeopleSearchComparison,
+  uniquePeopleSearchAuthorCount,
+  peopleSearchConfirmText,
+  runPeopleSearchComparison,
+} from "./people-search-extraction.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -81,6 +93,8 @@ const extractCompaniesProfilesBtn = document.getElementById("extract-companies-p
 const extractCompaniesProfilesStatusEl = document.getElementById("extract-companies-profiles-status");
 const applyLocationFilterBtn = document.getElementById("apply-location-filter-btn");
 const applyLocationFilterStatusEl = document.getElementById("apply-location-filter-status");
+const peopleSearchCompareBtn = document.getElementById("people-search-compare-btn");
+const peopleSearchCompareStatusEl = document.getElementById("people-search-compare-status");
 
 const SHOW_IRRELEVANT_STORAGE_KEY = "salesteam-dashboard-show-irrelevant";
 let showIrrelevant = false;
@@ -92,6 +106,12 @@ const collapsedCompanyGroups = new Set();
 const accountSummaryCache = new Map(); // normalized company name -> summary text, session-only
 
 let allLeads = [];
+// Target Contacts (PRD 6.19) - loaded once, not re-fetched on every
+// loadLeads() call (leads refresh far more often than the workbook does -
+// see the dedicated targetAccountsWorkbook branch in the storage.onChanged
+// listener below instead). Drives the Creator column's "known Target
+// Contact" badge/link.
+let targetContacts = [];
 let lastScanStartedAt = 0;
 let messageTemplates = [];
 let valueAddOffers = [];
@@ -128,6 +148,16 @@ function leadContent(lead) {
 
 function leadCreatorName(lead) {
   return lead.type === "job" ? (lead.company || "Unknown company") : (lead.author || "Unknown");
+}
+
+// Reported directly: the CSV export had no Company column at all for Post
+// leads (leadCreatorName above returns the author's name, not their
+// employer) - blocked a real analysis (cross-referencing new leads against
+// the Target Accounts list) that the JSON leads backup could already do via
+// its own company field. Job leads already carry company in leadCreatorName,
+// but this gives both lead types their own explicit, unambiguous column.
+function leadCompany(lead) {
+  return lead.company || "";
 }
 
 function leadCreatorUrl(lead) {
@@ -217,6 +247,10 @@ async function loadLeads() {
   const [resultsMap, scanStartedAt] = await Promise.all([getResults(), getLastScanStartedAt()]);
   allLeads = sortResultsByRelevance(resultsMap);
   lastScanStartedAt = scanStartedAt;
+}
+
+async function loadTargetContacts() {
+  targetContacts = (await getTargetAccountsWorkbook()).contacts;
 }
 
 // ---------------------------------------------------------------------
@@ -337,6 +371,7 @@ function renderAllPieCharts() {
 const MIN_COL_WIDTH = 70;
 const COL_WIDTHS_STORAGE_KEY = "salesteam-dashboard-column-widths";
 const HIDDEN_COLUMNS_STORAGE_KEY = "salesteam-dashboard-hidden-columns";
+const FILTER_SORT_STATE_STORAGE_KEY = "salesteam-dashboard-filter-sort-state";
 
 // "NEW" here means "first appeared in the most recent scan" - a different
 // concept from status "New" (meaning "not yet acted on"), see the storage.js
@@ -372,6 +407,11 @@ function contentCell(td, lead) {
   });
 }
 
+// Reported directly (PRD 6.19): flag when a post's author is already a
+// known, vetted Target Contact - findTargetContactMatch (storage.js,
+// already built for the priority-signal feature, 6.11) already returns
+// null for a job lead (no individual author), so this is safe to call
+// unconditionally without a type check here.
 function creatorCell(td, lead) {
   const creatorUrl = leadCreatorUrl(lead);
   if (creatorUrl) {
@@ -379,7 +419,23 @@ function creatorCell(td, lead) {
     link.className = "creator-link";
     td.appendChild(link);
   } else {
-    td.textContent = leadCreatorName(lead);
+    td.appendChild(document.createTextNode(leadCreatorName(lead)));
+  }
+
+  const contact = findTargetContactMatch(lead, targetContacts);
+  if (contact) {
+    const badge = document.createElement("a");
+    badge.className = "target-contact-badge";
+    badge.textContent = "🎯 Target Contact";
+    badge.title = `${contact.fullName} - ${contact.jobTitle || "known Target Contact"} - open their Contact view`;
+    badge.href = "#";
+    badge.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const contactKey = contactKeyFor(contact.company, contact.fullName);
+      chrome.tabs.create({ url: chrome.runtime.getURL(`target-accounts.html#contact=${encodeURIComponent(contactKey)}`) });
+    });
+    td.appendChild(badge);
   }
 }
 
@@ -387,8 +443,22 @@ function companyCell(td, lead) {
   td.textContent = lead.company || "—";
 }
 
+// Reported directly: a metro-only location ("Greater Hamburg Area") gives no
+// clue which country it's in without already knowing that city - appends the
+// classified country in parentheses when the raw text doesn't already spell
+// it out, using the same classifyLocation() the Location Filter itself
+// trusts, so this display hint and the filter's actual behavior can never
+// disagree. Display-only - never rewrites the lead's own stored location.
 function locationCell(td, lead) {
-  td.textContent = lead.location || "—";
+  const text = lead.location || "";
+  if (!text) {
+    td.textContent = "—";
+    return;
+  }
+  const classified = classifyLocation(text);
+  td.textContent = classified && !text.toLowerCase().includes(classified.country.toLowerCase())
+    ? `${text} (${classified.country})`
+    : text;
 }
 
 // A lead can match more than one Topic (e.g. re-scanning with an edited
@@ -479,6 +549,7 @@ function actionsCell(td, lead) {
     makeIconBtn("🧭", "Consult Mentor", () => openDetail(lead.key, "mentor")),
     makeIconBtn("✉", "Send Message", () => openDetail(lead.key, "draft")),
     makeIconBtn("🏢", "Assign Company", () => openAssignCompanyDialog(lead)),
+    makeIconBtn("📍", "Assign Location", () => openAssignLocationDialog(lead)),
     makeIconBtn(
       "✕",
       "Dismiss",
@@ -596,6 +667,35 @@ function loadHiddenColumns() {
   }
 }
 
+// Column filters/sort/search/status - persisted together as one blob since
+// they're always read/written together, unlike the display prefs above which
+// each have their own dedicated checkbox/select. Restoring these on open is
+// what saves re-excluding the same "Insufficient Evidence"/"Out of Scope"
+// rows (or re-picking a status/search) every single session.
+function saveFilterSortState() {
+  try {
+    localStorage.setItem(FILTER_SORT_STATE_STORAGE_KEY, JSON.stringify({
+      columnFilters, sortColumn, sortDirection, searchText, statusFilter,
+    }));
+  } catch {
+    // best-effort only, same as the other display prefs above
+  }
+}
+
+function loadFilterSortState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTER_SORT_STATE_STORAGE_KEY) || "{}");
+    if (saved.columnFilters && typeof saved.columnFilters === "object") columnFilters = saved.columnFilters;
+    if (typeof saved.sortColumn === "string") sortColumn = saved.sortColumn;
+    if (saved.sortDirection === "asc" || saved.sortDirection === "desc") sortDirection = saved.sortDirection;
+    if (typeof saved.searchText === "string") searchText = saved.searchText;
+    if (typeof saved.statusFilter === "string") statusFilter = saved.statusFilter;
+  } catch {
+    // ignore a corrupted/missing saved blob - defaults already set above
+  }
+  searchInput.value = searchText;
+}
+
 function saveHiddenColumns() {
   try {
     localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify([...hiddenColumns]));
@@ -696,6 +796,7 @@ function toggleColumnMenu(column, anchorEl) {
     ascBtn.addEventListener("click", () => {
       sortColumn = column.id;
       sortDirection = "asc";
+      saveFilterSortState();
       closeColumnMenu();
       renderTableFromScratch();
     });
@@ -706,6 +807,7 @@ function toggleColumnMenu(column, anchorEl) {
     descBtn.addEventListener("click", () => {
       sortColumn = column.id;
       sortDirection = "desc";
+      saveFilterSortState();
       closeColumnMenu();
       renderTableFromScratch();
     });
@@ -734,6 +836,7 @@ function toggleColumnMenu(column, anchorEl) {
 
     const applyFilter = () => {
       columnFilters[column.id] = { text: filterInput.value.trim(), emptyOnly: emptyOnlyCheckbox.checked };
+      saveFilterSortState();
       closeColumnMenu();
       renderTableFromScratch();
     };
@@ -751,6 +854,7 @@ function toggleColumnMenu(column, anchorEl) {
     clearBtn.textContent = "Clear";
     clearBtn.addEventListener("click", () => {
       columnFilters[column.id] = null;
+      saveFilterSortState();
       closeColumnMenu();
       renderTableFromScratch();
     });
@@ -1240,7 +1344,18 @@ document.getElementById("detail-status-select").addEventListener("change", async
   currentDetailLead = allLeads.find((l) => l.key === currentDetailLead.key) || currentDetailLead;
   renderAllPieCharts();
   renderTable();
-  appendActivityLog({ actor: "user", action: "lead_status_changed", label: `Lead "${leadTitle(currentDetailLead)}" status changed`, prevValue, newValue: event.target.value });
+  // relatedCompanyKey (PRD 6.19): best-effort only - lets an Account view's
+  // Activity Log pick this up when the lead's company matches a Target
+  // Account, without requiring every status-change site in this file to be
+  // updated for the new views to work at all.
+  appendActivityLog({
+    actor: "user",
+    action: "lead_status_changed",
+    label: `Lead "${leadTitle(currentDetailLead)}" status changed`,
+    prevValue,
+    newValue: event.target.value,
+    relatedCompanyKey: currentDetailLead.company ? normalizeCompanyName(currentDetailLead.company) : undefined,
+  });
 });
 
 document.getElementById("detail-draft-btn").addEventListener("click", async () => {
@@ -1413,7 +1528,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     alert("No leads to export.");
     return;
   }
-  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Connection", "Status", "Priority", "Priority Reason", "URL"];
+  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Company", "Connection", "Status", "Priority", "Priority Reason", "URL"];
   const rows = leads.map((lead) => [
     formatDateTime(leadDate(lead)),
     formatDateTime(lead.firstSeenAt),
@@ -1421,6 +1536,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     leadTitle(lead),
     leadContent(lead),
     leadCreatorName(lead),
+    leadCompany(lead),
     lead.connectionDegree || "",
     lead.status || "New",
     leadPriorityLabel(lead),
@@ -1623,11 +1739,11 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
     extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is missing a company or location with a profile URL to visit.";
     return;
   }
-  if (!confirm(profileVisitConfirmText(toVisit.length))) return;
+  if (!confirm(profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length))) return;
 
   extractCompaniesProfilesBtn.disabled = true;
   try {
-    const { found: scraped, debugSamples } = await runProfileExtraction(toVisit, {
+    const { found: scraped, debugSamples, hardTimeoutCount } = await runProfileExtraction(toVisit, {
       onProgress: (i, total) => { extractCompaniesProfilesStatusEl.textContent = `Visiting profile ${i} of ${total}…`; },
     });
     const found = scraped.length > 0 ? await applyExtractedCompanies(scraped) : 0;
@@ -1638,21 +1754,105 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
     const { blockedCount: locationBlockedCount } = await reapplyLocationFilter();
     await loadLeads();
     renderTable();
-    const missed = toVisit.length - found;
+    // Reported directly: a lead whose visit genuinely failed (a hard
+    // timeout - the page never responded at all, e.g. the v0.29.20
+    // profileUrl-matching bug) used to read identically to one that was
+    // visited fine but simply has no findable company/location - both just
+    // counted as "not found." Called out separately now so a real failure
+    // is visible right in the completion line, not just discoverable later
+    // by noticing the count didn't move.
     extractCompaniesProfilesStatusEl.textContent = `Done - ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} got a company/location from their profile` +
+      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error (will retry next run - see Activity Log)` : "") +
       (locationBlockedCount > 0 ? `, ${locationBlockedCount} newly marked Irrelevant by the Location Filter.` : ".");
     appendActivityLog({
       actor: "user",
       action: "companies_extracted_from_profiles",
-      label: `Extract Companies from Profiles: ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter` +
-        (missed > 0 && debugSamples.length > 0 ? ` - ${debugSamples.length} failure sample(s) attached for diagnosis` : ""),
-      newValue: { found, total: toVisit.length, locationBlockedCount, debugSamples },
+      label: `Extract Companies & Locations from Profiles: ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter` +
+        (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
+        (debugSamples.length > 0 ? ` - ${debugSamples.length} failure sample(s) attached for diagnosis` : ""),
+      newValue: { found, total: toVisit.length, locationBlockedCount, hardTimeoutCount, debugSamples },
     });
   } catch (err) {
     extractCompaniesProfilesStatusEl.textContent = `Something went wrong: ${err.message}`;
-    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies from Profiles failed", error: true, errorMessage: err.message });
+    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies & Locations from Profiles failed", error: true, errorMessage: err.message });
   } finally {
     extractCompaniesProfilesBtn.disabled = false;
+  }
+});
+
+// EXPERIMENTAL (v0.29.24, see PRD 6.15): compares the People-Search method
+// against whatever the profile-visit extraction already found, WITHOUT
+// overwriting it - purely to judge the new method's accuracy before trusting
+// it as a real source. Location agreement is judged via classifyLocation's
+// {country}, not exact string equality, since the same real place can be
+// phrased differently between the two methods (e.g. German vs English
+// spelling) without actually disagreeing.
+function locationsAgree(a, b) {
+  if (!a || !b) return null;
+  const ca = classifyLocation(a);
+  const cb = classifyLocation(b);
+  if (!ca || !cb) return null;
+  return ca.country === cb.country;
+}
+
+function companiesAgree(a, b) {
+  if (!a || !b) return null;
+  const na = a.trim().toLowerCase();
+  const nb = b.trim().toLowerCase();
+  return na.includes(nb) || nb.includes(na);
+}
+
+peopleSearchCompareBtn.addEventListener("click", async () => {
+  const toCheck = leadsForPeopleSearchComparison(allLeads);
+  if (toCheck.length === 0) {
+    peopleSearchCompareStatusEl.textContent = "Nothing to do - no Post lead with a known author is left unchecked.";
+    return;
+  }
+  if (!confirm(peopleSearchConfirmText(uniquePeopleSearchAuthorCount(toCheck), toCheck.length))) return;
+
+  peopleSearchCompareBtn.disabled = true;
+  try {
+    const { results: compared, debugSamples, hardTimeoutCount, stoppedByTouchBudget } = await runPeopleSearchComparison(toCheck, {
+      onProgress: (i, total) => { peopleSearchCompareStatusEl.textContent = `Looking up author ${i} of ${total}…`; },
+    });
+    await applyPeopleSearchComparison(compared);
+    await loadLeads();
+    renderTable();
+
+    const leadByKey = new Map(allLeads.map((l) => [l.key, l]));
+    let matchedCount = 0, locationAgree = 0, locationDisagree = 0, companyAgree = 0, companyDisagree = 0;
+    for (const c of compared) {
+      if (!c.matched) continue;
+      matchedCount++;
+      const lead = leadByKey.get(c.key);
+      if (!lead) continue;
+      const locAgreement = locationsAgree(lead.location, c.peopleSearchLocation);
+      if (locAgreement === true) locationAgree++;
+      else if (locAgreement === false) locationDisagree++;
+      const compAgreement = companiesAgree(lead.company, c.peopleSearchCompany);
+      if (compAgreement === true) companyAgree++;
+      else if (compAgreement === false) companyDisagree++;
+    }
+    peopleSearchCompareStatusEl.textContent = `Done - ${matchedCount} of ${toCheck.length} lead${toCheck.length === 1 ? "" : "s"} matched via People Search` +
+      (matchedCount > 0 ? ` (location: ${locationAgree} agreed/${locationDisagree} disagreed; company: ${companyAgree} agreed/${companyDisagree} disagreed, where both had data)` : "") +
+      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
+      // v0.30.0: this run can now stop itself early when the shared 75/99
+      // LinkedIn touch budget is hit (touch-budget-guard.js) - said plainly
+      // rather than silently under-reporting how many leads were checked.
+      (stoppedByTouchBudget ? " - stopped automatically, daily LinkedIn activity limit reached (resume tomorrow)." : ".");
+    appendActivityLog({
+      actor: "user",
+      action: "people_search_compared",
+      label: `Compare via People Search: ${matchedCount} of ${toCheck.length} lead${toCheck.length === 1 ? "" : "s"} matched` +
+        (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
+        (debugSamples.length > 0 ? ` - ${debugSamples.length} unmatched sample(s) attached for diagnosis` : ""),
+      newValue: { matchedCount, total: toCheck.length, locationAgree, locationDisagree, companyAgree, companyDisagree, hardTimeoutCount, debugSamples },
+    });
+  } catch (err) {
+    peopleSearchCompareStatusEl.textContent = `Something went wrong: ${err.message}`;
+    appendActivityLog({ actor: "user", action: "people_search_compared", label: "Compare via People Search failed", error: true, errorMessage: err.message });
+  } finally {
+    peopleSearchCompareBtn.disabled = false;
   }
 });
 
@@ -1828,17 +2028,64 @@ assignCompanyInput.addEventListener("keydown", (event) => {
   }
 });
 
+// Same pattern as Assign Company above - added so a lead with a clearly
+// wrong extracted location (a website, the person's own name, their
+// headline - see profile-content-script.js's looksLikeInvalidLocationText)
+// can be corrected or cleared without editing storage directly. Re-applies
+// the Location Filter afterward since a corrected value can newly match (or
+// stop matching) it.
+const assignLocationDialog = document.getElementById("assign-location-dialog");
+const assignLocationInput = document.getElementById("assign-location-input");
+let assignLocationLeadKey = null;
+let assignLocationLeadPrevLocation = null;
+let assignLocationLeadLabel = "";
+
+function openAssignLocationDialog(lead) {
+  assignLocationLeadKey = lead.key;
+  assignLocationLeadPrevLocation = lead.location || null;
+  assignLocationLeadLabel = leadTitle(lead);
+  assignLocationInput.value = lead.location || "";
+  assignLocationDialog.showModal();
+  assignLocationInput.focus();
+}
+
+async function saveAssignedLocation(value) {
+  await setLeadLocation(assignLocationLeadKey, value);
+  assignLocationDialog.close();
+  await reapplyLocationFilter();
+  await loadLeads();
+  renderTable();
+  appendActivityLog({
+    actor: "user", action: "lead_location_assigned",
+    label: `Lead "${assignLocationLeadLabel}" location ${value ? "assigned" : "cleared"}`,
+    prevValue: assignLocationLeadPrevLocation, newValue: value || null,
+  });
+}
+
+document.getElementById("assign-location-close-x-btn").addEventListener("click", () => assignLocationDialog.close());
+document.getElementById("assign-location-cancel-btn").addEventListener("click", () => assignLocationDialog.close());
+document.getElementById("assign-location-clear-btn").addEventListener("click", () => saveAssignedLocation(""));
+document.getElementById("assign-location-save-btn").addEventListener("click", () => saveAssignedLocation(assignLocationInput.value));
+assignLocationInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    saveAssignedLocation(assignLocationInput.value);
+  }
+});
+
 // ---------------------------------------------------------------------
 // Wiring + init
 // ---------------------------------------------------------------------
 
 searchInput.addEventListener("input", (event) => {
   searchText = event.target.value;
+  saveFilterSortState();
   renderTableFromScratch();
 });
 
 statusFilterSelect.addEventListener("change", (event) => {
   statusFilter = event.target.value;
+  saveFilterSortState();
   renderTableFromScratch();
 });
 
@@ -1910,11 +2157,19 @@ window.addEventListener("hashchange", route);
 // changes) while this tab is open, e.g. run from the side panel in another
 // tab at the same time.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !changes.results) return;
-  loadLeads().then(() => {
-    renderAllPieCharts();
-    renderTable();
-  });
+  if (area !== "local") return;
+  if (changes.results) {
+    loadLeads().then(() => {
+      renderAllPieCharts();
+      renderTable();
+    });
+  }
+  // A workbook re-import (Settings, or the Target Accounts Dashboard
+  // itself) should update the Creator column's Target Contact badges live,
+  // same reasoning as every other live-update listener in this codebase.
+  if (changes.targetAccountsWorkbook) {
+    loadTargetContacts().then(renderTable);
+  }
 });
 
 async function init() {
@@ -1924,9 +2179,12 @@ async function init() {
   loadPageSize();
   loadGroupByCompany();
   loadShowIrrelevant();
+  loadFilterSortState();
   await loadSettings();
   await loadLeads();
+  await loadTargetContacts();
   populateStatusFilterOptions();
+  statusFilterSelect.value = statusFilter;
   renderAllPieCharts();
   renderTable();
   route();

@@ -8,6 +8,8 @@
 <body>
   <h1>SalesTeam <span id="version-text"></span></h1>
 
+  <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
+
   <div id="empty-state-banner" class="warning-banner" hidden>
     <strong>No Topics and no leads found.</strong> If you just reinstalled or moved the extension and expected
     your data to be here, it isn't lost - Chrome ties storage to the extension's install location, so a moved
@@ -26,12 +28,13 @@
   </div>
 
   <div id="top-nav-buttons">
-    <button id="open-dashboard-btn" type="button" title="Open the full lead pipeline in a new tab">Dashboard ↗</button>
+    <button id="open-target-accounts-btn" type="button" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard ↗</button>
+    <button id="open-target-contacts-btn" type="button" title="Browse every Target Contact across all accounts">Target Contacts Dashboard ↗</button>
+    <button id="open-dashboard-btn" type="button" title="Open the full scanned-posts pipeline in a new tab">Posts Dashboard ↗</button>
     <button id="open-advisors-btn" type="button" title="Open the Sales Mentor and Customer Voice chats in a new tab">Advisors ↗</button>
     <button id="open-settings-btn" type="button" title="Open Settings (company context, API key, templates) in a new tab">Settings ↗</button>
-    <button id="open-help-btn" type="button" title="Open the Help page in a new tab">Help ↗</button>
     <button id="open-activity-log-btn" type="button" title="Open the Activity Log - every user and extension action, with old/new values and errors">Activity Log ↗</button>
-    <button id="open-target-accounts-btn" type="button" title="Browse the full Target Accounts workbook - companies, contacts, and AI initiatives">Target Accounts ↗</button>
+    <button id="open-help-btn" type="button" title="Open the Help page in a new tab">Help ↗</button>
   </div>
 
   <section id="backup-section">
@@ -46,11 +49,13 @@
       <button id="import-settings-btn" type="button" title="Restore Topics, filters, and other settings from a backup file - never touches your leads">Import Settings</button>
       <input type="file" id="import-settings-file-input" accept="application/json" hidden />
     </div>
+    <p id="import-settings-status" class="field-hint"></p>
     <div class="backup-buttons-row">
       <button id="export-leads-btn" type="button" title="Download your leads plus Sales Mentor / Customer Voice chat history as a JSON backup file">Export Leads</button>
       <button id="import-leads-btn" type="button" title="Restore any lead or chat history missing locally from a backup file - never overwrites data you already have">Import Leads</button>
       <input type="file" id="import-leads-file-input" accept="application/json" hidden />
     </div>
+    <p id="import-leads-status" class="field-hint"></p>
     <label class="checkbox-label">
       <input type="checkbox" id="export-include-api-key-checkbox" />
       Include Anthropic API key in the Settings export (only for deliberately sharing a spend-capped trial key
@@ -176,6 +181,7 @@
   <section id="run-section">
     <p id="total-searches-hint" class="field-hint"></p>
     <button id="scan-btn" type="button" title="Run every enabled Topic and Job Topic against LinkedIn now">Scan All Topics</button>
+    <button id="stop-scan-btn" type="button" hidden title="Stop the running scan - leads found so far are already saved">Stop Scan</button>
     <p id="progress-text"></p>
   </section>
 

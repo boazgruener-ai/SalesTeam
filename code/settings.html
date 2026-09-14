@@ -14,6 +14,7 @@
       here. Any other general (non-lead-specific) settings added later will live on this page too.
     </p>
     <div id="settings-save-status">All changes saved</div>
+    <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
   </header>
 
   <main id="settings-main">
@@ -54,14 +55,16 @@
       </p>
       <p id="target-accounts-status" class="field-hint">No target accounts imported yet.</p>
       <div class="settings-buttons-row">
-        <button id="import-target-accounts-btn" type="button" title="Import the Swiss AI prospects .xlsx workbook directly (its 'Companies' sheet)">Import Target Accounts</button>
+        <button id="import-target-accounts-btn" type="button" title="Import the Swiss AI prospects .xlsx workbook directly (its 'Companies' sheet), or restore a previously exported backup .json">Import Target Accounts</button>
         <input type="file" id="import-target-accounts-file-input" accept=".xlsx,application/json" hidden />
+        <button id="export-target-accounts-btn" type="button" title="Download a full backup (the target-accounts map plus the full Explorer workbook) as a .json file you can later restore with Import Target Accounts">Export Target Accounts</button>
       </div>
       <label for="target-account-threshold-input">Target Account confidence threshold</label>
       <input type="number" id="target-account-threshold-input" min="0" max="100" title="Companies scored at or above this (and labeled Very High/High, non-provisional) 'qualify' - see the Prioritization Rules below for exactly what that triggers" />
 
       <div class="settings-buttons-row">
         <button id="resolve-company-ids-btn" type="button" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID - needed for a future feature that scopes Post search to only these companies' employees">Resolve LinkedIn Company IDs…</button>
+        <button id="stop-resolve-company-ids-btn" type="button" class="danger-btn" hidden title="Stop the running resolve - companies resolved so far are already saved">Stop</button>
         <label for="resolve-company-ids-limit-input" class="field-hint" style="display:inline-flex; align-items:center; gap:4px;">
           Limit to
           <input type="number" id="resolve-company-ids-limit-input" min="1" style="width:5em;" title="Only resolve this many companies this run - leave blank to resolve everything still missing an ID. Useful for a quick test before committing to a full run." />

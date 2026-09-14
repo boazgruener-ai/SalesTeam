@@ -31,9 +31,12 @@ import {
   partitionLeadsByTargetAccount,
   tagPrioritiesWithTargetAccountSignal,
   appendActivityLog,
+  getTargetAccounts,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
+import { recordLinkedinTouch } from "./linkedin-touch-log.js";
+import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
 // Used only for the two independent AND-group searches below (concept-only,
@@ -61,6 +64,22 @@ const MAX_DELAY_MS = 8000;
 // LinkedIn at all (see content-script.js) - they're applied client-side
 // against each post's scraped headline instead.
 const MAX_OR_TERMS = 6;
+
+// EXPERIMENTAL (v0.29.26, see PRD 6.17): how many resolved Target Account
+// LinkedIn company IDs go into one Post search's authorCompany filter.
+// Raised from 50 to 100 (v0.29.44) once 499 companies were resolved and the
+// old value's 10 company-chunks (x11 keyword chunks) pushed a scan from 24
+// searches to 134 - reported directly as "way too much, will take forever."
+// Confirmed live with 100 real IDs: the filter chip read an exact "99"
+// (one duplicate id across two different companies, a real LinkedIn-side
+// dedup, not a bug) - a precise count, proving LinkedIn parsed and applied
+// the full array. 200 was inconclusive, not confirmed: LinkedIn's own chip
+// UI stops giving an exact number past 99 ("99+", the same convention as
+// "500+" connections), so there's no way to tell from the UI alone whether
+// the backend actually filtered on all 200 or silently capped around 99 -
+// not guessed at either way. 100 is the highest number with real, verifiable
+// evidence behind it.
+const AUTHOR_COMPANY_CHUNK_SIZE = 100;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -90,6 +109,18 @@ function buildSearchUrl(conceptChunk, activityChunk, timeframe) {
     url += `&datePosted=${encodeURIComponent(`["${timeframe}"]`)}`;
   }
   return url;
+}
+
+// EXPERIMENTAL (v0.29.26, see PRD 6.17): same query as buildSearchUrl, plus
+// LinkedIn's authorCompany filter - confirmed live (real user test) that
+// this genuinely restricts Post search results to only those companies'
+// employees, exactly the geo-scoping equivalent Job search already gets for
+// free via geoId but Post search has no native version of. The encoding
+// (a JSON array of numeric-ID strings, percent-encoded) was reverse-matched
+// against a real, working authorCompany URL, not guessed.
+function buildAuthorCompanySearchUrl(keywordChunk, companyIds, timeframe) {
+  const url = buildSearchUrl(keywordChunk, [], timeframe);
+  return `${url}&authorCompany=${encodeURIComponent(JSON.stringify(companyIds))}`;
 }
 
 // No shared-budget splitting needed anymore - each group is chunked
@@ -236,7 +267,18 @@ function navigateAndWait(tabId, url) {
     // Register the listener before navigating so a fast page load can't
     // fire "complete" before we're listening for it.
     chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tabId, { url });
+    // Reported directly: the extension's own Errors page showed an
+    // "Uncaught (in promise) Error: No tab with id: ..." even though the
+    // scan already surfaced its own friendly SCAN_ERROR message for the
+    // same underlying failure - this call's returned promise was never
+    // awaited or caught, so a tab closed out from under it (already
+    // anticipated and handled via the listener/timeout above) still left a
+    // genuinely unhandled rejection behind. The .catch here doesn't change
+    // behavior - the timeout already covers "the tab never responds" - it
+    // just stops that rejection from being reported twice, once usefully
+    // and once as a bare, unhelpful stack trace.
+    chrome.tabs.update(tabId, { url }).catch(() => {});
+    recordLinkedinTouch().catch(() => {});
   });
 }
 
@@ -267,6 +309,29 @@ function broadcastProgress(current, total, topicName) {
   chrome.runtime.sendMessage({ type: "SCAN_PROGRESS", current, total, topicName }).catch(() => {});
 }
 
+// v0.29.45: reported directly - a scan whose search count jumped from 24 to
+// 134 (the Target Account phase, 6.17) had no way to stop early short of
+// force-closing the extension, which risked leaving things in a half-torn
+// state. checkAbort is called at the same checkpoint every sub-query loop
+// already has (right after each completed++/broadcastProgress), so the
+// worst-case delay between clicking Stop and the scan actually stopping is
+// one in-flight search, not the rest of the run. Storage-based, not an
+// in-memory flag, so it works the same way every other cross-context signal
+// in this file already does (currentScanTopicId, companyResolveActive,
+// etc.) rather than introducing a second pattern.
+class ScanAbortedError extends Error {}
+async function checkAbort() {
+  const { scanAbortRequested } = await chrome.storage.local.get("scanAbortRequested");
+  if (scanAbortRequested) throw new ScanAbortedError("Scan stopped by you");
+  // v0.30.0: the shared 75/99 LinkedIn touch budget (touch-budget-guard.js)
+  // now actually stops a run, not just recolors a status label - checked
+  // right alongside the user-requested stop above, at the same per-sub-query
+  // checkpoint. checkTouchBudget() itself sets scanAbortRequested so every
+  // other module watching that same flag (Company Resolve, People Search,
+  // Discovery) stops too, not just this scan.
+  if (await checkTouchBudget()) throw new ScanAbortedError(TOUCH_BUDGET_STOP_MESSAGE);
+}
+
 // Re-checks a post against the topic's FULL keyword lists (both groups),
 // not just the specific chunk that happened to be searched when this post
 // was found. A topic's keywords get split into multiple sub-searches, so
@@ -278,6 +343,27 @@ function fullTopicMatchedKeywords(post, topic) {
   const allKeywords = [...topic.keywords, ...(topic.andKeywords || [])];
   const haystack = `${post.snippet} ${post.headline}`.toLowerCase();
   return allKeywords.filter((kw) => containsWholeWord(haystack, kw));
+}
+
+// EXPERIMENTAL (v0.29.26, see PRD 6.17): used only for the Target Account
+// company-scoped search phase below. Unlike every other search in this
+// file, a post found there didn't come from that specific topic's own
+// dedicated search (it came from a merged-keyword search spanning every
+// topic, scoped by company instead) - so there's no query result to trust
+// as "this matched." This checks the post's own scraped text directly
+// against ONE topic's full rule instead: any keyword for a plain OR-topic,
+// or at least one from BOTH groups for an AND-topic (the real double-check
+// the two-separate-searches-then-join approach elsewhere in this file
+// never actually performs - it only trusts that both searches happened to
+// surface the same post, not that its text contains both kinds of terms).
+// Returns the matched keywords (empty means no match), same shape
+// mergeTopicPosts already expects from post.matchedKeywords.
+function localTopicMatch(post, topic) {
+  const haystack = `${post.snippet} ${post.headline}`.toLowerCase();
+  const conceptMatches = topic.keywords.filter((kw) => containsWholeWord(haystack, kw));
+  if (!topic.andKeywords || topic.andKeywords.length === 0) return conceptMatches;
+  const activityMatches = topic.andKeywords.filter((kw) => containsWholeWord(haystack, kw));
+  return conceptMatches.length > 0 && activityMatches.length > 0 ? [...conceptMatches, ...activityMatches] : [];
 }
 
 // Keyed on profileUrl, not post.key: a post's key falls back to
@@ -324,6 +410,20 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
   // this scan later errors out partway through - every lead progressively
   // saved up to that point still counts as part of this scan.
   await saveLastScanStartedAt(Date.now());
+  // Cleared at the start too, not just in finally below - a stale flag left
+  // over from a previous run (e.g. the finally block never ran because the
+  // service worker itself was killed) would otherwise abort this new run
+  // before it ever gets going.
+  await chrome.storage.local.remove("scanAbortRequested").catch(() => {});
+
+  // Reported directly: a scan left running while the machine went to sleep
+  // came back hours later only a handful of steps further in - all JS
+  // timers just freeze during system sleep, so wall-clock time away doesn't
+  // reflect real scan progress. requestKeepAwake("system") stops the
+  // machine from sleeping for as long as a scan is in flight (the screen can
+  // still turn off - only system sleep is blocked); released in the finally
+  // below on every exit path (success, abort, or error).
+  chrome.power.requestKeepAwake("system");
 
   try {
     const timeframe = await getTimeframe();
@@ -355,7 +455,23 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
       0
     );
     const jobSubQueries = jobKeywordChunks.reduce((sum, chunks) => sum + chunks.length, 0);
-    const totalSubQueries = postSubQueries + jobSubQueries;
+
+    // EXPERIMENTAL (v0.29.26, see PRD 6.17): companies already resolved to a
+    // LinkedIn ID via Settings' "Resolve LinkedIn Company IDs" (6.16).
+    // Deduped since two Target Account entries could theoretically resolve
+    // to the same ID. Every enabled topic's keywords (both groups) are
+    // merged into ONE list here - deliberately not per-topic - so this
+    // phase's cost depends on total keyword/company volume, not on how many
+    // topics exist; a dedicated search per topic per company-chunk would
+    // multiply instead of add.
+    const targetAccounts = await getTargetAccounts();
+    const resolvedCompanyIds = [...new Set(Object.values(targetAccounts).map((a) => a.linkedinCompanyId).filter(Boolean))];
+    const mergedTopicKeywords = [...new Set(topics.flatMap((t) => [...t.keywords, ...(t.andKeywords || [])]))];
+    const taKeywordChunks = chunk(mergedTopicKeywords, MAX_OR_TERMS);
+    const taCompanyChunks = chunk(resolvedCompanyIds, AUTHOR_COMPANY_CHUNK_SIZE);
+    const taSubQueries = resolvedCompanyIds.length > 0 ? taKeywordChunks.length * taCompanyChunks.length : 0;
+
+    const totalSubQueries = postSubQueries + jobSubQueries + taSubQueries;
 
     tab = await chrome.tabs.create({ url: "about:blank", active: false });
 
@@ -376,6 +492,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         for (const conceptChunk of conceptChunks) {
           completed++;
           broadcastProgress(completed, totalSubQueries, topic.name);
+          await checkAbort();
 
           await chrome.storage.local.set({ currentScanKeywords: conceptChunk });
           await withKeepAlive(navigateAndWait(tab.id, buildSearchUrl(conceptChunk, [], timeframe)));
@@ -408,6 +525,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         for (const conceptChunk of conceptChunks) {
           completed++;
           broadcastProgress(completed, totalSubQueries, topic.name);
+          await checkAbort();
 
           await chrome.storage.local.set({ currentScanKeywords: conceptChunk, currentScanDeepScroll: true });
           await withKeepAlive(navigateAndWait(tab.id, buildSearchUrl(conceptChunk, [], timeframe)));
@@ -422,6 +540,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         for (const activityChunk of activityChunks) {
           completed++;
           broadcastProgress(completed, totalSubQueries, topic.name);
+          await checkAbort();
 
           await chrome.storage.local.set({ currentScanKeywords: activityChunk, currentScanDeepScroll: true });
           await withKeepAlive(navigateAndWait(tab.id, buildSearchUrl(activityChunk, [], timeframe)));
@@ -480,6 +599,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         for (const keywordChunk of keywordChunks) {
           completed++;
           broadcastProgress(completed, totalSubQueries, `${topic.name} (Jobs)`);
+          await checkAbort();
 
           await chrome.storage.local.set({ currentJobScanKeywords: keywordChunk });
           await withKeepAlive(navigateAndWait(tab.id, buildJobSearchUrl(keywordChunk, jobSearchLocation, jobSearchTimeframe)));
@@ -503,6 +623,50 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         // Checkpoint after each job topic too, same reasoning as above.
         await saveResults(existingResults);
       }
+    }
+
+    // EXPERIMENTAL (v0.29.26, see PRD 6.17): Post search scoped to Target
+    // Account companies via authorCompany, attacking the Post-vs-Job
+    // imbalance at the root (Job search has always been geo-scoped by
+    // geoId; Post search never had an equivalent - see 6.15). Only runs
+    // once at least one company has a resolved LinkedIn ID (6.16) - nothing
+    // changes for anyone who hasn't run that resolver yet.
+    if (resolvedCompanyIds.length > 0 && topics.length > 0) {
+      for (const keywordChunk of taKeywordChunks) {
+        for (const companyChunk of taCompanyChunks) {
+          completed++;
+          broadcastProgress(completed, totalSubQueries, "Target Account companies");
+          await checkAbort();
+
+          const taSearchId = `target-account-search-${completed}`;
+          await chrome.storage.local.set({
+            currentScanTopicId: taSearchId,
+            currentScanTopicName: "Target Account companies",
+            currentScanKeywords: keywordChunk,
+          });
+          await withKeepAlive(navigateAndWait(tab.id, buildAuthorCompanySearchUrl(keywordChunk, companyChunk, timeframe)));
+          const posts = await withKeepAlive(waitForScrapeResult(taSearchId));
+
+          // A post here didn't come from any one topic's own search - it
+          // could satisfy several topics' rules at once, or none, so every
+          // enabled topic gets checked against it directly (localTopicMatch),
+          // not just the topic whose keywords happened to be in this chunk.
+          for (const topic of topics) {
+            const matchingPosts = posts
+              .map((post) => ({ ...post, matchedKeywords: localTopicMatch(post, topic) }))
+              .filter((post) => post.matchedKeywords.length > 0);
+            if (matchingPosts.length > 0) {
+              autoIrrelevantCount += mergeTopicPosts(existingResults, topic, matchingPosts, negativeTopics);
+            }
+          }
+
+          if (completed < totalSubQueries) {
+            await keepAliveSleep(randomDelay());
+          }
+        }
+      }
+      await chrome.storage.local.remove(["currentScanTopicId", "currentScanTopicName", "currentScanKeywords"]);
+      await saveResults(existingResults);
     }
 
     // Opt-in, per the side panel's "Also apply..." checkbox: a negative
@@ -705,19 +869,54 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
       });
     }
   } catch (err) {
-    // Without this, any error here (a closed tab, a transient extension API
-    // failure, Chrome terminating this service worker mid-run - a known
-    // Manifest V3 risk for long-running background tasks) used to kill the
-    // scan silently: no message ever reached the side panel, the Scan
-    // button stayed disabled forever, and everything found in that run was
-    // lost since results were only saved at the very end.
-    console.error("[SalesTeam] Scan failed:", err);
     await saveResults(existingResults).catch(() => {});
-    const errorMessage = `Scan stopped early due to an error (${err?.message || err}). Leads found before the error ` +
-      "were saved - check Results, then try scanning again to pick up the rest.";
-    chrome.runtime.sendMessage({ type: "SCAN_ERROR", message: errorMessage }).catch(() => {});
-    appendActivityLog({ actor: "extension", action: "scan_error", label: "Scan stopped early due to an error", error: true, errorMessage: err?.message || String(err) });
+    if (err instanceof ScanAbortedError) {
+      // v0.29.45: a deliberate user action, not a failure - reported
+      // directly alongside the abort feature request itself, so this reads
+      // and logs as a normal stop, not an error (no error: true, no
+      // console.error). Same "starts over from the first topic" caveat as
+      // the genuine-error path below applies here too, for the same reason
+      // (no per-topic resume point exists either way). v0.30.0: the shared
+      // touch budget (touch-budget-guard.js) can now stop a scan the same
+      // cooperative way a user's own Stop click does - distinguished here so
+      // the wording actually says which one happened, not just "stopped by
+      // you" when it wasn't.
+      const isBudgetStop = err.message === TOUCH_BUDGET_STOP_MESSAGE;
+      const stoppedMessage = isBudgetStop
+        ? `${TOUCH_BUDGET_STOP_MESSAGE} Leads found before stopping were saved and won't be lost - but scanning ` +
+          "again starts over from the first topic (there's no partial-resume point)."
+        : "Scan stopped by you. Leads found before stopping were saved and won't be lost - " +
+          "but scanning again starts over from the first topic (there's no partial-resume point).";
+      chrome.runtime.sendMessage({ type: "SCAN_ABORTED", message: stoppedMessage }).catch(() => {});
+      appendActivityLog({
+        actor: isBudgetStop ? "extension" : "user",
+        action: "scan_aborted",
+        label: isBudgetStop ? "Scan stopped automatically - daily LinkedIn activity limit reached" : "Scan stopped by you",
+      });
+    } else {
+      // Without this, any error here (a closed tab, a transient extension API
+      // failure, Chrome terminating this service worker mid-run - a known
+      // Manifest V3 risk for long-running background tasks) used to kill the
+      // scan silently: no message ever reached the side panel, the Scan
+      // button stayed disabled forever, and everything found in that run was
+      // lost since results were only saved at the very end.
+      console.error("[SalesTeam] Scan failed:", err);
+      // Reported directly: running "Scan All Topics" again after this message
+      // restarted from topic 1 instead of resuming - there's no per-topic
+      // checkpoint, so every scan always starts over from the first topic.
+      // Nothing is lost or duplicated (leads found before the error are
+      // already saved, and re-scanning the same topics just re-matches the
+      // same lead keys), but the wording below used to promise an efficient
+      // resume that doesn't exist - corrected to set the right expectation.
+      const errorMessage = `Scan stopped early due to an error (${err?.message || err}). Leads found before the error ` +
+        "were saved and won't be lost - but scanning again starts over from the first topic (there's no partial-" +
+        "resume point), so it will take as long as a full scan, not just cover what's left.";
+      chrome.runtime.sendMessage({ type: "SCAN_ERROR", message: errorMessage }).catch(() => {});
+      appendActivityLog({ actor: "extension", action: "scan_error", label: "Scan stopped early due to an error", error: true, errorMessage: err?.message || String(err) });
+    }
   } finally {
+    chrome.power.releaseKeepAwake();
+    await chrome.storage.local.remove("scanAbortRequested").catch(() => {});
     if (previouslyActiveTab) {
       await chrome.tabs.update(previouslyActiveTab.id, { active: true }).catch(() => {});
     }

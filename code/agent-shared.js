@@ -234,6 +234,114 @@ export function buildAccountSummaryPrompt(companyName, leads, { mentorPersona, c
   );
 }
 
+// Account/Contact view's persisted Sales Mentor/Customer Voice chats (PRD
+// 6.19) - scoped to real, externally-researched Target Account/Contact data
+// from the imported workbook, not a scanned lead. Same "embed directly, no
+// tool round-trip" reasoning as buildLeadScopedMentorPrompt above - the
+// account/contact is already on screen. No draft_message tool here
+// (unlike the lead-scoped prompt) - that tool operates on a scanned lead's
+// key, which a Target Contact may not have one of at all (never posted
+// yet); the prompt instead points toward that specific post's own page
+// when one exists, rather than binding a tool that would fail without one.
+function accountOverviewBlock(company) {
+  const lines = [
+    `Company: ${company.company}` +
+      (company.zefixOfficialName && company.zefixOfficialName !== company.company
+        ? ` (official: ${company.zefixOfficialName})`
+        : ""),
+    company.industry ? `Industry: ${company.industry}` : null,
+    company.companyType ? `Type: ${company.companyType}` : null,
+    company.aiPriority
+      ? `AI Priority: ${company.aiPriority}${company.aiPriorityScore ? ` (${Math.round(company.aiPriorityScore)}/100)` : ""}`
+      : null,
+    company.topAiInitiatives ? `Top AI initiatives: ${company.topAiInitiatives}` : null,
+    company.aiInvestmentGlobal || company.aiInvestmentSwitzerland
+      ? `AI investment: ${[company.aiInvestmentGlobal, company.aiInvestmentSwitzerland].filter(Boolean).join(" / ")}`
+      : null,
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+export function buildAccountScopedMentorPrompt(company, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
+  return (
+    `You are acting as a sales mentor to a salesperson, discussing ONE specific Target Account they're looking ` +
+    `at right now - real, externally-researched company data, not a scanned lead. Your persona: ` +
+    `${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
+    companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
+    `\nThe account being discussed:\n${accountOverviewBlock(company)}\n\n` +
+    "Answer questions about this account directly using the details above - never invent facts beyond what's " +
+    "given. Ground advice in the company's actual AI initiatives/priority where relevant, not generic advice. " +
+    "Be direct and specific. Keep answers focused.\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
+export function buildAccountScopedCustomerVoicePrompt(company, { companyContext, customerPersona, outputLanguage }) {
+  return (
+    "You are playing the role of a realistic B2B buyer at ONE specific company - the kind of account a " +
+    "salesperson using this extension is trying to reach." +
+    companyContextBlock(companyContext) +
+    customerPersonaBlock(customerPersona) +
+    `\nThe account you represent:\n${accountOverviewBlock(company)}\n\n` +
+    "The salesperson will ask you to react to a proposed message or approach aimed at this account. React as " +
+    "someone at this specific company would, grounded in its real industry/AI-priority/initiatives above - " +
+    "never invent facts beyond what's given. Be honest and even critical - point out specifically what would " +
+    "make you ignore a message, what would make you reply, and why. Keep answers concise and concrete.\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
+// Reported directly as an explicit requirement: a drafted message needs to
+// be able to reference the account's own AI initiative ("I read that you
+// are doing a project to automate your customer support...") - so the
+// account block is embedded here too, not just the contact's own role.
+function contactOverviewBlock(contact) {
+  const lines = [
+    `Name: ${contact.fullName}`,
+    contact.jobTitle ? `Title: ${contact.jobTitle}` : null,
+    contact.function ? `Function: ${contact.function}` : null,
+    contact.seniority ? `Seniority: ${contact.seniority}` : null,
+    contact.aiRelevance ? `AI relevance: ${contact.aiRelevance}` : null,
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+export function buildContactScopedMentorPrompt(contact, account, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
+  return (
+    `You are acting as a sales mentor to a salesperson, discussing ONE specific Target Contact they're looking ` +
+    `at right now. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
+    companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
+    `\nThe contact being discussed:\n${contactOverviewBlock(contact)}\n` +
+    (account ? `\nTheir company (${account.company}):\n${accountOverviewBlock(account)}\n` : "") +
+    "\nAnswer questions about this contact directly using the details above - never invent facts beyond " +
+    "what's given. When drafting or suggesting outreach, ground it in the company's own real AI initiative(s) " +
+    "where one is given (e.g. \"I read that you're doing a project to automate your customer support...\"), " +
+    "and in this specific contact's role - not generic outreach. If this contact has an actual scanned post " +
+    "(shown separately on this page), point the salesperson to that post's own page to use the reviewed " +
+    "draft_message flow there rather than writing a message yourself here. Be direct and specific. Keep " +
+    "answers focused.\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
+export function buildContactScopedCustomerVoicePrompt(contact, account, { companyContext, customerPersona, outputLanguage }) {
+  return (
+    "You are playing the role of ONE specific, real B2B buyer - the kind of person a salesperson using this " +
+    "extension is trying to reach." +
+    companyContextBlock(companyContext) +
+    customerPersonaBlock(customerPersona) +
+    `\nWho you are:\n${contactOverviewBlock(contact)}\n` +
+    (account ? `\nYour company (${account.company}):\n${accountOverviewBlock(account)}\n` : "") +
+    "\nThe salesperson will ask you to react to a proposed message aimed at you specifically. React as this " +
+    "exact person would, grounded in their real role and their company's real AI initiatives above - never " +
+    "invent facts beyond what's given. Be honest and even critical - point out specifically what would make " +
+    "you ignore a message, what would make you reply, and why. Keep answers concise and concrete.\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
 export const LEAD_LOOKUP_TOOLS = [
   {
     name: "list_leads",
@@ -430,13 +538,22 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "still a 2-3: a real, reachable opportunity, just not a perfect-fit one. Reserve 4-5 for leads with no " +
     "genuine buying signal at all, a clearly unrelated technical domain, or noise that should have been " +
     "filtered - not simply \"real need, wrong location.\" " +
-    "Watch out for the opposite failure too: a post from someone with an impressive AI-sounding title, at a " +
-    "company that clearly already runs AI at scale internally, that is really just industry commentary or " +
-    "thought leadership (e.g. reacting to AI industry news, sharing opinions/trends, listicles) with no " +
-    "expressed need, project, challenge, or hiring signal of their own - that is a WEAK lead and belongs low " +
-    "(4-5), regardless of how senior or on-topic the poster looks. Topical overlap and an impressive title " +
-    "are not buying intent; only score a post higher because it names or implies an actual need, initiative, " +
-    "problem, or hire happening at that company right now. " +
+    "Watch out for the opposite failure too: a post from someone with a vaguely AI-flavored title or who just " +
+    "talks about AI a lot, that is really just industry commentary or thought leadership (e.g. reacting to AI " +
+    "industry news, sharing opinions/trends, listicles) with no expressed need, project, challenge, or hiring " +
+    "signal of their own - that is a WEAK lead and belongs low (4-5). Topical overlap and sounding senior are " +
+    "not buying intent; only score a post higher on its own content because it names or implies an actual " +
+    "need, initiative, problem, or hire happening at that company right now. " +
+    "Reported directly as an important exception: when the poster's OWN professional title names a genuine, " +
+    "formal AI/ML/Data leadership FUNCTION at the company - \"Head of AI,\" \"Chief AI Officer,\" \"VP of AI,\" " +
+    "\"Director of Data Science,\" and similar (not a vague self-description like \"AI enthusiast,\" \"AI " +
+    "advisor,\" or an independent consultant's own tagline) - that role's mere existence is itself a real, " +
+    "company-level signal: the company has committed formal headcount and budget to AI, whether or not this " +
+    "particular post says so. Even pure thought-leadership from such a person should not fall below 2-3 on " +
+    "that basis alone - it's a genuinely different case from a random employee's generic AI commentary, and " +
+    "worth surfacing to the salesperson as a company worth researching further, not filtering out as noise. " +
+    "Still reserve 1 for an actual expressed need/initiative/hire - a senior AI title alone, with no content " +
+    "signal, is a real account-level lead, not an urgent one. " +
     "Use the full 1-5 range across the batch rather than clustering everyone in the middle - these are meant " +
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
     "A lead may carry a `targetAccountSignal` - independent research on that company's AI investment/maturity " +
@@ -451,6 +568,17 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "further. Either way it's one input alongside the person's own seniority and post/job content, not an " +
     "automatic override. When it materially influenced your call, say so plainly in the reason (e.g. " +
     "\"also a Very High-scored Target Account\"). " +
+    "A Post lead may separately carry a `targetContactSignal` - this specific person (the post's own author) " +
+    "was independently identified and vetted, outside this extension, as a real decision-maker at a Target " +
+    "Account company (their jobTitle/function/seniority/aiRelevance are given). This is a materially stronger " +
+    "signal than targetAccountSignal alone: it confirms not just that the company is a good fit, but that " +
+    "this exact person is already on the researched priority-contact list. Weigh it heavily - a post from a " +
+    "confirmed Target Contact should typically land at Priority 1 unless the post's own content gives a real, " +
+    "specific reason not to (e.g. clearly personal/off-topic content unrelated to their role). When a lead " +
+    "carries both targetAccountSignal and targetContactSignal, treat that combination - a high-priority " +
+    "company, a confirmed high-priority contact, and a real post - as the strongest case this batch can " +
+    "contain. Still not an automatic override you skip judgment for: state in the reason when it drove the " +
+    "score (e.g. \"also a confirmed Target Contact - CIO\"). " +
     "Call assign_priorities exactly once, with one entry (priority plus a short, specific reason) for EVERY " +
     "lead listed below - do not skip any, and do not invent a lead that isn't listed.\n" +
     languageInstruction(outputLanguage)
@@ -468,6 +596,26 @@ function summarizeTargetAccountSignal(signal) {
     priorityLabel: signal.priorityLabel,
     score: signal.score,
     topInitiatives: signal.topInitiatives || undefined,
+  };
+}
+
+// Present only when partitionLeadsByTargetAccount (storage.js) matched a
+// Post lead's own scraped author name against the Target Contacts data (PRD
+// 6.12's Contacts sheet - real, externally-researched, pre-qualified
+// decision-makers at Target Account companies, not a keyword heuristic like
+// HIGH_VALUE_TITLE_KEYWORDS). Distinct from targetAccountSignal above: that
+// one is company-level research; this one confirms the specific PERSON who
+// wrote this specific post is already a known, vetted contact worth
+// reaching - the "high-priority company x high-priority contact x
+// high-priority post" case reported directly as the strongest possible
+// combination.
+function summarizeTargetContactSignal(signal) {
+  if (!signal) return undefined;
+  return {
+    jobTitle: signal.jobTitle,
+    function: signal.function,
+    seniority: signal.seniority,
+    aiRelevance: signal.aiRelevance,
   };
 }
 
@@ -498,6 +646,7 @@ function summarizeLeadForPrioritization(lead) {
         isFreelancePost: Boolean(lead.isFreelancePost),
         matchedTopics: lead.matchedTopics.map((t) => t.topicName),
         targetAccountSignal: summarizeTargetAccountSignal(lead.targetAccountSignal),
+        targetContactSignal: summarizeTargetContactSignal(lead.targetContactSignal),
       };
 }
 

@@ -1,3 +1,335 @@
+# SalesTeam — v0.30.0
+
+## Added: unified LinkedIn safety budget - one shared 75/99 daily limit now actually governs (and stops) every automated feature, not just Post/Job scanning
+
+- First phase of the Target Account & Contact Discovery plan (self-service company/contact discovery, replacing the manual ChatGPT-workbook workflow for new users - see PRD 6.20 for the full plan). This phase is self-contained: the daily automated-LinkedIn-activity budget that already existed (`linkedin-touch-log.js`, added v0.29.49 after a real "unusual activity" warning) was purely informational until now - hitting its old 100/day "danger" threshold only recolored a status label; nothing actually stopped. Decided directly: LinkedIn doesn't care which internal feature triggered a request, so one shared budget should govern every feature, with real enforcement, not just Post/Job/Target-Account scanning.
+- Thresholds raised and tightened: warn at **75** (was 50), hard stop at **99** (was 100) - `TOUCH_WARN_THRESHOLD_24H`/`TOUCH_DANGER_THRESHOLD_24H` in `linkedin-touch-log.js`.
+- New shared `touch-budget-guard.js` - `checkTouchBudget()` is the one place every LinkedIn-navigating module now checks the budget, and it sets the same `scanAbortRequested` storage flag every cooperative-stop check already watches, so hitting the limit in any one feature stops every other one running at the same time too, not just itself.
+- Wired into `background.js`'s `checkAbort()` (governs Post/Job/Target-Account-scoped scanning), `company-resolve-extraction.js`'s per-company loop, and `people-search-extraction.js`'s per-author loop - the last of which had **no** abort check of any kind before this, a pre-existing gap closed as part of unifying the budget rather than left for later.
+- Every affected status message and Activity Log entry now says plainly when a run stopped itself automatically ("daily LinkedIn activity limit reached - resume tomorrow") versus when the user clicked Stop themselves - distinguished by a `stoppedByTouchBudget` flag each module now returns, not silently conflated into the existing "stopped by you" wording.
+
+## Fixed: a third Contacts-sheet schema variant (v28) - Source_URL and LinkedIn_Profile_URL removed, Profile_URL now holds the actual LinkedIn link
+
+- The user had ChatGPT clean up the v25 workbook's low LinkedIn-link coverage; the result, `Swiss_AI_Prospects_500_v28_linkedin_profiles_verified.xlsx`, restructures the Contacts sheet a third way - `Source_URL` and `LinkedIn_Profile_URL` (the v24/v25 dedicated column, v0.29.65) are both removed, and `Profile_URL` (previously the company's own bio page) is repurposed to hold the actual verified LinkedIn profile link directly. Verified directly: 199 contacts, 183 with a `Profile_URL` that is a real `linkedin.com` link - matching the user's reported numbers exactly; 301/181/60.1% account-coverage figures unchanged from v25, as expected (contact links were cleaned up, not the contact list itself).
+- `normalizeContactRows` (`storage.js`, generalized from v0.29.65's per-row `normalizeContactRow`) now detects which of three schema variants a workbook uses by checking, once per import across the whole `contacts` array, whether the `linkedinProfileUrl`/`sourceUrl` columns exist at all - a single row's blank cell isn't a reliable signal, since a blank cell may not even produce a key on that row (xlsx-lite.js). When both columns are absent (v28's shape), `profileUrl` is read as the LinkedIn link and then blanked on the normalized contact, so the "Bio Page" column doesn't show the same URL a second time under a now-inaccurate label.
+- As with v0.29.65, this runs at import time - data already imported before this fix needs a re-import to pick up the corrected mapping.
+
+---
+
+# SalesTeam — v0.29.65
+
+## Fixed: a newer workbook export's cleaned-up Contacts schema broke the "LinkedIn Profile" link
+
+- The user imported `Swiss_AI_Prospects_500_v24_contacts_expanded.xlsx`, whose Contacts sheet schema changed: the old duplicate `Last_Verified`/`Evidence_Quality` header pair (which `lastVerified2`/`evidenceQuality2` were reading, v0.29.51) is gone, replaced by a single dedicated `LinkedIn_Profile_URL` column. Since the display code still read `lastVerified2`, the "LinkedIn Profile" link would have gone silently blank across the Account view's Contacts sub-table, the Target Contacts Dashboard's LinkedIn Profile column, and the Contact view's own overview - for every contact from this newer export.
+- `importTargetAccountsWorkbook` (`storage.js`) now normalizes each contact row at import time: if `lastVerified2` is absent but the new `linkedinProfileUrl` is present, it's copied across. The three display sites (`CONTACT_COLUMNS`, `CONTACT_LIST_COLUMNS`, `renderContactView` in `target-accounts.js`) are unchanged - they don't need to know which workbook schema a given contact came from. The old schema's `evidenceQuality2` status text (e.g. "Current - LinkedIn verified") has no equivalent in the new one and is left blank rather than invented.
+- Re-importing `Swiss_AI_Prospects_500_v24_contacts_expanded.xlsx` (or any future export) picks up this fix; data already imported under v0.29.64 needs a re-import to normalize, since this runs at import time, not on every read.
+- Reported directly: the workbook's own "Dashboard" summary sheet confirmed 301 sufficiently-evidenced accounts, matching exactly. Direct inspection of the raw Contacts sheet found 169 total contact rows, of which only 22 have the new `LinkedIn_Profile_URL` populated (the remaining 138 populated rows have only the older `Profile_URL`, the company bio page, not a personal LinkedIn profile) - this doesn't reconcile against the reported "166 verified contacts," and no field or summary-sheet KPI in the workbook was found that produces 166. Flagged rather than guessed at.
+
+---
+
+# SalesTeam — v0.29.64
+
+## Fixed: Target Contacts Dashboard had the same page heading/tab title as Target Accounts Dashboard
+
+- Reported directly: this one page serves both dashboards via a hash-routed tab switch, not separate HTML files, but the `<h1>` and browser tab title stayed the static "SalesTeam Target Accounts Dashboard" no matter which list was actually showing - the two looked identical at a glance.
+- `showListTab(tab)` (`target-accounts.js`) now updates both `document.title` and the `<h1>` text (wrapped in a new `#page-title-text` span so it can be updated without disturbing the adjacent version number) to match whichever list is active - "SalesTeam Target Accounts Dashboard" or "SalesTeam Target Contacts Dashboard," kept in sync with the same names used on the side panel's own buttons.
+
+---
+
+# SalesTeam — v0.29.63
+
+## Fixed: two proposed pies turned out to be wrong/redundant on the facts - both corrected, not just removed
+
+- Reported directly: the Target Contacts Dashboard's "LinkedIn verification" pie was wrong - every contact from a ChatGPT import already has a verified working LinkedIn link, so the pie would only ever show one 100% slice. A follow-up proposal (account coverage - how many accounts have at least 1 contact, "around 68/301 (22.6%)") turned out to already be the Accounts Dashboard's own Contact coverage pie, just needing a fix rather than a duplicate.
+- New `isRelevantAccount(company)` (`target-accounts.js`) - the real fix both issues pointed at: a coverage/status stat that includes every "Insufficient - Missing baseline" account (roughly 200 of 500) alongside the ~300 genuinely-researched ones is misleading, since those accounts were never going to have contacts researched yet. The Accounts Dashboard's Contact coverage pie is now scoped to Rich/Sufficient Evidence accounts only, matching the ~301-company denominator reported directly.
+- The Contacts Dashboard's broken LinkedIn-verification pie removed outright rather than replaced with an invented substitute - left as a single pie (Contact status) for now; Seniority or Function breakdowns would be reasonable next candidates if a 2nd pie is wanted later.
+
+---
+
+# SalesTeam — v0.29.62
+
+## Fixed: no side panel button for the new Target Contacts Dashboard; reordered the nav buttons
+
+- Reported directly: the Target Contacts Dashboard (v0.29.61) had no way to reach it from the side panel - it only existed as an in-page tab on the Target Accounts Dashboard.
+- New "Target Contacts Dashboard ↗" button opens `target-accounts.html#contacts` directly - the exact same in-page hash route the tab bar itself uses, so it lands straight on the Contacts list rather than requiring a click-through from Accounts.
+- Side panel button order changed to: Target Accounts Dashboard, Target Contacts Dashboard, Posts Dashboard, Advisors, Settings, Activity Log, Help - Help kept last per explicit instruction, to stay last as more buttons get added over time.
+
+---
+
+# SalesTeam — v0.29.61
+
+## Added: Target Accounts Dashboard, a new Target Contacts Dashboard, and Posts Dashboard - three parallel, fully-named dashboards with pie-chart stats
+
+- Reported directly, three linked requests: rename the Target Accounts hub now that it's the real starting point, add pie-chart stats there and on a brand-new Target Contacts list, and flag known Target Contacts on the Posts Dashboard's Creator column with a link to their Contact view.
+- Naming: "Target Accounts Dashboard" / "Target Contacts Dashboard" / "Posts Dashboard" - three parallel, fully descriptive names rather than an ambiguous "The Dashboard," so the browser tab and page heading say which one you're looking at at a glance. File names unchanged, only display text.
+- New `renderGenericPieChart(containerEl, slices, {unitLabel, onSliceClick})` (`target-accounts.js`) - same hand-drawn SVG technique as the Posts Dashboard's own pie charts, copied rather than generalizing the existing one (which is hardwired to lead-status buckets) to avoid any regression risk to an already-shipped chart. One implementation, reused for every pie on both new dashboards.
+- **Target Accounts Dashboard**: four pies - AI Priority range (90-100/80-90/70-80/60-70/below-60/no-score, bucketing the real `aiPriorityScore` field), Evidence level (real workbook values: Rich Evidence/Sufficient Evidence/Insufficient - Missing baseline), Account status (Not contacted/Contacted/Responded - derived from each account's own associated leads, no new stored field), and Contact coverage (0/1-2/3+ known Target Contacts per account - proposed as the most actionable 4th pie given contacts research is still mid-rollout).
+- **Target Contacts Dashboard** (new `#contacts` route in the same page): a full second sortable/filterable/paginated table across all Target Contacts (deliberately its own parallel state/render functions, not a generalized shared table widget - the Companies table's machinery is large and already working, and refactoring it risks regressing something the user depends on daily; the purely generic cell-formatting helpers it already had - `renderCellContent`, `formatValue`, etc. - are reused directly). Flag column (⚑) for an unreviewed post or overdue follow-up; row click opens the existing Contact view. Two pies: Contact status (same derivation as Account status) and LinkedIn verification (Current - LinkedIn verified/Legacy - LinkedIn reverify/Not verified, using the field the duplicate-header fix v0.29.51 made trustworthy). A small tab bar switches between the two list views, hidden on Account/Contact detail views.
+- **Posts Dashboard**: `creatorCell` now calls `findTargetContactMatch` (exported from `storage.js`, already built for the priority-signal feature) and appends a "🎯 Target Contact" badge/link when a post's author is a known Target Contact - clicking it opens `target-accounts.html#contact=<key>`, the same cross-page pattern already used elsewhere (e.g. `openLeadInDashboard` in the opposite direction). Contacts loaded once at page init and refreshed on a live `targetAccountsWorkbook` storage-change listener, not re-fetched on every lead-list refresh.
+- Not yet confirmed live - built and cross-checked (no dangling DOM IDs, no duplicate declarations, all braces/parens balanced) but not yet exercised in the browser.
+
+---
+
+# SalesTeam — v0.29.60
+
+## Added: overview card fields now click-to-expand, same as the Posts Dashboard's truncated cells
+
+- Reported directly with a screenshot: a truncated field (e.g. "Team Head Digital Workpl...") in the Account/Contact overview card should use the same click-to-expand/collapse behavior already used on the Posts Dashboard's own truncated cells (`dashboard.js`'s `contentCell`/`.content-cell`) - click to see the full value, click again to collapse.
+- `buildField` (`target-accounts.js`) now takes an `expandable` flag - every plain-text field in the compact grid gets a `.overview-value-expandable` class and a click listener toggling `.expanded`, same pattern as `.content-cell`. Long fields (e.g. "Top AI initiatives", already shown full-width with normal wrapping) deliberately don't get this - truncating them to one line first would fight the point of breaking them out to their own row.
+- Wired the same way the Dashboard does it: always active, not just when a value happens to be actually truncated - harmless no-op for a short value that already fits.
+
+---
+
+# SalesTeam — v0.29.59
+
+## Added: pagination (20/50/100 per page) and a second horizontal scrollbar above the Target Accounts table
+
+- Reported directly: 500 companies with no pagination was too much to scroll through, and both the page-size/navigation controls and the horizontal scrollbar to see columns off to the right should be reachable at the top of the table, not just the bottom.
+- New `buildPaginationBar()` (`target-accounts.js`) - a page-size select (20/50/100) plus First/Previous/Next/Last buttons - built twice (identical content, since duplicate ids aren't valid HTML) and dropped into a container above and below the table, both acting on the same shared `pageSize`/`currentPage` state. Page size is persisted (same blob as the existing filter/sort state); every search, sort, or filter change resets to page 1 so a filter never strands the view on a now-empty later page.
+- A thin scrollable strip (`#table-scroll-top`) sits above the table with a dummy filler matching the real table's `scrollWidth`, kept in sync with the table's own native horizontal scrollbar via a two-way scroll listener - scrolling either one moves both.
+
+---
+
+# SalesTeam — v0.29.58
+
+## Fixed: a never-before-chatted-with account/contact showed a DIFFERENT account/contact's Mentor conversation
+
+- Reported directly with a precise repro: chatted with the Sales Mentor inside a SIKA contact, then opened a never-before-seen Schindler Group account - the Mentor chat there showed the SIKA conversation instead of being empty.
+- Root cause: `getTargetAccountExtra`/`getTargetContactExtra` (`storage.js`) returned a single shared, module-level `EMPTY_EXTRA` object as the "no data yet" fallback for every key. `Object.freeze` only locks an object's own properties - it does nothing to the arrays those properties point to - so every entity with no saved extra got handed back the exact same `mentorHistory`/`customerVoiceHistory` array objects. `runAgentTurn` mutates its history array in place (push), so the very first message sent anywhere polluted that one shared array for every other not-yet-saved entity in the same page session, not just the one actually being chatted with.
+- Fixed by replacing the shared constant with `emptyExtra()`, a plain function returning a fresh object and fresh arrays on every call - used in both the read-fallback and the save-merge path in `getTargetAccountExtra`/`saveTargetAccountExtra`/`getTargetContactExtra`/`saveTargetContactExtra`.
+- Checked the rest of the codebase for the same pattern: the pre-existing global (`advisorHistory`/`customerVoiceHistory`) and per-lead (`mentorHistory`) chat stores already return a fresh `[]` literal per call rather than a shared constant, so this was specific to the new account/contact extras store, not a wider issue.
+- Confirms the intended design (already correct before this bug): per-account, per-contact, and per-post (existing lead-scoped Mentor chat) conversations are meant to stay fully separate, with the Advisors page's own chat staying separate too for generic/strategic questions with no specific account or contact in view.
+
+---
+
+# SalesTeam — v0.29.57
+
+## Changed: Sales Mentor and Customer Voice chats now sit side by side (Mentor left, Voice right), stacking vertically only when the window is too narrow
+
+- Reported directly: prefer the two chats side by side in a normal-size window, switching to vertical automatically once the window gets narrow.
+- Both views' chat sections now share a `.agent-chat-row` flex container (`flex-wrap: wrap`, 24px gap) instead of stacking unconditionally - each `.agent-chat-section` gets `flex: 1 1 360px`, so the two columns sit side by side whenever there's room for both plus the gap, and the second one wraps below the first on its own once the window gets too narrow - no hardcoded breakpoint, the flex-basis plus gap IS the threshold.
+- `#account-view`/`#contact-view`'s max width widened from 900px to 1200px so two real chat columns have actual room, not just the single-column width from before.
+- No JS changes - element IDs are unchanged, this is purely a re-wrap in HTML plus new CSS.
+
+---
+
+# SalesTeam — v0.29.56
+
+## Changed: Contact view's Posts/Web mentions/Recent Activity, and the Account view's Recent Activity, also default to collapsed
+
+- Follow-up to v0.29.55's Contacts/AI Initiatives/Sources collapse - same goal, extended to the remaining list sections on both views so the whole page fits one screen with minimal scrolling.
+- New `wireCollapsibleHeader` (`target-accounts.js`) applies the same ▸/▾ toggle to a static `<h3>` heading instead of a rebuilt-every-render button (`buildSubtable`'s own toggle) - wired once (idempotent, safe to call on every render) and reset to closed each time a different account/contact opens, so a section left open on one record doesn't stay open when navigating to the next.
+
+---
+
+# SalesTeam — v0.29.55
+
+## Changed: Contacts/AI Initiatives/Sources default to collapsed on the Account view
+
+- Reported directly: these sub-tables under the company header were pushing the Account view well past one screen - the goal is to fit a standard browser window with minimal scrolling.
+- `buildSubtable` (`target-accounts.js`) now renders each section's heading as a clickable toggle (▸ closed / ▾ open) with the body hidden by default - clicking expands it in place, same content as before, just closed until asked for. Applies uniformly to Contacts, AI Initiatives, AI Investment, and Sources, since they all go through this one shared function.
+
+---
+
+# SalesTeam — v0.29.54
+
+## Changed: Account/Contact overview redesigned as one compact card instead of one field per line
+
+- Reported directly, with a reference screenshot: the overview should read as a single card across the page width, 3-5 fields per row, not a tall one-field-per-line list - the whole thing shouldn't take more than 4-5 lines.
+- `buildOverviewList` replaced with `buildOverviewCard` (`target-accounts.js`) - short fields flow into a responsive grid (CSS `auto-fill`/`minmax`, not a hardcoded column count, since label lengths vary too much - "Type" vs. "Employees (Switzerland)" - for a fixed count to hold up at every width). A field marked `long: true` (paragraph text like "Top AI initiatives") gets its own full-width row below the grid instead, so a long value doesn't force the whole card wider or truncate badly.
+- "Last contact made" and "Follow-up due" moved into the same card as regular fields, per a follow-up request - previously separate rows below it. The due-date `<input>`/Clear button live in the HTML as plain hidden elements outside the overview div specifically so they can be un-hidden and moved into a card field on every render (`dueDateFieldNode`) rather than recreated - `wireDueDateInput`'s event listeners stay attached to the same two elements throughout.
+- Truncated short values get a hover tooltip (native `title`) so nothing is silently lost to the compact layout.
+
+---
+
+# SalesTeam — v0.29.53
+
+## Added: Target Accounts Dashboard, Account view, and Contact view - a real rearchitecture, not an incremental tweak
+
+- Reported directly: with real Target Accounts and now real Target Contacts imported, the externally-researched account/contact data is the actual primary asset - scanned posts are an enhancement on top of it, not the starting point. The Target Accounts Explorer evolves in place (same page, same filenames) from a flat table into a hash-routed hub: a priority-sorted, flag-annotated main dashboard plus a full Account view and Contact view per record, each with its own persisted Sales Mentor/Customer Voice chat. The Post view is unchanged - both new views link out to it rather than duplicating it.
+- Two real conflicts resolved deliberately before writing code: the imported workbook blob is wholesale-replaced on every re-import (would wipe chat history/due-dates stored on those rows), and "overdue action" had zero precedent anywhere in this codebase. Decided with the user: account/contact data lives in separate storage keyed by the same stable `normalizeCompanyName()`/contact-name key already used for prioritization matching, and "overdue" is a manual due-date field, not an automatic staleness guess.
+- New `storage.js` stores: `targetAccountExtras`/`targetContactExtras` (chat history + follow-up due date each), `findLeadsForContact` (every post by one contact, not just the first match), `hasUnreviewedPost`/`hasOverdueAction` (drive the new flag column), and two optional Activity Log fields (`relatedCompanyKey`/`relatedContactKey`) so a company/contact's own activity history can be filtered going forward.
+- List view: unchanged columns/search/filter, already defaulted to AI Score descending - a new "⚑" column flags any account with an unreviewed post or a passed due-date. Row click now opens a full Account view instead of the old in-place row-expand.
+- Account view: every requested overview field (official/alternative name, LinkedIn, industry, address, employees/revenue Global+Switzerland, AI Priority/Coverage/Budget, top initiatives), last-communication date, a follow-up due-date, Contacts (now clickable through to their own Contact view)/AI Initiatives/Sources sub-tables (reused from the Explorer as-is), Activity Log, and two chat panels.
+- Contact view: name/title/LinkedIn/function/seniority/AI relevance, last-communication date, every post by this contact (linking to the unchanged Post view), web mentions, due-date, Activity Log, two chat panels.
+- Four new prompt builders in `agent-shared.js` (`buildAccountScopedMentorPrompt`/`CustomerVoicePrompt`, `buildContactScopedMentorPrompt`/`CustomerVoicePrompt`). The contact-scoped pair deliberately embeds the parent account's own AI initiatives alongside the contact's role, per an explicit requirement - a drafted message needs to reference the real initiative ("I read that you are doing a project to automate your customer support..."), not just the contact's title.
+- Two honest data gaps flagged, not invented around: no distinct "company website" column exists in the workbook (`primarySourceUrl` used as the closest stand-in), and the Sources sheet only joins by company, not by contact, so "web mentions" for a contact is just their own single `sourceUrl` field today. Both are future ChatGPT research asks, not code fixes.
+- Not yet confirmed live - built and manually traced against real imported data (two known real matches, Christian Sebregondi/Zürcher Kantonalbank and François Réf/Geberit, should both flag and open correctly) but not yet exercised in the browser.
+
+---
+
+# SalesTeam — v0.29.52
+
+## Added: Target Contacts now feed the Sales Mentor's prioritization as a signal - a post by a known, vetted decision-maker weighs heavily toward Priority 1
+
+- Per the explicit decision behind this: one combined priority, no separate multiplier or second priority field - the signal feeds the same `prioritizeLeads` call as context, same pattern as the existing company-level `targetAccountSignal`, not a new deterministic auto-priority rule.
+- `partitionLeadsByTargetAccount` (`storage.js`) now also matches a Post lead's own scraped author name against the imported Target Contacts data (the Contacts sheet, 6.12) - scoped to the same company first (`normalizeCompanyName`, the same key the `targetAccounts` map itself uses), then every word of the contact's (clean) full name must appear as a whole word in the author's scraped name. Deliberately tolerant of trailing credentials real people add to their own LinkedIn name (confirmed against real leads: "Katja Roelants du Vivier, MSc", "Vikram Verma PMP®, CSM") rather than maintaining a list of abbreviations to strip.
+- `agent-shared.js`'s prioritization prompt now explains `targetContactSignal` to the Sales Mentor as a materially stronger signal than the company-level one alone - it confirms not just that the company fits, but that this exact person is already a vetted, researched decision-maker. A post from a confirmed Target Contact should typically land at Priority 1 unless the post's own content gives a real reason not to; a lead carrying both signals (high-priority company + confirmed contact + real post) is described as the strongest case a batch can contain.
+- `tagPrioritiesWithTargetAccountSignal` (unchanged name, extended scope) now also prepends a `[Target Contact match: ...]` tag whenever a contact signal was present, so the connection is deterministic rather than relying on the model reliably mentioning it in free text - same reasoning as the existing Target Account tag.
+- Confirmed working against real, already-saved data (zero LinkedIn contact): replaying the exact matching logic against today's leads and the newly-imported 83 Target Contacts found two genuine matches - Christian Sebregondi (Zürcher Kantonalbank, "Head Artificial Intelligence") and François Réf (Geberit, "Head of AI Competence Centre") - both exact name+company matches, not fuzzy edge cases. Not yet confirmed live through an actual prioritization run.
+
+---
+
+# SalesTeam — v0.29.51
+
+## Fixed: duplicate column headers in the Contacts sheet silently overwrote real data; the Explorer's "LinkedIn" link pointed at the wrong URL
+
+- Reported directly, checking the first real Contacts data (83 contacts, `Swiss_AI_Prospects_500_v19_contacts_enriched.xlsx`) before importing it: the Contacts sheet has two separate "Last_Verified"/"Evidence_Quality" column pairs with identical header text - a source-website verification date pair, then a distinct LinkedIn-verification pair (the actual verified profile URL plus a status like "Current - LinkedIn verified"/"Legacy - LinkedIn reverify"). `parseGenericSheetRows` (`xlsx-lite.js`) built a plain object keyed by header name, so the second pair silently overwrote the first with no error - and the Target Accounts Explorer's own "Profile" column was labeled "LinkedIn ↗" while actually reading `Profile_URL`, which in the real data is the company's own bio page (or empty), not LinkedIn at all.
+- `parseGenericSheetRows` now suffixes a repeated header (`lastVerified`, `lastVerified2`, `lastVerified3`, ...) so every column's data survives under its own key instead of colliding - a general fix protecting any future relational sheet from the same silent-overwrite risk, not just this one.
+- `CONTACT_COLUMNS` (`target-accounts.js`) updated to match: a new "LinkedIn Profile" column (the real verified URL, `lastVerified2`) and "LinkedIn Status" column (`evidenceQuality2`) now show what the label always claimed to show; the original date/quality pair is kept too, relabeled "Source Last Verified"/"Source Evidence Quality" so it's not lost, just no longer confused with the LinkedIn pair; "Profile" relabeled "Bio Page" since it usually isn't LinkedIn.
+- Confirmed the other four relational sheets (Companies, AI_Initiatives, AI_Investment, Sources) have no duplicate headers in this workbook - only Contacts was affected.
+- Nothing new to import separately: Settings' existing "Import Target Accounts" already parses the full workbook (companies *and* Contacts/AI_Initiatives/etc.) in one click - this fix just makes sure the Contacts data that lands displays correctly.
+
+---
+
+# SalesTeam — v0.29.50
+
+## Fixed: neither CSV export had a real Company column - blocked a genuine analysis the JSON leads backup could already do
+
+- Reported directly, while trying to measure whether the Target Account-scoped Post search phase (6.17) is actually improving the Post-vs-Job imbalance: the Dashboard's "Export Leads (CSV)" has no Company column for Post leads at all, and the side panel's own CSV export conflated "Headline / Company" into one ambiguous column that, for a Post lead, actually held the *headline*, not the company - the JSON leads backup already has both fields cleanly separate.
+- `dashboard.js`'s `exportLeadsToCsv` gets a new `leadCompany()` helper and a dedicated "Company" column. `sidepanel.js`'s `resultsToCsv` splits its old combined "Headline / Company" column into two real ones - "Headline" (Post leads only, blank for Job listings, matching the existing convention) and "Company" (both lead types, sourced from `lead.company` the same way the JSON backup already does).
+- Confirmed useful immediately: cross-referencing a fresh JSON leads export's now-consistent company data against the 500-company Target Accounts list found 41 of 65 new Post leads found in one day's scan (63%) were authored by someone at a Target Account company - real, direct evidence the Target Account phase is driving new Post lead discovery, not just a keyword-search coincidence.
+
+---
+
+# SalesTeam — v0.29.49
+
+## Added: visible LinkedIn touch-volume counter, so heavy automated activity is never invisible again
+
+- Reported directly: a single day of concentrated testing (one scan, one profile-extraction run, and nine separate company-ID-resolver runs spread from 00:54 to 12:23 UTC) triggered LinkedIn's own "unusual activity" account warning. Reconstructed after the fact from real timestamped data (not a guess): ~315 automated page visits that day - company-ID resolution alone (171) was the single largest contributor, more than the scan and profile-extraction combined, and it ran independently across the whole day rather than in one obvious burst.
+- New `linkedin-touch-log.js` module records every real navigation from all four LinkedIn-touching sources (`background.js`'s scan, `profile-extraction.js`, `company-resolve-extraction.js`, `people-search-extraction.js`) as a trimmed rolling-window timestamp log, not a running total - kept as its own tiny file rather than folded into `storage.js` so modules that deliberately have no dependency on it (`profile-extraction.js`, `people-search-extraction.js`) don't reintroduce one.
+- A persistent "LinkedIn touches (automated): N in the last 24h · M in the last 7 days" line now shows on both the side panel and Settings (Settings needed too, since the resolver - the biggest single contributor - can run there with the side panel closed), color-coded amber past 50/24h and red past 100/24h - both well below the ~315 that triggered the real warning. Refreshed on load, every 30s while the page stays open, and right after a scan/profile-extraction/resolver run finishes.
+- Not a gate - nothing is blocked or throttled. The volume was already happening; it just wasn't visible until it was too late once. This applies to every install, not just this account - the same invisible-volume risk exists for anyone else running SalesTeam.
+
+---
+
+# SalesTeam — v0.29.48
+
+## Fixed: AND-topic keyword matching required an exact singular/plural (and EN/DE conjugation) match - a configured "pilot" never matched a post's own "pilots"
+
+- Reported directly with two real, on-topic Holcim posts (Lily Wong, AI leadership) that a configured AND-topic should have caught but didn't. Root cause, confirmed by replaying the exact matching logic offline against the real post text: `containsWholeWord`'s `\bkeyword\b` requires an exact whole-word match on *both* ends, so a configured singular ("pilot") never matches its own plural ("pilots"). The topic's own keyword list already showed a prior manual workaround for exactly this gap - both "project" and "projects" listed separately - just never generalized.
+- `containsWholeWord` (`storage.js`, `content-script.js`, `jobs-content-script.js`) now only requires the *leading* boundary for keywords of 4+ characters, so one root keyword also matches its own grammatical family for free - "engineer" now matches engineers/engineering, "transform" matches transformation(s), German "Ingenieur" matches Ingenieur/e/in/innen/wesen/wissenschaften - with zero new keyword entries needed for any of those. Below 4 characters (AI, KI, ROI, GPT, LLM, PoC), both boundaries are still required - short acronyms are exactly as long as plenty of unrelated whole words (Aid, Air, Kind, Kiste) that would become false positives the moment the trailing boundary is dropped. `profile-content-script.js`'s own separate copy (used for a different, already-tuned location-detection heuristic) was deliberately left untouched.
+- A few configured keywords in the "AI Transformation (EN + DE)" topic needed a *shorter root*, not just the suffix tolerance, to reach irregular forms: "implementation" → "implement" (also covers implemented/implementing); "automation" → "automat" (also covers automate/automated/automating); "development" → "develop" (also covers developed/developing); German "Implementierung" → "Implementier" and "Automatisierung" → "Automatisier" (both also cover their "-iert"/"-ieren" verb forms); German "Entwicklung" → "Entwick" (e-elision means "Entwicklung" and "entwickeln" only share this shorter prefix, not the full noun form). True synonyms that aren't grammatical variants at all - "PoC" vs. "Proof of Concept", "ROI" vs. "Return On Investment" - were added as separate entries rather than folded into the suffix mechanism, since "PoC"/"ROI" themselves stay short-and-strict.
+- Offline verification (replaying the real topic keywords against the real post text, zero LinkedIn contact) confirmed the fix closes a genuine gap for one of the two reported posts ("pilot"/"pilots"); the other post already matched under the *old* logic too (a second, singular "use case" occurrence later in the body that a first read-through missed) - pointing at a separate, unconfirmed cause: matching only ever runs against `post.snippet` (LinkedIn's own truncated search-result preview), never the full post body, so a match sitting late in a long post may simply not be present in what got scraped. Not yet confirmed live.
+
+---
+
+# SalesTeam — v0.29.47
+
+## Fixed: 10 of 65 profile visits hard-timed out - same backgrounded-tab throttling bug already fixed once for the Company ID resolver
+
+- Reported directly with real evidence: a 65-profile "Extract Companies & Locations from Profiles" run hard-timed-out on 10 (found: 55, hardTimeoutCount: 10). Two of three attached debug samples (`peterwanda`, `ftomasini`) showed the exact signature already root-caused for `runCompanyIdResolution` (v0.29.43): `navCompleted: true` but the content script's result never arrived - the page loaded, the script just never got far enough to send it in time.
+- `runProfileExtraction`'s tab has always been created backgrounded (`active: false`), same as the resolver's was before v0.29.43 - and the same fix applies: Chrome's background-tab throttling can stall a heavy page badly enough that the content script never sends a message within the scrape timeout. `profile-extraction.js`'s tab is now created active, and `navigateAndWaitProfile` re-asserts `active: true` on every navigation, not just at creation - identical to the resolver's `navigateAndWaitResolve`. Tradeoff: a visible tab jumping between profiles during a run instead of working invisibly in the background.
+- The third sample (`notte`) wasn't a hard timeout at all - a real, successful visit that found `location: "Zurich, Switzerland"` but no company (`anyCompanyLinkOnPage: false`), counted correctly among the 55 successes, not the 10 failures. Not a bug: this profile's Experience section is genuinely present but empty (`entryCount: 0`).
+- Not yet confirmed working - awaiting the next run's hard-timeout count.
+
+---
+
+# SalesTeam — v0.29.46
+
+## Added: system sleep is now held off for the duration of a scan or any multi-profile run
+
+- Reported directly: a scan left running unattended came back 3 hours later only a handful of profiles further into the post-scan "Visiting profile…" phase - far slower than the ~15-25s/profile this should take. Confirmed live: the counter resumed advancing at its normal pace the instant the machine woke back up, with no error - the machine going to sleep had simply frozen every JS timer for as long as it was asleep, indistinguishable from a hang until the wake-up timing lined up with the resume.
+- `scanAllTopics` (`background.js`) now calls `chrome.power.requestKeepAwake("system")` right before its main scan loop starts and `chrome.power.releaseKeepAwake()` in the `finally` that already runs on every exit path (success, Stop Scan, or error) - a new `"power"` permission in `manifest.json`. Only blocks system sleep; the screen itself can still turn off.
+- Same pattern added to the extension's three other long-running, multi-visit loops for the same reason: `runProfileExtraction` (`profile-extraction.js`), `runCompanyIdResolution` (`company-resolve-extraction.js`), and `runPeopleSearchComparison` (`people-search-extraction.js`).
+
+---
+
+# SalesTeam — v0.29.45
+
+## Added: Stop buttons for both the scan and the LinkedIn Company ID resolver
+
+- Reported directly: with the Target Account-scoped Post search phase (6.17) now able to push a scan into the hundreds of searches, there was no way to stop a long-running scan short of force-closing the extension. A new **"Stop Scan"** button in the side panel (shown only while a scan is running) sets a `scanAbortRequested` storage flag, checked by a new `checkAbort()` at the exact same per-sub-query checkpoint every one of `background.js`'s scan loops already has (Post topics, Job topics, Target Account companies) - so the delay between clicking Stop and the scan actually stopping is at most one in-flight search. Whatever was found before stopping is already saved (the existing per-topic checkpoints, plus a final save on the same path a genuine error already used) and reported with its own "Scan stopped by you" message, logged as a deliberate stop rather than a failure.
+- Same idea for the Company ID resolver: a new **"Stop"** button next to "Resolve LinkedIn Company IDs…" in Settings. `runCompanyIdResolution` now takes a `shouldAbort` callback, checked before starting each new company (not mid-attempt). Returns a new `attemptedKeys` list - distinct from the full requested batch once a run can end early - used instead of it to mark which companies were actually attempted, so a company never reached this run isn't wrongly deprioritized behind ones that genuinely were tried, the next time the queue is built. The completion message states how many of the requested batch were never attempted when stopped early.
+
+---
+
+# SalesTeam — v0.29.44
+
+## Changed: scan search count cut roughly in half once 499 of 500 companies got resolved - the author-company chunk size was still set for a much smaller list
+
+- Reported directly: with 499 of 500 Target Account companies now resolved (6.16), the Target Account-scoped Post search phase (6.17) alone pushed one scan from 24 total searches to 134 - "way too much, will take forever." The math backed that up: 110 extra searches at this file's own 3-8s pacing works out to roughly 20-25 minutes added to a scan.
+- `AUTHOR_COMPANY_CHUNK_SIZE` raised from 50 to 100 (`background.js`) - tested live rather than guessed: 100 real ids in one authorCompany search read an exact "99" on LinkedIn's own filter chip (one duplicate id shared by two different companies, a real LinkedIn-side dedup, not a bug) - a precise count proving LinkedIn parsed and applied the full array. Tried 200 too, but that result is inconclusive, not confirmed working: LinkedIn's chip UI stops giving an exact count past 99 ("99+", the same convention as "500+" connections), so there's no way to tell from the UI alone whether the backend genuinely filtered on all 200 or silently capped around 99. 100 is the highest chunk size with real, verifiable evidence behind it - halves the company-chunk count (10 → 5) and roughly halves this phase's added scan time.
+
+---
+
+# SalesTeam — v0.29.43
+
+## Fixed: direct-link resolver hard-timed out on the majority of a 25-company run - the tab was backgrounded, and company pages are too heavy for that
+
+- Reported directly: a 25-company run on the new direct-link resolver (v0.29.42) hard-timed out on 15 of 25. Tested live rather than guessed: manually navigating to one of the exact same failing URLs, in an active tab, loaded the real page fully in ~3 seconds - ruling out LinkedIn-side slowness or blocking. The one constant across every version of this resolver: its tab has always been created backgrounded (`active: false`). The old search-based path almost exclusively hit lightweight search-results pages and never hit this in 60+ companies; the new direct-link path exclusively hits full company pages - heavier pages Chrome's background-tab throttling can apparently stall badly enough that the content script never sends a message at all within the 28s window (confirmed in the debug data - not a slow "complete" event, zero message ever received). `runCompanyIdResolution`'s tab is now created active, and `navigateAndWaitResolve` re-asserts `active: true` on every navigation, not just at creation. Tradeoff: a visible tab jumping between company pages during a run, instead of working invisibly in the background. **Confirmed working**: the next run after shipping resolved 10 of 10 companies with zero hard timeouts.
+- **Two more real problems found and fixed at the data source, not in code**: a 10-company test run flagged three "no confident match" results despite each having a validated LinkedIn link. Live-checking one (SWICA) found the link pointed to an unrelated Welsh carnival-arts company sharing the same name - a same-name collision no name-based check can catch, since the wrong page's name matches just as well as the right one's would. Reported to the external cross-check with this concrete example; a re-screen of all 500 (223 flagged as ambiguous enough to warrant a real industry/location check, not just a name match) found five more genuine wrong links this way (Ypsomed, Avolta AG, Emmi AG, Swiss Life, Belimed) plus one it caught independently (CSL Behring's link had gone 404 since first validated - corrected to the parent CSL page). Live-verified directly: BLKB, Swiss Life Group, and CSL all confirmed correct.
+- **`Alternative Company Name` gap closed**: the three "no confident match" companies (BCN, Balgrist, Bank Syz) all had correct links but a blank `Alternative Company Name`, leaving the sanity check nothing to compare the real page name against beyond the research/official name - neither of which shares words with an acronym or a rename. Since the external cross-check already visits every page, it now writes back the page's actual displayed name whenever it differs (406 blank cells filled, 13 replaced, 419 changed total).
+
+---
+
+# SalesTeam — v0.29.42
+
+## Changed: resolver's primary path is now a validated LinkedIn link, not name-based search; Explorer columns reordered to match the workbook
+
+- **Full 500-company run completed: 416 of 500 resolved (83.2%)**, confirming every fix from v0.29.39-41 actually worked - APG|SGA, Dätwyler, Edwards Lifesciences, Fresenius Kabi Switzerland, and Ford Switzerland (the specific companies each fix was built for) are all absent from the final unresolved list. The 84 that remained were traced through the actual code, not guessed at, and split into: a repeat-offender company-page-fallback bug (6+ companies - Bank Syz, Basellandschaftliche Kantonalbank, Geneva Airport, SWICA, Swiss Mobiliar, Takeda - all correctly reach the right page but extract no id there, still undiagnosed); verbose full legal/branch-registration names with the real brand buried mid-string, which no trailing-word stripping can reach (Gaznat, Skyguide, STMicroelectronics, Trafigura, Versigent, Pax, Securitas Group); cross-language names (Swiss Post); the known, deliberately-unfixed acronym cases (BCGE, BCN, "BD"); and a newly-found trailing place-of-registration pattern ("OC Oerlikon Corporation AG, Pfäffikon") that blocks the noise-word stripper from ever reaching the "AG" before it, since it only ever looks at the very last word.
+- **Resolver architecture changed to a direct-link primary path.** A follow-up external cross-check (ChatGPT, cross-referencing real web search/knowledge - not just the Swiss commercial registry) added two more workbook columns: `Alternative Company Name` (a commonly-used short/acronym form - solves the cantonal-bank acronym cases above without risky automated guessing, since a human/AI already did the disambiguation) and `LinkedIn Link` (a validated company-page URL for 499 of 500 companies, including catching real-world cases no on-site search could ever get right - e.g. a hospital whose old LinkedIn page now redirects as deprecated after a rename). Reported directly, and agreed: since the URL is already known-correct, navigating straight to it and reading the id off the page sidesteps essentially every failure mode above. `company-resolve-extraction.js`'s new `resolveViaDirectLink` is the primary path for any company with a `linkedinLink`; the existing search-based path is kept, unchanged, as a fallback for the rare company with none - so nothing about the proven single-search-per-company pacing changes. `company-resolve-content-script.js`'s new `runDirectLinkResolve` still does its own sanity check (the page's own `<title>`, parsed via a new `extractCompanyPageTitleName`, against every name known for the company) before trusting the id, since a supplied link has never been confirmed against a hero card the way the search-based path's has. Not yet run against real data - the company-page-fallback bug above is now the single highest-value remaining fix, since it's the one thing standing between a validated link and a resolved id for most of the list.
+- **Target Accounts Explorer columns reordered to match the workbook**, plus six columns not previously surfaced there at all (`Evidence_Status`, `Zefix_Official_Name`, `Zefix_UID`, `Zefix_Address`, `Alternative Company Name`, `LinkedIn Link`) - reported directly: the externally-maintained workbook's own column order already puts triage-relevant fields well to the left, so mirroring it avoids the horizontal scrolling the Explorer's independently-curated order caused.
+
+## Fixed: parentheses ("Fresenius Kabi (Schweiz)", "Ford Motor Company (Switzerland)") were being rejected the same way accents and pipes were
+
+- Reported directly, from a 10-company run that resolved 7 of 10: "Fresenius Kabi Switzerland" got a real, correct hero card and ID (`65191466`, `heroName: "Fresenius Kabi Schweiz"`) but was rejected anyway - search term `"Fresenius Kabi (Schweiz)"` has a literal `(` sitting where a space needs to be, and `normalizeForNameMatch` (`company-resolve-content-script.js`) didn't treat `(`/`)` as separator punctuation the way it already did `|`, `&`, comma, period, and hyphen. Added.
+- Same gap in `stripTrailingCorporateNoise` (`company-resolve-extraction.js`): "Ford Switzerland"'s official name `"Ford Motor Company (Switzerland)"` never got its trailing qualifier stripped the way `"ARYZTA AG"` did, because `"(switzerland)"` - parens still attached - never matched the noise-word set's plain `"switzerland"` entry. Same fix applied to that lookup.
+- `storage.js`'s own `normalizeCompanyForMatch` already treated `()` as separator punctuation for the exact same reason (Negative Topic company matching) - this resolver code just hadn't gotten the same treatment yet.
+- Not a bug, for the record: "Fundamenta Real Estate AG" correctly declined a match against "Fundamental Real Estate Investment Partners" in the same run - a genuinely different company with a similar name, not a punctuation issue.
+- Not yet confirmed working - awaiting the next test run.
+
+---
+
+# SalesTeam — v0.29.40
+
+## Fixed: accented company names ("Dätwyler", "Sàrl") were being rejected by literal-string matching
+
+- Reported directly, from a 20-company run: "Dätwyler" got a real, correct hero card (`heroName: "Datwyler Group"`) but was rejected anyway - `namesMatch` (`company-resolve-content-script.js`) lowercases before comparing but never strips accents, so `"dätwyler"` and `"datwyler group"` are different literal strings (ä vs a). Fixed with a `foldDiacritics` helper (Unicode NFD decomposition + stripping the resulting combining marks) applied before the existing punctuation normalization.
+- Same gap existed the other direction in `stripTrailingCorporateNoise` (`company-resolve-extraction.js`): "Edwards Lifesciences Sàrl" kept its trailing legal suffix in the search query because `"sàrl"` (accented, from the Zefix official name) never matched the noise-word set's plain `"sarl"` entry. Same fold applied to the noise-word lookup only - the search term itself keeps its original accents, only the *comparison* is accent-insensitive.
+- Two small, separately-maintained `foldDiacritics` helpers rather than one shared one - `company-resolve-content-script.js` is a plain injected content script with no module imports, matching this project's existing convention of small local duplicates over premature shared abstraction (see `formatImportStamp` in `sidepanel.js`/`settings.js`).
+- **Confirmed working**: the very next run (10 companies) resolved 7 of 10 (70%), with `hardTimeoutCount: 0` for the third consecutive run since the two-name-loop revert (v0.29.38) - 40 companies total now with zero hard timeouts on the single-name-only code.
+
+---
+
+# SalesTeam — v0.29.39
+
+## Fixed: resolver queue kept retrying the same stubborn companies instead of making progress; a real name-matching bug fixed along the way
+
+- Reported directly: with no distinction between "never attempted" and "tried and failed" in the data, and a run always drawing from the front of the same list in the same order, a handful of genuinely stubborn companies (a translated name, an acronym LinkedIn shows instead of the full one) kept consuming the whole budget of every run before ever reaching a fresh company further down the list - "wasting time trying to resolve the same companies again and again."
+- Added `linkedinResolveAttemptedAt` (`storage.js`) - set on every company a run actually attempts, success or failure, via a new `markLinkedinResolveAttempted`, called from `settings.js` after every run. Carried forward across a workbook re-import the same way `linkedinCompanyId` already is - a resolver run's history has nothing to do with what changed in a refreshed workbook. `getTargetAccountsMissingLinkedinId` now sorts never-attempted companies first, so a run makes real forward progress through the full list before it ever revisits a known-stubborn one - once every company has been attempted at least once, this naturally falls through to offering the stubborn remainder for retry/analysis, oldest-attempt-first. Completion message wording softened to match ("will retry once every other company's been attempted" instead of "will retry next run," which is no longer guaranteed).
+- **Confirmed working**: a 10-company run right after this shipped surfaced "Bergbahnen Engelberg-Trübsee-Titlis" - a company never seen in any debug sample before - and the very next 20-company run resolved 8 of 20 (40%), a sharp jump from the 1-of-10 seen immediately after shipping (which was itself explained by every company's `attemptedAt` starting at `null` together, so that first run's ordering was still effectively arbitrary - not a sign the fix wasn't working).
+- **A real bug found while testing this**: "APG|SGA" resolved a genuine, correct hero card and ID (`11414625`, `heroName: "APG|SGA AG"`) but was still rejected. Cause: the search term had already replaced the literal `|` with a space to avoid breaking LinkedIn's own search, but the hero card's real displayed name still has the `|` - "apg sga" (space) and "apg|sga ag" (pipe) are different literal strings to a plain substring check, even though they're obviously the same company. `namesMatch` (`company-resolve-content-script.js`) now normalizes pure separator punctuation (`|`, `&`, `,`, `.`, `-`) to whitespace before comparing - not an acronym/fuzzy matcher, and deliberately doesn't touch the BCGE/BCN/BD cases (a genuine abbreviation with no shared substring at all, punctuation or not), which stay correctly unmatched for a different reason.
+
+---
+
+# SalesTeam — v0.29.38
+
+## Fixed: every import flow's status was ambiguous, with no persistent feedback while running or on failure
+
+- Reported directly: re-importing a refreshed research workbook more than once in one day (e.g. to pick up the new Zefix cross-check column, 6.16) left an ambiguous "500 companies imported · Sep 9, 2026" status - date-only, so there was no way to tell a just-finished import from a stale one hours earlier, or confirm it actually ran, especially with several similarly-named candidate workbook files in play at once.
+- `formatImportedAt` (`settings.js`) now includes the time, not just the date. The status line also shows the source filename - `importTargetAccounts` (`storage.js`) now takes an optional `fileName` and stores it (`targetAccountsImportedFileName`), returned from `getTargetAccountsMeta` alongside `importedAt`. Final message reads "N companies imported from file \<name\> at \<date/time\>".
+- Carried through the Export/Import Target Accounts backup flow too (`exportTargetAccountsBackup`/`importTargetAccountsBackup`), so a restored backup doesn't leave a stale filename behind from whatever was imported before it.
+- Reported directly, same underlying complaint: parsing a large multi-sheet workbook isn't instant, and with no feedback between the click and the final status line, a click that hadn't actually registered yet looked identical to one still running. The status line now shows "Importing \<filename\>…" immediately on file selection, replaced by the real result either way.
+- Reported directly: on failure, silently reverting straight back to the last-successful status (once the dismissable `alert()` was closed) left no visible trace that anything had gone wrong. The status line now states the failure and the actual reason persistently instead - `Import failed - "<file>" doesn't look like a valid, uncorrupted .xlsx or .json export (<error detail>).` for a parse-level failure, or a similar message when the file parses fine but isn't a recognized Target Accounts shape at all.
+- **Generalized to every import flow in the extension, not just Target Accounts** - reported directly as a general expectation. Import Settings and Import Leads (side panel) had no persistent status at all before this, relying purely on a dismissable `alert()`; both now get the same "Importing…" → result-or-failure-with-reason treatment, via two new status lines (`import-settings-status`/`import-leads-status`, `sidepanel.html`). Import Leads' completion (`N leads restored from file <name> at <date/time>`) replaces its old success `alert()` entirely - failures still alert too, for the same reason a destructive-feeling settings replacement does, but a success no longer needs to interrupt.
+- **A real parity bug found and fixed along the way**: the Target Accounts Explorer page (6.12) has its own, separate copy of the import handler (`target-accounts.js`, added v0.29.30 for backing up/refreshing data without leaving the page) - it had silently drifted from Settings' version in two ways, not just cosmetically. It never mapped `zefixOfficialName` at all, so an import done from this page instead of Settings would silently skip 6.16's official-name resolver improvement; and it never passed a filename to `importTargetAccounts`, so this page's imports never recorded which file was used. Both fixed to match Settings' version exactly.
+
+---
+
+# SalesTeam — v0.29.37
+
+## Added: resolver tries a Zefix-verified official company name first, when the workbook has one
+
+- Reported directly: a 20-company batch resolved 8 of 20 (2 hard timeouts, both isolated - not the listener race recurring; 10 "no confident match"). Digging into the no-confident-match samples surfaced a genuinely new pattern: 3 of them (Banque Cantonale de Genève, Banque Cantonale Neuchâteloise, Becton Dickinson Switzerland) actually found the right hero card and a real currentCompany ID (`heroLinkFound: true`) - `namesMatch` just correctly declined to accept "BCGE"/"BCN"/"BD" as a match for the full name, since LinkedIn displays these companies under an abbreviation with no reliable, deterministic way to derive it from the full name (confirmed live: Swiss cantonal bank abbreviations don't even follow one consistent rule - "BCGE" uses the canton code style, "BCN" doesn't). Deliberately not auto-matched: a loose acronym heuristic risks the opposite failure - accepting a *wrong* company somewhere else in the list, worse than today's safe non-match.
+- Separately, the user had ChatGPT cross-check all 500 Target Accounts companies against Zefix (the Swiss commercial registry) by UI + address, producing a `Zefix_Official_Name` column (493 of 500 matched; the 7 unmatched needed genuine human judgment ChatGPT declined to guess at, e.g. "Amcor" - several plausible Swiss group entities, no unambiguous pick). Checked live against the companies already known to have resolver issues: this fixes "APG|SGA" (officialName "APG SGA SA" drops the literal `|` LinkedIn's search chokes on) and "Bank Syz" (officialName "Banque Syz SA" - the correct French spelling, matching what the user found manually on LinkedIn as "Banque SYZ & CO"). It does NOT fix the BCGE/BCN/BD acronym cases above (official names are unchanged or trivially different) or "Balgrist University Hospital" (officialName "Schweizerischer Verein Balgrist" is a real but different legal entity - still not what LinkedIn's own page is named).
+- `parseFullTargetAccountsWorkbook` (`xlsx-lite.js`) already keeps every workbook column camelCased, so `Zefix_Official_Name` arrives as `zefixOfficialName` with no parser changes needed. Settings' import now carries it into each Target Account record as `officialName` (`storage.js`'s `importTargetAccounts`) - refreshed on every import like the rest of the workbook's own data, unlike the durable `linkedinCompanyId` that gets carried forward across a re-import instead. `getTargetAccountsMissingLinkedinId` passes it through to the resolver.
+- `runCompanyIdResolution` (`company-resolve-extraction.js`) originally built a candidate list per company - the stripped officialName first, then the stripped research name - trying each until one resolved.
+- **First test run's numbers didn't add up**: a 20-company run (2 names tried per company, roughly doubling request volume) came back with `hardTimeoutCount: 9` - a real jump from the `0` seen consistently since the v0.29.35 listener-race fix, including on the exact same fully-diagnosed "tab landed on the right page, message never arrived" signature that fix targeted. A follow-up 3-company run on the same code came back clean (`hardTimeoutCount: 0`), which at first suggested cumulative daily volume (this was roughly the 10th+ resolver run against LinkedIn in one session) - but reported directly, that theory doesn't survive a real fact: there was a 9-hour gap with zero resolver activity right before these two runs, which should have cleared any daily-cumulative throttling entirely.
+- **Reverted (not a code regression, but not fully explained either)**: checked directly whether the two-candidate loop was missing a pacing delay between the first and second name attempt - it wasn't; `if (c > 0) await sleep(randomDelay())` already used the exact same 4-9s delay as between companies. Reported directly, and correct: every run before today used exactly one search per company - the two-name fallback was the one thing that changed request volume per company in a 20-company run, so it's reverted to isolate that variable and make future runs directly comparable to every one before it, whatever the real underlying cause turns out to be (a shorter in-session burst threshold rather than daily-cumulative volume remains the leading theory, not yet confirmed). Only the research name is used as a fallback now, and only when a company has no officialName at all (7 of 500, per the Zefix cross-check) - not as a second attempt after the official name fails. Consequence: whether "APG|SGA" and "Bank Syz" actually resolve with their official name is still unconfirmed either way, since the only run that tried both names for them was the same suspect 20-company run.
+
+---
+
 # SalesTeam — v0.29.36
 
 ## Fixed: resolver missed real, well-known companies whose sheet name carries a trailing corporate suffix
@@ -123,6 +455,177 @@
 - The missing piece was found in real HTML the user shared, not guessed: navigating to `https://www.linkedin.com/search/results/all/?keywords=<name>` (a plain URL, no autocomplete interaction needed) shows a "hero card" for the best-matching company, and that card's own "X connections/alumni work here" link always encodes `currentCompany=["<id>"]` - reliably the *first* such occurrence anywhere on the page, before any unrelated "People also viewed" sidebar company. Cross-confirmed twice: Swiss Re's hero card gave `3845` this way, exactly matching the `heroEntityKey` LinkedIn's own search-suggestion dropdown had already produced for the same company.
 - New "Resolve LinkedIn Company IDs…" button (Settings, next to Target Accounts) looks up each Target Account company missing an ID this way (`company-resolve-extraction.js`/`company-resolve-content-script.js`, matching `linkedin.com/search/results/all/*`, same gating/pacing/timeout pattern as the other extraction modules) and writes the resolved ID onto that company's Target Account record (`linkedinCompanyId`, `applyResolvedCompanyIds`, `storage.js`). A resolution only counts if the hero card's own displayed name loosely matches the company being searched for - a mismatch is left unresolved, not guessed.
 - This is a prerequisite, not the finished feature - the actual company-scoped Post search (chunking resolved IDs into `authorCompany` batches, merging keywords across topics so search count stays roughly constant regardless of topic count) is separate work, not yet built.
+
+---
+
+# SalesTeam — v0.29.24
+
+## Added: experimental Location/Company lookup via LinkedIn People Search (comparison mode)
+
+- Follow-up to the v0.29.22 Location Filter fixes: real numbers showed the filter now correctly discards the large majority of Post leads as non-Swiss, which raised a strategic question - is the Post-vs-Job imbalance fixable? Investigated live against LinkedIn's actual UI (not guessed): (1) Post Search's own filter bar has no "Locations" option at all - confirmed by the user's screenshot - so there is no way to geo-scope the original keyword search for Posts the way Job Search's `geoId` already scopes Job leads to Switzerland from the start. This means the imbalance is structural, not a bug - a much larger fraction of globally-matched Posts are genuinely non-Swiss, and the Location Filter is now correctly surfacing that instead of missing it. (2) People Search DOES support a location filter - confirmed live, selecting Switzerland produces `geoUrn=["106693272"]` - and its result cards show the person's location and current company directly, without a full profile visit.
+- Built on finding (2): a new, explicitly EXPERIMENTAL Dashboard button, "Compare via People Search…", looks up each Post lead's author by exact name in People Search filtered to Switzerland (`people-search-extraction.js`, mirroring `profile-extraction.js`'s visiting/pacing/timeout shape), and a new content script (`people-search-content-script.js`, matching `linkedin.com/search/results/people/*`) reads the matching result's location/company. A same-named stranger is never mistaken for the right person: only a result whose headline is also a close match (word-overlap, not exact) to the post's own already-known headline is accepted - anything less confident is skipped, not guessed.
+- Deliberately does NOT replace the existing profile-visit extraction yet - results are written to separate `peopleSearch*` fields (`applyPeopleSearchComparison`, `storage.js`) and compared against the existing `location`/`company` (location compared via `classifyLocation`'s country, so a German vs. English spelling of the same real place doesn't read as a disagreement), with agree/disagree counts surfaced in the completion message and Activity Log - a way to judge this method's real-world accuracy before it's trusted as a source, not a finished feature.
+- Selectors in `people-search-content-script.js` were built from a screenshot, not real HTML (same situation `profile-content-script.js` started in) - may need a live-tuning pass once run against a real page, same as that file did.
+
+---
+
+# SalesTeam — v0.29.23
+
+## Changed: a senior AI-leadership title is now its own priority signal, even without an expressed need
+
+- Reported directly with a real lead: Nicholas Blotti, "Head of AI for IT @ Azqore," posting AI industry commentary with no expressed need, scored P4 - "even though the account should be highly rated and the contact is super valuable... this lead should be at least P2." The prioritization prompt (`buildPrioritizationPrompt`, `agent-shared.js`) previously treated ANY "impressive AI-sounding title" with no expressed need as a WEAK lead belonging at 4-5, specifically to guard against over-scoring generic thought-leadership - but that guard didn't distinguish a person who merely talks about AI a lot from one whose own title names a genuine, formal AI leadership function at the company (Head of AI, Chief AI Officer, VP of AI, Director of Data Science, etc.). The existence of that role is itself a real company-level signal - formal headcount/budget committed to AI - independent of whether this particular post shows a need, and is a materially different case from a random employee's generic commentary. Such leads now have a floor of 2-3 rather than 4-5 on that basis alone; an actual expressed need/initiative/hire is still required to reach 1. A vague self-description ("AI enthusiast," "AI advisor," an independent consultant's own tagline) does NOT qualify for this carve-out and is still governed by the original rule. Only affects future prioritization runs (a new scan, or "Re-score All Priorities") - doesn't retroactively re-score already-scored leads.
+
+---
+
+# SalesTeam — v0.29.22
+
+## Added: Target Accounts backup/restore, persistent Dashboard/Target Accounts filters, location-accuracy fixes, and a manual Location fix-up control
+
+- Reported directly: "Need also a backup / export button for Target Accounts, as well as an Import button." The Settings page's "Import Target Accounts" button only ever imported (from the research `.xlsx` or the legacy `convert_target_accounts.py` JSON) - there was no way to get the currently-stored data back out. Added an "Export Target Accounts" button next to it, downloading a `.json` backup of both the lightweight scoring map and the full Explorer workbook (Contacts/AI Initiatives/AI Investment/Sources); "Import Target Accounts" now also recognizes this backup shape (an object, distinct from the legacy plain-array format) and restores it exactly via new `exportTargetAccountsBackup`/`importTargetAccountsBackup` functions (`storage.js`).
+- Asked directly in response: "are you covering all settings in the side panel (scanner) plus the settings in the Setting page?" for the side panel's existing Export/Import Settings. The honest answer was partly no - `exportSettings`/`importSettings` (`storage.js`) never touched the Location Filter's `locationFilterConfig` at all, despite it being genuine, hand-set configuration; now included. (The Target Accounts Explorer workbook stays deliberately excluded from this specific automatic export, which fires before every scan - see the dedicated backup button above instead.)
+- Reported directly: "In Target accounts, I keep having to refilter (remove) the Insufficient Evidence ones and the Out of Scope ones" - and more generally, "can you save the existing state of them for the next time I open them (even in a new extension open)? I mean, including the columns selected, the columns widths, the filters, etc." Column widths/hidden columns were already persisted on the Dashboard, but column filters, sort order, search text, and the status dropdown were not on either page - so filters like "exclude Insufficient Evidence" had to be re-entered every session. Both `dashboard.js` and `target-accounts.js` now persist their full filter/sort/search state (`localStorage`, same mechanism as the existing column-width/visibility prefs) and restore it automatically on open.
+- Reported directly, with several real examples: some leads' locations came back as `jobs.sbb.ch`, `jobs.finma.ch`, a person's own name ("Dr. Bernhard Koelmel"), a full headline/tagline ("Assistant Professor of Computer Science | Rhodes Scholar | NEP-AI Expert | UAE Youth Ambassador"), an education institution ("University of Toronto"), and a past job description ("SAS Japan - Sales Manager｜Insurence") - none of them a location. Root cause: `personLocationFromContactInfoRow()` (`profile-content-script.js`) trusted the first element before the "Contact info" link unconditionally; on a profile with no Location filled in on LinkedIn, that position can hold almost anything else instead. Now rejects text that's too long for a real location (>60 chars), contains a headline's "|"/"｜" separator, looks like a bare domain, names an education institution (University/Institute/College, etc.), or exactly matches the profile's own name heading - same "no location is better than a wrong one" philosophy as the rest of this extractor. Does not retroactively clear already-stored bad values from before this fix - so also added a new **"📍 Assign Location"** action button (Dashboard, next to the existing "🏢 Assign Company") to manually correct or clear a lead's location, mirroring Assign Company exactly (`setLeadLocation`, `storage.js`); clearing it also re-applies the Location Filter immediately.
+- Reported directly, with real examples: many leads clearly outside Switzerland (Greater Hamburg Area, Greater Bengaluru Area, Greater Lyon Area, Greater Rennes Area) weren't caught by the Location Filter, because `classifyLocation()`'s metro-to-country list only covered Swiss/US/UK/Canadian cities - an unrecognized metro name is always left unclassified (never a guess), which the filter correctly treats as "no data, don't touch." Extended the list with Germany/France/India/Italy/Spain/Netherlands/Ireland/Scandinavia/Poland/Austria/Belgium/UAE/Japan/Australia's major metros. Also, per direct feedback ("I prefer to have in these cases, the country, rather than the name of the Metropolitan... combine the 2, like this: Greater Hamburg Area (Germany)") - the Dashboard's Location column now appends the classified country in parentheses whenever the raw text doesn't already name it, using the exact same classification the filter itself uses, so what's displayed and what the filter does can never disagree.
+
+---
+
+# SalesTeam — v0.29.21
+
+## Fixed: an uncaught error on the extension's Errors page, a silent failure that read like "nothing found," and a misleading button name
+
+- Reported directly: the extension card in `chrome://extensions` showed a persistent error - "Uncaught (in promise) Error: No tab with id: ..." - separate from the friendly "Scan stopped early" message already shown for the same underlying event. Root cause: both `navigateAndWait` (`background.js`) and `navigateAndWaitProfile` (`profile-extraction.js`) called `chrome.tabs.update(tabId, { url })` without awaiting or catching its returned promise - a tab closed out from under it (a case the surrounding listener/timeout already handles gracefully) still left a genuinely unhandled rejection behind. Both now have `.catch(() => {})` attached; this doesn't change behavior, it just stops the same event from being reported twice.
+- Reported directly: "It would help if when such error occurs, you also write this in the results line of the Extract Companies from Profiles button." A lead whose visit hard-timed out (the page never responded at all - e.g. the v0.29.20 profileUrl-matching bug) used to read identically to one that was visited fine but simply had no findable company/location, both just counting as "not found." `runProfileExtraction` now also returns `hardTimeoutCount`; the Dashboard and side-panel completion messages, and the Activity Log entry, both call it out explicitly ("N failed due to an error - will retry next run") instead of it only being discoverable later by noticing the count didn't move.
+- Reported directly: "BTW, it is actually Extract Companies & Locations from profiles" - the button, its tooltip, every completion message, and every Activity Log label said "Extract Companies from Profiles," even though the feature has always extracted both fields. Renamed everywhere to "Extract Companies & Locations from Profiles."
+- Reported directly: after the v0.29.20 fix landed, a real lead (Roland Markowski) came back with a company but still no location - a partial miss the diagnostic bundle never covered, since it only ever attached when BOTH fields came back empty. Widened to fire whenever EITHER field is still missing, and each debug sample now also states which of company/location it actually found, so a partial miss is just as diagnosable from the Activity Log as a total one.
+
+---
+
+# SalesTeam — v0.29.20
+
+## Fixed: the real root cause of the Jochen Eversmeier saga - a locale-path URL variant was silently rejected as "not a match"
+
+- Confirmed with hard evidence after the v0.29.19 diagnostic bundle showed `{timedOut: true}` (no message ever received at all) for three leads - Jochen Eversmeier, Andy Huber, and Roland Markows - despite the content script demonstrably finding and sending the right company/location for at least one of them (verified byte-for-byte against real profile HTML). All three leads' stored `profileUrl` happened to be the `/in/<slug>/en/` locale-path variant (scraped from a LinkedIn UI link that uses that format, e.g. a post-author link in someone's own Activity carousel) rather than the canonical `/in/<slug>/` form.
+- Root cause: visiting `.../en/` redirects to `.../?locale=en` - a DIFFERENT path, just with the locale moved into a query param. `normalizeProfileUrl()` (`profile-extraction.js`) only ever stripped the query string and one trailing slash, so it normalized the stored URL to `.../slug/en` but the actual page's reported URL to just `.../slug` - never equal. The content script ran correctly, found the right data, and sent it back - but `waitForProfileScrapeResult`'s listener silently rejected the message as belonging to a different profile, and the wait timed out 15 seconds later with nothing, over and over, on every run, no matter how many other fixes shipped.
+- Fixed by matching on just the `/in/<slug>` prefix - the one part of the URL guaranteed to stay the same regardless of locale path, query string, or trailing slash - instead of comparing the full path. Also fixes `groupByProfile`'s deduplication the same way: two leads pointing at the same person via different URL variants now correctly count as one profile visit instead of two.
+- Also added: `navigateAndWaitProfile` now reports whether the page navigation itself actually completed (`navCompleted`), attached to any future hard-timeout debug sample - so a genuinely different cause (the page never loading at all) is now distinguishable from this one (the page loaded and worked fine, but the result was silently discarded) without another multi-day investigation.
+
+---
+
+# SalesTeam — v0.29.19
+
+## Fixed: the failure-diagnostic bundle still checked the OLD extraction signals, not the ones that actually matter now
+
+- Reported directly: a real lead (Jochen Eversmeier) came back with both company and location empty, despite his profile's raw HTML being verified byte-for-byte structurally correct against the current extractors - the "Contact info" row held his location text exactly as expected, and the company badge held his employer exactly as expected. No selector bug could be found by inspection.
+- Root cause of not being able to diagnose it further: `collectDiagnostics()` (`profile-content-script.js`) - the bundle attached to a failed extraction and surfaced in the Dashboard's Activity Log specifically so a failure can be diagnosed without needing to catch a background tab's live console during a fast, unattended run - still only checked the OLD signals (the Experience section, a generic company-page link) from before v0.29.15's structural rewrite. It never checked whether the "Contact info" link or the company badge - the actual PRIMARY extraction path now - were found on the page at all, so it couldn't explain a failure in that path.
+- Added the missing signals: `contactInfoLinkFound`, `contactInfoRowText`, `companyBadgeIconFound`, `companyBadgeText`. The next time a lead fails both fields, its debug sample (up to 3 per run, in the Activity Log) will show whether these primary extractors found anything at all on the live page during the actual automated visit - the missing piece of evidence needed to tell a genuine selector/timing bug apart from something else in the pipeline.
+
+---
+
+# SalesTeam — v0.29.18
+
+## Fixed: misleading message after a scan error promised a resume that doesn't exist
+
+- Reported directly: after a scan failed mid-run ("Scan stopped early due to an error (No tab with id: ...)"), clicking "Scan All Topics" again did not pick up where it left off - it restarted from topic 1, sub-query 1.
+- That's actually correct, safe behavior - `scanAllTopics()` has no per-topic checkpoint, so every scan always starts over from the first topic. Nothing was lost or duplicated (leads found before the error were already saved, and re-scanning the same topics just re-matches the same lead keys) - but the error message's wording ("try scanning again to pick up the rest") oversold this as an efficient resume, which it isn't.
+- Corrected the message text to set the right expectation: leads found before the error are safe, but scanning again takes as long as a full scan, not just "the rest." No behavior change - this is a wording fix only, since building an actual resume mechanism wasn't what was reported or asked for.
+
+---
+
+# SalesTeam — v0.29.17
+
+## Fixed: a Job listing at a Provisional-scored Target Account could still reach Priority 1
+
+- Reported directly: two real Job leads (Basler Kantonalbank Senior PO Data&AI, scored 98/100 "Very High - Provisional"; Nestlé Head of AI & Digital, scored 86/100 "Very High - Provisional") both landed at Priority 1, despite the project's stated rule that a Job listing - no individual to contact - should be capped at Priority 3.
+- By design (v0.29.2), the deterministic "Job company cap" only fires for a CONFIDENT match (`Very High`/`High`, never `Provisional`, above the score threshold) - a Provisional match like both of these is intentionally sent to the Sales Mentor instead, with only a soft instruction ("a job ad naming no initiative beyond the hiring itself should rarely reach 1 or 2"). That's not a code bug, but it isn't a guarantee either - the model ignored it for both leads.
+- Given this project's consistent preference for deterministic rules over relying on the model to follow soft guidance (the same reasoning behind the Job company cap itself), added a new rule - **Job signal ceiling** (Settings' Prioritization Rules table, default value 3) - using the "Ceiling" column that already existed in that table's UI but had no rule using it yet. A Job lead whose company matches a Target Account at ANY confidence (Provisional or below-threshold included) now carries a `targetAccountCeiling`; the Sales Mentor still decides freely, but `tagPrioritiesWithTargetAccountSignal` (`storage.js`) clamps any returned priority better than the ceiling back down to it, with the clamp stated plainly in the reason - the same mechanism the existing Post company floor rule already uses in the opposite direction.
+- Like every other rule in this table, it can be disabled from Settings, in which case a Provisional-matched Job lead goes back to the Sales Mentor as a plain, unconstrained signal - exactly as it did before this fix.
+
+---
+
+# SalesTeam — v0.29.16
+
+## Fixed: leads that failed under the old keyword-based heuristic never got a chance to benefit from v0.29.15's structural fix
+
+- Reported directly: after upgrading to v0.29.15 and re-running "Extract Companies from Profiles" against the same 53 leads, only 9 got a location - no meaningful improvement over the 9/53 baseline measured on v0.29.14, despite v0.29.15's fix being a fundamental, content-independent rewrite that should work on nearly every profile (every profile has a "Contact info" link).
+- Root cause: `profileVisitedAt` is only cleared by a **one-time** migration, and that migration (added in v0.29.11, for the v0.29.12/13 fixes) had already run during earlier testing on v0.29.14 - before v0.29.15 even existed. Every lead visited-and-failed under the old keyword-scan code between v0.29.11 and v0.29.14 was already past that one-time reset, so it stayed permanently marked "checked" and was silently excluded from ever being visited again - v0.29.15's new structural extractor never got a chance to run on any of them.
+- This is the same symptom as v0.29.13's "already-checked leads couldn't benefit from the fix" bug, recurring because a one-time migration flag can only ever protect against the ONE fix it shipped alongside - a later, unrelated fix needs its own fresh flag. Added a second one-time migration (`locationHeuristicV3Migrated`, independent of the v2 flag) that clears `profileVisitedAt` once more for any lead still missing a location, so v0.29.15's structural fix gets a real shot at every lead that hasn't already succeeded.
+- Company extraction was unaffected by this bug (47 of 53 leads already have a company) - the remaining 6 without one were already confirmed, in an earlier check, to genuinely have no company listed on their profile.
+
+---
+
+# SalesTeam — v0.29.15
+
+## Fixed: location extraction no longer depends on recognizing the text at all
+
+- After several rounds of "one more missing country/city" reports (Nashville, Bengaluru, Dubai, Israel...) that kept recurring no matter how large the recognized-word list grew, real profile HTML (Allie K. Miller's page, shared directly) revealed the actual fix: the location text isn't identified by keyword-matching its content at all. Structurally, it's always the first paragraph in a small row that also contains the "Contact info" overlay link - `<div><p>New York, United States</p><p>·</p><p><a href=".../overlay/contact-info/">Contact info</a></p></div>`.
+- That "Contact info" link is a stable, always-present feature of every profile's top card, regardless of language or how obscure the location text is. The extractor now finds the location this way first - capturing whatever's actually there, word-list or not - falling back to the old keyword-scan approach only if this structural anchor isn't found on a given profile layout.
+- This is the real fix for the pattern this project kept hitting: recognizing more words was never going to be a complete answer, since there's no bounded list of every city/region a lead might be in. Reading the page's own structure removes that dependency entirely for the common case.
+- Classification into a country/continent for the Location Filter is unaffected by this - it still uses `classifyLocation`'s country/city tables, just against a much more reliably captured raw string.
+
+---
+
+# SalesTeam — v0.29.14
+
+## Fixed: the location word list was a hand-picked subset that kept missing individual countries one at a time
+
+- Reported directly with five more real profiles after v0.29.13: Bengaluru/India, Dubai/UAE, Canada, "New York City Metropolitan Area," and Atlit/Haifa/Israel all still came back with no location.
+- Four of these five (India, UAE, Canada, New York) were already-recognized words - their failure isn't a vocabulary gap, it's consistent with the scrape-wait early-exit bug and the `profileVisitedAt` lock-in, both fixed in v0.29.13 but not yet tested against a live re-run. **Israel was a genuine, separate gap** - never in the word list at all, despite already being a recognized country for the Location Filter's own classifier.
+- Rather than keep adding one missed country at a time, `profile-content-script.js`'s location word list is now the FULL country list `classifyLocation` (`storage.js`) already recognizes - about 150 countries, mirrored in full - instead of a hand-picked subset. A country gap in one can no longer exist without the other having it too.
+- If a location is still missing after this, re-checking with the actual profile's HTML markup (not just its visible text) will be the fastest way to pin down whatever's left - the DOM-traversal logic itself, not word coverage, would be the remaining suspect.
+
+---
+
+# SalesTeam — v0.29.13
+
+## Fixed: the profile scraper stopped waiting for location the moment it found a company - the actual dominant cause of missing locations
+
+- Reported directly with a real profile (andreasbezner) whose location plainly says "Switzerland" - a word this extractor has always recognized, no vocabulary gap involved - yet the lead's location still came back empty. Root cause: the scrape-wait loop stopped polling the instant EITHER company OR location was found, not once BOTH were. Since v0.29.10 made company resolve almost instantly (the top-card badge renders immediately, unlike the lazy-loaded Experience section), the loop was exiting on the very first attempt on most profiles the moment company was found - before location, which can render a beat later, ever got a real chance across the remaining ~5.5 seconds of polling. This was very likely the single biggest cause of missing locations overall, well beyond the vocabulary gaps below. Now waits for both before stopping early.
+- Also reported directly with two further real examples: Burke Holland's profile clearly shows "Nashville Metropolitan Area," and Allie K. Miller's clearly shows "New York, United States" - yet both leads still had no location. Two more real causes:
+- **Already-checked leads couldn't benefit from the v0.29.12 language fix.** v0.29.11 marks a profile "checked" (`profileVisitedAt`) the moment a visit gets a real response, specifically so a lead with no findable location isn't re-queued forever - but that same mechanism meant a lead checked under the OLDER, narrower heuristic (or under the early-exit bug above) stayed marked "checked" even after the underlying issue was fixed, so it could never get a second look. Fixed with a one-time migration: any lead still missing a location gets its `profileVisitedAt` cleared once, so it's picked up again on the next run under the current (better) rules.
+- **"Nashville Metropolitan Area" has no country name in it at all.** LinkedIn often shows just a metro-area name with nothing else - the same "Greater Zurich Area" phrasing already handled for Switzerland's own cities, but never extended past Switzerland. Added a modest set of other major metros (New York, Los Angeles, Chicago, San Francisco, Nashville, Seattle, Austin, Boston, Dallas, Houston, Atlanta, Denver, Miami, Washington, Philadelphia, Phoenix, San Diego, Portland, Minneapolis, Detroit, London, Manchester, Toronto, Vancouver, Montreal) to both the location-detection heuristic and the Location Filter's classifier - deliberately a best-effort list, not exhaustive world city coverage, same trade-off already accepted for the Swiss cities.
+- Combined, any lead still missing a location - including ones already visited once under the old rules - will be picked up and correctly classified on the next "Extract Companies from Profiles" run.
+
+---
+
+# SalesTeam — v0.29.12
+
+## Fixed: location extraction missed profiles that showed their country/city in German or French
+
+- Reported directly: leads at obviously-Swiss companies (SBB, Syngenta, IMD Business School) still came back with no location after a profile visit. Root cause: the location heuristic and the Location Filter's classifier both only ever recognized English names - "Zurich," "Geneva," "Lucerne," "Switzerland" - and a Swiss LinkedIn profile just as often shows "Zürich," "Genève"/"Genf," "Luzern," "Schweiz"/"Suisse," or the bare ISO code "CH," none of which ever matched.
+- Both the profile scraper's location detection (`profile-content-script.js`) and the Location Filter's classifier (`classifyLocation`, `storage.js`) now also recognize these German/French spellings and "CH," kept in sync so what gets scraped is also what gets correctly classified.
+- "CH" is only two letters, so matching it as a raw substring would also match inside "which," "search," "chief," and plenty of other everyday words. The profile scraper's location-detection check (previously a plain substring test) was upgraded to whole-word matching first, specifically so "CH" could be added safely - it now only counts as a hit when it stands alone as its own word.
+- This only helps *future* profile visits - it doesn't retroactively fix a location already (not) recorded, but combined with v0.29.11's fix (a checked lead is only skipped once it actually got a real response, not just once it was queued), any lead still missing a location will be picked up and re-checked correctly on the next "Extract Companies from Profiles" run.
+
+---
+
+# SalesTeam — v0.29.11
+
+## Fixed: "Extract Companies from Profiles" kept showing the same count run after run, visited the same person twice, and a job's location carried its work-arrangement tag
+
+- Reported directly: a run showed "Visiting profile X of 55" against an expected ~20 (leads missing a company), and the count stayed at 55 even across repeated runs. Three real causes, all fixed:
+- **The count was never just "missing a company."** It's every lead missing EITHER a company OR a location (by design, since v0.29.5 added location extraction to the same visit) - a lead that already has a company but no location was counted too, which the confirmation dialog never made clear.
+- **The real reason the number never shrank**: only a *successful* location find ever marked a lead as done. A profile that was actually visited but simply has no location text on it (common - the extractor's location heuristic is a small, Switzerland-biased hint-word list) stayed permanently "missing," so it kept getting queued and re-visited on every single future run, forever, even though nothing new was ever going to be found there. Every lead now gets a `profileVisitedAt` timestamp the moment its profile visit actually completes (a real response from the page, not a network/tab timeout) - regardless of whether a location was found - so a profile genuinely without one is checked once and never re-queued again. A hard timeout (the tab never loaded, the extension lost context, etc.) is NOT marked this way, so it's still retried next run.
+- **Duplicate visits**: two posts (or an in-post job ad) from the same person, each still missing data, were visited as two separate profile pages even though one visit answers both. `runProfileExtraction` now groups by profile URL first and visits each real profile exactly once, applying that one result to every lead that shares it.
+- The confirmation dialog and the "Visiting profile X of Y…" progress counter now both show the real number of page visits about to happen, noting how many leads that covers when it's more than the visit count (e.g. "This will visit 20 individual LinkedIn profile pages (covering 55 leads that share these profiles)...").
+
+## Fixed: a job's scraped location carried its work-arrangement tag ("(Hybrid)", "(Remote)", "(On-site)")
+
+- Reported directly: LinkedIn appends this tag right onto (or immediately after) a job listing's location text, and it describes the job's arrangement, not the place - e.g. "Zurich, Switzerland (Hybrid)" isn't a place called "Zurich, Switzerland (Hybrid)."
+- Stripped at the scrape source (`jobs-content-script.js`) so every downstream consumer (the Location Filter, the Dashboard's Location column, Sales Mentor location parsing) only ever sees the actual place.
+- A location scraped before this fix and still carrying the tag is cleaned up automatically, best-effort, the next time it's read - no manual cleanup needed for existing leads.
+
+---
+
+# SalesTeam — v0.29.10
+
+## New: Negative Topics do fuzzy company matching + an AI/Cloud Vendor Blocklist; fixed a profile's top-card company badge not being read; fixed "Known Recruiting Firms" matching post text, not just company
+
+- Reported directly: "How do I handle when I put a company name without the AG/Ltd/Inc part, and it appears with, or vice versa? ... in Switzerland it is called `<company name>` Switzerland, or vice versa? ... the formal name is `<company name>` Group, or vice versa?" A configured keyword and a lead's own `company` text are now compared with legal-entity suffixes (AG, GmbH, Ltd, Inc, LLC, ...), corporate-structure words (Group, Holding, International), and regional suffixes (Switzerland, Schweiz, Suisse) stripped from BOTH sides first, in either direction - so "Zühlke" now matches "Zühlke Engineering AG," "Randstad" matches "Randstad Switzerland," etc., without needing every legal variant spelled out. This is additive to every existing Negative Topic's own free-text matching, not a replacement.
+- Also reported: many leads work at Google, Microsoft, NVIDIA, and similar - not competitors, but not this project's ICP either. New built-in **AI/Cloud Vendor Blocklist** negative topic (Google, Microsoft, Amazon/AWS, NVIDIA, IBM, Oracle, SAP, Salesforce, Meta, OpenAI). These are the exact vendors the Competitor Blocklist deliberately excludes, for the exact reason a plain keyword match against them is noisy (a post merely mentioning "built on Azure" or "runs on an NVIDIA GPU") - so this new topic checks ONLY the lead's own company (never post/job text), which a new **"Company name only" / "Company + text"** selector on every Negative Topic card now controls.
+- Fixed a real latent bug found while building the above: "Known Recruiting Firms" was documented in-code as matching only a lead's own company, but nothing actually enforced that - it could be triggered by a mere mention of e.g. "Randstad" in a post's snippet. It's now set to "Company name only," matching its original intent.
+- Fixed: a profile's stated current employer wasn't read when it appears as the top card's company badge (next to the person's photo) rather than in the Experience section - confirmed against real profiles that Experience only renders after scrolling, while the badge renders immediately, so it's now checked first. Also confirmed this correctly ignores a sibling school/university badge on the same profile (the two use different, badge-specific icon markers).
+- These two new built-in defaults - the AI/Cloud Vendor Blocklist, and "Known Recruiting Firms" switching to company-only matching - only apply to a **fresh install**. An existing configuration is never silently changed, since Negative Topics are your own live settings. To pick these up yourself: open the side panel's Negative Topics, add an "AI/Cloud Vendor Blocklist" topic if you want it, and switch "Known Recruiting Firms" to "Company name only" in its new selector.
+- Verified against real profile data (top-card badge extraction) and by tracing representative cases for the fuzzy matching (a company with/without a legal suffix, with/without "Switzerland," with/without "Group," in both directions) - no automated test harness was available in this environment (no Node.js on this machine's shell), so this shipped on careful manual verification rather than an executed test suite.
 
 ---
 

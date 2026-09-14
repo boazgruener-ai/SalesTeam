@@ -45,7 +45,8 @@ import {
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { sanitizeApiKey, suggestLookalikeTopics, analyzePostSearch } from "./agent-shared.js";
-import { leadsMissingProfileData, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
+import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
+import { getLinkedinTouchStats } from "./linkedin-touch-log.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -69,6 +70,7 @@ const openSettingsBtn = document.getElementById("open-settings-btn");
 const openHelpBtn = document.getElementById("open-help-btn");
 const openActivityLogBtn = document.getElementById("open-activity-log-btn");
 const openTargetAccountsBtn = document.getElementById("open-target-accounts-btn");
+const openTargetContactsBtn = document.getElementById("open-target-contacts-btn");
 const topicsListEl = document.getElementById("topics-list");
 const addTopicBtn = document.getElementById("add-topic-btn");
 const suggestTopicsBtn = document.getElementById("suggest-topics-btn");
@@ -80,6 +82,7 @@ const searchQualityResultsEl = document.getElementById("search-quality-results")
 const jobTopicsListEl = document.getElementById("job-topics-list");
 const addJobTopicBtn = document.getElementById("add-job-topic-btn");
 const scanBtn = document.getElementById("scan-btn");
+const stopScanBtn = document.getElementById("stop-scan-btn");
 const progressTextEl = document.getElementById("progress-text");
 const resultsListEl = document.getElementById("results-list");
 const clearResultsBtn = document.getElementById("clear-results-btn");
@@ -105,9 +108,11 @@ const exportSettingsBtn = document.getElementById("export-settings-btn");
 const exportIncludeApiKeyCheckbox = document.getElementById("export-include-api-key-checkbox");
 const importSettingsBtn = document.getElementById("import-settings-btn");
 const importSettingsFileInput = document.getElementById("import-settings-file-input");
+const importSettingsStatusEl = document.getElementById("import-settings-status");
 const exportLeadsBtn = document.getElementById("export-leads-btn");
 const importLeadsBtn = document.getElementById("import-leads-btn");
 const importLeadsFileInput = document.getElementById("import-leads-file-input");
+const importLeadsStatusEl = document.getElementById("import-leads-status");
 const exportCsvBtn = document.getElementById("export-csv-btn");
 
 let topics = [];
@@ -380,6 +385,13 @@ openActivityLogBtn.addEventListener("click", () => {
 
 openTargetAccountsBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: chrome.runtime.getURL("target-accounts.html") });
+});
+
+// Same page as Target Accounts (target-accounts.js's own #contacts hash
+// route, PRD 6.19) - opened directly at that route rather than making the
+// user land on Accounts and click the in-page tab every time.
+openTargetContactsBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("target-accounts.html#contacts") });
 });
 
 addTopicBtn.addEventListener("click", () => {
@@ -731,7 +743,10 @@ function linesFrom(textarea) {
 }
 
 function newNegativeTopic() {
-  return { id: crypto.randomUUID(), name: "", keywords: [], andKeywords: [], enabled: true, appliesTo: "both", builtin: false };
+  return {
+    id: crypto.randomUUID(), name: "", keywords: [], andKeywords: [], enabled: true,
+    appliesTo: "both", matchField: "any", builtin: false,
+  };
 }
 
 async function persistNegativeTopics() {
@@ -750,6 +765,7 @@ function renderNegativeTopics() {
     if (topic.enabled === undefined) topic.enabled = true;
     if (!topic.andKeywords) topic.andKeywords = [];
     if (!topic.appliesTo) topic.appliesTo = "both";
+    if (!topic.matchField) topic.matchField = "any";
 
     const card = document.createElement("div");
     card.className = "topic-card";
@@ -807,10 +823,30 @@ function renderNegativeTopics() {
       });
     });
 
-    headerRow.append(enabledCheckbox, nameInput, appliesToSelect);
+    const matchFieldSelect = document.createElement("select");
+    matchFieldSelect.title = "What this filter's keywords are checked against";
+    for (const [value, label] of [["any", "Company + text"], ["company", "Company name only"]]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      matchFieldSelect.appendChild(option);
+    }
+    matchFieldSelect.value = topic.matchField;
+    matchFieldSelect.addEventListener("change", () => {
+      const prevValue = topic.matchField;
+      topic.matchField = matchFieldSelect.value;
+      persistNegativeTopics();
+      appendActivityLog({
+        actor: "user", action: "negative_topic_match_field_changed",
+        label: `Negative Topic "${topic.name || "(untitled)"}" match field changed`,
+        prevValue, newValue: topic.matchField,
+      });
+    });
+
+    headerRow.append(enabledCheckbox, nameInput, appliesToSelect, matchFieldSelect);
 
     const keywordsTextarea = document.createElement("textarea");
-    keywordsTextarea.placeholder = "One keyword or phrase per line - a lead matching any one of these is marked Irrelevant";
+    keywordsTextarea.placeholder = "One keyword or phrase per line - a lead matching any one of these is marked Irrelevant. Company names auto-match despite AG/Ltd/Inc, Switzerland, or Group suffixes on either side.";
     keywordsTextarea.value = topic.keywords.join("\n");
     keywordsTextarea.addEventListener("input", () => {
       topic.keywords = linesFrom(keywordsTextarea);
@@ -955,7 +991,8 @@ function resultsToCsv(sortedResults) {
   const headers = [
     "Type",
     "Author / Job Title",
-    "Headline / Company",
+    "Headline",
+    "Company",
     "Location",
     "Topics",
     "Matched Keywords",
@@ -975,7 +1012,8 @@ function resultsToCsv(sortedResults) {
     return [
       isJob ? "Job Listing" : "Post",
       isJob ? r.title : r.author,
-      isJob ? r.company : r.headline,
+      isJob ? "" : r.headline,
+      r.company || "",
       isJob ? r.location : "",
       topicNames,
       allKeywords,
@@ -1275,6 +1313,14 @@ importSettingsBtn.addEventListener("click", () => {
   importSettingsFileInput.click();
 });
 
+// v0.29.38, see PRD 6.11: the same "Importing…" / persistent result-or-
+// failure status pattern the Target Accounts import already got, applied
+// consistently to every import flow in the extension - reported directly
+// as a general expectation, not just a Target-Accounts-specific fix.
+function formatImportStamp(ms) {
+  return new Date(ms).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 importSettingsFileInput.addEventListener("change", async () => {
   const file = importSettingsFileInput.files[0];
   importSettingsFileInput.value = "";
@@ -1283,15 +1329,24 @@ importSettingsFileInput.addEventListener("change", async () => {
   let data;
   try {
     data = JSON.parse(await file.text());
-  } catch {
+  } catch (err) {
+    importSettingsStatusEl.textContent = `Import failed - "${file.name}" isn't valid JSON (${err.message}).`;
     alert("That file isn't valid JSON - couldn't import it.");
     return;
   }
 
   if (!confirm("Import this settings backup? It will replace your current Topics, filters, and other settings - your leads are never touched by this.")) return;
 
-  await importSettings(data);
+  importSettingsStatusEl.textContent = `Importing ${file.name}…`;
+  try {
+    await importSettings(data);
+  } catch (err) {
+    importSettingsStatusEl.textContent = `Import failed - "${file.name}" doesn't look like a valid settings backup (${err.message}).`;
+    alert(`Couldn't import that file: ${err.message}`);
+    return;
+  }
   await init();
+  importSettingsStatusEl.textContent = `Settings imported from file ${file.name} at ${formatImportStamp(Date.now())}`;
   appendActivityLog({ actor: "user", action: "settings_imported", label: "Imported Settings backup (replaced current Topics/filters/settings)" });
 });
 
@@ -1312,15 +1367,22 @@ importLeadsFileInput.addEventListener("change", async () => {
   let data;
   try {
     data = JSON.parse(await file.text());
-  } catch {
+  } catch (err) {
+    importLeadsStatusEl.textContent = `Import failed - "${file.name}" isn't valid JSON (${err.message}).`;
     alert("That file isn't valid JSON - couldn't import it.");
     return;
   }
 
-  const restored = await importLeads(data);
-  alert(restored > 0
-    ? `Restored ${restored} lead${restored === 1 ? "" : "s"} that weren't already saved locally.`
-    : "Nothing to restore - every lead in that backup is already saved locally.");
+  importLeadsStatusEl.textContent = `Importing ${file.name}…`;
+  let restored;
+  try {
+    restored = await importLeads(data);
+  } catch (err) {
+    importLeadsStatusEl.textContent = `Import failed - "${file.name}" doesn't look like a valid leads backup (${err.message}).`;
+    alert(`Couldn't import that file: ${err.message}`);
+    return;
+  }
+  importLeadsStatusEl.textContent = `${restored} lead${restored === 1 ? "" : "s"} restored from file ${file.name} at ${formatImportStamp(Date.now())}`;
   if (restored > 0) await renderResultsFromStorage();
   appendActivityLog({ actor: "user", action: "leads_imported", label: `Imported Leads backup - restored ${restored} lead${restored === 1 ? "" : "s"}`, newValue: restored });
 });
@@ -1375,6 +1437,23 @@ scanBtn.addEventListener("click", async () => {
   progressTextEl.textContent = "Starting scan…";
   chrome.runtime.sendMessage({ type: "SCAN_ALL", reapplyToExisting: reapplyExistingCheckbox.checked });
   appendActivityLog({ actor: "user", action: "scan_started", label: "Started a scan" });
+  stopScanBtn.hidden = false;
+  stopScanBtn.disabled = false;
+  stopScanBtn.textContent = "Stop Scan";
+});
+
+// v0.29.45: reported directly - a scan whose search count can now run into
+// the hundreds (6.17's Target Account phase) had no way to stop early short
+// of force-closing the extension. Storage-based, checked by background.js's
+// own checkAbort() at the same per-sub-query checkpoint every loop already
+// has - so the worst-case delay between this click and the scan actually
+// stopping is one in-flight search, not the rest of the run. Disabled
+// immediately (not just on the eventual SCAN_ABORTED message) so a slow
+// in-flight search can't look like the click didn't register.
+stopScanBtn.addEventListener("click", () => {
+  stopScanBtn.disabled = true;
+  stopScanBtn.textContent = "Stopping…";
+  chrome.storage.local.set({ scanAbortRequested: true });
 });
 
 // A scan's own "topic X of Y" progress is a different, much shorter phase
@@ -1390,34 +1469,40 @@ async function promptAndRunProfileExtraction(results) {
   if (toVisit.length === 0) return;
   if (!confirm(
     `${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} (including any from before this scan) ` +
-    `${toVisit.length === 1 ? "is" : "are"} missing a company or location. ` + profileVisitConfirmText(toVisit.length)
+    `${toVisit.length === 1 ? "is" : "are"} missing a company or location. ` +
+    profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length)
   )) {
     return;
   }
 
   scanBtn.disabled = true;
   try {
-    const { found: scraped, debugSamples } = await runProfileExtraction(toVisit, {
+    const { found: scraped, debugSamples, hardTimeoutCount } = await runProfileExtraction(toVisit, {
       onProgress: (i, total) => { progressTextEl.textContent = `Visiting profile ${i} of ${total}…`; },
     });
     const found = scraped.length > 0 ? await applyExtractedCompanies(scraped) : 0;
     const { blockedCount: locationBlockedCount } = await reapplyLocationFilter();
     await renderResultsFromStorage();
-    const missed = toVisit.length - found;
+    // Same distinction as the Dashboard's button (see dashboard.js) - a
+    // genuine hard-timeout failure now reads differently from "visited fine,
+    // nothing findable" instead of both silently counting as "not found."
     progressTextEl.textContent = `Done - ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} got a company/location from their profile` +
+      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error (will retry next run - see Activity Log)` : "") +
       (locationBlockedCount > 0 ? `, ${locationBlockedCount} newly marked Irrelevant by the Location Filter.` : ".");
     appendActivityLog({
       actor: "user",
       action: "companies_extracted_from_profiles",
-      label: `Extract Companies from Profiles: ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter` +
-        (missed > 0 && debugSamples.length > 0 ? ` - ${debugSamples.length} failure sample(s) attached for diagnosis` : ""),
-      newValue: { found, total: toVisit.length, locationBlockedCount, debugSamples },
+      label: `Extract Companies & Locations from Profiles: ${found} of ${toVisit.length} lead${toVisit.length === 1 ? "" : "s"} updated, ${locationBlockedCount} marked Irrelevant by Location Filter` +
+        (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
+        (debugSamples.length > 0 ? ` - ${debugSamples.length} failure sample(s) attached for diagnosis` : ""),
+      newValue: { found, total: toVisit.length, locationBlockedCount, hardTimeoutCount, debugSamples },
     });
   } catch (err) {
     progressTextEl.textContent = `Something went wrong visiting profiles: ${err.message}`;
-    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies from Profiles failed", error: true, errorMessage: err.message });
+    appendActivityLog({ actor: "user", action: "companies_extracted_from_profiles", label: "Extract Companies & Locations from Profiles failed", error: true, errorMessage: err.message });
   } finally {
     scanBtn.disabled = false;
+    await renderLinkedinTouchStat();
   }
 }
 
@@ -1431,17 +1516,46 @@ chrome.runtime.onMessage.addListener((message) => {
     progressTextEl.textContent =
       `Scan complete — ${message.results.length} total leads (${newCount} new).`;
     scanBtn.disabled = false;
+    stopScanBtn.hidden = true;
     renderResults(message.results);
+    renderLinkedinTouchStat();
     promptAndRunProfileExtraction(message.results);
   } else if (message?.type === "SCAN_ERROR") {
     progressTextEl.textContent = message.message;
     scanBtn.disabled = false;
+    stopScanBtn.hidden = true;
     renderResultsFromStorage(); // pick up any leads saved before the failure
+    renderLinkedinTouchStat();
+  } else if (message?.type === "SCAN_ABORTED") {
+    progressTextEl.textContent = message.message;
+    scanBtn.disabled = false;
+    stopScanBtn.hidden = true;
+    renderResultsFromStorage(); // pick up any leads saved before stopping
+    renderLinkedinTouchStat();
   }
 });
 
+// Reported directly (2026-09-10): a single day of concentrated testing
+// (scan + profile-extraction + repeated company-ID-resolver runs) triggered
+// LinkedIn's own "unusual activity" account warning - reconstructed after
+// the fact at ~315 automated page visits that day, an invisible number until
+// it was already too late. This makes that number visible up front instead,
+// refreshed on load and periodically while the panel stays open (a scan or
+// profile-extraction run can run long enough for the count to move
+// meaningfully within one session).
+async function renderLinkedinTouchStat() {
+  const el = document.getElementById("linkedin-touch-stat");
+  const { last24h, last7d, level } = await getLinkedinTouchStats();
+  el.textContent = `LinkedIn touches (automated): ${last24h} in the last 24h · ${last7d} in the last 7 days`;
+  el.classList.toggle("linkedin-touch-stat-warn", level === "warn");
+  el.classList.toggle("linkedin-touch-stat-danger", level === "danger");
+}
+
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+
+  await renderLinkedinTouchStat();
+  setInterval(renderLinkedinTouchStat, 30000);
 
   topics = await getTopics();
   renderTopics();

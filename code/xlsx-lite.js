@@ -261,12 +261,26 @@ function parseGenericSheetRows(sheetXml, sharedStrings) {
   const rows = Array.from(tag(doc, "row"));
   if (rows.length === 0) return [];
 
+  // A duplicate header name (confirmed live in a real workbook: the
+  // Contacts sheet has two separate "Last_Verified"/"Evidence_Quality"
+  // pairs - a source-verification date pair, then a distinct LinkedIn-
+  // verification pair) would otherwise silently collide: rowValues[header]
+  // = value below is a plain object write, so the later column would
+  // overwrite the earlier one with no error and no sign anything was lost.
+  // Every column after the first occurrence of a given header gets a
+  // numeric suffix (lastVerified, lastVerified2, lastVerified3, ...) so
+  // every column's data survives under its own key - the caller decides
+  // what each one actually means.
   const headerByCol = {};
+  const headerSeenCount = {};
   for (const c of Array.from(rows[0].getElementsByTagNameNS(SML_NS, "c"))) {
     const col = columnLetters(c.getAttribute("r"));
     if (!col) continue;
     const value = cellValue(c, sharedStrings);
-    if (value != null) headerByCol[col] = camelCaseHeader(String(value).trim());
+    if (value == null) continue;
+    const base = camelCaseHeader(String(value).trim());
+    const seen = (headerSeenCount[base] = (headerSeenCount[base] || 0) + 1);
+    headerByCol[col] = seen === 1 ? base : `${base}${seen}`;
   }
 
   const entries = [];

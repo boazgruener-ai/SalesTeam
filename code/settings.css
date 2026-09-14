@@ -90,6 +90,16 @@ h3 {
   margin: 4px 0 10px;
 }
 
+.linkedin-touch-stat-warn {
+  color: #a66a00;
+  font-weight: 600;
+}
+
+.linkedin-touch-stat-danger {
+  color: #a00;
+  font-weight: 600;
+}
+
 label {
   display: block;
   color: var(--gray);
@@ -131,6 +141,18 @@ textarea {
   cursor: pointer;
   font-size: 12.5px;
   font-weight: 600;
+}
+
+.settings-buttons-row button.danger-btn {
+  border-color: #c23b3b;
+  background: white;
+  color: #c23b3b;
+}
+
+.settings-buttons-row button.danger-btn:disabled {
+  border-color: #d99;
+  color: #d99;
+  cursor: default;
 }
 
 #company-context-input,

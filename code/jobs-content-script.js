@@ -51,8 +51,15 @@ function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// See storage.js's copy of this function for the full reasoning behind the
+// length-based prefix-match tolerance (kept as a separate small duplicate
+// here per this project's existing convention for injected content scripts).
+const MIN_LENGTH_FOR_PREFIX_MATCH = 4;
+
 function containsWholeWord(haystackLower, keyword) {
-  return new RegExp(`\\b${escapeRegExp(keyword.toLowerCase())}\\b`, "i").test(haystackLower);
+  const escaped = escapeRegExp(keyword.toLowerCase());
+  const pattern = keyword.trim().length >= MIN_LENGTH_FOR_PREFIX_MATCH ? `\\b${escaped}` : `\\b${escaped}\\b`;
+  return new RegExp(pattern, "i").test(haystackLower);
 }
 
 function findMatchingKeywords(searchedKeywords, text) {
@@ -77,6 +84,17 @@ function extractJobTitle(titleP) {
   return labeledSpan?.textContent.replace(/\s*\(Verified job\)\s*$/, "").trim() || "";
 }
 
+// Reported directly: LinkedIn appends a work-arrangement tag - "(Hybrid)",
+// "(Remote)", "(On-site)" - right onto a job's location text (either its own
+// separate element after the location, or trailing the same one), and it
+// describes the job's arrangement, not the place itself. Stripped at the
+// source so every downstream consumer (Location Filter, the Dashboard's
+// Location column, Sales Mentor location parsing) only ever sees the actual
+// place.
+function stripWorkArrangementTag(text) {
+  return text.replace(/\(\s*(?:hybrid|remote|on-?site)\s*\)/gi, " ").replace(/\s+/g, " ").trim();
+}
+
 function extractCompanyAndLocation(titleWrapper) {
   const infoContainer = titleWrapper?.parentElement;
   const children = infoContainer ? Array.from(infoContainer.children) : [];
@@ -86,7 +104,7 @@ function extractCompanyAndLocation(titleWrapper) {
     .map((el) => el.textContent.trim())
     .filter(Boolean)
     .join(" ");
-  return { company, location };
+  return { company, location: stripWorkArrangementTag(location) };
 }
 
 function extractPostedText(card) {

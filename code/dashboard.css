@@ -505,6 +505,25 @@ table#results-table {
   text-decoration: none;
 }
 
+/* Flags a post's author as a known, vetted Target Contact (PRD 6.19) -
+   its own line under the name rather than crammed onto the same line as
+   the (fixed-width) Creator column's existing link. */
+.target-contact-badge {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #0a7d3a;
+  background: #e3f5ea;
+  border-radius: 4px;
+  padding: 1px 6px;
+  width: fit-content;
+}
+
+.target-contact-badge:hover {
+  text-decoration: underline;
+}
+
 .actions-cell {
   display: flex;
   gap: 4px;

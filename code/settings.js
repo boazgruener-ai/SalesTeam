@@ -20,8 +20,11 @@ import {
   getTargetAccountScoreThreshold,
   saveTargetAccountScoreThreshold,
   importTargetAccountsWorkbook,
+  exportTargetAccountsBackup,
+  importTargetAccountsBackup,
   getTargetAccountsMissingLinkedinId,
   applyResolvedCompanyIds,
+  markLinkedinResolveAttempted,
   getPrioritizationRules,
   savePrioritizationRuleOverride,
   appendActivityLog,
@@ -36,6 +39,7 @@ import {
 import { sanitizeApiKey } from "./agent-shared.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
+import { getLinkedinTouchStats } from "./linkedin-touch-log.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -77,8 +81,14 @@ const valueAddOffersInput = document.getElementById("value-add-offers-input");
 const targetAccountsStatusEl = document.getElementById("target-accounts-status");
 const importTargetAccountsBtn = document.getElementById("import-target-accounts-btn");
 const importTargetAccountsFileInput = document.getElementById("import-target-accounts-file-input");
+const exportTargetAccountsBtn = document.getElementById("export-target-accounts-btn");
 const resolveCompanyIdsBtn = document.getElementById("resolve-company-ids-btn");
+const stopResolveCompanyIdsBtn = document.getElementById("stop-resolve-company-ids-btn");
 const resolveCompanyIdsStatusEl = document.getElementById("resolve-company-ids-status");
+// Module-scoped, not local to the click handler below - the Stop button has
+// its own separate click listener and needs to reach the same flag a
+// currently-running resolve is reading via its shouldAbort callback.
+let resolveAbortRequested = false;
 const targetAccountThresholdInput = document.getElementById("target-account-threshold-input");
 const prioritizationRulesTbodyEl = document.getElementById("prioritization-rules-tbody");
 const locationFilterModeSelect = document.getElementById("location-filter-mode-select");
@@ -179,14 +189,20 @@ anthropicApiKeyInput.addEventListener("blur", () => {
 anthropicApiKeyInput.addEventListener("focus", () => { anthropicApiKeyInput.dataset.touched = ""; });
 anthropicApiKeyInput.addEventListener("input", () => { anthropicApiKeyInput.dataset.touched = "1"; });
 
+// v0.29.38: reported directly - date-only made two same-day imports (e.g.
+// re-importing a refreshed workbook to pick up a Zefix cross-check) show an
+// identical status line, with no way to tell a just-finished import from a
+// stale one hours earlier, or confirm it actually ran at all. Time added;
+// still date-first since that's the more useful glance for anything not
+// imported today.
 function formatImportedAt(ms) {
-  return new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return new Date(ms).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 async function renderTargetAccountsStatus() {
-  const { count, importedAt } = await getTargetAccountsMeta();
+  const { count, importedAt, importedFileName } = await getTargetAccountsMeta();
   targetAccountsStatusEl.textContent = count > 0
-    ? `${count} companies imported · ${formatImportedAt(importedAt)}`
+    ? `${count} companies imported${importedFileName ? ` from file ${importedFileName}` : ""} at ${formatImportedAt(importedAt)}`
     : "No target accounts imported yet.";
 }
 
@@ -198,23 +214,61 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
   const file = importTargetAccountsFileInput.files[0];
   importTargetAccountsFileInput.value = "";
   if (!file) return;
+  // v0.29.38: reported directly, alongside the date-only ambiguity fix
+  // above - parsing a large multi-sheet workbook isn't instant, and with
+  // no feedback between the click and the final status line, a click that
+  // hadn't actually registered yet looked identical to one still running.
+  // Replaced below either way - by the real success status, or by a
+  // specific failure message (not just a dismissable alert).
+  targetAccountsStatusEl.textContent = `Importing ${file.name}…`;
 
   let list;
   let fullWorkbook = null;
   try {
     if (file.name.toLowerCase().endsWith(".json")) {
+      const parsed = JSON.parse(await file.text());
+      // A backup from this page's own Export Target Accounts button (an
+      // object keyed by targetAccounts/targetAccountsWorkbook) restores
+      // exactly as exported - distinct from the legacy convert_target_
+      // accounts.py output below, which is a plain array with no workbook.
+      if (parsed && !Array.isArray(parsed) && (parsed.targetAccounts || parsed.targetAccountsWorkbook)) {
+        const prevMeta = await getTargetAccountsMeta();
+        const { count, workbookCount } = await importTargetAccountsBackup(parsed);
+        await renderTargetAccountsStatus();
+        flashSaved();
+        appendActivityLog({
+          actor: "user",
+          action: "target_accounts_imported",
+          label: `Restored Target Accounts backup (${count} companies${workbookCount ? `, ${workbookCount} in Explorer workbook` : ""})`,
+          prevValue: prevMeta.count,
+          newValue: count,
+        });
+        return;
+      }
       // Legacy path (convert_target_accounts.py output) - no Contacts/AI
       // Initiatives/etc. to derive, so the Explorer (PRD 6.12) only gets
       // populated by a direct .xlsx import.
-      list = JSON.parse(await file.text());
+      list = parsed;
     } else {
       // One parse of the whole relational workbook covers both storage keys:
       // the lightweight score/label projection prioritization needs (6.11)
       // is just a re-shape of fullWorkbook.companies, so there's no need to
       // separately re-parse the Companies sheet a second time.
       fullWorkbook = await parseFullTargetAccountsWorkbook(await file.arrayBuffer());
+      // Reported directly: a company with no AI Priority score (e.g. marked
+      // "Out of Scope" - a competitor or AI vendor, deliberately excluded
+      // from ever qualifying for the priority boost below) used to be
+      // dropped from this map entirely, which also meant it could never be
+      // resolved to a LinkedIn company ID or included in the Target
+      // Account-scoped Post search (6.16/6.17) - losing real search
+      // coverage for a reason that had nothing to do with search scoping.
+      // Safe to include unconditionally: evaluateTargetAccountMatch already
+      // nulls out any match whose score is null, so a score-less company
+      // here still never qualifies for the P1 boost or the AI's signal-
+      // weighting - this only affects things that key off "is this company
+      // in the map at all," which is exactly what 6.16/6.17 need.
       list = fullWorkbook.companies
-        .filter((c) => c.aiPriorityScore != null)
+        .filter((c) => c.company && c.company.trim())
         .map((c) => ({
           company: c.company,
           industry: c.industry,
@@ -222,19 +276,36 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
           priorityLabel: c.aiPriority,
           researchStatus: c.researchStatus,
           topInitiatives: c.topAiInitiatives,
+          // v0.29.37, see PRD 6.16: a Zefix (Swiss commercial registry)
+          // cross-check, done outside the extension against a workbook
+          // column that doesn't exist in every import - a company's own
+          // researched name is used whenever this is blank.
+          officialName: c.zefixOfficialName || null,
+          // v0.29.42: same external cross-check, two more columns - a
+          // commonly-used short/acronym name and a human/AI-verified
+          // LinkedIn company-page URL (see company-resolve-extraction.js).
+          alternativeName: c.alternativeCompanyName || null,
+          linkedinLink: c.linkedinLink || null,
         }));
     }
   } catch (err) {
+    // Reported directly, alongside the "Importing…" feedback above: reverting
+    // straight to the last-successful status on failure (silently, as this
+    // used to) left no visible trace that anything had gone wrong once the
+    // alert was dismissed - the persistent status line now states the
+    // failure and the actual reason, not just a transient popup.
+    targetAccountsStatusEl.textContent = `Import failed - "${file.name}" doesn't look like a valid, uncorrupted .xlsx or .json export (${err.message}).`;
     alert(`Couldn't import that file: ${err.message}`);
     return;
   }
   if (!Array.isArray(list)) {
+    targetAccountsStatusEl.textContent = `Import failed - "${file.name}" doesn't look like a Target Accounts export or backup (expected a list of companies).`;
     alert("That file doesn't look like a target-accounts export (expected a list of companies).");
     return;
   }
 
   const prevMeta = await getTargetAccountsMeta();
-  const { count } = await importTargetAccounts(list);
+  const { count } = await importTargetAccounts(list, file.name);
   if (fullWorkbook) await importTargetAccountsWorkbook(fullWorkbook);
   await renderTargetAccountsStatus();
   flashSaved();
@@ -244,6 +315,27 @@ importTargetAccountsFileInput.addEventListener("change", async () => {
     label: `Imported Target Accounts list (${count} companies)${fullWorkbook ? " plus full Explorer data (Contacts, AI Initiatives, etc.)" : ""}`,
     prevValue: prevMeta.count,
     newValue: count,
+  });
+});
+
+// Same download-a-json-file pattern as the side panel's Export Settings/
+// Export Leads buttons, kept local here since this is the only file-download
+// this page needs - not worth importing across files for one function.
+exportTargetAccountsBtn.addEventListener("click", async () => {
+  const data = await exportTargetAccountsBackup();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `target-accounts-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  appendActivityLog({
+    actor: "user",
+    action: "target_accounts_exported",
+    label: `Exported Target Accounts backup (${Object.keys(data.targetAccounts || {}).length} companies, ${(data.targetAccountsWorkbook?.companies || []).length} in Explorer workbook)`,
   });
 });
 
@@ -265,33 +357,78 @@ resolveCompanyIdsBtn.addEventListener("click", async () => {
   if (!confirm(resolveConfirmText(toResolve.length))) return;
 
   resolveCompanyIdsBtn.disabled = true;
+  stopResolveCompanyIdsBtn.hidden = false;
+  stopResolveCompanyIdsBtn.disabled = false;
+  stopResolveCompanyIdsBtn.textContent = "Stop";
+  resolveAbortRequested = false;
   try {
-    const { results: resolved, debugSamples, hardTimeoutCount, notConfidentCount } = await runCompanyIdResolution(toResolve, {
+    const { results: resolved, debugSamples, hardTimeoutCount, notConfidentCount, attemptedKeys, stoppedByTouchBudget } = await runCompanyIdResolution(toResolve, {
       onProgress: (i, total) => { resolveCompanyIdsStatusEl.textContent = `Resolving company ${i} of ${total}…`; },
+      shouldAbort: () => resolveAbortRequested,
     });
     const updated = await applyResolvedCompanyIds(resolved);
+    // v0.29.39, see PRD 6.16: marks every company this run actually
+    // attempted - not just the successes applyResolvedCompanyIds already
+    // knows about - as no longer "never tried," so a future run's queue
+    // (getTargetAccountsMissingLinkedinId) prioritizes fresh companies over
+    // retrying this same stubborn handful again immediately. attemptedKeys
+    // (v0.29.45), not toResolve.map(key) - since a stopped-early run means
+    // most of toResolve was never actually reached, and marking those as
+    // "attempted" would wrongly deprioritize them the next time this same
+    // list is built.
+    await markLinkedinResolveAttempted(attemptedKeys);
     // Reported directly: the old message only ever accounted for resolved +
     // hard-timed-out, silently leaving a gap for a real third outcome (no
     // confident match found, but no error either) with no explanation -
     // every company in the run is now accounted for in this one line.
-    resolveCompanyIdsStatusEl.textContent = `Done - ${updated} of ${toResolve.length} compan${toResolve.length === 1 ? "y" : "ies"} resolved` +
-      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error (will retry next run)` : "") +
-      (notConfidentCount > 0 ? `, ${notConfidentCount} found no confident match (will retry next run)` : "") + ".";
+    // "Will retry" wording softened (v0.29.39): a failed company is no
+    // longer guaranteed to be retried on the very next run - it's now
+    // deprioritized behind every still-never-attempted company instead.
+    // "stopped by you" wording added (v0.29.45) when the run ended early via
+    // the Stop button - attemptedKeys.length is how many companies were
+    // actually reached, distinct from toResolve.length (the full requested
+    // batch) once a run can end before finishing it.
+    // v0.30.0: a run can also stop itself when the shared 75/99 LinkedIn
+    // touch budget is hit (touch-budget-guard.js) - distinguished from the
+    // user's own Stop button so the wording says which one actually happened.
+    const stoppedSuffix = stoppedByTouchBudget
+      ? ` - stopped automatically, daily LinkedIn activity limit reached (${toResolve.length - attemptedKeys.length} of ${toResolve.length} never attempted this run; resume tomorrow).`
+      : resolveAbortRequested
+        ? ` - stopped by you (${toResolve.length - attemptedKeys.length} of ${toResolve.length} never attempted this run).`
+        : ".";
+    resolveCompanyIdsStatusEl.textContent = `Done - ${updated} of ${attemptedKeys.length} compan${attemptedKeys.length === 1 ? "y" : "ies"} resolved` +
+      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error (will retry once every other company's been attempted)` : "") +
+      (notConfidentCount > 0 ? `, ${notConfidentCount} found no confident match (will retry once every other company's been attempted)` : "") +
+      stoppedSuffix;
     appendActivityLog({
-      actor: "user",
+      actor: stoppedByTouchBudget ? "extension" : "user",
       action: "company_ids_resolved",
-      label: `Resolve LinkedIn Company IDs: ${updated} of ${toResolve.length} resolved` +
+      label: `Resolve LinkedIn Company IDs: ${updated} of ${attemptedKeys.length} resolved` +
         (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
         (notConfidentCount > 0 ? `, ${notConfidentCount} found no confident match` : "") +
+        (stoppedByTouchBudget ? ", stopped automatically (daily LinkedIn activity limit reached)" : resolveAbortRequested ? ", stopped early by you" : "") +
         (debugSamples.length > 0 ? ` - ${debugSamples.length} unresolved sample(s) attached for diagnosis` : ""),
-      newValue: { updated, total: toResolve.length, hardTimeoutCount, notConfidentCount, debugSamples },
+      newValue: { updated, total: attemptedKeys.length, requested: toResolve.length, hardTimeoutCount, notConfidentCount, debugSamples, stoppedByUser: resolveAbortRequested, stoppedByTouchBudget },
     });
   } catch (err) {
     resolveCompanyIdsStatusEl.textContent = `Something went wrong: ${err.message}`;
     appendActivityLog({ actor: "user", action: "company_ids_resolved", label: "Resolve LinkedIn Company IDs failed", error: true, errorMessage: err.message });
   } finally {
     resolveCompanyIdsBtn.disabled = false;
+    stopResolveCompanyIdsBtn.hidden = true;
+    await renderLinkedinTouchStat();
   }
+});
+
+// v0.29.45: checked before starting a new company (see runCompanyIdResolution's
+// own shouldAbort check), not mid-attempt - one company's own resolution is a
+// few seconds, a fine granularity to wait out rather than interrupt. Disabled
+// immediately so a slow in-flight company can't look like the click didn't
+// register.
+stopResolveCompanyIdsBtn.addEventListener("click", () => {
+  resolveAbortRequested = true;
+  stopResolveCompanyIdsBtn.disabled = true;
+  stopResolveCompanyIdsBtn.textContent = "Stopping…";
 });
 
 targetAccountThresholdInput.addEventListener("input", () => {
@@ -458,6 +595,7 @@ const PRIORITIZATION_RULE_LABELS = {
   post_title_match: "Post title match",
   post_topic_match: "Post topic match",
   post_company_floor: "Post company floor",
+  job_signal_ceiling: "Job signal ceiling",
 };
 
 function ruleValueCell(rule) {
@@ -614,8 +752,25 @@ async function renderPrioritizationRules() {
   }));
 }
 
+// See sidepanel.js's own copy of this function for the full reasoning
+// (LinkedIn's "unusual activity" warning after a day of concentrated
+// testing, ~315 automated visits reconstructed after the fact) - shown here
+// too since the company-ID resolver (this page's own biggest single
+// contributor to that day's total) can be run from Settings without the
+// side panel ever being open.
+async function renderLinkedinTouchStat() {
+  const el = document.getElementById("linkedin-touch-stat");
+  const { last24h, last7d, level } = await getLinkedinTouchStats();
+  el.textContent = `LinkedIn touches (automated): ${last24h} in the last 24h · ${last7d} in the last 7 days`;
+  el.classList.toggle("linkedin-touch-stat-warn", level === "warn");
+  el.classList.toggle("linkedin-touch-stat-danger", level === "danger");
+}
+
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+
+  await renderLinkedinTouchStat();
+  setInterval(renderLinkedinTouchStat, 30000);
 
   outputLanguageSelect.value = await getOutputLanguage();
   outputLanguageSelect.dataset.prevValue = outputLanguageSelect.value;

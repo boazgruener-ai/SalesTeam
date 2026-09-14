@@ -2,39 +2,206 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>SalesTeam Target Accounts</title>
+  <title>SalesTeam Target Accounts Dashboard</title>
   <link rel="icon" href="icons/icon16.png" />
   <link rel="stylesheet" href="target-accounts.css" />
 </head>
 <body>
   <header id="page-header">
-    <h1>SalesTeam Target Accounts <span id="version-text"></span></h1>
+    <h1><span id="page-title-text">SalesTeam Target Accounts Dashboard</span> <span id="version-text"></span></h1>
     <p class="page-subtitle">
-      The full externally-researched company workbook - every company, plus its known contacts and AI
-      initiatives, linked by the workbook's own Company ID. Click a row to expand it. Import or refresh
-      the underlying .xlsx on the Settings page - it also drives automatic lead prioritization (see the
-      Dashboard's Priority column).
+      The full externally-researched company and contact workbook - every account, plus its known contacts and
+      AI initiatives, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
+      unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
+      automatic lead prioritization (see the Posts Dashboard's Priority column).
     </p>
+    <div id="page-header-actions">
+      <button id="import-target-accounts-page-btn" type="button" title="Import the .xlsx research workbook directly, or restore a previously exported backup .json - same as Settings' Import Target Accounts">Import Target Accounts…</button>
+      <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
+      <button id="export-target-accounts-page-btn" type="button" title="Download a full backup (the target-accounts map plus this Explorer's workbook) as a .json file - same as Settings' Export Target Accounts" hidden>Export Target Accounts…</button>
+      <span id="target-accounts-page-io-status" class="status-text"></span>
+    </div>
+    <p id="linkedin-resolve-status" class="page-subtitle" hidden></p>
   </header>
 
-  <main id="explorer-main">
-    <p id="empty-state" class="empty-state" hidden>
-      No Target Accounts data imported yet. Go to <strong>Settings</strong> and use
-      <strong>Import Target Accounts</strong> to load the workbook.
-    </p>
+  <nav id="list-tab-bar" hidden>
+    <a href="#" id="tab-accounts" class="list-tab active">Target Accounts</a>
+    <a href="#contacts" id="tab-contacts" class="list-tab">Target Contacts</a>
+  </nav>
 
-    <div id="explorer-controls" hidden>
-      <input id="search-input" type="text" placeholder="Search company or industry…" />
-      <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
-      <span id="result-count"></span>
+  <main id="explorer-main">
+    <div id="list-view">
+      <p id="empty-state" class="empty-state" hidden>
+        No Target Accounts data imported yet. Use <strong>Import Target Accounts</strong> above (or on the
+        Settings page) to load the workbook.
+      </p>
+
+      <section id="accounts-stats-section" hidden>
+        <div class="pie-card">
+          <h2>AI Priority range</h2>
+          <div class="pie-wrap" id="pie-ai-priority"></div>
+        </div>
+        <div class="pie-card">
+          <h2>Evidence level</h2>
+          <div class="pie-wrap" id="pie-evidence-level"></div>
+        </div>
+        <div class="pie-card">
+          <h2>Account status</h2>
+          <div class="pie-wrap" id="pie-account-status"></div>
+        </div>
+        <div class="pie-card">
+          <h2>Contact coverage</h2>
+          <div class="pie-wrap" id="pie-contact-coverage"></div>
+        </div>
+      </section>
+
+      <div id="explorer-controls" hidden>
+        <input id="search-input" type="text" placeholder="Search company or industry…" />
+        <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
+        <span id="result-count"></span>
+      </div>
+
+      <div id="pagination-top" class="pagination-bar" hidden></div>
+
+      <div id="table-scroll-top" hidden><div id="table-scroll-top-filler"></div></div>
+
+      <div id="table-wrap" hidden>
+        <table id="companies-table">
+          <colgroup id="companies-colgroup"></colgroup>
+          <thead id="companies-thead"></thead>
+          <tbody id="companies-tbody"></tbody>
+        </table>
+      </div>
+
+      <div id="pagination-bottom" class="pagination-bar" hidden></div>
     </div>
 
-    <div id="table-wrap" hidden>
-      <table id="companies-table">
-        <colgroup id="companies-colgroup"></colgroup>
-        <thead id="companies-thead"></thead>
-        <tbody id="companies-tbody"></tbody>
-      </table>
+    <div id="contacts-list-view" hidden>
+      <p id="contacts-empty-state" class="empty-state" hidden>
+        No Target Contacts imported yet - the Contacts sheet of the same workbook (Import Target Accounts
+        above) is currently empty.
+      </p>
+
+      <section id="contacts-stats-section" hidden>
+        <div class="pie-card">
+          <h2>Contact status</h2>
+          <div class="pie-wrap" id="pie-contact-status"></div>
+        </div>
+      </section>
+
+      <div id="contacts-explorer-controls" hidden>
+        <input id="contacts-search-input" type="text" placeholder="Search name, company, or title…" />
+        <button id="contacts-columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
+        <span id="contacts-result-count"></span>
+      </div>
+
+      <div id="contacts-pagination-top" class="pagination-bar" hidden></div>
+
+      <div id="contacts-table-scroll-top" hidden><div id="contacts-table-scroll-top-filler"></div></div>
+
+      <div id="contacts-table-wrap" hidden>
+        <table id="contacts-table">
+          <colgroup id="contacts-colgroup"></colgroup>
+          <thead id="contacts-thead"></thead>
+          <tbody id="contacts-tbody"></tbody>
+        </table>
+      </div>
+
+      <div id="contacts-pagination-bottom" class="pagination-bar" hidden></div>
+    </div>
+
+    <div id="account-view" hidden>
+      <a href="#" id="account-back-link">&larr; Back to Target Accounts</a>
+      <h2 id="account-title"></h2>
+      <div id="account-overview" class="entity-overview"></div>
+      <input type="date" id="account-due-date-input" hidden />
+      <button id="account-due-date-clear-btn" class="text-link-btn" type="button" title="Clear the follow-up due date" hidden>Clear</button>
+
+      <div id="account-detail-lists"></div>
+
+      <section class="entity-activity-section">
+        <h3 id="account-activity-toggle">Recent Activity</h3>
+        <div id="account-activity-list" class="entity-activity-list"></div>
+      </section>
+
+      <div class="agent-chat-row">
+        <section class="agent-chat-section">
+          <div class="section-title-row">
+            <h3>Consult Sales Mentor about this account</h3>
+            <button id="account-mentor-clear-btn" class="text-link-btn" type="button" title="Permanently clear this account's Mentor conversation history">Clear conversation</button>
+          </div>
+          <div id="account-mentor-history" class="agent-history"></div>
+          <span id="account-mentor-status" class="status-text"></span>
+          <div class="agent-input-row">
+            <textarea id="account-mentor-input" class="agent-input" placeholder="Ask about this account, e.g. “Who should I approach first?”"></textarea>
+            <button id="account-mentor-send-btn" class="agent-send-btn" type="button" title="Send your message to the Sales Mentor">Send</button>
+          </div>
+        </section>
+
+        <section class="agent-chat-section">
+          <div class="section-title-row">
+            <h3>Consult Customer Voice about this account</h3>
+            <button id="account-voice-clear-btn" class="text-link-btn" type="button" title="Permanently clear this account's Customer Voice conversation history">Clear conversation</button>
+          </div>
+          <div id="account-voice-history" class="agent-history"></div>
+          <span id="account-voice-status" class="status-text"></span>
+          <div class="agent-input-row">
+            <textarea id="account-voice-input" class="agent-input" placeholder="Try a message on this account, e.g. “How would this land?”"></textarea>
+            <button id="account-voice-send-btn" class="agent-send-btn" type="button" title="Send your message to Customer Voice">Send</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="contact-view" hidden>
+      <a href="#" id="contact-back-link">&larr; Back to Target Accounts</a>
+      <h2 id="contact-title"></h2>
+      <div id="contact-overview" class="entity-overview"></div>
+      <input type="date" id="contact-due-date-input" hidden />
+      <button id="contact-due-date-clear-btn" class="text-link-btn" type="button" title="Clear the follow-up due date" hidden>Clear</button>
+
+      <section>
+        <h3 id="contact-posts-toggle">Posts by this contact</h3>
+        <div id="contact-posts-list" class="entity-activity-list"></div>
+      </section>
+
+      <section>
+        <h3 id="contact-mentions-toggle">Web mentions</h3>
+        <div id="contact-mentions-list" class="entity-activity-list"></div>
+      </section>
+
+      <section class="entity-activity-section">
+        <h3 id="contact-activity-toggle">Recent Activity</h3>
+        <div id="contact-activity-list" class="entity-activity-list"></div>
+      </section>
+
+      <div class="agent-chat-row">
+        <section class="agent-chat-section">
+          <div class="section-title-row">
+            <h3>Consult Sales Mentor about this contact</h3>
+            <button id="contact-mentor-clear-btn" class="text-link-btn" type="button" title="Permanently clear this contact's Mentor conversation history">Clear conversation</button>
+          </div>
+          <div id="contact-mentor-history" class="agent-history"></div>
+          <span id="contact-mentor-status" class="status-text"></span>
+          <div class="agent-input-row">
+            <textarea id="contact-mentor-input" class="agent-input" placeholder="Ask about this contact, e.g. “How should I approach them?”"></textarea>
+            <button id="contact-mentor-send-btn" class="agent-send-btn" type="button" title="Send your message to the Sales Mentor">Send</button>
+          </div>
+        </section>
+
+        <section class="agent-chat-section">
+          <div class="section-title-row">
+            <h3>Consult Customer Voice about this contact</h3>
+            <button id="contact-voice-clear-btn" class="text-link-btn" type="button" title="Permanently clear this contact's Customer Voice conversation history">Clear conversation</button>
+          </div>
+          <div id="contact-voice-history" class="agent-history"></div>
+          <span id="contact-voice-status" class="status-text"></span>
+          <div class="agent-input-row">
+            <textarea id="contact-voice-input" class="agent-input" placeholder="Try a message on this contact, e.g. “How would this land?”"></textarea>
+            <button id="contact-voice-send-btn" class="agent-send-btn" type="button" title="Send your message to Customer Voice">Send</button>
+          </div>
+        </section>
+      </div>
     </div>
   </main>
 

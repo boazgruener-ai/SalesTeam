@@ -231,10 +231,17 @@ export async function saveOutputLanguage(language) {
 // never merged incrementally.
 const TARGET_ACCOUNTS_KEY = "targetAccounts";
 const TARGET_ACCOUNTS_IMPORTED_AT_KEY = "targetAccountsImportedAt";
+// v0.29.38: reported directly - re-importing a refreshed workbook multiple
+// times in one day left an ambiguous "500 companies imported · Sep 9, 2026"
+// status with no way to tell a just-finished import from a stale one hours
+// earlier (date-only, no time) or confirm which of several similarly-named
+// files was actually picked up. Stored alongside importedAt so Settings can
+// show both.
+const TARGET_ACCOUNTS_IMPORTED_FILENAME_KEY = "targetAccountsImportedFileName";
 const TARGET_ACCOUNT_SCORE_THRESHOLD_KEY = "targetAccountScoreThreshold";
 const DEFAULT_TARGET_ACCOUNT_SCORE_THRESHOLD = 70;
 
-export async function importTargetAccounts(list) {
+export async function importTargetAccounts(list, fileName = null) {
   // Carries a company's resolved LinkedIn ID (6.16) forward across a
   // wholesale re-import - reported directly as a real risk: this map is
   // rebuilt from scratch every import (by design, since the research
@@ -256,11 +263,35 @@ export async function importTargetAccounts(list) {
       priorityLabel: entry.priorityLabel || null,
       researchStatus: entry.researchStatus || null,
       topInitiatives: entry.topInitiatives || null,
+      // v0.29.37, see PRD 6.16: unlike linkedinCompanyId below, this comes
+      // straight from the workbook (a Zefix cross-check done outside the
+      // extension) and is refreshed on every import same as company/score/
+      // etc. - no carry-forward needed, the workbook is the source of truth.
+      officialName: entry.officialName || null,
+      // v0.29.42, see PRD 6.16: two more workbook columns from the same
+      // external cross-check - alternativeName (a commonly-used short/
+      // acronym form, e.g. a cantonal bank's own initials) and linkedinLink
+      // (a human/AI-verified LinkedIn company-page URL). Refreshed on every
+      // import same as officialName above, for the same reason - the
+      // workbook is the source of truth for all three.
+      alternativeName: entry.alternativeName || null,
+      linkedinLink: entry.linkedinLink || null,
       ...(previousMap[key]?.linkedinCompanyId ? { linkedinCompanyId: previousMap[key].linkedinCompanyId } : {}),
+      // v0.29.39, see PRD 6.16: same durable-across-reimport treatment as
+      // linkedinCompanyId above, for the same reason - a resolver run's
+      // history has nothing to do with what changed in a refreshed
+      // workbook.
+      ...(previousMap[key]?.linkedinResolveAttemptedAt
+        ? { linkedinResolveAttemptedAt: previousMap[key].linkedinResolveAttemptedAt }
+        : {}),
     };
   }
   const importedAt = Date.now();
-  await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map, [TARGET_ACCOUNTS_IMPORTED_AT_KEY]: importedAt });
+  await chrome.storage.local.set({
+    [TARGET_ACCOUNTS_KEY]: map,
+    [TARGET_ACCOUNTS_IMPORTED_AT_KEY]: importedAt,
+    [TARGET_ACCOUNTS_IMPORTED_FILENAME_KEY]: fileName || null,
+  });
   return { count: Object.keys(map).length, importedAt };
 }
 
@@ -270,9 +301,13 @@ export async function getTargetAccounts() {
 }
 
 export async function getTargetAccountsMeta() {
-  const data = await chrome.storage.local.get([TARGET_ACCOUNTS_KEY, TARGET_ACCOUNTS_IMPORTED_AT_KEY]);
+  const data = await chrome.storage.local.get([TARGET_ACCOUNTS_KEY, TARGET_ACCOUNTS_IMPORTED_AT_KEY, TARGET_ACCOUNTS_IMPORTED_FILENAME_KEY]);
   const map = data[TARGET_ACCOUNTS_KEY] || {};
-  return { count: Object.keys(map).length, importedAt: data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null };
+  return {
+    count: Object.keys(map).length,
+    importedAt: data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null,
+    importedFileName: data[TARGET_ACCOUNTS_IMPORTED_FILENAME_KEY] || null,
+  };
 }
 
 // EXPERIMENTAL (v0.29.25, see PRD 6.16): resolves a Target Account company's
@@ -281,11 +316,53 @@ export async function getTargetAccountsMeta() {
 // location - confirmed live against a real "currentCompany=[...]" link the
 // user found in a real search results page, not guessed). Companies already
 // resolved are skipped so a run only ever costs one visit per company, ever.
+//
+// Reported directly (v0.29.39): a company that fails stays "missing"
+// forever, with nothing distinguishing "never tried" from "tried and
+// failed" - since a "Limit to N" run always draws from the front of this
+// same list in the same order, a handful of genuinely stubborn companies
+// (a translated name, an acronym LinkedIn shows instead of the full name,
+// etc.) kept consuming the whole budget of every run, before ever reaching
+// a fresh, never-attempted company further down the list. Never-attempted
+// companies (no linkedinResolveAttemptedAt - see markLinkedinResolveAttempted
+// below) now sort first, so a run makes real forward progress through the
+// full list before it ever revisits a known-stubborn one a second time;
+// once every company has been attempted at least once, this naturally
+// falls through to offering the stubborn remainder for retry/analysis,
+// oldest-attempt-first (so a company isn't retried again and again ahead
+// of one that's had a single attempt).
 export async function getTargetAccountsMissingLinkedinId() {
   const map = await getTargetAccounts();
   return Object.entries(map)
     .filter(([, v]) => !v.linkedinCompanyId)
-    .map(([key, v]) => ({ key, company: v.company }));
+    .map(([key, v]) => ({
+      key,
+      company: v.company,
+      officialName: v.officialName || null,
+      alternativeName: v.alternativeName || null,
+      linkedinLink: v.linkedinLink || null,
+      attemptedAt: v.linkedinResolveAttemptedAt || null,
+    }))
+    .sort((a, b) => (a.attemptedAt || 0) - (b.attemptedAt || 0));
+}
+
+// Called after a resolver run with every company key it actually attempted
+// (regardless of outcome - success, "no confident match," or a hard
+// timeout all count as an attempt) - see getTargetAccountsMissingLinkedinId
+// above for why this exists. Separate from applyResolvedCompanyIds (which
+// only ever hears about successes) since a failed attempt still needs to
+// stop being treated as "never tried."
+export async function markLinkedinResolveAttempted(keys) {
+  const map = await getTargetAccounts();
+  const attemptedAt = Date.now();
+  let marked = 0;
+  for (const key of keys || []) {
+    if (!map[key]) continue;
+    map[key].linkedinResolveAttemptedAt = attemptedAt;
+    marked++;
+  }
+  if (marked > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map });
+  return marked;
 }
 
 export async function applyResolvedCompanyIds(resolutions) {
@@ -322,10 +399,57 @@ export async function saveTargetAccountScoreThreshold(threshold) {
 const TARGET_ACCOUNTS_WORKBOOK_KEY = "targetAccountsWorkbook";
 const TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY = "targetAccountsWorkbookImportedAt";
 
+// The Contacts sheet schema has changed across three successive workbook
+// exports so far - each normalized here, once, at import time, rather than
+// in every place that reads lastVerified2, so a contact from any of the
+// three ends up with the same shape and CONTACT_COLUMNS/CONTACT_LIST_COLUMNS/
+// renderContactView (target-accounts.js) don't need to know which version
+// produced it:
+//  1. Original: two colliding "Last_Verified"/"Evidence_Quality" header
+//     pairs, which xlsx-lite.js's parseGenericSheetRows suffixed apart into
+//     lastVerified2/evidenceQuality2 (the real LinkedIn-verification pair) -
+//     no normalization needed, already the field this code reads.
+//  2. v24/v25: the duplicate pair dropped, replaced by a single dedicated
+//     LinkedIn_Profile_URL column (camelCased to linkedinProfileUrl).
+//  3. v28 (reported directly): LinkedIn_Profile_URL removed again, and
+//     Source_URL removed too - every contact's LinkedIn link is now
+//     consolidated into Profile_URL itself, which up to v25 held the
+//     company's own bio page instead.
+// Schema 3 can't be told apart from a schema-1/2 row with a blank
+// Source_URL cell by looking at one row alone (a blank cell may not even
+// appear as a key on that row - see xlsx-lite.js), so the presence of the
+// sourceUrl/linkedinProfileUrl columns is checked across the whole contacts
+// array, once per import, rather than per row. Schema 2's evidenceQuality2
+// status text (e.g. "Current - LinkedIn verified") has no equivalent in
+// schema 2 or 3 and is left blank rather than invented.
+function normalizeContactRows(contacts) {
+  const hasLinkedinProfileUrlColumn = contacts.some((c) => "linkedinProfileUrl" in c);
+  const hasSourceUrlColumn = contacts.some((c) => "sourceUrl" in c);
+  const linkedinConsolidatedIntoProfileUrl = !hasLinkedinProfileUrlColumn && !hasSourceUrlColumn;
+  return contacts.map((contact) => {
+    if (contact.lastVerified2 != null) return contact;
+    if (contact.linkedinProfileUrl) {
+      return { ...contact, lastVerified2: contact.linkedinProfileUrl };
+    }
+    if (linkedinConsolidatedIntoProfileUrl && contact.profileUrl) {
+      // profileUrl no longer represents a distinct "bio page" separate from
+      // the LinkedIn link in this schema - blanked here too so the "Bio
+      // Page" column doesn't show the identical URL a second time under a
+      // now-inaccurate label.
+      return { ...contact, lastVerified2: contact.profileUrl, profileUrl: null };
+    }
+    return contact;
+  });
+}
+
 export async function importTargetAccountsWorkbook(sheets) {
   const importedAt = Date.now();
+  const normalized = {
+    ...sheets,
+    contacts: normalizeContactRows(sheets.contacts || []),
+  };
   await chrome.storage.local.set({
-    [TARGET_ACCOUNTS_WORKBOOK_KEY]: sheets,
+    [TARGET_ACCOUNTS_WORKBOOK_KEY]: normalized,
     [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: importedAt,
   });
   return { count: (sheets.companies || []).length, importedAt };
@@ -342,6 +466,51 @@ export async function getTargetAccountsWorkbookMeta() {
   return {
     count: sheets ? (sheets.companies || []).length : 0,
     importedAt: data[TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY] || null,
+  };
+}
+
+// A standalone backup/restore pair for the Settings page's own Export/Import
+// Target Accounts buttons - distinct from importTargetAccounts(list) above,
+// which re-derives normalized keys from a plain company list. This restores
+// the already-keyed map and the full Explorer workbook exactly as they were,
+// so re-importing a research workbook isn't the only way to recover this data
+// after e.g. clearing browser storage or moving to a new machine.
+export async function exportTargetAccountsBackup() {
+  const [targetAccounts, targetAccountsMeta, targetAccountsWorkbook, workbookMeta, targetAccountScoreThreshold] =
+    await Promise.all([
+      getTargetAccounts(),
+      getTargetAccountsMeta(),
+      getTargetAccountsWorkbook(),
+      getTargetAccountsWorkbookMeta(),
+      getTargetAccountScoreThreshold(),
+    ]);
+  return {
+    exportedAt: new Date().toISOString(),
+    version: 1,
+    targetAccounts,
+    targetAccountsImportedAt: targetAccountsMeta.importedAt,
+    targetAccountsImportedFileName: targetAccountsMeta.importedFileName,
+    targetAccountsWorkbook,
+    targetAccountsWorkbookImportedAt: workbookMeta.importedAt,
+    targetAccountScoreThreshold,
+  };
+}
+
+export async function importTargetAccountsBackup(data) {
+  await chrome.storage.local.set({
+    [TARGET_ACCOUNTS_KEY]: data.targetAccounts || {},
+    [TARGET_ACCOUNTS_IMPORTED_AT_KEY]: data.targetAccountsImportedAt || null,
+    [TARGET_ACCOUNTS_IMPORTED_FILENAME_KEY]: data.targetAccountsImportedFileName || null,
+    [TARGET_ACCOUNTS_WORKBOOK_KEY]:
+      data.targetAccountsWorkbook || { companies: [], contacts: [], aiInitiatives: [], aiInvestment: [], sources: [] },
+    [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: data.targetAccountsWorkbookImportedAt || null,
+  });
+  if (typeof data.targetAccountScoreThreshold === "number") {
+    await saveTargetAccountScoreThreshold(data.targetAccountScoreThreshold);
+  }
+  return {
+    count: Object.keys(data.targetAccounts || {}).length,
+    workbookCount: (data.targetAccountsWorkbook?.companies || []).length,
   };
 }
 
@@ -468,15 +637,37 @@ const DEFAULT_NEGATIVE_TOPICS = [
   {
     id: "builtin-recruiting-firms",
     name: "Known Recruiting Firms",
-    // Matched against the lead's own `company` (see negativeTopicHaystack
-    // below) - a far more precise signal than a headline/snippet keyword,
-    // since it targets who the poster actually works for rather than
-    // self-description text or a passing mention. Short canonical names, not
-    // full legal names, so "Randstad" still matches "Randstad Switzerland."
+    // matchField: "company" makes this actually match ONLY the lead's own
+    // `company` field, not a mere mention in a post's snippet/headline - the
+    // precision this topic's whole premise depends on ("who the poster
+    // actually works for," not self-description text or a passing mention).
+    // Also gets the fuzzy suffix-stripped comparison from
+    // matchesCompanyKeyword (below), so a short canonical name like
+    // "Randstad" matches "Randstad Switzerland," "Randstad AG," etc. in
+    // either direction without needing every legal variant spelled out.
     keywords: ["Adecco", "Randstad", "Michael Page", "PageGroup", "Swisslinx", "Robert Walters", "Hays"],
     andKeywords: [],
     enabled: true,
     appliesTo: "both",
+    matchField: "company",
+    builtin: true,
+  },
+  {
+    id: "builtin-ai-vendors",
+    name: "AI/Cloud Vendor Blocklist",
+    // These are exactly the vendors builtin-competitors above deliberately
+    // EXCLUDES, and for the same underlying reason free-text mentions of
+    // them are noisy ("built on Azure," "runs on an NVIDIA GPU") - but a
+    // company-scoped match sidesteps that entirely: matchField: "company"
+    // means this only ever compares against the lead's own employer, never
+    // post/job text, so it can safely block leads who actually work AT one
+    // of these vendors (not competitors, but still not this project's ICP)
+    // without resurrecting the tooling-mention false positives.
+    keywords: ["Google", "Microsoft", "Amazon", "AWS", "NVIDIA", "IBM", "Oracle", "SAP", "Salesforce", "Meta", "OpenAI"],
+    andKeywords: [],
+    enabled: true,
+    appliesTo: "both",
+    matchField: "company",
     builtin: true,
   },
 ];
@@ -515,8 +706,29 @@ export function escapeRegExp(str) {
 // Whole-word match, not raw substring - a naive .includes() on a short
 // keyword like "AI" also matches inside unrelated words (e.g. "AljurAId"),
 // which is a real false-positive source for 2-3 letter terms.
+//
+// Below MIN_LENGTH_FOR_PREFIX_MATCH, both ends require a real word boundary
+// (unchanged behavior) - short acronyms (AI, KI, ROI, GPT, LLM, PoC...) are
+// exactly as long as plenty of unrelated whole words (Aid, Air, Kind, Kiste,
+// Pod) that would become false positives the moment the trailing boundary is
+// dropped. At or above it, only the LEADING boundary is required, so one
+// root keyword also matches its own plurals and common conjugations (e.g.
+// "pilot" -> "pilots", "engineer" -> "engineers"/"engineering", "transform"
+// -> "transformation"/"transformations", German "Ingenieur" -> "Ingenieur/
+// e/in/innen/wesen/wissenschaften") without maintaining a separate keyword
+// entry per grammatical form. Reported directly (2026-09): two genuinely
+// on-topic Holcim posts (Lily Wong, AI leadership) were silently missed by
+// an AND-topic's activity-group check purely because the post used "use
+// cases"/"pilots" (plural) against configured "use case"/"pilot" (singular)
+// - a real, general gap, not a one-off. Known tradeoff: a keyword like
+// "Prompt" now also matches inside "promptly" - accepted the same way this
+// file already accepts "Llama" matching the animal, not just the AI model.
+const MIN_LENGTH_FOR_PREFIX_MATCH = 4;
+
 export function containsWholeWord(haystackLower, keyword) {
-  return new RegExp(`\\b${escapeRegExp(keyword.toLowerCase())}\\b`, "i").test(haystackLower);
+  const escaped = escapeRegExp(keyword.toLowerCase());
+  const pattern = keyword.trim().length >= MIN_LENGTH_FOR_PREFIX_MATCH ? `\\b${escaped}` : `\\b${escaped}\\b`;
+  return new RegExp(pattern, "i").test(haystackLower);
 }
 
 // Legal-entity suffixes and generic corporate-structure/regional words that
@@ -594,11 +806,35 @@ function matchesNegativeTopic(lead, topic) {
   if (topic.appliesTo === "post" && lead.type === "job") return null;
   if (topic.appliesTo === "job" && lead.type !== "job") return null;
   if (!topic.keywords || topic.keywords.length === 0) return null; // unconfigured topic never matches
+
+  // matchField: "company" (Known Recruiting Firms, AI/Cloud Vendor Blocklist)
+  // compares ONLY lead.company, via the fuzzy suffix-stripped comparison -
+  // free-text snippet/headline mentions never count, which is exactly what
+  // keeps the AI Vendor list from reintroducing the "built on Azure" false
+  // positives builtin-competitors avoids by excluding these vendors outright.
+  if (topic.matchField === "company") {
+    const matchedKeyword = topic.keywords.find((kw) => matchesCompanyKeyword(lead.company, kw));
+    if (!matchedKeyword) return null;
+    const andGroup = topic.andKeywords || [];
+    const andMatch = andGroup.length === 0 || andGroup.some((kw) => matchesCompanyKeyword(lead.company, kw));
+    return andMatch ? matchedKeyword : null;
+  }
+
   const haystack = negativeTopicHaystack(lead).toLowerCase();
-  const matchedKeyword = topic.keywords.find((kw) => containsWholeWord(haystack, kw));
+  // Default ("any") field: the existing free-text whole-word check, OR'd
+  // with the fuzzy company-suffix check - additive, so an existing topic's
+  // free-text matching behavior is unchanged, it just ALSO now catches a
+  // company-name variant that differs only by a legal-entity/regional/group
+  // suffix (AG/Ltd/Inc, "<Company> Switzerland," "<Company> Group," in
+  // either direction) without the user needing to list every variant.
+  const matchedKeyword = topic.keywords.find(
+    (kw) => containsWholeWord(haystack, kw) || matchesCompanyKeyword(lead.company, kw)
+  );
   if (!matchedKeyword) return null;
   const andGroup = topic.andKeywords || [];
-  const andMatch = andGroup.length === 0 || andGroup.some((kw) => containsWholeWord(haystack, kw));
+  const andMatch =
+    andGroup.length === 0 ||
+    andGroup.some((kw) => containsWholeWord(haystack, kw) || matchesCompanyKeyword(lead.company, kw));
   return andMatch ? matchedKeyword : null;
 }
 
@@ -764,12 +1000,65 @@ const COUNTRY_ALIASES = {
   uae: "United Arab Emirates", czechia: "Czech Republic",
   "côte d'ivoire": "Ivory Coast", "cote d'ivoire": "Ivory Coast",
   drc: "Democratic Republic of the Congo", "congo-kinshasa": "Democratic Republic of the Congo",
+  // A Swiss profile just as often names the country in German or French as
+  // in English, or by its ISO code - reported directly, several leads at
+  // obviously-Swiss companies had no location because their profile said
+  // "Schweiz," "Suisse," or "CH," none of which this table recognized as
+  // Switzerland. "ch" is safe here specifically because containsWholeWord
+  // (used below) only ever matches it as an isolated word, never mid-word.
+  schweiz: "Switzerland", suisse: "Switzerland", svizzera: "Switzerland", ch: "Switzerland",
 };
 
-// LinkedIn sometimes shows "Greater Zurich Area" with no country name at
-// all - a fallback specifically for the user's own primary market, not an
-// attempt at exhaustive city coverage for every country.
-const SWISS_CITIES = ["zurich", "geneva", "basel", "bern", "lausanne", "lucerne", "winterthur", "st. gallen", "st gallen", "lugano", "biel", "zug"];
+// LinkedIn often shows just a metro-area name with no country at all -
+// "Greater Zurich Area," "Nashville Metropolitan Area," "Greater New York
+// City Area." Originally Switzerland-only (this project's primary market);
+// reported directly after "Nashville Metropolitan Area" (Burke Holland) and
+// other major non-Swiss cities came back with no classifiable location at
+// all despite obviously being real, specific places ("Can you not infer
+// from Nashville to the USA?"). Extended to a modest set of other major
+// metros a B2B tech/AI lead is likely to be based in - deliberately a
+// short, best-effort list (like the Swiss one before it), not an attempt at
+// exhaustive world city coverage - a city not on this list is left
+// unclassified rather than guessed at, same as any other unrecognized text.
+const CITY_TO_COUNTRY = {
+  // Switzerland (this project's primary market) - includes the German/
+  // French names actually seen on Swiss profiles ("Zürich," "Genève"/
+  // "Genf," "Luzern") alongside their English equivalents.
+  zurich: "Switzerland", "zürich": "Switzerland", geneva: "Switzerland", "genève": "Switzerland",
+  genf: "Switzerland", basel: "Switzerland", bern: "Switzerland", lausanne: "Switzerland",
+  lucerne: "Switzerland", luzern: "Switzerland", winterthur: "Switzerland", "st. gallen": "Switzerland",
+  "st gallen": "Switzerland", "sankt gallen": "Switzerland", lugano: "Switzerland", biel: "Switzerland",
+  bienne: "Switzerland", zug: "Switzerland",
+  // Major US metros commonly shown as just "X Metropolitan Area"/"Greater X Area."
+  "new york": "United States", "new york city": "United States", "los angeles": "United States",
+  chicago: "United States", "san francisco": "United States", nashville: "United States",
+  seattle: "United States", austin: "United States", boston: "United States", dallas: "United States",
+  houston: "United States", atlanta: "United States", denver: "United States", miami: "United States",
+  washington: "United States", philadelphia: "United States", phoenix: "United States",
+  "san diego": "United States", portland: "United States", minneapolis: "United States", detroit: "United States",
+  // A handful of other major metros seen the same way.
+  london: "United Kingdom", manchester: "United Kingdom",
+  toronto: "Canada", vancouver: "Canada", montreal: "Canada",
+  // Reported directly - real leads came back as "Greater Hamburg Area,"
+  // "Greater Bengaluru Area," and "Greater Lyon/Rennes Area," none
+  // classifiable, so a lead from clearly outside Switzerland went untouched
+  // by the Location Filter. Same modest-list philosophy as above: the major
+  // metros most likely to keep recurring for a Swiss/European AI-sales
+  // audience, not an attempt at exhaustive world coverage.
+  hamburg: "Germany", munich: "Germany", "münchen": "Germany", berlin: "Germany",
+  frankfurt: "Germany", cologne: "Germany", "köln": "Germany", stuttgart: "Germany", dusseldorf: "Germany",
+  "düsseldorf": "Germany",
+  lyon: "France", rennes: "France", paris: "France", marseille: "France", toulouse: "France", nantes: "France",
+  bengaluru: "India", bangalore: "India", mumbai: "India", delhi: "India", "new delhi": "India",
+  hyderabad: "India", pune: "India", chennai: "India",
+  milan: "Italy", milano: "Italy", rome: "Italy", roma: "Italy",
+  madrid: "Spain", barcelona: "Spain",
+  amsterdam: "Netherlands", rotterdam: "Netherlands",
+  dublin: "Ireland", stockholm: "Sweden", copenhagen: "Denmark", oslo: "Norway", helsinki: "Finland",
+  warsaw: "Poland", vienna: "Austria", brussels: "Belgium",
+  dubai: "United Arab Emirates", "abu dhabi": "United Arab Emirates",
+  tokyo: "Japan", sydney: "Australia", melbourne: "Australia",
+};
 
 let countryToContinentTable = null;
 function countryToContinent() {
@@ -801,8 +1090,11 @@ export function classifyLocation(text) {
       if (entry) return entry;
     }
   }
-  for (const city of SWISS_CITIES) {
-    if (containsWholeWord(lower, city)) return { country: "Switzerland", continent: "europe" };
+  for (const [city, country] of Object.entries(CITY_TO_COUNTRY)) {
+    if (containsWholeWord(lower, city)) {
+      const entry = table[country.toLowerCase()];
+      if (entry) return entry;
+    }
   }
   return null;
 }
@@ -1092,6 +1384,12 @@ export const PRIORITIZATION_RULE_CATALOG = [
     type: "floor",
     defaultValue: 2,
   },
+  {
+    id: "job_signal_ceiling",
+    description: "Job listing whose company matched a Target Account, but not confidently enough for the Job company cap above (a Provisional label or below-threshold score) - the Sales Mentor still decides, but is never allowed to rate it better than this, since there's still no individual to contact.",
+    type: "ceiling",
+    defaultValue: 3,
+  },
 ];
 
 const PRIORITIZATION_RULE_OVERRIDES_KEY = "prioritizationRuleOverrides";
@@ -1115,6 +1413,60 @@ export async function savePrioritizationRuleOverride(id, { enabled, value } = {}
     ...(value !== undefined ? { value } : {}),
   };
   await chrome.storage.local.set({ [PRIORITIZATION_RULE_OVERRIDES_KEY]: overrides });
+}
+
+// Target Contacts (PRD 6.12's Contacts sheet - real, externally-researched,
+// pre-qualified decision-makers at Target Account companies, not a keyword
+// heuristic) matching, feeding the Sales Mentor's own judgment as context -
+// deliberately NOT a separate deterministic auto-priority rule or a second
+// priority field, per the explicit decision this was built against: one
+// combined priority, the AI weighs the signal itself.
+function nameWordSet(name) {
+  if (!name) return new Set();
+  return new Set(
+    name
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+  );
+}
+
+// A Post lead's scraped author name often carries trailing credentials a
+// person added to their own LinkedIn name (confirmed against real leads
+// cross-referenced by hand: "Katja Roelants du Vivier, MSc", "Vikram Verma
+// PMP®, CSM") that a strict full-string comparison would reject as "not
+// the same person." Requiring every word of the Contacts sheet's (clean)
+// full name to appear as a whole word in the author's name sidesteps
+// needing a maintained list of credential abbreviations - it tolerates
+// extra trailing (or interleaved) tokens on the author's side without
+// needing to know what they are. Deliberately best-effort: a missed match
+// only means this signal doesn't fire for that one lead, never a wrong
+// person being flagged, since a company match (normalizeCompanyName) is
+// required first, and at a few dozen contacts per company at most, a first
+// name + last name collision within the same company is effectively nil.
+function authorMatchesContactName(authorName, contactFullName) {
+  const contactWords = nameWordSet(contactFullName);
+  if (contactWords.size === 0) return false;
+  const authorWords = nameWordSet(authorName);
+  for (const w of contactWords) {
+    if (!authorWords.has(w)) return false;
+  }
+  return true;
+}
+
+// Post leads only - a Job listing's "creator" is the company itself, not an
+// individual, so there's no author name to match against a contact.
+export function findTargetContactMatch(lead, contacts) {
+  if (lead.type === "job" || !lead.author || !lead.company || contacts.length === 0) return null;
+  const companyKey = normalizeCompanyName(lead.company);
+  if (!companyKey) return null;
+  for (const contact of contacts) {
+    if (normalizeCompanyName(contact.company) !== companyKey) continue;
+    if (authorMatchesContactName(lead.author, contact.fullName)) return contact;
+  }
+  return null;
 }
 
 // Pure decision function behind background.js's Target Account auto-priority
@@ -1197,6 +1549,13 @@ export async function partitionLeadsByTargetAccount(leads) {
   const targetAccounts = await getTargetAccounts();
   if (Object.keys(targetAccounts).length === 0) return { autoPriorities: [], toScore: leads };
 
+  // Target Contacts (Companies-sheet-independent - the Contacts sheet of
+  // the same workbook, PRD 6.12) - attached at the very end below to every
+  // lead reaching toScore, regardless of which branch put it there, so a
+  // contact match matters even for a lead whose company didn't clear the
+  // score threshold above.
+  const contacts = (await getTargetAccountsWorkbook()).contacts || [];
+
   const threshold = await getTargetAccountScoreThreshold();
   const rules = await getPrioritizationRules();
   const ruleById = Object.fromEntries(rules.map((r) => [r.id, r]));
@@ -1265,41 +1624,83 @@ export async function partitionLeadsByTargetAccount(leads) {
       continue;
     }
 
-    if (match) {
+    if (match && lead.type === "job") {
+      // A Provisional/below-threshold match still means this Job lead's
+      // company is a researched, imported Target Account - the same "no
+      // individual to contact" reasoning as job_company_cap above applies
+      // regardless of confidence, but the score itself isn't confident enough
+      // to trust the AI-free deterministic path. Reported directly: two
+      // real Job leads with a "Very High - Provisional" signal still reached
+      // Priority 1 - the AI's own soft guidance ("should rarely reach 1 or
+      // 2") isn't a guarantee. This makes it one: the Sales Mentor still
+      // decides, but tagPrioritiesWithTargetAccountSignal below clamps
+      // whatever it returns to never beat this rule's value.
+      const ceilingRule = ruleById.job_signal_ceiling;
+      toScore.push(ceilingRule.enabled
+        ? { ...lead, targetAccountSignal: match, targetAccountCeiling: ceilingRule.value }
+        : { ...lead, targetAccountSignal: match });
+    } else if (match) {
       toScore.push({ ...lead, targetAccountSignal: match });
     } else {
       toScore.push(lead);
     }
   }
-  return { autoPriorities, toScore };
+  const toScoreWithContacts = toScore.map((lead) => {
+    const contact = findTargetContactMatch(lead, contacts);
+    return contact ? { ...lead, targetContactSignal: contact } : lead;
+  });
+  return { autoPriorities, toScore: toScoreWithContacts };
 }
 
 // prioritizeLeads (agent-shared.js) is told to mention a lead's
-// targetAccountSignal in its own reason text when it influenced the call,
-// but that's free-text AI writing, not a guaranteed template - it doesn't
-// reliably say so every time, which made it look like the Target Accounts
-// list wasn't being used at all even when it was. This makes the connection
-// deterministic instead of relying on the model's phrasing: prepends a fixed,
-// always-present tag to any AI-returned priority whose lead carried a signal
-// (matched against `leads` - the same array passed to prioritizeLeads, so a
-// signal attached by partitionLeadsByTargetAccount above is still present).
-// Also enforces targetAccountFloor (set on a qualifying Post lead by
+// targetAccountSignal/targetContactSignal in its own reason text when it
+// influenced the call, but that's free-text AI writing, not a guaranteed
+// template - it doesn't reliably say so every time, which made it look like
+// the Target Accounts list wasn't being used at all even when it was. This
+// makes the connection deterministic instead of relying on the model's
+// phrasing: prepends fixed, always-present tags to any AI-returned priority
+// whose lead carried either signal (matched against `leads` - the same
+// array passed to prioritizeLeads, so a signal attached by
+// partitionLeadsByTargetAccount above is still present). Also enforces
+// targetAccountFloor (set on a qualifying Post lead by
 // partitionLeadsByTargetAccount) - a real contact at a confidently-scored
 // company is never allowed to end up worse than the floor, whatever the AI
-// itself returned, with the clamp itself stated plainly in the reason.
+// itself returned - and targetAccountCeiling (set on a Job lead with a
+// Provisional/below-threshold match) the same way in the opposite direction,
+// with either clamp stated plainly in the reason. The contact signal
+// deliberately has no floor/ceiling of its own - per the explicit decision
+// behind it (one combined priority, no second rule), it only ever reaches
+// the outcome through the AI's own weighing, never a deterministic clamp.
 export function tagPrioritiesWithTargetAccountSignal(priorities, leads) {
-  const leadByKey = new Map(leads.filter((l) => l.targetAccountSignal).map((l) => [l.key, l]));
+  const leadByKey = new Map(
+    leads.filter((l) => l.targetAccountSignal || l.targetContactSignal).map((l) => [l.key, l])
+  );
   return priorities.map((p) => {
     const lead = leadByKey.get(p.key);
     if (!lead) return p;
-    const signal = lead.targetAccountSignal;
-    const tag = `[Target Account signal: ${signal.company} scored ${Math.round(signal.score)}/100 (${signal.priorityLabel})] `;
-    const baseReason = tag + (p.reason || "");
+    let baseReason = p.reason || "";
+    if (lead.targetContactSignal) {
+      const c = lead.targetContactSignal;
+      const tag = `[Target Contact match: ${c.fullName} - ${c.jobTitle}${c.seniority ? ` (${c.seniority})` : ""}] `;
+      baseReason = tag + baseReason;
+    }
+    if (lead.targetAccountSignal) {
+      const signal = lead.targetAccountSignal;
+      const tag = `[Target Account signal: ${signal.company} scored ${Math.round(signal.score)}/100 (${signal.priorityLabel})] `;
+      baseReason = tag + baseReason;
+    }
     if (lead.targetAccountFloor && p.priority > lead.targetAccountFloor) {
       return {
         ...p,
         priority: lead.targetAccountFloor,
         reason: `${baseReason} (raised from Priority ${p.priority} to ${lead.targetAccountFloor} - a floor for a real contact at a confidently-scored Target Account.)`,
+      };
+    }
+    if (lead.targetAccountCeiling && p.priority < lead.targetAccountCeiling) {
+      return {
+        ...p,
+        priority: lead.targetAccountCeiling,
+        reason: `${baseReason} (capped from Priority ${p.priority} to ${lead.targetAccountCeiling} - a Job listing has no individual contact, so a company signal alone can't earn better than this.)`,
       };
     }
     return { ...p, reason: baseReason };
@@ -1316,32 +1717,50 @@ export function tagPrioritiesWithTargetAccountSignal(priorities, leads) {
 // extraction never has one to offer, only a profile visit does (see PRD
 // 6.14) - and is written independently of company, so a profile that states
 // one but not the other still saves whichever it found.
+//
+// `visited` (profile-extraction.js only - always undefined for the AI
+// headline-extraction caller) marks the lead as checked via
+// `profileVisitedAt` REGARDLESS of whether company/location came back non-
+// empty - a profile genuinely has no findable location on it is a real,
+// stable answer, not a reason to keep re-visiting the same profile on every
+// future run (see leadsMissingProfileData in profile-extraction.js). Kept
+// out of the returned count on purpose: that count means "got a company or
+// location," not "was checked," so a run of leads that all turn out to have
+// no location doesn't misreport 0 successes as 0 progress.
 export async function applyExtractedCompanies(entries) {
   const results = await getResults();
   const extractedAt = Date.now();
   let changed = 0;
-  for (const { key, company, location } of entries) {
+  let anyWrite = false;
+  for (const { key, company, location, visited } of entries) {
     const lead = results[key];
     if (!lead) continue;
-    let leadChanged = false;
+    let dataChanged = false;
 
     const trimmedCompany = (company || "").trim();
     if (!lead.company && trimmedCompany) {
       lead.company = trimmedCompany;
       lead.companyExtractedAt = extractedAt;
-      leadChanged = true;
+      dataChanged = true;
     }
 
     const trimmedLocation = (location || "").trim();
     if (!lead.location && trimmedLocation) {
       lead.location = trimmedLocation;
       lead.locationExtractedAt = extractedAt;
-      leadChanged = true;
+      dataChanged = true;
     }
 
-    if (leadChanged) changed++;
+    if (dataChanged) {
+      changed++;
+      anyWrite = true;
+    }
+    if (visited && !lead.profileVisitedAt) {
+      lead.profileVisitedAt = extractedAt;
+      anyWrite = true;
+    }
   }
-  if (changed > 0) await saveResults(results);
+  if (anyWrite) await saveResults(results);
   return changed;
 }
 
@@ -1361,6 +1780,45 @@ export async function setLeadCompany(key, company) {
   }
   delete results[key].companyExtractedAt; // no longer an AI guess either way
   await saveResults(results);
+}
+
+// Same pattern as setLeadCompany above - added after real leads came back
+// with a clearly wrong extracted location (a website, the person's own name,
+// their headline) with no way to correct or clear it short of editing
+// storage directly.
+export async function setLeadLocation(key, location) {
+  const results = await getResults();
+  if (!results[key]) return;
+  const trimmed = (location || "").trim();
+  if (trimmed) {
+    results[key].location = trimmed;
+  } else {
+    delete results[key].location;
+  }
+  delete results[key].locationExtractedAt; // no longer an AI guess either way
+  await saveResults(results);
+}
+
+// EXPERIMENTAL (v0.29.24, see PRD 6.15): writes the People-Search comparison
+// method's findings onto separate peopleSearch* fields, deliberately never
+// touching the existing company/location (still sourced from the profile-
+// visit extraction) - this is comparison data for judging the new method's
+// accuracy, not a second source of truth yet.
+export async function applyPeopleSearchComparison(comparisons) {
+  const results = await getResults();
+  let updated = 0;
+  const checkedAt = Date.now();
+  for (const c of comparisons) {
+    const lead = results[c.key];
+    if (!lead) continue;
+    lead.peopleSearchMatched = c.matched;
+    lead.peopleSearchLocation = c.peopleSearchLocation || null;
+    lead.peopleSearchCompany = c.peopleSearchCompany || null;
+    lead.peopleSearchCheckedAt = checkedAt;
+    updated++;
+  }
+  if (updated > 0) await saveResults(results);
+  return updated;
 }
 
 // Persists the Dashboard detail page's lead-scoped Sales Mentor conversation
@@ -1411,6 +1869,109 @@ export async function clearCustomerVoiceHistory() {
   await chrome.storage.local.set({ [CUSTOMER_VOICE_HISTORY_KEY]: [] });
 }
 
+// Chat history and a follow-up due-date for a Target Account/Contact (PRD
+// 6.19) - deliberately its OWN storage, never written onto the imported
+// workbook rows themselves (targetAccountsWorkbook, above). That whole blob
+// is wholesale-replaced on every re-import (the external ChatGPT research
+// refreshes every few months), which would silently wipe any chat history
+// or due-date stored there. Keyed by normalizeCompanyName() - the same
+// stable key targetAccounts/partitionLeadsByTargetAccount already use - so
+// this data survives a re-import untouched even if the workbook's own
+// companyId churns.
+const TARGET_ACCOUNT_EXTRAS_KEY = "targetAccountExtras";
+
+// A FUNCTION, not a shared constant - reported directly with real evidence:
+// chatting with the Mentor inside a SIKA contact, then opening a
+// never-before-seen Schindler account, showed SIKA's conversation under
+// Schindler. Root cause: a single frozen EMPTY_EXTRA object used to be
+// returned as the "no data yet" fallback for every key. Object.freeze only
+// locks the object's OWN properties - it does nothing to the arrays those
+// properties point to - so every entity with no saved extra got handed back
+// the exact same mentorHistory/customerVoiceHistory array objects.
+// runAgentTurn mutates its history array in place (push), so the very first
+// message sent anywhere polluted that one shared array for every other
+// not-yet-saved entity in the same page session, not just the one being
+// chatted with. Each call now gets its own fresh object and fresh arrays.
+function emptyExtra() {
+  return { mentorHistory: [], customerVoiceHistory: [], nextActionDueAt: null };
+}
+
+export async function getTargetAccountExtras() {
+  const data = await chrome.storage.local.get(TARGET_ACCOUNT_EXTRAS_KEY);
+  return data[TARGET_ACCOUNT_EXTRAS_KEY] || {};
+}
+
+export async function getTargetAccountExtra(companyKey) {
+  const extras = await getTargetAccountExtras();
+  return extras[companyKey] || emptyExtra();
+}
+
+export async function saveTargetAccountExtra(companyKey, patch) {
+  if (!companyKey) return;
+  const extras = await getTargetAccountExtras();
+  extras[companyKey] = { ...emptyExtra(), ...(extras[companyKey] || {}), ...patch };
+  await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
+}
+
+// Same idea, per Target Contact - keyed by a composite of company + full
+// name (contactKeyFor below) rather than the workbook's own contactId, for
+// the same re-import-durability reason above. Reuses nameWordSet's own
+// diacritic-folding/punctuation-stripping (already built for
+// authorMatchesContactName) so this key is exactly as tolerant of
+// formatting differences as the matching that finds a contact in the first
+// place - a name that matches for prioritization purposes resolves to the
+// identical extras key.
+export function contactKeyFor(company, fullName) {
+  const companyPart = normalizeCompanyName(company);
+  const namePart = [...nameWordSet(fullName)].sort().join(" ");
+  return companyPart && namePart ? `${companyPart}::${namePart}` : null;
+}
+
+const TARGET_CONTACT_EXTRAS_KEY = "targetContactExtras";
+
+export async function getTargetContactExtras() {
+  const data = await chrome.storage.local.get(TARGET_CONTACT_EXTRAS_KEY);
+  return data[TARGET_CONTACT_EXTRAS_KEY] || {};
+}
+
+export async function getTargetContactExtra(contactKey) {
+  const extras = await getTargetContactExtras();
+  return extras[contactKey] || emptyExtra();
+}
+
+export async function saveTargetContactExtra(contactKey, patch) {
+  if (!contactKey) return;
+  const extras = await getTargetContactExtras();
+  extras[contactKey] = { ...emptyExtra(), ...(extras[contactKey] || {}), ...patch };
+  await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: extras });
+}
+
+// Reverse of findTargetContactMatch (above) - every Post lead authored by
+// this specific contact, for the Contact view's "posts by this contact"
+// list, instead of stopping at the first match.
+export function findLeadsForContact(contact, leads) {
+  return leads.filter((lead) => {
+    if (lead.type === "job" || !lead.author || !lead.company) return false;
+    if (normalizeCompanyName(lead.company) !== normalizeCompanyName(contact.company)) return false;
+    return authorMatchesContactName(lead.author, contact.fullName);
+  });
+}
+
+// Main Target Accounts dashboard flag (PRD 6.19): a company needs attention
+// when it has a Post lead nobody has triaged yet, or a manually-set
+// follow-up date that's already passed. Cheap enough to compute client-side
+// over already-loaded data at this scale (500 companies, ~1000 leads) - no
+// new index needed.
+export function hasUnreviewedPost(companyKey, leads) {
+  return leads.some(
+    (lead) => lead.type !== "job" && lead.status === "New" && normalizeCompanyName(lead.company) === companyKey
+  );
+}
+
+export function hasOverdueAction(extra) {
+  return Boolean(extra?.nextActionDueAt && extra.nextActionDueAt < Date.now());
+}
+
 // When the most recent scan started - lets the Dashboard flag which leads
 // were first discovered by that specific scan (a persistent equivalent of
 // the side panel's transient in-memory "NEW" badge, which only ever existed
@@ -1443,9 +2004,29 @@ export async function saveTopics(topics) {
 // "Dismissed", which is always a person's own decision).
 export const LEAD_STATUSES = ["New", "Contacted", "Dismissed", "Responded", "Converted", "Irrelevant"];
 
+// One-time migration guard for the v0.29.12/13 location-detection fixes
+// (German/French/CH spellings, then broader non-Swiss city coverage) - see
+// the loop below for why this exists.
+const LOCATION_HEURISTIC_V2_MIGRATED_KEY = "locationHeuristicV2Migrated";
+
+// Same idea, second time around: v0.29.15 replaced the keyword-scan location
+// heuristic with a structural one (personLocationFromContactInfoRow), but any
+// lead visited-and-failed under the OLD keyword-based code between v0.29.11
+// and v0.29.14 already has the v2 migration's profileVisitedAt reset behind
+// it - the v2 flag only fires once, and it already fired before v0.29.15
+// shipped. Without a fresh flag, those leads stay permanently "checked" and
+// the structural fix never gets a chance to run on them at all.
+const LOCATION_HEURISTIC_V3_MIGRATED_KEY = "locationHeuristicV3Migrated";
+
 export async function getResults() {
-  const data = await chrome.storage.local.get(RESULTS_KEY);
+  const data = await chrome.storage.local.get([
+    RESULTS_KEY,
+    LOCATION_HEURISTIC_V2_MIGRATED_KEY,
+    LOCATION_HEURISTIC_V3_MIGRATED_KEY,
+  ]);
   const results = data[RESULTS_KEY] || {};
+  const alreadyMigratedLocationHeuristic = Boolean(data[LOCATION_HEURISTIC_V2_MIGRATED_KEY]);
+  const alreadyMigratedLocationHeuristicV3 = Boolean(data[LOCATION_HEURISTIC_V3_MIGRATED_KEY]);
   // Self-healing migration: `status` didn't exist before the Dashboard
   // feature, so any lead scraped before this shipped is missing it. Backfill
   // to "New" here (rather than a one-off migration script) so every reader
@@ -1495,8 +2076,47 @@ export async function getResults() {
       lead.postedAt = parseRelativeTimestamp(rawText, reference) || lead.firstSeenAt || reference;
       healed = true;
     }
+    // Cleans up a location scraped before jobs-content-script.js started
+    // stripping LinkedIn's own work-arrangement tag - "(Hybrid)", "(Remote)",
+    // "(On-site)" - which describes the job's arrangement, not the place, and
+    // was leaking straight into this field for job leads scraped earlier.
+    if (lead.location && /\((?:hybrid|remote|on-?site)\)/i.test(lead.location)) {
+      const cleaned = lead.location.replace(/\(\s*(?:hybrid|remote|on-?site)\s*\)/gi, " ").replace(/\s+/g, " ").trim();
+      lead.location = cleaned || null;
+      healed = true;
+    }
+    // v0.29.11 introduced profileVisitedAt so a genuinely-checked profile
+    // isn't re-queued forever - but that same run marked plenty of leads
+    // "checked" using the OLD, narrower location-detection heuristic (English
+    // Swiss names only, then no non-Swiss city coverage at all). Without this,
+    // v0.29.12/13's language and city-coverage fixes could never help a lead
+    // that already got (incorrectly) marked done under the old rules -
+    // reported directly: "Nashville Metropolitan Area" (Burke Holland) and
+    // "New York, United States" (Allie K. Miller) both clearly show a real
+    // location, yet stayed empty. Runs once: any lead still missing a
+    // location gets its profileVisitedAt cleared so the next
+    // "Extract Companies & Locations from Profiles" run gives it a fair shot
+    // under the current heuristic - never touches a lead that already has a
+    // location.
+    if (!alreadyMigratedLocationHeuristic && !lead.location && lead.profileVisitedAt) {
+      delete lead.profileVisitedAt;
+      healed = true;
+    }
+    // Second pass of the same fix, for the v0.29.15 structural rewrite - see
+    // the constant's comment above. Runs once, independently of the v2 flag
+    // (a lead could already be past v2's reset and still need this one).
+    if (!alreadyMigratedLocationHeuristicV3 && !lead.location && lead.profileVisitedAt) {
+      delete lead.profileVisitedAt;
+      healed = true;
+    }
   }
   if (healed) await saveResults(results);
+  if (!alreadyMigratedLocationHeuristic) {
+    await chrome.storage.local.set({ [LOCATION_HEURISTIC_V2_MIGRATED_KEY]: true });
+  }
+  if (!alreadyMigratedLocationHeuristicV3) {
+    await chrome.storage.local.set({ [LOCATION_HEURISTIC_V3_MIGRATED_KEY]: true });
+  }
   return results;
 }
 
@@ -1536,7 +2156,16 @@ function activityLogDayKey(date) {
   return `${ACTIVITY_LOG_PREFIX}${y}-${m}-${d}`;
 }
 
-export async function appendActivityLog({ actor, action, label, prevValue, newValue, error, errorMessage }) {
+// relatedCompanyKey/relatedContactKey (v0.29.53, PRD 6.19) are optional -
+// only the Account/Contact views and callers that already know the context
+// pass them. An entry without either simply never matches
+// getActivityLogForCompany/getActivityLogForContact below - there's no
+// migration to backfill them onto pre-existing entries (consistent with how
+// this store already treats schema growth elsewhere), so a company/contact's
+// activity log genuinely only goes back to whenever this shipped.
+export async function appendActivityLog({
+  actor, action, label, prevValue, newValue, error, errorMessage, relatedCompanyKey, relatedContactKey,
+}) {
   const now = new Date();
   const key = activityLogDayKey(now);
   const data = await chrome.storage.local.get(key);
@@ -1550,6 +2179,8 @@ export async function appendActivityLog({ actor, action, label, prevValue, newVa
     newValue: newValue === undefined ? null : newValue,
     error: Boolean(error),
     errorMessage: errorMessage || null,
+    relatedCompanyKey: relatedCompanyKey || null,
+    relatedContactKey: relatedContactKey || null,
   });
   await chrome.storage.local.set({ [key]: dayLog });
 
@@ -1597,6 +2228,19 @@ export async function getActivityLog() {
   const combined = [];
   for (const key of dayKeys) combined.push(...(all[key] || []));
   return combined;
+}
+
+// Account/Contact view "Log of recent activities" (PRD 6.19) - filters the
+// same flat log above on the optional relatedCompanyKey/relatedContactKey
+// fields, newest first.
+export async function getActivityLogForCompany(companyKey) {
+  const all = await getActivityLog();
+  return all.filter((e) => e.relatedCompanyKey === companyKey).reverse();
+}
+
+export async function getActivityLogForContact(contactKey) {
+  const all = await getActivityLog();
+  return all.filter((e) => e.relatedContactKey === contactKey).reverse();
 }
 
 // Backs the periodic file export to /log - piggybacks on an already-existing
@@ -1657,6 +2301,7 @@ export async function exportSettings(includeApiKey = false) {
     targetAccounts,
     targetAccountsImportedAt,
     targetAccountScoreThreshold,
+    locationFilterConfig,
     anthropicApiKey,
   ] = await Promise.all([
     getTopics(),
@@ -1681,6 +2326,7 @@ export async function exportSettings(includeApiKey = false) {
     getTargetAccounts(),
     getTargetAccountsMeta().then((meta) => meta.importedAt),
     getTargetAccountScoreThreshold(),
+    getLocationFilterConfig(),
     includeApiKey ? getAnthropicApiKey() : Promise.resolve(undefined),
   ]);
   return {
@@ -1708,6 +2354,7 @@ export async function exportSettings(includeApiKey = false) {
     targetAccounts,
     targetAccountsImportedAt,
     targetAccountScoreThreshold,
+    locationFilterConfig,
     ...(anthropicApiKey !== undefined ? { anthropicApiKey } : {}),
   };
 }
@@ -1768,6 +2415,7 @@ export async function importSettings(data) {
     ...(typeof data.targetAccountScoreThreshold === "number"
       ? [saveTargetAccountScoreThreshold(data.targetAccountScoreThreshold)]
       : []),
+    ...(data.locationFilterConfig ? [saveLocationFilterConfig(data.locationFilterConfig)] : []),
     // Only present if the exporter deliberately chose to include it (e.g.
     // sharing one spend-capped trial key across a small team) - never
     // overwrites an existing key with nothing if the import doesn't have one.

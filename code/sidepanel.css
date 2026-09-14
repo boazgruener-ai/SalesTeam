@@ -28,6 +28,20 @@ h1 {
   border-radius: 3px;
 }
 
+#linkedin-touch-stat {
+  margin: -6px 0 12px;
+}
+
+.linkedin-touch-stat-warn {
+  color: #a66a00;
+  font-weight: 600;
+}
+
+.linkedin-touch-stat-danger {
+  color: #a00;
+  font-weight: 600;
+}
+
 #version-text {
   font-size: 11px;
   font-weight: normal;
@@ -312,6 +326,24 @@ section {
 
 #scan-btn:disabled {
   background: #9cbfe0;
+  cursor: default;
+}
+
+#stop-scan-btn {
+  width: 100%;
+  padding: 6px;
+  margin-top: 6px;
+  border: 1px solid #c23b3b;
+  border-radius: 6px;
+  background: white;
+  color: #c23b3b;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#stop-scan-btn:disabled {
+  border-color: #d99;
+  color: #d99;
   cursor: default;
 }
 

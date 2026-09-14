@@ -40,8 +40,36 @@
 // (AG, Holding, Group, Switzerland, etc.) for the exact same reason that
 // list exists elsewhere - reused rather than duplicated, so the two never
 // drift apart.
+//
+// Some names fail for neither reason - the research spreadsheet's name is
+// just genuinely different from LinkedIn's, in ways no stripping can fix
+// (a translated name, a wrong word, a typo). Rather than guess a broader
+// automated transformation, v0.29.37 lets each company optionally carry an
+// officialName (a Zefix/Swiss-commercial-registry cross-check done outside
+// the extension, imported from the workbook's own Zefix_Official_Name
+// column - see storage.js's importTargetAccounts), used in place of the
+// research name when present. Confirmed live: "APG|SGA"'s officialName
+// ("APG SGA SA") drops the literal "|" LinkedIn's search chokes on; "Bank
+// Syz"'s officialName ("Banque Syz SA") is the correct French spelling the
+// English research name never had - though neither is actually confirmed
+// working yet (see below).
+//
+// Originally tried BOTH names per company (officialName first, then the
+// research name on failure) - reverted the same day (v0.29.38) after a
+// 20-company run with the two-name loop came back with hardTimeoutCount:
+// 9, versus the 0 seen consistently since the v0.29.35 listener-race fix,
+// immediately followed by a clean 3-company run on the identical code.
+// Reported directly: every run before that one used exactly one search per
+// company - the two-name fallback was the one thing that changed request
+// volume per company, so it's reverted to isolate that variable rather
+// than guess at the real cause (LinkedIn-side throttling from some kind of
+// in-session burst rate is the leading theory - NOT cumulative volume
+// across the day, since a 9-hour idle gap right before those two runs
+// ruled that out directly). See runCompanyIdResolution's own comment.
 
 import { COMPANY_SUFFIX_NOISE_WORDS } from "./storage.js";
+import { recordLinkedinTouch } from "./linkedin-touch-log.js";
+import { checkTouchBudget } from "./touch-budget-guard.js";
 
 const NAV_TIMEOUT_MS = 20000;
 // Covers the full wait from BEFORE navigation starts (see the listener-race
@@ -69,12 +97,28 @@ function randomDelay() {
 // part of the actual searchable brand name. Stripped only for the search
 // query itself - the resolved ID still gets written back onto the original
 // Target Account entry regardless of this transformation.
+// Diacritics folded before the noise-word lookup (v0.29.40) - reported
+// directly with real evidence: "Edwards Lifesciences Sàrl" kept its
+// trailing legal suffix in the search term because "sàrl" (accented, from
+// the Zefix official name) never matched the noise-word set's plain "sarl"
+// entry. Same fold as company-resolve-content-script.js's namesMatch, same
+// reasoning - Unicode NFD + stripping combining marks turns "à" into "a".
+function foldDiacritics(text) {
+  return (text || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+// Parentheses added to the lastWord cleanup (v0.29.41) - reported directly
+// with real evidence: "Ford Motor Company (Switzerland)" never got its
+// trailing qualifier stripped the way "ARYZTA AG" did, because "(switzerland)"
+// - parens still attached - never matched the noise-word set's plain
+// "switzerland" entry. storage.js's own normalizeCompanyForMatch already
+// strips () for the same reason elsewhere in this codebase.
 function stripTrailingCorporateNoise(name) {
   let current = (name || "").trim();
   for (let i = 0; i < 5; i++) {
     const words = current.split(/\s+/);
     if (words.length <= 1) break;
-    const lastWord = words[words.length - 1].toLowerCase().replace(/[.,]/g, "");
+    const lastWord = foldDiacritics(words[words.length - 1]).toLowerCase().replace(/[.,()]/g, "");
     if (!COMPANY_SUFFIX_NOISE_WORDS.has(lastWord)) break;
     current = words.slice(0, -1).join(" ").trim();
   }
@@ -149,7 +193,14 @@ function navigateAndWaitResolve(tabId, url) {
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tabId, { url }).catch(() => {});
+    // active: true re-asserted on every navigation, not just at tab
+    // creation (see runCompanyIdResolution's own comment on why the tab is
+    // active at all now) - keeps the tab foregrounded even if the user
+    // switches to a different tab mid-run, since Chrome's background-tab
+    // throttling cares about a tab's current focus state, not just how it
+    // started out.
+    chrome.tabs.update(tabId, { url, active: true }).catch(() => {});
+    recordLinkedinTouch().catch(() => {});
   });
 }
 
@@ -202,6 +253,96 @@ function waitForResolveResult(expectedName) {
 // couple of them at once.
 const MAX_DEBUG_SAMPLES = 8;
 
+// One full attempt at resolving a single search term: the search-page
+// navigation, plus the company-page fallback (the "Acino" gap) if that
+// term gets a confident name with no ID anywhere. Pulled out of the main
+// loop (v0.29.37) so it can be tried against more than one candidate name
+// per company - see the officialName comment below.
+async function resolveOneName(tab, searchName) {
+  // companyResolveDirectLink explicitly cleared, not just omitted -
+  // chrome.storage.local.set merges rather than replaces, so a prior
+  // company's direct-link attempt (see resolveViaDirectLink) would
+  // otherwise leave it set to true and silently misroute this one through
+  // the content script's direct-link branch instead of the search-page one.
+  await chrome.storage.local.set({
+    companyResolveActive: true,
+    companyResolveTarget: searchName,
+    companyResolveDirectLink: false,
+  });
+  // Registered BEFORE navigation starts, not after - see
+  // waitForResolveResult's own comment for why (a real listener race,
+  // confirmed via finalUrl evidence, not a guess).
+  const resultPromise = waitForResolveResult(searchName);
+  const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, buildCompanyResolveUrl(searchName));
+  let { resolved, linkedinCompanyId, debug, companyPageUrl } = await resultPromise;
+  let usedFallback = false;
+  let fallbackFinalUrl = null;
+  // A confident name with no id anywhere on the search page (the
+  // "Acino" gap) - retry on the company's own page rather than giving
+  // up, since companyPageUrl is only ever set once the name already
+  // matched confidently (see company-resolve-content-script.js).
+  if (!resolved && companyPageUrl) {
+    usedFallback = true;
+    await sleep(randomDelay());
+    const fallbackResultPromise = waitForResolveResult(searchName);
+    const fallbackNav = await navigateAndWaitResolve(tab.id, companyPageUrl);
+    fallbackFinalUrl = fallbackNav.finalUrl;
+    const fallbackResult = await fallbackResultPromise;
+    resolved = fallbackResult.resolved;
+    linkedinCompanyId = fallbackResult.linkedinCompanyId;
+    debug = fallbackResult.debug || debug;
+  }
+  return {
+    searchName,
+    resolved,
+    linkedinCompanyId,
+    debug,
+    navCompleted,
+    finalUrl,
+    usedFallback,
+    fallbackFinalUrl,
+  };
+}
+
+// v0.29.42, see PRD 6.16: the new primary path for a company that carries a
+// linkedinLink - an external cross-check (done outside the extension, the
+// same one that produced officialName) validated 499 of 500 companies'
+// actual LinkedIn company-page URL, including catching cases no on-site
+// search could ever get right (a hospital that renamed itself, a page
+// LinkedIn itself now redirects as deprecated). Reported directly: since
+// that URL is already known-correct, navigating straight to it and reading
+// the id off the page sidesteps every failure mode the search-based path
+// (below) exists to work around - verbose legal names, translated names,
+// LinkedIn's own search ranking returning a related-but-wrong company - none
+// of which are name-matching problems once the destination is already
+// known. company-resolve-content-script.js's runDirectLinkResolve still does
+// its own sanity check (the page's own title against every name known for
+// this company) before trusting the id, since this URL has never been
+// confirmed against a hero card the way the search-based path's has.
+async function resolveViaDirectLink(tab, company) {
+  const expectedName = company.company;
+  const candidateNames = [company.company, company.officialName, company.alternativeName].filter(Boolean);
+  await chrome.storage.local.set({
+    companyResolveActive: true,
+    companyResolveDirectLink: true,
+    companyResolveTarget: expectedName,
+    companyResolveTargetCandidates: candidateNames,
+  });
+  const resultPromise = waitForResolveResult(expectedName);
+  const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, company.linkedinLink);
+  const { resolved, linkedinCompanyId, debug } = await resultPromise;
+  return {
+    searchName: `[direct link] ${company.linkedinLink}`,
+    resolved,
+    linkedinCompanyId,
+    debug,
+    navCompleted,
+    finalUrl,
+    usedFallback: false,
+    fallbackFinalUrl: null,
+  };
+}
+
 // Visits each company one at a time, paced like the other extraction
 // modules, and resolves with:
 // - results: {key, linkedinCompanyId} for every company that resolved
@@ -209,10 +350,19 @@ const MAX_DEBUG_SAMPLES = 8;
 //   all is never guessed at - simply left unresolved for a future run).
 // - debugSamples, hardTimeoutCount: same diagnostic shape as the other
 //   extraction modules.
-export async function runCompanyIdResolution(companies, { onProgress } = {}) {
+export async function runCompanyIdResolution(companies, { onProgress, shouldAbort } = {}) {
   const results = [];
   const debugSamples = [];
+  // v0.29.45: every company actually reached this run, success or failure -
+  // distinct from `companies` (the full requested batch) once shouldAbort
+  // can end the run early. markLinkedinResolveAttempted needs exactly this
+  // list, not the full batch - a company never reached this run was never
+  // attempted, and marking it as if it were would wrongly deprioritize it
+  // behind companies that genuinely were tried, the next time the queue is
+  // built (getTargetAccountsMissingLinkedinId).
+  const attemptedKeys = [];
   let hardTimeoutCount = 0;
+  let stoppedByTouchBudget = false;
   // Reported directly: a completion message only ever accounted for
   // "resolved" and "hard-timed-out," silently omitting a real THIRD outcome
   // - the content script responded fine and quickly, but couldn't
@@ -223,7 +373,30 @@ export async function runCompanyIdResolution(companies, { onProgress } = {}) {
   let notConfidentCount = 0;
   let tab;
   try {
-    tab = await chrome.tabs.create({ url: "about:blank", active: false });
+    // Reported directly with real evidence (v0.29.43): the direct-link path
+    // (resolveViaDirectLink) hard-timed out on 15 of 25 companies in one
+    // run - manually navigating to one of the exact same failing URLs, in
+    // an active tab, loaded the real page fully in ~3s, ruling out
+    // LinkedIn-side slowness or blocking. The one thing that differs: this
+    // tab has always been created backgrounded (active: false) and stayed
+    // that way for the whole run. The old search-based path almost
+    // exclusively hit lightweight search-results pages and never showed
+    // this problem across 60+ companies; the new direct-link path
+    // exclusively hits full company pages - heavier pages Chrome's
+    // background-tab throttling can stall badly enough that the content
+    // script never gets far enough to even send a message within the 28s
+    // window, backed up by the debug data: not just a slow "complete"
+    // event, but zero message ever received. Made active here (and kept
+    // active on every navigation, see navigateAndWaitResolve) to test
+    // whether that's the actual cause - the visible tradeoff is a tab
+    // visibly jumping between company pages during a run instead of
+    // working invisibly in the background.
+    // Same reasoning as scanAllTopics (background.js) and runProfileExtraction
+    // (profile-extraction.js): a large batch can run long enough that system
+    // sleep mid-run freezes it for however long the machine was asleep.
+    // Released in the finally below on every exit path.
+    chrome.power.requestKeepAwake("system");
+    tab = await chrome.tabs.create({ url: "about:blank", active: true });
     // Reported directly, with real evidence: the exact same few companies
     // hard-timed-out with zero diagnostic info on every run (not a name-
     // specific issue - they simply never resolve, so they always land back
@@ -237,40 +410,71 @@ export async function runCompanyIdResolution(companies, { onProgress } = {}) {
     // also the tab's first navigation ever.
     await navigateAndWaitResolve(tab.id, "https://www.linkedin.com/feed/");
     for (let i = 0; i < companies.length; i++) {
+      // v0.29.45: checked before starting a new company, not mid-attempt -
+      // one company's own resolution (a few seconds) is short enough that
+      // waiting for it to finish is a fine granularity, and it keeps this
+      // function's return shape (results/debugSamples/counts) exactly as-is
+      // for however far it got, no special-casing needed for a stop versus
+      // reaching the end of the list normally.
+      if (shouldAbort && shouldAbort()) break;
+      // v0.30.0: the shared 75/99 LinkedIn touch budget (touch-budget-guard.js)
+      // now stops this run too, not just background.js's scan - checked at the
+      // same per-company checkpoint as the user's own Stop button above.
+      if (await checkTouchBudget()) { stoppedByTouchBudget = true; break; }
       const company = companies[i];
       if (onProgress) onProgress(i + 1, companies.length);
-      // The content script matches the hero card's name against this same
-      // stripped form - namesMatch's substring check would likely tolerate
-      // either form, but there's no reason to search for one name and
-      // compare against a different one when both can be identical.
-      const searchName = stripTrailingCorporateNoise(company.company);
-      await chrome.storage.local.set({
-        companyResolveActive: true,
-        companyResolveTarget: searchName,
-      });
-      // Registered BEFORE navigation starts, not after - see
-      // waitForResolveResult's own comment for why (a real listener race,
-      // confirmed via finalUrl evidence, not a guess).
-      const resultPromise = waitForResolveResult(searchName);
-      const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, buildCompanyResolveUrl(searchName));
-      let { resolved, linkedinCompanyId, debug, companyPageUrl } = await resultPromise;
-      let usedFallback = false;
-      let fallbackFinalUrl = null;
-      // A confident name with no id anywhere on the search page (the
-      // "Acino" gap) - retry on the company's own page rather than giving
-      // up, since companyPageUrl is only ever set once the name already
-      // matched confidently (see company-resolve-content-script.js).
-      if (!resolved && companyPageUrl) {
-        usedFallback = true;
-        await sleep(randomDelay());
-        const fallbackResultPromise = waitForResolveResult(searchName);
-        const fallbackNav = await navigateAndWaitResolve(tab.id, companyPageUrl);
-        fallbackFinalUrl = fallbackNav.finalUrl;
-        const fallbackResult = await fallbackResultPromise;
-        resolved = fallbackResult.resolved;
-        linkedinCompanyId = fallbackResult.linkedinCompanyId;
-        debug = fallbackResult.debug || debug;
+      attemptedKeys.push(company.key);
+
+      let attempt = null;
+      const triedNames = [];
+      // v0.29.42, see PRD 6.16 and resolveViaDirectLink's own comment: a
+      // company with an externally-validated linkedinLink skips name-based
+      // search entirely - reported directly, this eliminates the whole
+      // class of failures the logic below exists to work around, for the
+      // ~499 of 500 companies that have one.
+      if (company.linkedinLink) {
+        attempt = await resolveViaDirectLink(tab, company);
+        triedNames.push(`[direct link] ${company.linkedinLink}`);
+      } else {
+        // v0.29.37, see PRD 6.16: a Zefix (Swiss commercial registry)
+        // cross-check, done outside the extension, gives some companies an
+        // officialName that's a genuinely better LinkedIn search term than
+        // the research spreadsheet's own name - confirmed live for
+        // "APG|SGA" (whose officialName "APG SGA SA" drops the literal "|"
+        // LinkedIn's search chokes on) and "Bank Syz" (officialName
+        // "Banque Syz SA" - the correct French spelling the English-
+        // language research name never had). Used only as a fallback for
+        // the handful of companies with no linkedinLink at all (1 of 500,
+        // per the external cross-check, plus any future re-import without
+        // that column).
+        //
+        // Originally tried the officialName first, then fell back to the
+        // research name on failure - reverted (v0.29.38) after a 20-company
+        // run (roughly doubling request volume per company) came back with
+        // hardTimeoutCount: 9, a real jump from the 0 seen consistently
+        // since the v0.29.35 listener-race fix, immediately followed by a
+        // clean 0-timeout 3-company run on the same code. Reported directly:
+        // every run before today used exactly one search per company at the
+        // same ~4-9s pacing this file has always used - the two-name
+        // fallback was the one thing that changed request volume per
+        // company, so removing it makes a run directly comparable to every
+        // prior one again, isolating whether that volume increase (not a
+        // code regression - the pacing between names was already the same
+        // randomDelay() used between companies, confirmed on inspection) is
+        // what's triggering LinkedIn-side throttling. Only the research
+        // name is used as a fallback now, and only when there's no
+        // officialName at all - not as a second attempt after the official
+        // name fails.
+        const candidateNames = [stripTrailingCorporateNoise(company.officialName || company.company)];
+        for (let c = 0; c < candidateNames.length; c++) {
+          if (c > 0) await sleep(randomDelay());
+          attempt = await resolveOneName(tab, candidateNames[c]);
+          triedNames.push(candidateNames[c]);
+          if (attempt.resolved) break;
+        }
       }
+
+      const { resolved, linkedinCompanyId, debug, navCompleted, finalUrl, usedFallback, fallbackFinalUrl } = attempt;
       const hardTimedOut = Boolean(debug?.timedOut);
       if (hardTimedOut) hardTimeoutCount++;
       else if (!resolved) notConfidentCount++;
@@ -280,9 +484,13 @@ export async function runCompanyIdResolution(companies, { onProgress } = {}) {
         // comment: lets a hard timeout distinguish "the tab genuinely
         // landed on the intended page and the content script still never
         // responded" from "it landed somewhere else entirely" before
-        // changing any behavior based on it.
+        // changing any behavior based on it. triedNames records every
+        // search term actually attempted (research name, officialName, or
+        // both) so a future diagnosis doesn't have to guess which one this
+        // sample reflects.
         debugSamples.push({
           company: company.company,
+          triedNames,
           navCompleted,
           finalUrl,
           usedFallback,
@@ -293,8 +501,11 @@ export async function runCompanyIdResolution(companies, { onProgress } = {}) {
       if (i < companies.length - 1) await sleep(randomDelay());
     }
   } finally {
-    await chrome.storage.local.remove(["companyResolveActive", "companyResolveTarget"]).catch(() => {});
+    chrome.power.releaseKeepAwake();
+    await chrome.storage.local
+      .remove(["companyResolveActive", "companyResolveTarget", "companyResolveDirectLink", "companyResolveTargetCandidates"])
+      .catch(() => {});
     if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
   }
-  return { results, debugSamples, hardTimeoutCount, notConfidentCount };
+  return { results, debugSamples, hardTimeoutCount, notConfidentCount, attemptedKeys, stoppedByTouchBudget };
 }

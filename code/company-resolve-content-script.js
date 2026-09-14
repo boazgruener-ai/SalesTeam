@@ -108,10 +108,51 @@ function findEmployeesLinkCompanyId() {
 // Loose match tolerating legal-suffix differences ("Swiss Re" vs "Swiss Re
 // Ltd") - exact equality would miss too many real companies whose LinkedIn
 // page name isn't quite what a research spreadsheet calls them.
+//
+// Punctuation normalized before comparing (v0.29.39) - reported directly
+// with real evidence: "APG|SGA" resolved a real, correct hero card and ID
+// (11414625, heroName "APG|SGA AG") but was rejected anyway, because the
+// SEARCH term had already replaced the "|" with a space to avoid breaking
+// LinkedIn's own search (see stripTrailingCorporateNoise's caller), while
+// the hero card's genuine displayed name still has the "|" - "apg sga"
+// (space) is a different literal string from "apg|sga ag" (pipe), even
+// though they're obviously the same company. This only normalizes pure
+// separator punctuation (|, &, comma, period, hyphen) to whitespace - not
+// an acronym/fuzzy matcher, and deliberately doesn't touch the BCGE/BCN/BD
+// cases (an abbreviation with no shared substring at all, punctuation or
+// not) that were correctly left unmatched for a different reason.
+//
+// Diacritics folded too (v0.29.40) - reported directly with real evidence:
+// "Dätwyler" got a real, correct hero card (heroName "Datwyler Group") but
+// was rejected, because "dätwyler" and "datwyler group" are different
+// literal strings - LinkedIn's own page name drops the umlaut, the research
+// name doesn't. Unicode NFD + stripping combining marks turns "ä" into
+// plain "a" before comparing, same reasoning as the punctuation fold above.
+function foldDiacritics(text) {
+  return (text || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+// Parentheses added to the separator set (v0.29.41) - reported directly with
+// real evidence: "Fresenius Kabi (Schweiz)" resolved a real, correct hero
+// card (heroName "Fresenius Kabi Schweiz", id 65191466) but was rejected,
+// because "(" and ")" weren't in this list - "fresenius kabi (schweiz)"
+// isn't a literal substring match against "fresenius kabi schweiz" when the
+// "(" sits where a space needs to be. storage.js's own
+// normalizeCompanyForMatch already treats () as separator punctuation for
+// the same reason elsewhere in this codebase.
+function normalizeForNameMatch(text) {
+  return foldDiacritics(text || "")
+    .toLowerCase()
+    .replace(/[|&,.()\-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function namesMatch(target, hero) {
   if (!target || !hero) return false;
-  const a = target.toLowerCase();
-  const b = hero.toLowerCase();
+  const a = normalizeForNameMatch(target);
+  const b = normalizeForNameMatch(hero);
+  if (!a || !b) return false;
   return a === b || a.includes(b) || b.includes(a);
 }
 
@@ -162,6 +203,65 @@ async function runCompanyPageFallback(expectedName) {
   });
 }
 
+// Reads the company's own displayed name off a company page's <title> -
+// every debug sample collected across this feature's whole development has
+// shown the exact same shape ("(4) SWICA Versicherungen AG: About |
+// LinkedIn", "(1) Aéroport International de Genève-Cointrin: About |
+// LinkedIn", etc.): an optional leading "(N)" notification-count badge (not
+// part of the name, present or absent depending on the viewer's own account
+// state), then the real name, then ": About | LinkedIn". No dedicated name
+// element has been confirmed for this page type - this is the only company-
+// page name signal actually observed so far, real evidence rather than a
+// guessed selector.
+function extractCompanyPageTitleName() {
+  let title = normalizeText(document.title);
+  title = title.replace(/^\(\d+\)\s*/, "");
+  title = title.replace(/\s*[:|]?\s*About\s*\|\s*LinkedIn\s*$/i, "");
+  title = title.replace(/\s*\|\s*LinkedIn\s*$/i, "");
+  return title || null;
+}
+
+// v0.29.42, see PRD 6.16: the new primary resolution path - rather than
+// searching LinkedIn's own Companies tab and matching a hero card, navigates
+// straight to a LinkedIn company-page URL an external cross-check already
+// validated (the workbook's new "LinkedIn Link" column) and reads the id
+// directly off that page, skipping name-based search entirely for the ~499
+// of 500 companies that have one. Distinct from runCompanyPageFallback
+// above: that one is only ever reached AFTER a search page already
+// confirmed a matching hero name, so it has nothing left to check but the
+// id. Arriving here via a supplied link has never had that confirmation -
+// the link could be stale, or wrong - so this does its own sanity check
+// (the page's own title against every name known for this company) before
+// trusting the id, rather than blindly extracting whatever's on the page.
+async function runDirectLinkResolve(expectedName, candidateNames) {
+  let companyId = null;
+  let caughtError = null;
+  try {
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
+      companyId = findEmployeesLinkCompanyId();
+      if (companyId) break;
+      await sleep(POLL_INTERVAL_MS);
+    }
+  } catch (err) {
+    caughtError = err?.message || String(err);
+  }
+
+  const pageName = extractCompanyPageTitleName();
+  const nameConfirmed = Boolean(!caughtError && pageName && (candidateNames || []).some((n) => namesMatch(n, pageName)));
+  const resolved = Boolean(nameConfirmed && companyId);
+  console.log(`[SalesTeam] company resolve (direct link) for "${expectedName}": page="${pageName}" id=${companyId} resolved=${resolved}`, caughtError ? `error=${caughtError}` : "");
+
+  chrome.runtime.sendMessage({
+    type: "COMPANY_RESOLVE_RESULT",
+    companyName: expectedName,
+    resolved,
+    linkedinCompanyId: resolved ? companyId : null,
+    debug: resolved
+      ? null
+      : { ...collectDiagnostics({ directLink: true, pageName, currentCompanyIdFound: companyId }), caughtError },
+  });
+}
+
 // Reported directly: a genuine, reproducible chunk of companies (confirmed
 // across three unrelated real names - none sharing the country-qualifier
 // issue fixed separately) come back as a hard timeout with NO diagnostic
@@ -174,9 +274,24 @@ async function runCompanyPageFallback(expectedName) {
 // gets reported immediately, with its actual message attached, instead of
 // silently burning the full wait with nothing to show for it.
 async function run() {
-  const { companyResolveActive, companyResolveTarget } =
-    await chrome.storage.local.get(["companyResolveActive", "companyResolveTarget"]);
+  const { companyResolveActive, companyResolveTarget, companyResolveDirectLink, companyResolveTargetCandidates } =
+    await chrome.storage.local.get([
+      "companyResolveActive",
+      "companyResolveTarget",
+      "companyResolveDirectLink",
+      "companyResolveTargetCandidates",
+    ]);
   if (!companyResolveActive || !companyResolveTarget) return;
+
+  // Checked before the plain company-page branch below - a direct-link
+  // navigation also lands on a linkedin.com/company/* URL, but needs the
+  // sanity-checked path (see runDirectLinkResolve's own comment), not the
+  // blind extraction runCompanyPageFallback does after a search already
+  // confirmed the name.
+  if (companyResolveDirectLink) {
+    await runDirectLinkResolve(companyResolveTarget, companyResolveTargetCandidates || [companyResolveTarget]);
+    return;
+  }
 
   if (location.pathname.startsWith("/company/")) {
     await runCompanyPageFallback(companyResolveTarget);

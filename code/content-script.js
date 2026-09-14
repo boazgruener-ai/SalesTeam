@@ -154,9 +154,17 @@ function escapeRegExp(str) {
 
 // Whole-word match, not raw substring - a naive .includes() on a short
 // keyword like "AI" also matches inside unrelated words (e.g. "AljurAId"),
-// which is a real false-positive source for 2-3 letter terms.
+// which is a real false-positive source for 2-3 letter terms. See
+// storage.js's own copy of this function for the full reasoning behind the
+// length-based prefix-match tolerance below (kept as a separate small
+// duplicate here since this is a plain injected content script with no
+// module imports - matching this project's existing convention).
+const MIN_LENGTH_FOR_PREFIX_MATCH = 4;
+
 function containsWholeWord(haystackLower, keyword) {
-  return new RegExp(`\\b${escapeRegExp(keyword.toLowerCase())}\\b`, "i").test(haystackLower);
+  const escaped = escapeRegExp(keyword.toLowerCase());
+  const pattern = keyword.trim().length >= MIN_LENGTH_FOR_PREFIX_MATCH ? `\\b${escaped}` : `\\b${escaped}\\b`;
+  return new RegExp(pattern, "i").test(haystackLower);
 }
 
 // Best-effort only: LinkedIn's search can match a post semantically without
