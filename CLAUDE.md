@@ -1,0 +1,113 @@
+# SalesTeam — project rules
+
+Chrome MV3 extension that scans LinkedIn for sales leads, prioritizes them with AI, and
+drafts outreach. `code/` is the extension source; `PRD.md` and `RELEASE_NOTES.md` are the
+living spec and changelog. Current status, version history and roadmap live in this
+project's memory — read that rather than re-deriving it.
+
+## Reading big files — grep the span, don't open the file
+
+This repo holds a handful of very large files. Opening one whole doesn't just cost that read:
+context is resent on every later turn, so a file read early in a session rides along in every
+request until the session ends. Sizes as of 2026-09-22:
+
+| File | Size | ~Tokens |
+|---|---|---|
+| `~/.claude/plans/giggly-watching-feather.md` | 382 KB | ~95k |
+| `PRD.md` | 291 KB | ~75k |
+| `code/gen_docs.py` | 275 KB | ~70k |
+| `code/target-accounts.js` | 261 KB | ~67k |
+| `RELEASE_NOTES.md` | 249 KB | ~64k |
+| `code/storage.js` | 241 KB | ~62k |
+| `code/dashboard.js` | 122 KB | ~31k |
+
+**Never read any of these end to end.** Locate first, then read only the matching span:
+
+```
+grep -n "<thing you need>" PRD.md | head
+```
+
+`PRD.md` section 6 (Feature spec) alone runs lines 77-1932 — 62% of the file — so "read
+section 6" is still too coarse. Grep for the subsection heading and read that.
+
+Everything else in `code/` is under ~23k tokens and can be read normally. Re-check sizes with
+`ls -S code/ | head` rather than trusting the table above once it ages.
+
+**If a full read of one of these genuinely seems necessary, say the token cost first and ask** —
+don't just do it. Boaz is on a usage-limited plan, and one careless full read of PRD.md plus
+gen_docs.py is ~145k tokens for what is, in substance, a single document.
+
+## Repo hygiene — read before any `git add`
+
+The root holds **real scraped LinkedIn PII**: `Swiss_AI_Prospects_*.xlsx` workbooks,
+CSV/JSON exports, screenshots. `.gitignore` covers `/backup/`, `/exports/`, `/log/` and a
+few named files, but most of the PII is deliberately untracked rather than formally ignored.
+
+**Never `git add -A` or `git add .` in this repo.** Stage only `code/`, `PRD.*`,
+`RELEASE_NOTES.*`, and other files explicitly intended for the repo.
+
+## Doc sync — the asymmetry that keeps biting
+
+- `code/gen_release_notes_docx.py` **parses** `RELEASE_NOTES.md`, so it stays accurate on any
+  re-run.
+- `code/gen_docs.py` (PRD.docx) **hand-mirrors** PRD.md's prose in Python
+  `add_heading`/`add_bullets` calls. It does *not* parse the .md, so it silently goes stale
+  whenever PRD.md gains a bullet or section and gen_docs.py isn't updated in the same pass.
+
+**After any PRD.md edit:** grep `gen_docs.py` for the heading/bullet you changed before
+assuming it's in sync, then regenerate both docx. Bullet convention in that file is
+bold-lead + `" - "` + rest as a single plain string (not the `(lead, rest)` tuple form used
+elsewhere), markdown/backticks stripped, curly quotes kept.
+
+```
+set PYTHONDONTWRITEBYTECODE=1
+python code/gen_docs.py
+python code/gen_release_notes_docx.py
+```
+
+`PYTHONDONTWRITEBYTECODE=1` is required — a `__pycache__` directory inside `code/` breaks
+Chrome's "Load unpacked" (underscore-reserved name). There is no Node on PATH, so any JS
+build/test tooling needs a different path.
+
+## Versioning and store submission
+
+- **Default to bumping the patch digit only** (1.1.3 -> 1.1.4). Minor and major bumps are
+  Boaz's explicit call, never something to propose per feature batch. Chrome allows each
+  segment up to 65535, so there's no shortage.
+- Keep `code/manifest.json`'s version and `PRD.md`'s "Current version" line in sync on every
+  bump, regardless of tier. Release notes are optional for patches — ask if a patch is going
+  to the store.
+- Build with `python code/build_package.py` -> `builds/vX.Y.Z/SalesTeam-vX.Y.Z.zip`.
+- **A submitted package is frozen.** Any code change after submission means a new patch
+  version and a fresh build — never overwrite a zip that has already been uploaded.
+- Submit via the **existing** store item > Package > Upload new package. Never "Add new
+  item" (the account limit is 2 published items).
+
+## Code discipline, learned the expensive way
+
+- **Never guess a LinkedIn URL, geoUrn or industry id.** `geo-urn-map.js` and
+  `industry-id-map.js` hold only live-confirmed constants, and the wizard offers only
+  entries with a confirmed mapping. Double-check any new batch for copy-paste duplicate ids —
+  that mistake has been made more than once here.
+- **`chrome.storage.local` serializes on every get/set, destroying JS object identity.**
+  `new Set(Object.values(map))`-style "dedupe by identity" silently does nothing once data
+  has round-tripped through storage. Dedupe by a plain value (e.g.
+  `normalizeCompanyName(v.company)`).
+- **Persist as you go, not just at the end.** A long-running live lookup that holds results
+  in memory until the end loses everything when the extension is reloaded mid-run — which is
+  a routine step after any code change. Use a per-item callback that persists immediately.
+- **Don't automate the LinkedIn UI** beyond simple navigation and reading search results.
+  Coordinate clicks on filter dropdowns are fragile (viewport shifts, stale refs, wrong
+  elements). Ask Boaz to do that class of interaction instead — it's faster and more reliable.
+- Test in an isolated Chrome profile (`--user-data-dir=C:\ST-test-profile`); the
+  `--load-extension` flag no longer works.
+
+## Messaging rules — public-facing text
+
+Applies to the store listing, website, wizard, Help and anything else users read:
+
+- Positive but accurate. **Never claim LinkedIn ToS compliance** and never describe behavior
+  as "human-like" or as evading detection.
+- **Never write that SalesTeam is "not a company."**
+- Keep the framing consistent: user-initiated scans, visible in the browser, paced, daily
+  touch limit, no server, no resale.
