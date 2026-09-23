@@ -28,7 +28,7 @@ in a system; they don't help *find* them on LinkedIn in the first place.
 ## 3. Non-goals
 
 - Not a full CRM. No pipeline stages beyond a simple status label, no deal value/forecasting, no team
-  features (single-user, local-only storage).
+  features (single-user, local-only storage) - team use is a planned future milestone, see section 8.
 - Never sends a message on the user's behalf. Drafts are generated for copy-paste only.
 - No scheduled or background scanning. Every scan is a manual click, by design — this keeps the tool's
   behavior indistinguishable from a careful human user, not an automation bot, for LinkedIn ToS reasons.
@@ -195,6 +195,39 @@ copy per page.
   automatically when a default changes (this applies to v0.29.10's new AI/Cloud Vendor Blocklist and to Known
   Recruiting Firms' `matchField` fix: an existing user must add/change these themselves — see
   RELEASE_NOTES.md).
+- **Competitor Blocklist and Known Recruiting Firms (renamed "Recruiting Companies") became wizard-list-backed
+  (2026-09-16), plus 2 new such filters, Existing Customers and Existing Partners.** Reported directly: the
+  Setup wizard already has its own dedicated company-exclusion lists for exactly this purpose
+  (`competitorCompanySlugs`/`recruiterCompanySlugs`/`existingCustomerCompanySlugs`/`existingPartnerCompanySlugs`,
+  6.20's "Competitors/Recruiters/Existing customers/Existing partners to exclude" steps — LinkedIn company
+  slugs, identity-based, originally built for Discovery's company search) — maintaining a *second*,
+  independently-edited free-text keyword list here for the same real-world exclusion was pure duplication, "it
+  is better to use the lists from the Wizard." These 4 negative topics now carry a `sourceList` field
+  (`storage.js`'s new `applyWizardSourceLists()`, run on every `getNegativeTopics()` call) that computes their
+  `keywords` fresh from the matching wizard list every time, always `matchField: "company"` — a lead's
+  `company` text is compared the same fuzzy, suffix-stripped way as before (`matchesCompanyKeyword`), just
+  against a slug converted to a space-separated pseudo-name (`"randstad-switzerland"` → `"randstad
+  switzerland"`) rather than a hand-typed keyword; a slug with no hyphens at all (e.g. `"lhhworldwide"`) won't
+  fuzzy-match a differently-formatted display name (`"LHH"`) — an accepted best-effort limitation, not solved
+  further. The side panel no longer lets these 4 be renamed, rescoped by match field, or have their keywords
+  edited directly — each is just an enabled checkbox (labeled, e.g., "Filter out competitors, listed in the
+  main settings") plus the existing Posts+Jobs/Post-only/Job-only scope dropdown, with a live company-count
+  hint underneath. A stored `negativeTopics` array from before this change is backfilled on next read (adds
+  the 2 new topics by id if missing, backfills `sourceList`/`matchField` onto an existing Competitor
+  Blocklist/Known Recruiting Firms entry if it predates this — a user's own custom topics and any other
+  builtin's edits are never touched). "Recruiter/Staffing Headline Filter" and "AI/Cloud Vendor Blocklist" are
+  unaffected — genuinely different mechanisms (a person's own headline text; a fixed hardcoded vendor list),
+  not backed by any wizard list, so left as regular fully-editable negative topics.
+- **The Scanner tile's "Author title contains" filter is now wizard-list-backed too, same day** — its
+  free-text textarea was a second, independently-maintained title list duplicating the Setup wizard's own
+  Target Contacts profile (`targetContactProfile.exactTitles`/`titleKeywords`, 6.20 — also PRD 6.12's Phase 6
+  contact discovery input). The checkbox that enables/disables this filter at scan time is unchanged; the
+  underlying title list is now computed from the wizard's profile instead of typed here, refreshed by
+  `sidepanel.js` on load and live via a `chrome.storage.onChanged` listener if the wizard is edited on another
+  tab while the side panel stays open. Internally this still writes into the same `authorTitle` storage key
+  `content-script.js`'s scrape-time filter already reads directly (a plain, non-module content script that
+  can't import `storage.js`) — `sidepanel.js` just populates that key programmatically now instead of a user
+  typing into it.
 - A match sets the lead's status to **Irrelevant** and records both the topic *and* the specific keyword that
   matched (`irrelevantReason`, e.g. `Recruiter/Staffing Headline Filter (matched "Recruiter")`), shown as a
   hover tooltip on the Dashboard's status pill — distinct from **Dismissed**, which is always the
@@ -619,19 +652,36 @@ investing in; deliberately a separate field from "What We Offer" since the produ
 are different concepts, even though every relevant AI feature reads both together — not used by Customer
 Voice, which has no reason to reason about who the seller targets), Anthropic API key, message templates
 (auto-picked per lead by connection status / job-ad detection, or chosen manually), value-add offers (a fixed
-list the AI may mention, never invents). **Target Accounts** (v0.28.0 — imported list, confidence threshold, and the
-configurable Prioritization Rules table, v0.29.4; see 6.11). Opened via its own blue button in the Scanner tile. The Advisors page reads these
-live (via `chrome.storage.onChanged`) rather than caching a stale copy, since editing now happens on a
-separate page.
+list the AI may mention, never invents). Opened via its own blue button in the Scanner tile. The Advisors page
+reads these live (via `chrome.storage.onChanged`) rather than caching a stale copy, since editing now happens
+on a separate page.
+- **Settings progressively narrowed to just the Anthropic API key and output language (2026-09-16).**
+  Company-context/Ideal Customer Profile/value-add-offers moved into the Setup wizard first. The same day,
+  the Prioritization Rules table (v0.29.4) followed, becoming the wizard's own "Leads Prioritization" step,
+  and the Location Filter's country picker (6.13) was unified with the wizard's Location step rather than
+  kept as a separate setting — both removed from this page **outright**, not left as pointer cards, since the
+  wizard's own "Edit Setup…" already covers that. **Then, per direct instruction ("remove the 2 sections...
+  they are in the Wizard"), confirmed the same day**: no Location Filter or Prioritization Rules card remains
+  on this page at all — `settings.js`'s `applyLocationFilterBtn` handler and `reapplyLocationFilter` import
+  were removed alongside the card (safe: the Dashboard, 6.5, already carries its own independent "Apply
+  Location Filter" copy, so nothing was lost). Finally, **Target Accounts (import/export, confidence
+  threshold, Resolve LinkedIn Company IDs) moved to the Target Accounts Dashboard** (6.19, `target-
+  accounts.html`/`.js`) — raised as a genuine design question ("would it make more sense to move this?"),
+  answered yes: it belongs next to the data it actually affects. This page's own copy of Import/Export
+  (`target-accounts.js`, previously kept in sync with Settings' by hand since v0.29.30 — see the v0.29.38
+  parity-bug note in 6.12) is now the only one; the confidence threshold and Resolve LinkedIn Company IDs
+  (6.16) moved there for the first time. Settings keeps only a pointer button ("Open Target Accounts
+  Dashboard…"). Every remaining Settings section sits in its own card frame, not mixed together as before.
+  French was added to the output-language dropdown the same round.
 - **Persistent "Saved" indicator (v0.29.7)** — reported directly: every field here already auto-saves on
   change (kept deliberately — an explicit Save-everywhere model risks losing an edit if the user navigates
   away without clicking it), but that auto-save is invisible, which "feels weird, unsure if it was saved or
   not." A fixed, page-wide badge now flashes "Saved" on every write across the whole page (any text field,
   checkbox, dropdown, or rule toggle) and settles back to "All changes saved" a moment later — one shared
-  confirmation mechanism rather than per-field feedback that would need its own indicator everywhere. The
-  Location Filter's country picker (6.13) is the one exception: it stages changes and requires its own
-  explicit Save click, so it also gets its own local "Unsaved changes"/"Saved" status alongside this
-  page-wide one.
+  confirmation mechanism rather than per-field feedback that would need its own indicator everywhere. (The
+  Location Filter's country picker used to be the one exception here, staging changes behind its own explicit
+  Save click — moot since 2026-09-16, when that picker moved into the wizard, above, which auto-saves like
+  every other wizard field.)
 
 ### 6.8 Backup / portability
 
@@ -646,7 +696,12 @@ back Topic edits made since that backup:
   Location Filter configuration was silently missing from export/import despite being genuine, hand-set
   configuration; now included. (The Target Accounts Explorer workbook, 6.12, is still deliberately excluded
   from this automatic export — see its own note below — but now has its own dedicated backup, next.)
-- **Target Accounts backup (v0.29.22, Settings page):** a separate, dedicated "Export Target Accounts" button
+  **Superseded 2026-09-16:** the standalone `locationFilterConfig` this covered no longer exists — Location
+  Filter is now just the wizard's own Location step (6.13, 6.20), and the wizard's own settings
+  (`targetUniverseConfig`/`targetContactProfile`/etc.) are a pre-existing gap in this export, unrelated to
+  and not newly introduced by that change — still not covered by either backup flow here.
+- **Target Accounts backup (v0.29.22, originally Settings page):** a separate, dedicated "Export Target
+  Accounts" button
   (next to the existing Import Target Accounts) downloads a standalone `.json` backup of the target-accounts
   map plus the full Explorer workbook — reported directly ("Need also a backup / export button for Target
   Accounts, as well as an Import button"), since re-importing a research `.xlsx` was previously the only way
@@ -654,10 +709,13 @@ back Topic edits made since that backup:
   (distinct from both the legacy `convert_target_accounts.py` JSON and a fresh `.xlsx` import).
   **Extended in v0.29.30**: reported directly, having to leave the Target Accounts Explorer page (6.12) and go
   to Settings to back up or refresh the very data it's showing was an unnecessary detour. The same Import/
-  Export buttons now also appear at the top of `target-accounts.html`, calling the exact same `storage.js`
-  functions — Settings stays the source of truth for the score threshold and other configuration, but the
-  actual import/export actions work from either page. Import works even before any data has been loaded (from
-  the page's own empty state); Export only appears once there's something to back up.
+  Export buttons appeared at the top of `target-accounts.html` alongside Settings' own copy, calling the exact
+  same `storage.js` functions. **Superseded 2026-09-16**: Settings' Target Accounts section (import/export,
+  score threshold, Resolve LinkedIn Company IDs) was removed entirely — `target-accounts.js` is now the sole
+  copy, not a second one kept in sync by hand (see 6.11's move note). Import works even before any data has
+  been loaded (from the page's own empty state); Export only appears once there's something to back up. Import
+  now also prompts for the minimum confidence threshold (pre-filled with the current value) before opening the
+  file picker — canceling the prompt cancels the whole import.
 - **Leads**: the full lead dataset, plus the generic Sales Mentor and Customer Voice conversation histories
   (previously not backed up anywhere at all, despite being genuinely irreplaceable). Import **merges, never
   replaces** — a lead or chat history already present locally is left exactly as-is; only what's genuinely
@@ -823,11 +881,12 @@ something a model chose (or didn't choose) to mention:
   `storage.js`) runs during a scan's automatic pass *and* both Dashboard buttons (6.4), not just at scan time.
   Concretely: importing a new/updated Target Accounts list and then clicking "Re-score All Priorities"
   immediately re-prioritizes every eligible existing lead — no new scan needed.
-- Threshold and the imported list itself live in Settings (6.7) and travel with a Settings export/import
+- Threshold and the imported list itself lived in Settings (6.7) through 2026-09-16; both moved to the Target
+  Accounts Dashboard (6.19) that day, and travel with a Settings export/import
   (6.8), so a fresh install or a restored backup doesn't lose them.
 - **Every rule above is configurable, and the whole set is visible in one place (v0.29.4)** — reported: "the
   user can also see what is driving the prioritization and can also decide to disable any of them." A
-  **Prioritization Rules** table on Settings (6.7) lists the five rules above (Job company cap, Post title
+  **Prioritization Rules** table lists the five rules above (Job company cap, Post title
   match, Post topic match, Post company floor, Job signal ceiling) with columns for Ceiling/Floor/Decisive
   value and Enabled —
   each rule occupies exactly one of those three value columns, matching its fixed effect type. The rule's
@@ -837,7 +896,10 @@ something a model chose (or didn't choose) to mention:
   plain signal, exactly as a non-qualifying match already works; the Mentor's own judgment is always the
   base decision for every lead and can't itself be disabled, only constrained or overridden by an enabled
   rule that applies. Extended in v0.29.5 with two further transparency rows, Competitor Blocklist and
-  Location Filter — see 6.13.
+  Location Filter — see 6.13. **Moved 2026-09-16** from a Settings (6.7) table into the Setup wizard's own
+  "Leads Prioritization" step (6.20) — same five rules, same table shape, minus the two v0.29.5 transparency
+  rows (each was just a shortcut into a real toggle that already lives elsewhere: side panel's Negative
+  Topics; the wizard's own Location step).
 - **Import status shows time and filename, not just a date (v0.29.38)** — reported directly: re-importing a
   refreshed research workbook more than once in one day (e.g. to pick up a Zefix cross-check column, 6.16)
   left an ambiguous "500 companies imported · Sep 9, 2026" status with no way to tell a just-finished import
@@ -977,7 +1039,18 @@ Profiles," extended in this version to also capture location from the same page 
 a real, reviewable auto-filter — the same reviewable/reversible mechanism Negative Topics (6.6) already uses,
 never a silent delete.
 
-- **Configuration lives in Settings (6.7)**, one of three modes: **Off** (default — untouched), **By
+- **Configuration lives in the Setup wizard's own Location step, unified there 2026-09-16 (see 6.20)** —
+  originally a separate Settings (6.7) setting with its own dual-listbox country picker (below); the user
+  raised, once the two were actually explained as distinct, that a user wouldn't want a different location
+  for companies (the wizard's own concern) vs. leads (this filter's concern), so rather than just relocate
+  the old picker, `storage.js`'s standalone `locationFilterConfig` was removed and this filter now reads the
+  wizard's own `targetUniverseConfig` location fields directly via a `generalLocationFilterConfig()` reshaping
+  helper — genuinely the same one setting now, not two kept in sync. The wizard's own country list was widened
+  from `geo-urn-map.js`'s 10-country, live-verified `CONFIRMED_COUNTRIES` (needed for Discovery's company
+  search facet, 6.20) to the full ~150-country `ALL_COUNTRIES` this filter always used, so the unified step
+  can serve both jobs — Discovery's own search still only ever uses whichever selected countries have a
+  confirmed `geoUrn`, same as before, the rest still apply only to filtering leads as this section describes.
+  One of three modes: **Off** (default — untouched), **By
   continent** (six checkboxes: North America, Latin America, Europe — including UK and Switzerland, Africa,
   Middle East, South East Asia), or **By country** — a dual-listbox picker (v0.29.7, replacing an initial
   free-text textarea): a searchable, alphabetized list of every country `classifyLocation` recognizes on the
@@ -985,7 +1058,9 @@ never a silent delete.
   single country either direction. Reported directly: free-text entry risked a misspelling or an unrecognized
   alternate name failing to match silently — the picker only ever offers names from `ALL_COUNTRIES` (the same
   flattened list `classifyLocation` itself matches against), so a selected country is guaranteed to match
-  exactly, by construction, rather than needing to fuzzy-match free text later. Also reported: moving several
+  exactly, by construction, rather than needing to fuzzy-match free text later. (The staged-changes/explicit
+  "Save Countries" click described next was a Settings-page-only affordance — the wizard's own copy of this
+  picker just auto-saves like every other wizard field, 6.20.) Also reported: moving several
   countries shouldn't each take effect immediately while still building up the list, so the picker stages
   changes in memory and only writes them (and logs one activity entry) when its own **Save Countries**
   button is clicked — disabled until there's an actual pending change. The six continents deliberately mirror
@@ -1030,18 +1105,25 @@ never a silent delete.
   *other* reason is also absent before restoring, so clearing one filter's match never wrongly un-blocks a
   lead the other filter still wants hidden.
 - **Applied automatically** after every "Extract Companies & Locations from Profiles" run (fresh location data just
-  arrived) and **on demand** via a standalone **"Apply Location Filter"** button on both the Dashboard and
-  Settings (mirrors "Apply Negative Filters," 6.6) — for re-running after a Settings change without
-  re-visiting profiles.
-- **Visible and toggleable from the Prioritization Rules table (6.11)** — reported directly, alongside a real
+  arrived) and **on demand** via a standalone **"Apply Location Filter"** button on the Dashboard (mirrors
+  "Apply Negative Filters," 6.6) — for re-running after a wizard Location-step change without re-visiting
+  profiles. Settings' own copy of this button was removed 2026-09-16 alongside the rest of Settings' Location
+  Filter section (Dashboard's is the only one now).
+- **Was visible and toggleable from the Prioritization Rules table (6.11), v0.29.5 through 2026-09-16** —
+  reported directly, alongside a real
   example (a PwC Switzerland lead scoring Priority 3 instead of `Irrelevant`, since PwC wasn't yet in the
-  user's own saved Competitor Blocklist): for transparency, the same table also lists **Competitor Blocklist**
+  user's own saved Competitor Blocklist): for transparency, the same table also listed **Competitor Blocklist**
   (reflecting/toggling the real `builtin-competitors` Negative Topic's enabled state) and **Location Filter**
   (reflecting/toggling `mode !== "off"`) as two additional rows, even though neither sets a P-level the way
   the rules above do — both instead exclude a lead to `Irrelevant` outright, overriding the Sales
   Mentor the same way a decisive rule does. `DEFAULT_NEGATIVE_TOPICS`' Competitor Blocklist was also extended
   (PwC, KPMG, Accenture, McKinsey, Bain added) for fresh installs — an existing, already-saved list isn't
   retroactively changed by a code default, so the user's own list needed the same firms added by hand once.
+  **Dropped, not relocated, 2026-09-16**: when the Prioritization Rules table itself moved into the wizard
+  (6.20), these 2 rows didn't move with it — each was only ever a shortcut into a real toggle that already
+  lives elsewhere (Competitor Blocklist: side panel's Negative Topics; Location Filter: `mode !== "off"` on
+  the wizard's own Location step, above), and neither is part of `PRIORITIZATION_RULE_CATALOG`, so keeping
+  them as shortcut rows on the new wizard step would have meant two controls for the same underlying toggle.
 - Same "unverified against a live, logged-in LinkedIn profile" caveat as the rest of profile-content-script.js
   (6.3) — the location-detection heuristic (a short, Switzerland-biased hint-word list, restricted to text
   appearing before the Experience section so an unrelated country mention inside someone's work history isn't
@@ -1105,7 +1187,8 @@ results, filter chip and all; LinkedIn accepted at least that many IDs in one se
   well before any unrelated "People also viewed" sidebar company shows up later in the markup. Cross-confirmed
   twice: Swiss Re's hero card gave `3845` this way, exactly matching the `heroEntityKey` LinkedIn's own
   search-suggestion dropdown had already produced for the same company earlier in the investigation.
-- **New "Resolve LinkedIn Company IDs…" button** (Settings, next to Target Accounts) looks up each Target
+- **New "Resolve LinkedIn Company IDs…" button** (originally Settings, next to Target Accounts; moved to the
+  Target Accounts Dashboard 2026-09-16 alongside the rest of that section) looks up each Target
   Account company still missing an ID this way (`company-resolve-extraction.js`/
   `company-resolve-content-script.js`, matching `linkedin.com/search/results/all/*`, gated the same way as
   the other extraction content scripts, same visiting/pacing/timeout shape). A resolution only counts if the
@@ -1777,8 +1860,75 @@ contact discovery, paced under 6.20's unified touch budget, no `chrome.alarms` �
 deep research behind them. v0.30.0 shipped the first phase (the unified safety-budget enforcement described
 in Section 7 below); v0.31.0 shipped the second — the onboarding wizard itself, fully built and tested
 end-to-end by the user for a real second-team pilot, with company/industry exclusion lists and a real
-starter set of confirmed countries/industries. Phases 4-8 (the resumable scan queue, the actual company/
-contact discovery scan modules, merging into the workbook, and AI prioritization) remain unbuilt.
+starter set of confirmed countries/industries. Phase 4 (`discovery-queue.js`, a resumable multi-day scan
+queue) and Phase 5 (`company-discovery-extraction.js`/`company-discovery-content-script.js`, the actual
+Company Search scan module) are now built, both still only reachable via a temporary debug panel on Settings
+(no real progress UI yet) pending live testing. Phase 5's design, confirmed live 2026-09-15 against real
+LinkedIn pages (not guessed): the Companies-only search tab's result cards are directly scraped
+(`p[0]`/`p[1]`/`p[2]` = name/industry/location within each card's own anchor, same anchor carries a
+`currentCompany=` link for the numeric id), pagination is a plain `&page=N` query param (no clicking/scrolling
+needed), and a card whose own location text doesn't carry a recognizable country falls back to a structured
+read of the company's own page (`bpr-guid-*` embedded JSON — the primary entity is found via its query
+response's own `*elements` reference, not just "the first entity with a `headquarter` field," which was
+confirmed live to sometimes return an unrelated company). Only a company whose own location confirms a target
+country is kept (Priority 1, per the plan's tiering); a facet-matched card whose location can't be confirmed
+either way (Priority 2) is deferred past v1 and simply skipped, not guessed at. Search strategy revised the
+same day after live testing: a facet-only query (no keyword) ranks results toward "companies you follow"/
+globally prominent companies regardless of how narrow the facets are — confirmed live, only 3 of the first 10
+Switzerland-facet results were genuinely Swiss-HQ'd. Adding the target country's own name as a `keywords=` term
+raised that to 9 of 10; the search is now one unit per target country (each with its own `keywords=<country>`
+term and its own pagination), not one combined multi-country query. Fourth bug found the same day: a real run
+showed 37.5% of scraped cards (15 of 40) silently discarded for lacking a LinkedIn numeric id — a card only
+carries one when there's LinkedIn-network overlap with the viewer. Fixed the same way `company-resolve-
+content-script.js` already solved this exact gap months ago: recovering the id from the company's own page
+(the same visit already made for the location fallback tier, when needed) rather than giving up. Phase 6
+(`contact-discovery-extraction.js`/`contact-discovery-content-script.js`) is now also built, not yet
+live-tested. Its real mechanism turned out different from the original sketch: global People Search has no
+structured Title filter at all, but each company's own LinkedIn People tab has its own keyword search box
+(`linkedin.com/company/<slug>/people/?keywords=<expression>`), already scoped to one company - confirmed live
+against a real 12-candidate result (real, semantic LinkedIn CSS classes, not hashed ones), including that the
+match is against a person's entire *career history*, not just their current role (a "Senior Advisor" card
+matched a "CEO OR CTO" search purely from a past role) - which is why a candidate is only kept once its own
+displayed headline is independently checked against the target titles/keywords (expanded through a new
+acronym/full-title alias table, `storage.js`'s `TITLE_ALIAS_GROUPS`), not trusted from LinkedIn's own match
+alone. Ships with a configurable max-contacts-per-account (default 10) and exact-title-before-keyword
+prioritized selection when a company has more qualifying candidates than the cap. A structured preferred-seniority
+field (2026-09-17) is now also built: confirmed live via Claude in Chrome that the company People tab has no
+seniority facet (only 6 unrelated categories - location x2, job function, skills, connection degree), so each of
+6 fixed levels (Board/Chairman, C-level, VP-level, Head-level, Director-level, Manager-level) is a checkbox plus
+a 1-3 priority that expands into keyword terms unioned additively into title search - never replacing typed
+exact titles/keywords. A matched contact is also tagged with their own matched level/priority
+(`seniorityLevel`/`seniorityPriority` on the contact row), consumable by the Post-lead prioritization rule
+engine's new `authorSeniorityAtLeast` condition, so seniority can floor/ceiling/decide a lead's Priority too, not
+just gate which contacts get kept. Not yet live-tested against a real LinkedIn run. Pagination isn't pursued for v1 (the page's "Page 2..." controls are plain buttons with no URL param, and a
+real programmatic click on one didn't change the rendered results) - not needed since one company's first
+screen already routinely exceeds the 10-contact cap. The first real run hit LinkedIn's own "unable to load
+people insights data" error on every company. First diagnosis (a rendering-timing issue, same class as a
+Phase 5 bug) was wrong — re-tested after that fix with the same result, then found the real cause by testing
+a precise range of query lengths live: LinkedIn's People-tab insights backend has a deterministic
+query-complexity ceiling — 6 boolean OR-clauses work, 7 fail every time. A real 17-title profile (each title
+doubling via acronym-alias expansion) was destined to fail regardless of timing. Fixed properly: the combined
+search expression now caps at a confirmed-safe 6 terms (prioritizing `exactTitles`, never splitting a term
+from its own alias), reporting which titles got dropped by the cap rather than silently searching a subset.
+Re-tested live and it worked: an 11-company run (stopped correctly by the shared touch budget) found 77 real
+contacts with zero insights-load errors. Reviewing that batch for quality (at the user's own request)
+surfaced a third real bug: `classifyCandidate`'s plain substring matching let short acronyms match inside
+unrelated words — "CTO" inside "director"/"sector", "AI" inside "Affairs"/"Airworthiness" — wrongly tagging
+several real people (an L&D director, a water-sector specialist, an airworthiness engineer) as CTO/CIO/AI
+matches. Fixed by reusing `storage.js`'s existing `containsWholeWord` (built for this exact class of bug
+elsewhere in the codebase) instead of the naive check. Of the two remaining limitations initially accepted,
+one turned out solvable after all (user's own idea, validated against the real batch before building): a
+"CTO title held at a different company mentioned in the same headline" case (Robin Waech: "Head Intelligent
+Robotics & ML @ AXA · CTO @ Material Upcycling AG") is now caught by splitting the headline on its own
+delimiters (`·`/`;`/`/`) and checking, per segment, whether the matched term's segment names the target
+company, a different one, or none — a whole-headline check doesn't work since Robin Waech's headline mentions
+AXA too, just in a different segment. A real regex bug was caught and fixed *before* shipping this (`\b`
+doesn't anchor correctly right before `@` when preceded by whitespace — verified directly with a real
+interpreter, not just reasoned about, against every name in the batch). "Chief of Staff to the CIO" remains
+genuinely unsolved, by mutual agreement — it names the target company correctly, so nothing tells it apart
+from being the CIO. Phase 7 (merging discovered companies/contacts into the real workbook) is now built and
+live-tested (2026-09-16, see Section 8); Phase 8 (company-level AI prioritization, both imported AND
+Discovered-only companies) is now also built (2026-09-17, see Section 8) but not yet live-tested.
 
 ## 7. Non-functional requirements
 
@@ -1796,12 +1946,17 @@ contact discovery scan modules, merging into the workbook, and AI prioritization
   `profile-extraction.js`'s `navigateAndWaitProfile`, `company-resolve-extraction.js`'s
   `navigateAndWaitResolve`, `people-search-extraction.js`'s `navigateAndWaitPeopleSearch`) as a trimmed
   rolling-window timestamp log (7-day retention), not a running total, so the visible count reflects genuine
-  recent activity. Surfaced as a persistent "LinkedIn touches (automated): N in the last 24h · M in the last 7
-  days" line on both the side panel and Settings (the latter needed since the company-ID resolver — the
-  biggest single contributor — can run from Settings with the side panel closed), color-coded amber past 50/24h
-  and red past 100/24h — both well below the ~315 that triggered the real warning, refreshed on load, every
-  30s while the page stays open, and immediately after a scan/profile-extraction/resolver run completes. Not a
-  gate — nothing is blocked or throttled, purely visibility; the volume was already happening, it just wasn't
+  recent activity. Surfaced as a persistent "LinkedIn touches (automated): N today · N in the last 24h · M in
+  the last 7 days" line on both the side panel and Settings (the latter needed since the company-ID resolver —
+  the biggest single contributor — can run from Settings with the side panel closed), color-coded amber past
+  50/24h and red past 100/24h — both well below the ~315 that triggered the real warning, refreshed on load,
+  every 30s while the page stays open, and immediately after a scan/profile-extraction/resolver run completes.
+  The "today" figure (added 2026-09-15, per the user's own request for an easier "what did I run today" read)
+  is a local calendar-day count, purely informational — the color-coding and the actual hard-stop
+  (`touch-budget-guard.js`) both deliberately stay on the rolling 24h window, not calendar-day, since that's
+  what caught the real incident this feature exists because of; a calendar-day reset would blind the hard-stop
+  to a burst that straddles midnight. Not a gate — nothing is blocked or throttled, purely visibility; the
+  volume was already happening, it just wasn't
   visible until it was too late once.
 - **Unified safety budget, now actually enforced (v0.30.0)** — decided directly as part of scoping 6.20: since
   LinkedIn doesn't care which internal feature triggered a request, one shared daily budget should govern every
@@ -1847,7 +2002,1008 @@ contact discovery scan modules, merging into the workbook, and AI prioritization
   likely alongside a dedicated Companies view (deferred for now in favor of the in-table grouping above).
 - Chrome Web Store submission was rejected once (v0.15.0, excessive `scripting`/`tabs` permissions that
   weren't actually used) and resubmitted after removing them (v0.15.1); awaiting review as of this writing.
+- **Deferred (2026-09-15), explicit decision, not forgotten**: the Topics/lead-scanning prioritization
+  prompt (`buildPrioritizationPrompt`, `agent-shared.js`) still uses AI-specific examples to illustrate its
+  genuine-signal-vs-noise heuristic ("Head of AI," "Chief AI Officer," "a senior AI title alone" vs. "generic
+  AI commentary"). The Target Accounts side of the product (import, display, Mentor/Customer Voice prompts)
+  was genericized this session to drop every AI/Swiss/Switzerland-specific reference, following the user's
+  own move to a de-AI'd, reusable ChatGPT research template (v38+). This one core prompt was flagged
+  separately rather than changed along with it, since it's the product's own scanning heuristic, not
+  Target-Account display - a bigger, different piece of work (would need a more variable set of illustrative
+  examples, not just word-for-word substitution) - deliberately left for later, not an oversight.
+- **Onboarding wizard redesign - built 2026-09-16** (was deferred 2026-09-15, "explicit decision, not
+  forgotten" - the user changed his mind the next day and asked for the full version, confirmed over a
+  smaller UX-only slice when asked directly). (1) UX: "Finish Setup" now navigates back to Settings
+  automatically instead of just relabeling itself "Setup saved," a new per-step "Save & Exit" persists the
+  current step immediately and returns to Settings, and one shared, `position: sticky` nav bar (Back/Save &
+  Exit/Next) replaces a `.wizard-buttons` pair duplicated in all 13 sections - always in the same place
+  regardless of a step's own content length. (2) The Location step has a new priority picker
+  (`locationPriorities`, `targetUniverseConfig`), same 1-3 (Low/Med/High) scale as Industry (default Medium) -
+  per-continent if multiple continents were picked, per-country otherwise, rebuilt live as the selection
+  changes (unlike Size/Industry's priority rows, rendered once). (3) The Size step's "Top N largest" vs.
+  min/max-employee-range toggle is replaced with 5 fixed, independently checkable buckets
+  (`storage.js`'s `SIZE_PRIORITY_BUCKETS`: S 0-200 / M 201-500 / L 501-1,000 / XL 1,001-5,000 / XXL 5,001+),
+  each with its own 1-3 priority when checked - `company-discovery-extraction.js`'s `sizeLettersForConfig`
+  unions the existing LinkedIn-letter-overlap logic per checked bucket (verified by hand: S->B,C,D; M->E;
+  L->F; XL->G; XXL->H,I). (4) The Industry step has a "Select All" option plus a per-industry 1-3 priority,
+  defaulting to Medium - `industries` changed shape from flat `string[]` to `{name, priority}[]`
+  (`storage.js`, normalized on every read for configs saved before this redesign, so nothing downstream needs
+  its own defensive code). (5) The Priority guidelines step's Top Locations/Top Size Bucket/Top Industries
+  sections are removed outright, superseded by (2)-(4) - `accountPriorityGuidelines` shrunk to just
+  `criteriaOrder`; the step itself survives, just shorter. Full detail (including the migration approach for
+  `sizeBuckets`, which needed none - configs saved before this redesign simply have no `sizeBuckets` key, so
+  the normal default-merge already falls back to "all checked, Medium") is in
+  `giggly-watching-feather.md`'s onboarding-wizard section. Not yet live-tested (same `chrome://extensions`
+  reachability limit as the alias/Organization Type work above). The industry-exclusion idea this paragraph
+  originally described (opt-in wholesale exclusion of segments like "Non-profit Organizations"/"Government
+  Administration") is exactly what shipped the day before as **Organization Type eligibility** below, not a
+  separate still-open item. Still genuinely open: a not-yet-confirmed "Company Type" LinkedIn facet.
+- **Re-running Discovery after a criteria change - v1 blunt warning built 2026-09-16, smart version still
+  deferred.** The full delta-recompute design (re-evaluate already-discovered companies locally, never delete
+  a company/contact - relabel it, keeping chat history/priority/due-dates intact) explicitly depends on Phase 7
+  (merge into the real workbook), which doesn't exist yet - asked directly, the user confirmed building just
+  the simple v1 baseline now. `onboarding.js`'s `warnIfDiscoveryNowStale` compares the current wizard state
+  against the criteria the most recent Discovery run actually used (`discoveryQueueState.configSnapshot`) at
+  the two points a user leaves the wizard; on a mismatch, a dialog offers to reset the queue and clear staged
+  discovered companies/contacts so a redo doesn't silently mix stale and fresh results under the existing
+  dedup logic. **Real bug found and fixed live the same day**: the comparison fired unconditionally even with
+  zero real edits, because the user's own first Discovery run had started before the Size/Industry schema
+  redesign (above) - its frozen snapshot read as empty/garbage once compared raw against the post-redesign
+  shape. Fixed via a new exported `normalizeTargetUniverseConfig()` (storage.js), applied to the snapshot
+  before comparison, not just fresh reads. **The dialog itself went through two more rounds of live
+  feedback**: a native `confirm()`'s OK/Cancel couldn't be relabeled and read as ambiguous no matter the
+  wording, so it became a real `<dialog>` (same pattern as dashboard.html's assign-*/bulk-change dialogs)
+  with explicit "Clear Current Discovery"/"Keep Current Discovery" buttons per the user's own suggested
+  labels; separately, the message always named all four possible categories regardless of which one actually
+  changed, so the comparison logic was split to track each category (Location/Size/Industry/Target-contact
+  titles-keywords) individually and the dialog now names only the ones that are genuinely different. Full
+  detail in `giggly-watching-feather.md`'s "re-running Discovery after a criteria change" section.
+- **Settings page reorganization + wizard step index - built 2026-09-16.** Real back-and-forth with the
+  user after they actually re-checked the Settings page (not from memory): "What We Offer"/"Ideal
+  Customer Profile" removed from `settings.html` (genuinely redundant with the wizard's own steps, which
+  already have Save & Exit); "Things you can offer" moved into the wizard as a new optional step between
+  "What you sell" and "Ideal customer" (13 real steps now, up from 12); "Message templates" moved out of
+  Settings entirely into `dashboard.js`'s lead-detail view, next to the Draft Message template dropdown -
+  kept as the same global, shared list it always was (it's consumed from 3+ places, including the
+  standalone Advisors page's Mentor chat, not just one lead's conversation), just relocated the editing
+  UI to where drafting actually happens. Also added a step index to the wizard's nav bar - one button per
+  step, jumping straight there (persisting the step being left first) - after a follow-up report that
+  Save & Exit alone still meant Back-clicking through to reach a specific step. Not yet live-tested. Full
+  detail in `giggly-watching-feather.md`'s Phase 2 section.
+- **Settings page redesign round 2 - built 2026-09-16, same day.** A further, more detailed critique of the
+  just-reorganized Settings page, this time flagging French missing from the output-language dropdown and
+  Location Filter/Prioritization Rules as apparent wizard duplicates. Investigated before acting: neither was
+  actually a duplicate (Location Filter/Prioritization Rules govern already-scanned Topic leads; the wizard's
+  Location/Priority steps govern Discovery's own company search and a future Phase 8 scoring pass) -
+  corrected to the user with code evidence, which led to a more deliberate outcome once the user reasoned
+  through it themselves ("why would a user want a different location for companies vs. leads?"): **French**
+  added to `#output-language-select` and `agent-shared.js`'s `languageInstruction()` (now a 3-way branch).
+  **Location Filter unified with the wizard's Location step** rather than just relocated - `storage.js`'s
+  separate `locationFilterConfig` key removed outright; `matchesLocationFilter`/`applyLocationFilterToResultsMap`/
+  `reapplyLocationFilter` now read a `generalLocationFilterConfig()` reshaping helper over `targetUniverseConfig`
+  instead. Confirmed via `AskUserQuestion`: the wizard's Location step country picker widened from
+  `geo-urn-map.js`'s 10-country `CONFIRMED_COUNTRIES` (live-verified `geoUrn`, needed for Discovery's own
+  search facet) to `storage.js`'s ~150-country `ALL_COUNTRIES` (pure text classification) so the one setting
+  serves both jobs - Discovery's own search still only ever uses whichever selected countries have a
+  confirmed `geoUrn`, the rest still apply to lead filtering. **Prioritization Rules relocated (not cut) into
+  a new wizard step**, "Leads Prioritization," placed right after the existing "Priority guidelines" step
+  (renamed "Discovery Prioritization" for the same disambiguation reason). All 5 `PRIORITIZATION_RULE_CATALOG`
+  rules confirmed still actively consumed in real lead-scoring logic before relocating - none dead, so
+  "reduce the rules" was answered with "just fix + relocate, no cuts" (confirmed via `AskUserQuestion`) rather
+  than a scoped-down version; the new step follows the wizard's normal validate-then-persist convention
+  (`prioritizationRules` working state + `persistStep`'s `"leads-prioritization"` case), not the old page's
+  save-immediately-on-change pattern. The old page's 2 extra "exclusion rule" rows (Competitor Blocklist,
+  Location Filter) were dropped outright, not relocated - both were shortcuts into real toggles that already
+  live elsewhere and aren't part of `PRIORITIZATION_RULE_CATALOG`. **Every Settings section now its own
+  card frame** - the previous mega-section spanning Message language through the API key split into 5
+  standalone `.settings-card`s; Location Filter's and Prioritization Rules' cards now just point at the
+  wizard, their old dedicated markup/CSS removed from `settings.html`/`settings.css` entirely (not hidden) -
+  `onboarding.css` carries its own independent copies of the reusable classes for the wizard's own use. Known
+  pre-existing gap, unrelated to this round: Settings' backup export/import still doesn't cover
+  `targetUniverseConfig`/`targetContactProfile`/the other wizard-owned fields at all. Not yet live-tested.
+  Full detail in `giggly-watching-feather.md`'s Phase 4 section ("Settings-page redesign").
+- **Wizard "Exit" button and further Settings simplification - built 2026-09-16, same day.** Reported
+  directly: with only "Save & Exit," a pure look-don't-touch visit to the wizard still forced an immediate
+  persist of the current step plus a possible stale-Discovery dialog. A new `#nav-exit-btn` ("Exit") leaves
+  straight away, skipping both - it doesn't undo anything the wizard's debounced autosave (`scheduleAutoSave`)
+  already committed while the step was open, since there's no separate draft layer to roll back; it only
+  skips the *extra* work Save & Exit does on top of that. Separately, per direct instruction ("remove the 2
+  sections... they are in the Wizard"), the Location Filter and Prioritization Rules cards were removed from
+  `settings.html` outright - no pointer card left behind, unlike the round-2 redesign above, since the
+  wizard's own "Edit Setup…" already covers that; `settings.js`'s corresponding `applyLocationFilterBtn`
+  handler and `reapplyLocationFilter` import were removed too (Dashboard already carries its own independent
+  "Apply Location Filter" copy, so nothing was lost). **Target Accounts (import/export, confidence threshold,
+  Resolve LinkedIn Company IDs, 6.11/6.16) moved to the Target Accounts Dashboard** (`target-accounts.html`/
+  `.js`, 6.19) the same day - reported as a genuine design question ("would it make more sense to move
+  this?"), answered yes: it belongs next to the data it actually affects. `target-accounts.js` already had
+  its own independently-maintained copy of Import/Export (kept in sync with Settings' by hand since v0.29.30,
+  once drifted per the v0.29.38 parity-bug note in 6.12) - that copy is now the only one; the confidence
+  threshold (`getTargetAccountScoreThreshold`/`saveTargetAccountScoreThreshold`) and the experimental Resolve
+  LinkedIn Company IDs action (`getTargetAccountsMissingLinkedinId`/`runCompanyIdResolution`/
+  `applyResolvedCompanyIds`/`markLinkedinResolveAttempted`, `resolveConfirmText`) moved into `target-
+  accounts.js` for the first time, with matching UI added to `target-accounts.html`/`.css`. Also implements
+  the second explicit requirement that came with the move: **Import now prompts for the minimum confidence
+  threshold** (a `prompt()` pre-filled with the current stored value) before opening the file picker at all -
+  reported directly, a fresh import is exactly the moment worth reconsidering the threshold, but it's easy to
+  forget the field exists otherwise since it just silently auto-saved on its own; canceling the prompt
+  cancels the whole import, never opens the file picker. Settings' own Target Accounts card is now just a
+  pointer button ("Open Target Accounts Dashboard…"). Not yet live-tested. Full detail in
+  `giggly-watching-feather.md`'s Phase 4 section.
+- **Phase 9 (Topics settings consolidation) - per-topic Location Filter override built 2026-09-16, target-
+  contact-profile half deliberately skipped.** The original plan bullet conflated two pieces of very
+  different maturity: a per-topic override for the already-built, globally-applied Location Filter
+  (buildable), and a `useGeneralTargetContactProfile` checkbox that only makes sense once matching a post's
+  *author* against target-contact titles exists - it doesn't, and wasn't in scope, so building that checkbox
+  now would have shipped a control that visibly does nothing. Only the Location Filter half was built:
+  `sidepanel.js`'s Topic cards (shared by both Post and Job Topics) gained a per-topic "Use general Location
+  Filter" checkbox that reveals an inline `location-picker.js` override when unchecked. Real discovery made
+  while scoping this: the plan's premise that `scanAllTopics` already applies the filter automatically was
+  wrong - the real (only) application point is `storage.js`'s `reapplyLocationFilter()` (Dashboard's Apply
+  button, post-extraction auto-apply, manual location assignment), which now resolves per-lead using each
+  matched topic's own effective config (`matchesLocationFilterForLead`) - conservative by design, a lead
+  survives if it satisfies at least one of its matched topics, blocked only if every one of them would
+  exclude it. `scanAllTopics` itself still never calls this - a pre-existing gap, not newly introduced. Not
+  yet live-tested. Full detail in `giggly-watching-feather.md`'s Phase 9 section.
+- **Deferred (2026-09-15), explicit decision, not forgotten**: a further batch of Phase 6/8 design refinements
+  and new to-dos, none started (Phase 6 hasn't begun, Phase 8 not yet scoped). **Phase 6 (contact discovery)**:
+  a structured preferred-seniority field (C-level/VP/Director/Head/Manager/etc.), distinct from today's free-text
+  `exactTitles`/`titleKeywords`; a configurable max-contacts-per-account (default 10, up from the ~4-5 estimate
+  elsewhere in the plan); and prioritized contact selection (exact-title matches ranked ahead of keyword-only
+  matches, not just the first N in result order) once a company has more matches than the cap. **Phase 8
+  (company prioritization)**: a proposed weighted-percentage scoring alternative to the ordinal `criteriaOrder`
+  ranking (Geography 30% / Size 25% / Industry 20% / a new Strategic Fit or "SalesMentor Priority" factor 25%,
+  covering buying readiness/budget/pain-point fit) - not yet reconciled against `criteriaOrder`, which the
+  onboarding-wizard revision above already keeps. **Onboarding**: a not-yet-confirmed "Company Type" LinkedIn
+  facet (distinct from Industry) is still open. Several related items shipped instead of staying deferred
+  (Industry step, plus two new onboarding steps between Recruiters and Company aliases): an
+  **Organization Type eligibility** mechanism, a one-click "Any industry" clear button, a keyword-search
+  language setting, and two more exclusion lists.
+  **Organization Type eligibility** (redesigned same day from an initial binary exclude list, after a
+  ChatGPT-run audit of discovered-but-unlisted companies showed some "non-corporate-looking" organizations are
+  genuinely good targets, not noise): a three-state per-industry-label choice - Yes (default) / No (exclude) /
+  Review (keep, flag for a human) - `storage.js`'s `organizationTypeEligibility`, matched against a card's own
+  displayed industry text (a cheaper but real accepted gap since that text doesn't always match the facet id a
+  company was actually found under, e.g. WHO/UNHCR display "International Affairs"). Live-confirmed labels
+  (`industry-id-map.js`'s `EXCLUDABLE_INDUSTRIES`): `Non-profit Organizations` = 100,
+  `Government Administration` = 75, `International Affairs` = 74, `Higher Education` = 68,
+  `Research Services` = 70, `Civic and Social Organizations` = 90. Not yet live-tested end to end. Governing
+  principle for this and any future scale/fit scoring, per the user: organization type alone should never
+  exclude a company - rank by operating scale, buying potential and fit (employee/budget size), not by
+  membership counts, volunteers, or brand visibility, and size should weigh as the *stronger* signal of the two
+  once scale scoring exists (not yet built - Phase 8).
+  **Company aliases** (deprioritized, then reinstated and built, same day): maps a brand/program LinkedIn page
+  that isn't an independently relevant buying organization (e.g. "Audi Schweiz") to its real canonical company
+  ("AMAG"), so Phase 5 attributes a discovered page like that to the right identity instead of writing it up as
+  a duplicate account. `storage.js`'s `companyAliases` (`{aliasSlug, canonicalSlug}` - deliberately no display
+  name, same reasoning as the competitor/recruiter slug lists), entered as one `<alias URL> -> <canonical URL>`
+  pair per line in a new onboarding step. `company-discovery-extraction.js` tags a resolved card's record with
+  `canonicalSlug` (its own `slug`/`name` stay the literal page actually found) and skips a second card that
+  resolves to an identity (`canonicalSlug || slug`) already represented earlier in the same run -
+  `excludedByAliasDuplicate` - before spending a fallback-tier page visit on it. `settings.js`'s viewer flags
+  such records (`[ALIAS OF: ...]`) and its Dashboard-comparison tool buckets them separately ("needs manual
+  check") rather than risking a false "new" it can't reliably name-match. Not yet live-tested (chrome://
+  extensions isn't reachable through this session's browser tooling). Phase 7 (the real merge, built
+  2026-09-16, see below) ended up NOT consuming `canonicalSlug` directly - it turned out identity at merge
+  time is better resolved by company NAME (`normalizeCompanyName`, the same identity every other part of
+  `target-accounts.js` already uses), which naturally collapses an alias into its canonical row's own name
+  match in the common case anyway, without the bug risk a direct `canonicalSlug` redirect would have carried
+  (see Phase 7's own entry below for why).
+  The "Any industry" clear button is a one-click way to clear the Industry checkbox list.
+  **Keyword-search languages - wired in 2026-09-16**: `resolveTargetCountries`
+  (`company-discovery-extraction.js`) now builds one additional Company Search unit per country per selected
+  language (English/German/French), each anchored on that language's own local name for the country (new
+  `country-local-names.js`) instead of the English name every country's base unit already searches under -
+  a real, accepted extra touch-budget cost per added language. **Existing customers/existing partners -
+  built 2026-09-16**: two more identity-based exclusion lists (`storage.js`'s
+  `existingCustomerCompanySlugs`/`existingPartnerCompanySlugs`), same mechanics as competitors/recruiters -
+  asked directly when this was scoped, and the user chose exclude-outright over the "mark in Dashboard"
+  alternative, so these fold into the same `excludedSlugSet`/`excludedByBlocklist` Phase 5 already tracks for
+  competitors/recruiters, not a separate exclusion reason. **Discovery run history - built 2026-09-16**: each
+  completed Discovery run (Phase 5 and Phase 6) now logs its stats via the existing `appendActivityLog()`,
+  visible on the existing `activity-log.html` page, replacing the previous transient debug-panel-only summary.
+  None of this session's 2026-09-16 additions (languages, existing-customer/partner lists, run history) have
+  been live-tested yet. Full detail in `giggly-watching-feather.md`'s Phase 5/6/8 sections and its
+  onboarding-wizard "Planned revision (2026-09-15)" note.
+- **Phase 7 (merging Discovery results into the real workbook) - built 2026-09-16, live-tested 2026-09-16.**
+  Originally scoped as "keep fully separate"; revised once the user raised the real near-term case - piloting
+  with a sales team that already has a rich ChatGPT-researched dataset a generic new customer will never
+  have, so a single unified list serves the pilot far better than two disconnected views the user has to
+  mentally merge. A new **"Review & Merge Discovery Results…"** button on the Target Accounts Dashboard (6.19,
+  hidden unless something's actually pending) shows a live status line and a confirmation dialog before
+  committing - deliberately manual, not automatic the moment a Discovery run finishes, consistent with every
+  other data-mutating action already on that page. **Real design correction made while building this**: a
+  company's actual identity throughout `target-accounts.js` turned out to be
+  `normalizeCompanyName(company.company)`, not `Company_ID`/`companyId` - the Account view's own lookup, the
+  row-click handler that opens an account, and lead-matching all key off the normalized name; `companyId`
+  only ever joins Contacts/Initiatives/Investment/Sources to their own row. `storage.js`'s new
+  `mergeDiscoveredIntoWorkbook()` resolves a discovered company by that same name identity (preferring a
+  LinkedIn-company-ID match when both sides have one, falling back to name - see below): a name matching an
+  existing row (ChatGPT-imported, or merged in an earlier run) is attributed there instead of creating a
+  confusing second account for the same real company; only a genuinely new company gets a new row, keyed
+  `"D-" + linkedinCompanyId` (never colliding with a real `Company_ID`, as originally scoped). A discovered
+  contact follows whichever row its own company resolved to, so its `contactKeyFor` identity (the real
+  routing/chat-history/due-date key for a contact, not `contactId`) always lines up with the right account.
+  Every merged row carries `source: "Discovered"`; a ChatGPT-imported row defaults to `source: "Imported"` as
+  a read-time backfill, never a migration write. A new sortable/filterable **Source** column (reusing the
+  existing per-column table filter, no new filter UI needed) shows this as a small pill on the Explorer
+  table, plus on the Account detail view. A fresh "Import Target Accounts" re-import (a wholesale replace of
+  the ChatGPT sheets) preserves already-merged Discovery rows across that replace - without this, a routine
+  research-workbook refresh would have silently discarded every previously-merged Discovery company/contact.
+  Staged `discoveredCompanies`/`discoveredContacts` are left untouched after a merge (not cleared) -
+  re-running the merge is idempotent by construction. **Live-tested with a real Discovery run** (10 companies
+  discovered, 6 merged, 0 contacts), which surfaced and fixed a real CSS specificity bug (an ID selector's own
+  `display:` rule silently beat the browser's built-in `[hidden]` rule, so the merge button/status stayed
+  visible with nothing pending) and drove two more rounds of direct UX feedback on the confirmation dialog
+  itself: a plain `confirm()` (then a `<dialog>` with too much prose) read as unclear, so it now shows a real
+  **preview** of the actual company/contact names about to be added plus which ones matched to an existing
+  row instead of creating a new one - the honest reason the review step exists at all (Phase 5/6 are new and
+  unproven, there's no undo yet) is also what motivated a real **soft-delete** safety net
+  ("Remove Account…"/"Remove Contact…" next to each Account/Contact view's own title, never actually erasing
+  the row) and **ID-preferred merge matching** (`computeDiscoveredMergeDiff` now prefers a LinkedIn-company-ID
+  match over the name match when both sides have one, since name matching alone is provably fragile against
+  translated names/acronyms/typos, a risk the user raised directly and confirmed as real) - plus a **free
+  LinkedIn-ID backfill** on every name-matched merge (writes the discovered side's own ID onto the existing
+  row via 6.16's `applyResolvedCompanyIds`, narrowing that same identity gap for next time at zero extra
+  touch-budget cost). Full detail in `giggly-watching-feather.md`'s Phase 7 section.
+- **Post-lead prioritization rule engine - genericized 2026-09-16/17.** The Target-Account-driven Post/Job
+  lead-floor logic (6.11/6.16) started as a fixed 8-cell floor table crossing three signals (company
+  confidence, decision-maker Target Contact match, buying-readiness Topic match) - the user's own explicit
+  spec, but then flagged directly as "VERY connected to the Swiss, ChatGPT AI priorities... NOT transferable
+  to a generic SalesTeam app." Rebuilt as a small, generic, fully user-editable condition vocabulary instead:
+  a rule is an AND of conditions (`column` - any named workbook column, equals/contains/at-least/at-most any
+  of a value list; `companyHasMatch`; `authorIsTargetContact`; `topicMatch`), each rule a Floor/Ceiling/
+  Decisive effect, evaluated in stored order (first fully-matching enabled rule wins), with a full visual
+  builder in the Setup wizard's "Leads Prioritization" step (rule cards, per-condition editors, reorder,
+  add/remove). Deliberately **no Author-title condition** in the vocabulary - the user's own call: a Target
+  Contact match already implies the author's title matched the wizard's own title settings, so a separate
+  headline-keyword heuristic would be redundant; the 8-cell table's own version of that heuristic
+  (`HIGH_VALUE_TITLE_KEYWORDS`) was deleted, not kept as a fallback. Caught live while building it: `column`
+  needed two distinct operators, not one - `equalsAnyOf` (exact match) vs. `containsAnyOf` (substring) -
+  after the user shared ChatGPT's own priority-label convention ("Very High - Provisional" as a distinct,
+  lower-confidence label from plain "Very High"); a naive substring check would have wrongly matched the
+  Provisional variant as containing the base label, reintroducing the exact false-positive the original
+  threshold check existed to prevent. The Workbook-column picker was first shipped with ~6 hardcoded
+  suggestions, then fixed the same day, reported directly as "not generic enough": it now reads the real,
+  currently-imported workbook's own column keys live instead. Also surfaced (and fixed) a real gap in
+  `xlsx-lite.js`'s `AI_FIELD_ALIASES` (the table that lets a de-AI'd workbook header like "Priority Score"
+  still resolve to the `aiPriorityScore` field every consumer expects) - `Investment_Score` had no alias back
+  to `aiInvestmentScore`. Full detail in `giggly-watching-feather.md`'s "Post-lead prioritization rule engine"
+  section.
+- **Company exclusion lists unified, then made workbook-aware - built 2026-09-17.** The 4 separate exclusion
+  lists (competitors/recruiters/existing customers/existing partners, each its own storage key and wizard
+  step) were unified into one categorized `companyExclusions` list (`{slug, category}`, one wizard step with
+  5 labeled boxes instead of 4 separate steps) - motivated directly by ChatGPT's own newer workbook gaining a
+  matching single-list-with-a-category "Exclusion_List" sheet (confirmed live: `Company_ID`/`Company`/
+  `Exclusion_Reason` columns, joined to Companies by `Company_ID`), which a single categorized list here can
+  cross-reference cleanly. ChatGPT's own workbook also replaced the old `Priority: "Out of Scope"` convention
+  (which drove no actual exclusion in the extension) with a real score plus a plain `Excluded: Yes/No` column
+  - closing a real correctness gap this surfaced: an excluded company scored normally would otherwise pass a
+  rule's own confidence conditions like any other qualifying account. `storage.js`'s
+  `isCompanyRowExcluded()` now excludes a company from Dashboard display and from both Job/Post prioritization
+  if *either* its own workbook `Excluded` flag or the unified `companyExclusions` blocklist says so; a new
+  **additive-only backfill** (the user's own proposal - never remove, since this app's own list stays
+  authoritative for removal) adds a newly-excluded company to the matching category automatically on every
+  import. Live-tested against a real 528-company workbook: 10 companies flagged `Excluded: Yes` (all
+  `Competitor`), all 10 correctly hidden from the Dashboard and backfilled into the exclusion list. Full
+  detail in `giggly-watching-feather.md`'s "Company exclusion lists" section.
+- **Discovery efficiency and reliability hardening - built 2026-09-17.** Reported directly: Discovery had no
+  idea which companies were already in the real, 528-company workbook, so it would re-find, count against
+  the cap, and spend a touch-costing LinkedIn visit on a company Phase 7's own merge would later just discard
+  as a duplicate. `company-discovery-extraction.js` now skips a card matching the current workbook by
+  LinkedIn slug or name (`excludedByAlreadyInWorkbook`, a new run-summary counter) before any touch-costing
+  action, same identity pattern as Phase 7's own merge. Separately, a recurring zero-result-page bug (same
+  signature as one fixed 2026-09-15) was directly investigated via Claude in Chrome - navigating to the
+  exact failing URL, replicating the scraper's own selector logic in the page's console, and reproducing the
+  real rapid same-tab navigation sequence all confirmed the page genuinely renders correctly within 2-3
+  seconds, ruling out both a broken pagination URL and a broken selector. The remaining explanation is an
+  intermittent miss the existing one-retry defense doesn't always catch; strengthened to up to 2 retries (3
+  attempts total) in both `company-discovery-extraction.js` and `contact-discovery-extraction.js`.
+- **Discover Contacts for Existing Companies - built 2026-09-17, the user's own request.** Phase 6 only ever
+  finds contacts for companies Phase 5 *just* discovered - a real gap once the user pointed out most of a
+  real 528-company ChatGPT-imported workbook only has 1-2 contacts each. New, independent action (no
+  `discoveryQueueState` coupling, can run any time) modeled on 6.16's "Resolve LinkedIn Company IDs":
+  `storage.js`'s `getExistingCompaniesNeedingContacts()` finds workbook companies below a contact-count
+  threshold, sorted never-attempted-first; `contact-discovery-extraction.js`'s
+  `runContactDiscoveryForExistingCompanies()` writes results **directly** to the workbook, no separate
+  review/merge step - confirmed directly with the user (unlike Phase 5/6, there's no identity ambiguity to
+  review here, and a wrong result can still be undone via the existing soft-delete). New matching UI on the
+  Target Accounts Dashboard (Limit-to-N/Stop/status text, same pattern as Resolve LinkedIn Company IDs).
+- **Contact search keyword chunking, not dropping - built 2026-09-17, the user's own request.** The People-
+  tab search used to cap at LinkedIn's confirmed 6-boolean-OR-term ceiling and permanently drop whatever
+  didn't fit - a real profile with more than 6 title/keyword variants silently never got some of its own
+  configured terms searched at all. A real run showed `AI, Artificial Intelligence, Transformation,
+  Innovation, Automation` all dropped, leaving only C-level exact titles actually searched. Rebuilt to chunk
+  into multiple ≤6-term queries instead (a 14-term profile becomes ~3 real per-company visits), merging
+  results by candidate slug. Real, accepted cost: a company needing N chunks now costs N touches, not 1.
+- **Merge status message clarity - built 2026-09-17, two rounds of direct feedback.** "The sentence is very
+  ambiguous" (an aside describing the companies count trailed the whole sentence, after the contacts count,
+  reading as if it described the contacts instead), then a request for a fuller breakdown. Now two clearly
+  separated sentences - Companies (discovered/added/already-on-list) and Contacts (discovered/added/
+  duplicate/how many companies received one) - each count sitting with the sentence it actually describes.
+  Deliberately doesn't report "how many companies had no contacts found" - that's the Contact Discovery run's
+  own stat, not something the merge step can see (a company with zero kept contacts is never staged in the
+  first place).
+- **"AI"-prefixed internal field names leaking into the rule builder - fixed 2026-09-17.** Reported directly,
+  twice: `aiPriority`/etc. kept appearing in the wizard's Post-rule builder and its column-name suggestions,
+  even after the user's real workbook dropped every "AI" mention from its own headers "in the last several
+  file versions." Root cause: `xlsx-lite.js`'s existing short-to-ai field aliasing only ran one direction, so
+  a de-AI'd workbook's row ended up with both the real short key and a synthetic "ai"-prefixed copy, which
+  the column-name datalist then naively listed alongside the real one. Made bidirectional (robust for a
+  legacy AI_-prefixed workbook too), the datalist now excludes every aliased "ai"-prefixed key, the 8 default
+  seed Post rules switched to the short column names, and a retroactive normalization in
+  `getPostPrioritizationRules()` fixes up any rule already saved before this change. Confirmed fixed by the
+  user after reloading.
+- **Preferred-seniority field, built and connected to lead prioritization - built 2026-09-17, the user's own
+  request.** The last remaining Phase 6 to-do (structured seniority, distinct from free-text
+  `exactTitles`/`titleKeywords`) was resolved via live research first: navigated Claude in Chrome to a real
+  company People tab and confirmed there is no seniority facet at all - only 6 unrelated facet categories
+  (location x2, job function, skills, connection degree) plus the existing free-text keyword box. Built as 6
+  fixed levels (Board/Chairman, C-level, VP-level, Head-level, Director-level, Manager-level), each a checkbox
+  plus a 1-3 Low/Medium/High priority (Contacts step, same UI pattern as Industry's own priority rows), additive
+  into `titleKeywords` (never replacing typed titles/keywords) per the user's own explicit confirmation. While
+  scoping this the user added a second, unprompted requirement: seniority should also feed lead prioritization,
+  not just which contacts get kept. Built as: a matched contact is tagged with whichever selected level their
+  headline demonstrates at that specific company (ties go to the higher-priority level), stamped onto the
+  contact's own row, and readable from the Post-lead rule engine via a new `authorSeniorityAtLeast` condition
+  type - reuses the existing generic rule-card UI entirely, no new engine machinery. Not yet live-tested against
+  a real LinkedIn run (touch budget was exhausted for the remainder of this session).
+- **Phase 8 - company-level AI prioritization - built 2026-09-17, same day it was fully scoped.** Scores every
+  eligible company in `targetAccountsWorkbook.companies` (imported and Discovered-only alike) into a P1-P5
+  Priority + short reason, mirroring `prioritizeLeads`'s existing pattern. Implements the user's own 4 scenarios:
+  an imported company with confident research (Very High/High, above the existing Target Account confidence
+  threshold) maps straight to P1/P2, no AI call; an imported company with thin evidence and no SalesTeam signal
+  (no matched contact) floors to P5, deferring to the Sales Mentor's own judgment; everything else (Discovered-
+  only, or imported-thin-but-with-a-matched-contact) gets a free deterministic pre-score (Location/Size/Industry
+  priority ±8 each, matched-contact count a saturating +0/18/25/30) optionally refined by a batch AI Strategic
+  Fit call (0-100 fitScore, folded in as a ±20 nudge, never a full override). One real deviation from the
+  original scoping: the plan's own suggested field names (`priorityScore`/`priorityReason`) turned out to
+  collide with `AI_FIELD_ALIASES`' short-key aliases of the import's own `aiPriority`/`aiPriorityScore` on the
+  same row - caught before writing any code, and renamed to `salesTeamPriority`/`salesTeamPriorityScore`/
+  `salesTeamPriorityReason`, clearly namespaced from the import's own conclusion. New Dashboard UI: a
+  "Prioritize Companies…" button (Target Accounts page), with a "rescore already-scored" checkbox (default off)
+  and an "Also run AI Strategic Fit" checkbox that confirms how many companies will actually incur an API call
+  before running. Results show as 3 new columns, including a P1-P5 pill with its own dedicated color scale
+  distinct from the import's own Very High/High pills.
+- **Phase 8 live-tested against the real workbook, 2026-09-17, same day it was built** - all 4 scenarios
+  confirmed correct, including the "Very High - Provisional" label correctly excluded from the confident-
+  evidence check despite a high raw score (Luzerner Kantonalbank, score 96, still fell to Scenario 4), and the
+  saturating contact-count nudge confirmed exactly (an 8-contact company scored identically to a 4-contact
+  one, not higher). **One real bug found live and fixed the same day**: a several-hundred-company "score
+  everything remaining" run with AI Strategic Fit checked produced zero Strategic Fit text on any Discovered
+  company. Root cause: the whole AI batch was sent to Claude in ONE forced tool call capped at 8192 output
+  tokens - fine for a small batch, but a large one's JSON response silently truncated, and every company past
+  the cutoff simply never appeared in the response, no error surfaced. Fixed by chunking into batches of 25
+  companies per Claude call, with a new progress callback so a long chunked run doesn't look stalled.
+- **"Fetch Company Size" - built 2026-09-17, a second real gap found during the same live test.** The user
+  asked why Discovered companies never got a Size-priority nudge despite XL/XXL being marked High priority.
+  Root cause: LinkedIn's company-search result cards never show employee count at all (only name/industry/
+  location) - confirmed in `company-discovery-content-script.js`, which explicitly caches `sizeBucket: null`
+  for exactly this reason. The user's response: "size is a very important piece of information for an
+  account... we must be able to have this for every discovered company" - authorizing a new LinkedIn touch
+  per company to fix it. Verified live first (same discipline as every scraper in this project): a company's
+  OWN page (not its search card) does show a size band (e.g. "501-1K employees") in a stable, semantic
+  element - though NOT reliably inside a clickable link, a real assumption broken live mid-investigation (one
+  test company had the size as plain text, with an unrelated link nearby that a naive selector would have
+  grabbed instead). Built as a new standalone, user-triggered "Fetch Company Size" feature (mirrors "Discover
+  Contacts for Existing Companies" exactly - button, Stop, limit, touch-budget messaging), backfilling every
+  company already in the workbook (imported or Discovered) missing a size, not just future discoveries. Writes
+  onto the same `globalEmployees` field an imported row already uses (LinkedIn's own band's lower bound, which
+  lines up exactly with `SIZE_PRIORITY_BUCKETS`' own boundaries), so Phase 8's deterministic scorer needs zero
+  special-casing once this runs. Not yet live-tested.
+- **UI/navigation redesign - scoped and approved 2026-09-17, not yet built.** Started from a narrow complaint
+  (the "Remove Account" link too prominent) and widened into a full cross-cutting design pass once the user
+  noticed how much action-button surface has piled up this session (Resolve IDs, Discover Contacts, Fetch
+  Company Size, Prioritize Companies all landed in the same shared page header in one session - confirmed as
+  a real bug too: that header sits outside the Target Accounts/Contacts tab switcher, so company-only actions
+  show on the Contacts tab). Approved via a 4-artboard visual mockup:
+  https://claude.ai/artifact/CmUsCcS3pUjegws6Q3RT2C. Scope: (1) row-level kebab (⋮) menus replacing Posts
+  Dashboard's 6 always-visible icons and adding per-row actions to Target Accounts (Open/Edit/Merge/Remove)
+  and Target Contacts (Open/Edit/Remove, no Merge - contacts already dedupe automatically); (2) a left-nav
+  shell for the 3 full-tab pages (not the side panel, a genuinely different constrained surface), grouping
+  today's flat button rows by topic with modals for anything needing input; (3) Edit + Merge for Target
+  Accounts, built on a new import-surviving override layer (`targetAccountExtras`, merged in only at
+  display/scoring read sites, deliberately never baked into the shared `getTargetAccountsWorkbook()` reader,
+  since several existing functions read-tweak-write the whole workbook back and would otherwise silently
+  bake an edit into permanent storage) - full editability of every imported field, confirmed by the user over
+  a narrower option; (4) soft-delete UX fixes (reposition/reword the link, add a Restore view) - the delete
+  mechanics were already non-destructive and audit-logged, only the presentation was the problem; (5) a side
+  panel rethink - the Scanner (Topics/Job Search/Negative Topics/Search Quality/results) moves to its own
+  full tab, the panel becomes a Quick Launch list plus a new pipeline stats summary; (6) "Send Message" made
+  LinkedIn-safe by explicit design choice - the user's own original idea (auto-paste into LinkedIn's compose
+  box) was flagged as crossing this project's deliberate "never automate an action on LinkedIn's own UI"
+  boundary, resolved instead as clipboard-copy + navigate to the contact's profile, human still clicks
+  Message/paste/Send themselves.
+- **UI redesign Step 1 (kebab menus + delete UX fixes) - built 2026-09-17, not yet live-tested.** Posts
+  Dashboard's 6 always-visible row icons collapsed into one kebab (⋮) dropdown with the same 6 actions, no
+  behavior change. Target Accounts/Target Contacts tables each gained a genuinely new trailing kebab column
+  (previously whole-row-click only, no per-row actions at all): Accounts get Open/Edit(disabled)/
+  Merge(disabled)/Remove, Contacts get Open/Edit(disabled)/Remove. Merge is a deliberate disabled placeholder,
+  not omitted - the user's own explicit call, since they still want to think through how it should work. The
+  original complaint (a prominent red "Remove Account…" link right under the title) is fixed: removed
+  entirely, replaced by a small kebab next to the title offering the same menu. `removeAccount`/
+  `removeContact` extracted into reusable functions so both the table row and the detail page call the same
+  code. Not yet built from the original delete-UX proposal: a self-service "Removed accounts" restore view -
+  scoped but deferred given turn budget; a soft-deleted row is still fully recoverable today, just not by the
+  user themselves yet.
+- **UI redesign Step 2 (left-nav shell) - `target-accounts.html`/`.css`/`.js` only so far, built 2026-09-18,
+  not yet live-tested.** The flat stack of always-visible header button rows replaced with a left sidebar
+  grouped by topic (Views/Data/Enrichment/Prioritization), exactly as mocked up and approved. Low-risk
+  approach: every existing control kept its exact same id, most just relocated from an always-visible row
+  into a `<dialog>` (same pattern `merge-discovered-dialog` already used) - no existing click-handler wiring
+  needed to change, only 4 new one-line "open this dialog" listeners. Deliberately paused before applying the
+  same restructuring to `dashboard.html`/`settings.html` - each is its own real risk of a structural mistake
+  with no live browser access to verify against this session, so Target Accounts alone should get a real look
+  first.
+- **UI redesign Step 2 completed + Step 4 built - 2026-09-18, not yet live-tested.** One real usability bug
+  found from live feedback and fixed the same day: the kebab column sat at the far right of a wide,
+  horizontally-scrolling table - once scrolled right to see it, it was no longer obvious which row it
+  belonged to. Fixed via `position: sticky` on both the header and body cells, applied to both Target
+  Accounts/Contacts and (proactively, same underlying problem) the Posts Dashboard table.
+  `dashboard.html`/`.css` and `settings.html`/`.css` given the same left-nav shell confirmed on Target
+  Accounts first - Dashboard's 8 header buttons became plain nav items (no dialogs needed, none of them ever
+  had a parameter input); Settings (a page of topic cards, not action buttons) got anchor-jump nav items
+  instead. Step 4 (side panel split): `scanner.js` is an exact, unmodified copy of the old `sidepanel.js`
+  (1813 lines) powering a new `scanner.html` tab - the actual scan logic was deliberately never rewritten,
+  only relocated, verified by cross-referencing every element id the script expects against the new page
+  (zero missing). `sidepanel.html`/`.js`/`.css` are a genuine from-scratch rewrite - Quick Launch plus a new
+  pipeline-stats summary (Target Accounts/Contacts counts, leads by status, using the same soft-delete/
+  exclusion filtering as the Dashboard's own so the numbers actually match). "Discover Accounts/Contacts"
+  quick-launch items from the original mockup were deliberately dropped after checking: Company/Contact
+  Discovery (Phase 5/6) triggering only exists today in Settings' own debug test panels, and linking a
+  friendly button to a debug harness would have been misleading - a real gap worth a proper trigger someday.
+- **Two more real bugs found and fixed from live feedback, 2026-09-18** (Target Contacts Dashboard): the
+  contacts table had no column sort/filter at all - root cause was `#contacts-table` having zero CSS rules
+  anywhere (only the companies table was ever styled), so the absolutely-positioned filter menu had no
+  positioned ancestor to anchor to and rendered invisibly off-page; fixed by merging the two tables into one
+  shared rule set so they can't drift apart again. Contacts also had no Priority column despite carrying real
+  seniority-match data (`seniorityLevel`/`seniorityPriority`, stamped on every Discovered contact all along) -
+  added both, with id-to-label lookups matching every other pill column's pattern. Also added `accountStatus`/
+  `contactStatus` as new per-row pill columns (previously only computed for the pie charts), routed through
+  the same `rawValue()` every other column uses so sort/filter work on Status too.
+- **Three more real bugs found and fixed, 2026-09-18 (same day):** the Contact page's back-link was mislabeled
+  "Back to Target Accounts" and always navigated to the Accounts list regardless of where it was opened from -
+  fixed (correct label, navigates to Contacts). Copying a drafted message from the Account/Contact page's own
+  Mentor chat didn't update Status or Last Contact at all (unlike the Lead Detail page's `detail-copy-btn`,
+  which auto-advances a lead's own status) - this mattered specifically for "cold" contacts/accounts with no
+  associated lead, previously the only entities that could never show anything but "Not contacted." The
+  Contact page also showed no Status field at all. **Full fix**: a new `manualStatus`/`manualStatusAt` field
+  pair on `targetAccountExtras`/`targetContactExtras` (same durable, import-surviving pattern as the
+  follow-up-date/soft-delete fields), combined with the lead-derived status via `effectiveStatus()` (an
+  advance-only rank comparison, so a manual value can never silently downgrade what leads already show) -
+  wired into a new Status field (pill + manual override `<select>`) as the first field on both the Account and
+  Contact overview cards, AND into a new "Copy" button on every Account/Contact Mentor chat bubble
+  (deliberately not on Customer Voice, which is for rehearsal, not real outreach) that copies the drafted text
+  to the clipboard and auto-advances status to "Contacted," mirroring the Lead Detail page's own copy-then-
+  advance behavior for entities with no lead at all.
+- **Scanner page split into two independently-scrolling verticals, 2026-09-18** (user follow-up to the Step 4
+  Scanner-tab split, same day): Scan Settings (Topics through Backup/Restore) on the left with its own scroll;
+  Run (the Scan All Topics button and scan-progress status) pinned above a separately-scrolling Results list
+  on the right - so the scan status and results are always reachable without scrolling past the settings
+  sections above them, and settings can be reviewed without losing your place in a long results list.
+- **UI redesign Step 3 (Edit for Accounts/Contacts) built, 2026-09-18** (Merge stays disabled). Narrower than
+  originally scoped: edits cover the descriptive/researched fields already on the overview card (Industry,
+  Type, names/URLs, Address, Employees, Revenue, Budget, Top initiatives for Accounts; Title, Function,
+  Seniority, LinkedIn, Business email, Relevance for Contacts) - deliberately excludes the company name/
+  contact full name (the stable identity keys every extras record and lead-match join is keyed by) and every
+  field with its own existing editor (Status, Follow-up due) or owned by import/Discovery (Source, Priority,
+  Evidence Coverage). A new `overrides` field on `targetAccountExtras`/`targetContactExtras` holds only the
+  fields actually edited, diffed against the raw imported value (not the override-merged one) so an untouched
+  field keeps following future re-imports; applied at read time (the Explorer table's own columns/sort/filter,
+  and the detail page), never baked into the shared workbook reader. The previously-disabled "Edit" kebab item
+  (table row and detail page, both entity types) now opens the overview card into an edit form with **Save
+  changes / Cancel** buttons, directly per the user's own request ("in case we decide not to go through with
+  the changes") - Cancel discards with no write, Save logs one Activity Log entry per edit listing which
+  fields changed. Posts (leads) Edit intentionally not yet built - unlike Accounts/Contacts, leads never had a
+  disabled Edit placeholder to begin with, and what's actually missing an editor (scraped author/title fields)
+  is a different enough scope that it was flagged to the user rather than guessed at.
+- **Contact Coverage pie re-bucketed, 2026-09-18**: "0/1-2/3+ contacts" replaced with "1/2/3+ contacts" -
+  zero-contact relevant accounts are now skipped entirely rather than bucketed, so a single-contact account
+  (one departure from having no contact at all) is no longer lumped in with a properly-covered one.
+- **Posts Dashboard cross-linked from Target Accounts' left nav, plus 3 new stat pies, 2026-09-18**: a
+  `Posts Dashboard ↗` item added to Target Accounts' "Views" nav group (its first-ever cross-page link).
+  Posts Dashboard's stats row gained Priority (P1-P5 + Not scored), Status (all-time), and Source (Post/
+  In-Post Job Ad/Job Listing) pies alongside the original 3 time-windowed ones - 6 cards total, changed from
+  an even-flex row to a horizontally-scrolling strip of fixed-width cards so 6 pies stay readable instead of
+  squeezing down to fit.
+- **Account/Contact Edit narrowed to direct feedback, same day**: cut from a broad field list down to just
+  Industry, Type, Alt. name(s), and Top initiatives for Accounts (LinkedIn/Website/Address/Employees/Revenue/
+  Budget walked back out - the user's own reasoning: without an official source like a financial report,
+  a user has no better data than SalesTeam's own research). Industry/Type became dropdowns of values already
+  used elsewhere in the workbook, never free text, so a typo can't spawn a near-duplicate category. Alt. name
+  became an editable list (one name per line) instead of a single string. For Contacts: LinkedIn URL dropped
+  (same reasoning), Seniority became the same kind of dropdown, and Business Phone was added alongside
+  Business Email - both now also shown as visible columns on the Contacts Dashboard table. A new "SalesTeam
+  Priority" field on the Account overview card lets Phase 8's own scoring be manually overridden, but requires
+  a reason (defaults to "Overridden by user," editable) before the override is saved - directly per the
+  user's request. Also fixed: the Target Contacts table's own top/bottom scroll bars never worked at all -
+  same root cause as an earlier sort/filter bug (the Companies table's scroll CSS was never duplicated for
+  Contacts, even though the JS scroll-sync wiring was already correct).
+- **Settings page restructured into single-section routing, 2026-09-18**: every settings card used to render
+  at once (nav items just scrolled to one); now exactly one section shows at a time, chosen by the nav
+  (hash-routed, same shape as the other pages' own detail views) - directly closes the request that the Setup
+  Wizard's explanation and the 3 debug test panels shouldn't show by default. A new "Onboarding" nav group is
+  first in the sidebar, showing real progress (`X/11` steps, or a checkmark once complete) as both a compact
+  nav badge and a full progress bar in the Setup section itself - not just the old "not completed yet"
+  boolean. A new "User Profile" section was added but deliberately left as an honest placeholder rather than
+  copying the reference screenshot's Login/Password/CRM-connection fields - none of that exists in this
+  local-only, single-user extension (no accounts, no server, no CRM integration), so building those fields
+  would have been fake UI; flagged back to the user for what real, user-specific setting belongs there
+  instead. Also answered directly rather than built: no cookie/consent banner is needed - everything persists
+  through `chrome.storage.local` only, with no server and no third-party data transmission beyond the user's
+  own Anthropic API calls and plain LinkedIn page navigation.
+- **User Profile built out for real, same day**: the user answered directly - name + title/role for
+  drafted-message personalization, plus an email address saved ahead of a future notification feature (not
+  used anywhere yet). New `getUserProfile()`/`saveUserProfile()` (storage.js) and a `userProfileBlock()`
+  prompt helper (agent-shared.js), wired into the 3 prompts that actually write a draft's text directly (the
+  Dashboard/side panel Draft Message button, and the Account/Contact Mentor chats) - phrased as "use for a
+  natural self-introduction or sign-off only where it genuinely fits, never force it in," since these are
+  short LinkedIn openers, not emails. The Mentor's general advisory prompts were deliberately left untouched -
+  they always delegate actual drafting to the same one function. Settings' User Profile section now has real
+  Name/Title/Email inputs, saved live with the page's existing save-confirmation pattern.
+- **Cross-page navigation gap closed, same day**: every full-tab page's nav only ever showed that page's own
+  actions, with no way back to Settings/Help/Advisors/Activity Log/User Profile except through the side
+  panel. `sidepanel.html` (already a Quick Launch hub from the Step 4 split) got extended rather than
+  building a second hub page: a new "My Profile ↗" item, and a deliberately separate, visually muted "Debug"
+  item at the very bottom ("not something a normal user will use... only in case of a support session," the
+  user's own words). Every full-tab page (Target Accounts, Posts Dashboard, Settings, Scanner) gained a
+  "← Home" link as the first nav item - a plain relative link (not `chrome.tabs.create` like every other
+  cross-page link here) so it navigates the current tab back to the hub instead of opening yet another one.
+  "Target Accounts" was removed from Settings entirely (the user's own question: "Why is the Target account
+  in this Setting menu at all?") - it only held one redundant "Open Target Accounts Dashboard…" button.
+  Settings' own Debug test panels group was visually de-emphasized and pushed to the bottom of its nav rather
+  than removed outright, so someone arriving via the hub's Debug link can still switch between the 3 panels.
+  Message/Response Language's explanation was rewritten to actually answer "how will this be used" - it's
+  the default language for every AI-generated text in the extension, with one named exception (Customer
+  Voice mirrors a specific real lead's own post language when grounded in one) - and left in Settings rather
+  than moved into Onboarding, since it's a standing app-wide preference (like the API key) rather than part
+  of the one-time targeting profile the wizard's own steps describe.
+- **Real bug fixed from a live console error, 2026-09-19**: `company-resolve-content-script.js` and
+  `company-size-content-script.js` both crashed ("Identifier 'POLL_INTERVAL_MS' has already been declared")
+  on plain LinkedIn company-page visits. Root cause: Chrome runs every content script from one extension in
+  a single shared per-page scope, and `manifest.json` registers 3 separate content scripts against
+  `linkedin.com/company/*` - the two above both declared their own top-level `POLL_INTERVAL_MS`/`sleep`/
+  `normalizeText`/`run`, colliding, which silently broke whichever one lost the race (Resolve LinkedIn
+  Company IDs or Fetch Company Size) with no visible symptom beyond a console error. The exact same bug was
+  found once before (2026-09-15) and fixed by IIFE-wrapping only one of the two colliding files at the time,
+  leaving the other exposed to whatever got added later. Fixed properly this time: both files wrapped in an
+  IIFE, matching the pattern already used by the other two content scripts on overlapping URL patterns.
+- **Cross-page nav redesigned a 4th time, converging on an in-place mega-menu, 2026-09-19**: the earlier
+  "Home" link (to `sidepanel.html`) was rejected twice more in quick succession before landing on the final
+  design - every full-tab page's own left nav is now the FULL cross-app menu, permanently, with no separate
+  "Home" destination at all. One `<details open>` group holds the current page's own real, live items; one
+  closed `<details>` per other page holds only its real addressable destinations (never an in-page-only
+  action button); native HTML, zero JS needed for expand/collapse. Clicking a different page's item still
+  opens a new tab (existing convention); clicking within the current page's own group behaves exactly as
+  before. The main content area is never touched by anything in the nav except an actual cross-page click -
+  directly satisfying the repeatedly-restated requirement: "keep the content of the main page, but only
+  switch to the full menu... while only highlighting the current menu option."
+- **Mega-menu refined, 5th round of direct feedback, 2026-09-19**: Target Accounts and Target Contacts split
+  into two separate top-level nav groups (previously one umbrella that stayed bold/open even while viewing
+  Contacts - a real bug, reported with a screenshot); `showView()` now toggles which one is open based on the
+  real current view. Bold/indent hierarchy fixed (the open group's header is now visibly darker, items get a
+  real 16px indent). The ↗ arrow ("opens in a new tab") is now consistent - removed from Advisors/Activity
+  Log/Help/Pipeline Overview, which now embed IN PLACE via an iframe instead of opening a new browser tab
+  (those 4 pages have no nav shell of their own, so this shows only their real content, no nested sidebar) -
+  the left menu stays visible the whole time, with a "← Back" button to return. New collapsible nav
+  (`#nav-collapse-btn`, «/» toggle) shrinks the sidebar to a 44px icon rail for more room, persisted across
+  page navigations via `localStorage`.
+- **Mega-menu, 6th round of direct feedback, 2026-09-19**: "Pipeline Overview" removed entirely (redundant
+  once every real destination had its own nav entry). Nothing in the nav opens a new browser tab any more -
+  every cross-page item, including the "big" pages (Target Accounts/Posts Dashboard/Scanner/Settings), now
+  embeds via iframe. Since those 4 pages each have their own full nav shell, a new `?embedded=1` query param
+  makes a page hide its own nav when loaded inside another page's embed, avoiding a nested double sidebar -
+  the embedded page shows only its real content, relying on the host's nav + "← Back" for further navigation.
+  Also fixed: bold was being used for two different things (group headers and the current selected item,
+  reported with a counter-example screenshot from Apollo) - the current item is now marked by its background
+  highlight alone, bold is group-headers-only.
+- **Mega-menu, 7th round of direct feedback, 2026-09-19**: Scanner's own sub-menu (7 anchor-jump links into
+  `scanner.html`'s own sections) replaced with real functionality - reported directly, the links "mostly
+  point to the wrong place" and Run Scan/Results "do not seem to do anything" (both sit in the always-visible
+  right column of Scanner's own 2-column layout, so jumping to them changes nothing visible). The Scanner nav
+  group in the other 3 full-tab pages plus the side panel now reads Open Scanner, Export Settings, Import
+  Settings, Export Leads, Import Leads - reusing `storage.js`'s existing, page-independent
+  `exportSettings`/`exportLeads`/`importSettings`/`importLeads` (the same functions Scanner's own
+  Backup/Restore buttons already called), so these work from any page without navigating to Scanner at all.
+  Scanner's own copy of the group keeps only the 4 backup/restore actions (its own destination is itself); the
+  old `#backup-section` in Scanner's page body was deleted, the same controls now living only in the nav, per
+  the user's explicit ask.
+- **Mega-menu, 8th round of direct feedback, 2026-09-19**: nav typography cleanup, from a live screenshot.
+  Root cause of "sub-menu items look semi-bold": `.nav-item` never set `font-family`, so every `<button
+  class="nav-item">` silently rendered in the browser's own default UA font (confirmed live: Arial on Windows
+  Chrome) instead of the page's own font stack - fixed with `font-family: inherit`. Group headers no longer
+  change color between open and closed (previously grey when closed, dark when open - reported directly as
+  confusing); given a fixed, distinct dark-navy color (`--nav-header`) instead, with the all-caps styling
+  removed per the same feedback. The ungrouped "More" label (Advisors/Activity Log/Help) removed entirely -
+  it was never a real collapsible group, just an unlabeled 4th category - those 3 items now share the same
+  header-level typography instead. Debug Test Panels deliberately excluded from all of the above, per the
+  user's own stated exception - stays visually muted/grey.
+- **Side panel trimmed down, 9th round of direct feedback, 2026-09-19**: `sidepanel.html` is a different
+  surface from the 4-page mega-menu (a small persistent launcher, not a full-tab page with its own nav shell)
+  - scoped back to just Scan for Leads, Target Accounts Dashboard, Target Contacts Dashboard, and Posts
+  Dashboard, followed by the Your Pipeline stats - reported directly, everything else (Scanner backup's
+  Export/Import Settings/Leads, Settings, the ungrouped "More" items, and the closed-by-default Debug group)
+  removed entirely. The 4 remaining items are now flat (no group wrappers - a single-item group whose header
+  read the same as its one child button was redundant at this length). All 4 already opened in a genuine new
+  browser tab (`chrome.tabs.create`, no `?embedded=1`) rather than disturbing the user's current tab, landing
+  on a page that shows its own full nav - confirmed, not changed, since that was already `sidepanel.js`'s own
+  `openTab()` behavior.
+- **Side panel, 10th round of direct feedback, 2026-09-19**: "Scan for Leads" fixed to match the other 3 -
+  reported directly, it was "always highlighted in Blue background" (a leftover static `.primary` CTA style,
+  unrelated to actual selection) and missing the ↗ the other 3 had. `.primary` removed, ↗ added, and (at the
+  time) a `.nav-item.active` class was introduced to follow whichever button was last clicked - later removed
+  entirely once it proved unreliable; see the final bullet below.
+  Separately, a reported "old version of the left main menu" on Posts Dashboard was initially investigated and
+  traced to a genuinely older `dashboard.html` packaged inside `builds/v0.31.0/SalesTeam-v0.31.0.zip` in this
+  repo (no left nav at all) - flagged as a possible stale-load issue, but the user confirmed the correct folder
+  was loaded and reloaded and the issue persisted, and a live DevTools diagnostic proved the page was in fact
+  current. The real cause (11th round, below) was something else entirely.
+- **Posts Dashboard sub-labels flattened, 11th round of direct feedback, 2026-09-19**: the actual root cause
+  of the "old version of the left main menu" report - `dashboard.html`'s own nav group still divided its 8
+  action items into Scoring/Enrichment/Export sub-labels, a deliberate choice made in the 5th round specifically
+  because Target Accounts/Target Contacts got simplified past that style while Posts Dashboard (and Settings)
+  kept it for having more items. Reported directly: "the menu has these older version of sections... that we
+  no longer have in the menu of Target Accounts and Target Contacts." Fixed by flattening Posts Dashboard's own
+  group to match (sub-label `<div>`s removed, same 8 items now flat; `.nav-group-sublabel` deleted from
+  `dashboard.css` as now-dead code). `settings.html` has the same kind of sub-division and was left unchanged -
+  flagged to the user as an open question rather than assumed into scope.
+- **Kebab/Actions column sticky-header bug fixed, 12th round of direct feedback, 2026-09-19**: reported with a
+  screenshot - the Posts Dashboard table's row kebab (⋮) menu appeared positioned over the last visible column
+  instead of to the side. Reproduced live with a synthetic copy of the table (real data needs `chrome.storage`,
+  unavailable outside a loaded extension) and confirmed via `getComputedStyle`: the body `td.actions-cell` was
+  correctly `position: sticky` the whole time, but the HEADER `th.actions-cell` computed to `position:
+  relative` instead - `#results-table th { position: relative; ...}` (ID + element, specificity 1-0-1) was
+  beating the sticky rule (class + element, 0-1-1), an ID always outranking any number of classes regardless
+  of source order. With no "Actions" label pinned above the (correctly pinned) kebab buttons, they read as
+  attached to whichever column was last visible. Same bug found and fixed proactively in `target-accounts.css`'s
+  `.actions-col` (shared by the Companies/Contacts tables, identical root cause) even though not reported
+  there yet. Fixed by scoping both rules with their table's own id so specificity actually wins - no JS/HTML
+  changes needed. **Still open per the user's immediate follow-up**: the header-label fix didn't resolve it -
+  the kebab still visually overlays the last visible data column while scrolled, which may be the sticky
+  column's inherent overlay design (same mechanism `target-accounts.css` already uses) rather than a further
+  bug; whether the user wants a structurally different non-overlapping pinned column is unconfirmed.
+- **Embedded-page height collapse bug fixed, 13th round of direct feedback, 2026-09-19**: reported as "worse"
+  than the kebab issue, from a full testing pass - navigating into an embedded page (e.g. Posts Dashboard
+  embedded inside Target Accounts) collapsed the main screen into "a small scrollable area at the top,"
+  across many nav items. Root cause: `#app-shell`'s `align-items: flex-start` never actually stretches
+  `#app-main` to its own `min-height: 100vh` - it only looked full-height because real, in-flow content was
+  naturally tall; with that content hidden to show an embedded page instead (`position: absolute`, out of
+  flow), `#app-main` collapsed to just its padding, and the absolutely-positioned embed wrapper collapsed
+  with it. `scanner.css`'s `#app-main` already had an explicit height (needed for its own 2-column layout) and
+  so was unaffected; `target-accounts.css`/`dashboard.css`/`settings.css` did not. Fixed by adding `min-height:
+  100vh` to `#app-main` in all three. Verified live by manually triggering the embed DOM changes and
+  confirming via screenshot that the embedded page now fills the full viewport.
+- **Nav group order normalized across all 4 pages, 14th round of direct feedback, 2026-09-19**: reported
+  directly - "if I click on the Posts Dashboard in the side panel, the main menu changes its order and puts
+  the Posts Dashboard first. It should not do that." Root cause: each full-tab page's own nav put its OWN
+  group first in its static markup (current/open), so the rest of the list reshuffled depending on which page
+  was current - `target-accounts.html` happened to already define what became the de facto canonical order,
+  so landing there never visibly moved anything, while dashboard/settings/scanner all did. Fixed by reordering
+  every page's `<details class="nav-group">` blocks to one fixed sequence (Target Accounts Dashboard, Target
+  Contacts Dashboard, Posts Dashboard, Scanner, Settings, Debug test panels last) - only which group carries
+  `open` changes now, never their relative order. Purely a markup reorder, no CSS/JS changes.
+- **Posts Dashboard's Actions column rebuilt as a separate table, 15th round of direct feedback, 2026-09-19**:
+  the bigger fix for the kebab-overlap issue (chosen explicitly over a narrower-columns quick fix). Root cause
+  of "only Posts Dashboard, not Target Accounts/Contacts": both tables used the same `position: sticky; right:
+  0` last column, which by design overlays whatever real column is scrolled underneath it - true for both, but
+  `dashboard.js`'s 16 columns are wide (150px+, `table-layout: fixed`) so the overlap cut off a large,
+  noticeable chunk, while `target-accounts.js`'s ~35 narrower, auto-sized columns made the same overlap much
+  less noticeable. Rebuilt `#table-section` from one sticky-column table into a flex row of two structurally
+  separate tables - `#table-scroll-region` (the only part that still scrolls horizontally) and
+  `#actions-column-wrap` (fixed-width, never scrolls) - so Actions can no longer overlap real data at any
+  scroll position, not via a CSS trick but an actual different structure (the same "frozen pane via a separate
+  synced table" pattern spreadsheet/grid UIs use). `actions` removed entirely from `dashboard.js`'s `COLUMNS`;
+  `renderTable()` now builds both tables' rows in lockstep and syncs each row's height afterward
+  (`syncActionsColumnRowHeights`) since leads' Content/Title/Priority Reason cells wrap to different heights
+  per row and would otherwise drift the two tables out of alignment. `target-accounts.css`'s own sticky
+  `.actions-col` was left untouched - the report and chosen fix were specific to Posts Dashboard.
+- **Posts Dashboard's Actions column reverted back to sticky, 16th round of direct feedback, 2026-09-19**: the
+  separate-table structure was undone the same day - reported directly, with a side-by-side screenshot
+  comparison against Target Contacts, that it "doesn't look good... much nicer and cleaner [with sticky]. Why
+  can't you use the same solution as with the other Dashboards?" Reverted to one table with a sticky last
+  column (round 12's header specificity fix restored verbatim), the separate-table JS/CSS removed, and every
+  column's default width narrowed (e.g. `content` 280->240, `actions` 150->48) closer to Target Accounts/
+  Contacts' own narrower columns, so any overlap while actively scrolling now covers noticeably less area -
+  the underlying sticky mechanism is unchanged and now identical to the other 2 tables.
+- **Scanner nav polish, 17th round of direct feedback, 2026-09-19**: two issues from continued testing. "Why
+  do the menu items under the Scanner... look like buttons?" - the round-7 relocation of Backup/Restore
+  controls into the nav brought their old `.backup-buttons-row` boxed styling along with it; unwrapped and the
+  dead CSS deleted, so they're now plain `.nav-item`s like everywhere else. "The checkbox for 'include API key
+  in setting export' does not belong in the menu... should be in a pop up window" - moved into a new
+  `#export-settings-dialog` (same `action-dialog` pattern `target-accounts.html` already uses for its own
+  nav-triggered dialogs), with Export Settings now opening the dialog instead of exporting immediately.
+- **Posts Dashboard's Actions column rebuilt to actually mirror target-accounts.js, 18th round of direct
+  feedback, 2026-09-19**: reported with precision - "only in the Posts Dashboard, the Kebabs have a column
+  header called Action[s]... still overlapping the last column... and there is no Scroll slide at the top of
+  the table... this is telling me that the code is not re-using common components." Root cause: `dashboard.js`
+  had "actions" as just another entry in the shared `COLUMNS` array (a label, a resize handle) - target-
+  accounts.js never did, building it entirely separately as a bare, unlabeled, hardcoded-40px column after the
+  real columns. Fixed by actually converting to that same shape, and added the missing top scrollbar
+  (`#table-scroll-top`, mirroring target-accounts.html's own mechanism) that dashboard.html never had.
+- **"<- Back" button removed from every embedded page, 19th round of direct feedback, 2026-09-19**: started
+  scoped to Advisors/Activity Log/Help, widened to all pages including Scanner in the same round. Since
+  `#embedded-page-close-btn` was the ONLY thing that ever called `hideEmbeddedPage()` and no nav item points
+  back to "this page's own content," removing it outright would have stranded the user - added a safety net
+  first: clicking the "SalesTeam" brand name now also returns to native content. Also caught and fixed the same
+  class of CSS specificity bug as round 6 (`#embedded-page-bar { display: flex }` beating `[hidden]`) across
+  all 4 host files.
+- **Empty debug-state-display boxes hidden, 2026-09-19**: reported directly, with screenshots - Company/Contact
+  Discovery's debug panels showed 2 empty grey rectangles below their buttons even with nothing to display.
+  Fixed with `.debug-state-display:empty { display: none; }` in `settings.css`.
+- **Posts Dashboard kebab header white-box fixed + missing nav self-item added, 2026-09-19**: the sticky
+  column's own `background: #fff` (needed on the body cell only) was also landing on the header cell at higher
+  specificity than the shared header background, breaking its blue tint - split the rule so only the body cell
+  gets it. Also added `#open-posts-dashboard-self-btn` ("Posts Dashboard") as the first item in its own nav
+  group, matching Target Accounts' own self-referential tab - reported directly, there was no findable way back
+  to Posts Dashboard's own content once something else was embedded over it.
+- **Actions column extracted into a shared module, 2026-09-19**: reported directly, twice, with increasing
+  directness - "why can't you simply re-use the code that displays the Kebabs in the Target and Contacts
+  Dashboard, instead of keep trying to find workarounds." Root cause: `dashboard.js` and `target-accounts.js`
+  (itself internally duplicating the same logic twice, for Companies and Contacts) were never sharing code for
+  the actions column - three hand-written copies of the same idea that kept drifting apart in small ways round
+  after round. Confirmed with the user before touching target-accounts.js/css (no reported bugs there) given
+  the real regression risk, then extracted a new shared module, `actions-column.js`
+  (`appendActionsCol`/`appendActionsTh`/`appendActionsTd`) - now the only place that decides the column's
+  structure; each table's own kebab menu items stay page-specific via a callback. `dashboard.css`'s class
+  renamed from `.actions-cell` to `.actions-col` to match; `target-accounts.css` needed no changes.
+- **Genuine nested double-scrollbar bug fixed (a real regression from round 13's own fix), 2026-09-19**:
+  reported directly, in stages, confirmed by testing each scrollbar independently - "the outer one moves the
+  main page and also the menu, the inner one moves only the central page." Root cause: round 13's own
+  `#app-main { min-height: 100vh }` fix (for embedded pages collapsing to "a small scrollable area") inflated
+  `#app-main` unconditionally, even while showing a genuinely tall embedded page - since `#embedded-page-wrap`
+  was sized via `bottom: 0` (stretch to match `#app-main`), inflating `#app-main` also inflated the OUTER host
+  document, producing a real second scrollbar layered on top of the embedded iframe's own internal one. Fixed
+  by giving `#embedded-page-wrap` its own `min-height: 100vh` directly (it's `position: absolute`, so this
+  doesn't depend on `#app-main`'s height at all) and reverting `#app-main`'s own `min-height: 100vh` in
+  `target-accounts.css`/`dashboard.css`/`settings.css`. Verified by injecting 2500px of synthetic content
+  directly into an embedded iframe: the outer host page's scroll height stayed completely unchanged while the
+  inner iframe correctly grew and scrolled internally - exactly one meaningful scrollbar.
+- **Related non-bug clarified in the same round**: "the Target Accounts Dashboard sub-menu... only have one
+  item" turned out to be the user viewing real Target Contacts data via the embed mechanism (navigated there
+  from another page), so the left nav they saw correctly belonged to the HOST page (whose own copy of that
+  cross-page group has only ever had one button, since round 5) - not a bug, but made less obvious once round
+  19 removed the "← Back" bar/title that used to mark the seam between host nav and embedded content.
+- **That same fix regressed 2 more things, fixed the same day, 2026-09-19**: "You fixed one thing and broke 2
+  other things." (1) "Missing the upper horizontal scroll slide" - the previous fix's `min-height: 100vh` is a
+  known CSS flexbox gotcha: a flex container's `min-height` doesn't reliably give a `flex: 1` child a definite
+  height, so `#embedded-page-frame` (the actual iframe) could render shorter than intended, squeezing the
+  embedded page's own layout. Fixed by using a definite `height: 100vh` instead - also more semantically
+  correct, since an iframe's box is exactly whatever CSS gives it and a taller embedded document scrolls
+  within it on its own. (2) "The missing sub-menu items for Contacts and Accounts... are gone again" - not a
+  regression: traced to a dated, on-record decision (plan file, PRD 6.20 Phase 10's original side-panel
+  rewrite) that explicitly dropped "Discover Accounts"/"Discover Contacts" quick-launch items because
+  Company/Contact Discovery only ever existed as temporary debug panels - those items never existed as real
+  nav items anywhere; the debug panels themselves are unchanged, still in Settings → Debug Test Panels.
+- **Every nav group now shows its full, real item list everywhere - a real design change, 2026-09-19**: "I do
+  not care which screen is now in the middle. If I have a sub-menu open, it must show all entries, not only 1.
+  This was never designed to hide entries based on what screen is active" - then, on scope: "it should do what
+  I meant it to do..., even if my main central tab is pointing to a completely different sub-menu." Scanner and
+  Settings groups needed no work (already fully duplicated with working per-item behavior since rounds 6-7).
+  `dashboard.html`/`settings.html`/`scanner.html`'s own copies of "Target Accounts Dashboard"/"Target Contacts
+  Dashboard" now include the same dialog-opening actions `target-accounts.html`'s native copy has;
+  `target-accounts.html`/`settings.html`/`scanner.html`'s own copies of "Posts Dashboard" now include the same
+  8 real actions `dashboard.html`'s native copy has. Each item embeds the target page with `#action=X`; new
+  `openActionFromHash()` (`target-accounts.js`) and `runActionFromHash()` (`dashboard.js`) auto-trigger the
+  matching dialog/button on arrival, layered on top of each page's existing hash handling (verified no
+  collision). Two items deliberately left out, flagged rather than silently skipped: "Import/Export Target
+  Accounts…" - a native OS file picker can only open from inside a real, synchronous user click, which
+  browsers block from firing after an async page load; there's no way around this constraint.
+- **Cross-page action items "sometimes work and sometimes not," fixed same day, 2026-09-19**: reported
+  directly - "I cannot figure out any logical rule for when it works and when not." Root cause: a real browser
+  quirk - changing an iframe's `src` to a URL differing only in the `#hash` from what it already shows (e.g.
+  two different `target-accounts.html#action=X` clicks in a row) is treated as an in-page fragment navigation,
+  not a real one - the document never reloads, so `init()`'s one-time action-trigger call never runs a second
+  time. Whether it "worked" depended invisibly on whether the previously-embedded page happened to be the same
+  page or a different one. Fixed by also calling the trigger logic from each page's existing `hashchange`
+  listener (which does still fire for this case), covering both a real reload and a fragment-only change.
+- **Side panel's "active button" highlight removed, 2026-09-19**: round 10's `.nav-item.active` highlight
+  (moved to whichever Quick Launch button was last clicked, via `markActiveLaunch`/`restoreActiveLaunch`)
+  removed entirely. Raised directly while debugging the round above: "it will then highlight the wrong
+  Dashboard in the middle tab... should we not remove this highlight all together?" Confirmed no messaging
+  mechanism exists between the side panel and any main tab (grepped `chrome.runtime.sendMessage`/`onMessage` -
+  none found), so the highlight could only ever reflect "last thing launched from the panel itself," not what a
+  main tab was actually showing once the user navigated any other way (e.g. via a tab's own mega-menu) - once
+  every nav item worked from any page, that mismatch became actively misleading rather than merely stale.
+  Confirmed with the user before removing: "Better no indicator than to miss lead. The user can see which
+  content is showing in the middle tab so, it is not needed." `markActiveLaunch`/`restoreActiveLaunch`/the
+  storage key/button-id map removed from `sidepanel.js`, `.nav-item.active` removed from `sidepanel.css`.
+- **Cross-page confirm()-gated actions freezing on the previous page, 2026-09-19**: reported directly - "the
+  '165 New leads' [confirm popup] appeared, only the underlying Accounts Dashboard did not switch to Posts."
+  Root cause: not a Cancel-vs-OK logic gate (the iframe already navigates to the target page unconditionally
+  the moment the nav item is clicked) but a real rendering quirk - `confirm()` is synchronous and
+  render-blocking, and when `runActionFromHash()`'s `.click()` runs at the end of a freshly-loaded page's own
+  `init()` and immediately triggers a `confirm()`-gated action (e.g. Re-score All Priorities), the browser can
+  block before ever painting that page's first frame - leaving the iframe frozen on whatever the PREVIOUS page
+  last painted, underneath the popup. The dialog-based Target Accounts/Contacts actions
+  (`<dialog>.showModal()`, non-blocking) never showed this symptom. Fixed by deferring `runActionFromHash()`'s
+  `.click()` by one frame (double `requestAnimationFrame`), guaranteeing a real paint happens first.
+- **Stacked/duplicate action dialogs, same day, 2026-09-19**: reported directly - "I even managed to get 2
+  different pop-ups appear at the same time, because I clicked on a new action, without closing the previous
+  pop-up." Root cause: `openActionFromHash()` called `.showModal()` unconditionally - native `<dialog>`s don't
+  close each other, so a second call just stacks a new dialog on top of whatever's still open, and calling
+  `showModal()` on a dialog that's already open throws a spec-defined `InvalidStateError` (silently aborting
+  the function - likely also behind some of the earlier "click did nothing" reports). Fixed by closing every
+  action dialog before opening the target one, guaranteeing at most one is ever open.
+- **"Re-score All Priorities only works once," 2026-09-19**: reported directly - "unless I click on Open Posts
+  Dashboard again, which seems to reset/unfreeze it... only happens with this specific action." Root cause: a
+  third real browser quirk - re-clicking the same action nav item twice sets the iframe's `src` to a URL
+  IDENTICAL to what it already has, and an identical `src` assignment is a total no-op (no navigation, not even
+  a `hashchange`), so neither `init()` nor the `hashchange` listener get a second chance to re-fire the action.
+  "Open Posts Dashboard" only ever "fixed" it by accident, since its hash always differs from the last action
+  triggered. Fixed in all 4 host files' `showEmbeddedPage()`: when the requested URL matches the iframe's
+  current `src`, bounce through `about:blank` first, forcing a genuinely fresh navigation every time.
+- **"3 vertical scroll bars at the same time," 2026-09-19**: reported directly, with a screenshot - "the left
+  one moves only the menu, 2nd one, inner one, only moves the central tab, and the outer one which move both
+  menu and central tab." Investigated live (local static server + injected JS measurement, bypassing the usual
+  `chrome.*`-API gap) rather than guessed at. Root cause #1: `body` in `target-accounts.css`/`dashboard.css`
+  still carried a leftover, pre-Phase-10 `padding: 24px 32px 60px` duplicating `#app-main`'s own equivalent
+  padding - stacking silently inflated `<body>` 84px past the one-viewport `#app-shell`, forcing a permanent
+  outer/document scrollbar regardless of actual content height (`settings.css`/`scanner.css` never had this
+  duplicate, which is why only Target Accounts/Contacts and Posts Dashboard showed it). Root cause #2:
+  `#app-nav`'s own scroll plus its `position: sticky` interacting with that outer scrollbar produced two
+  visually distinct phases (nav pinned while only main content moves, then nav joining the scroll once room
+  ran out) - read as 2 separate bars. The user's own stated ideal became the fix's spec: "the inner vertical
+  scroll is often needed when we have a Dashboard in the central tab... The problem is with the outer vertical
+  scroll... it should not appear at all." Fixed properly: removed body's duplicate padding (folded into
+  `#app-main`'s own padding instead, matching `settings.css`'s already-correct pattern, zero visual change);
+  `#app-shell` (`target-accounts.css`/`dashboard.css`/`settings.css`) changed from `min-height: 100vh` to a
+  hard `height: 100vh; overflow: hidden`; `#app-main` now stretches to fill it and owns its own
+  `overflow-y: auto` - a real, independent scroll region mirroring `#app-nav`'s. Verified with a stress test
+  (synthetic 2000px/3000px content in both nav and main) confirming each scrolls independently while the outer
+  document never overflows under any tested condition.
+- **Industry taxonomy rebuilt on GICS Sectors, 2026-09-19**: the first of two "freeze prep" items after this
+  session's debugging concluded - completing genuine data shortcuts before a version freeze. Investigated
+  first: `industry-id-map.js` had only 9 of LinkedIn's ~200+ industries, by deliberate design (confirmed live
+  only, never guessed, since a wrong id silently breaks search filtering) - filling the full catalog would mean
+  ~200 individual live lookups, flagged as out of scope. Separately confirmed `storage.js`'s
+  `CONTINENT_COUNTRIES`/`ALL_COUNTRIES` is deliberately non-exhaustive by design, not a shortcut - no work
+  needed there. User proposed mapping GICS (Global Industry Classification Standard)'s 11 top-level Sectors
+  onto LinkedIn ids instead of the full catalog. 6 of the 9 pre-existing ids already matched a Sector cleanly,
+  1 partially; 4 genuine gaps confirmed live via the user's own logged-in LinkedIn session (Claude in Chrome,
+  no credentials entered): Energy -> Oil and Gas (57); Materials -> Mining (56) + Chemical Manufacturing (54,
+  GICS Materials spans both, no single LinkedIn label covers it); Consumer Discretionary -> Retail (27); Real
+  Estate -> Real Estate (44). User's decision on architecture: "the GICS list looks cleaner and more logical...
+  present the 11 industry names from GICS and silently map them to the LinkedIn industry IDs (1 or 2 per
+  sector)." `INDUSTRY_ID_MAP` rebuilt from the flat 9-entry LinkedIn-label map to 11 GICS Sector names, each
+  value now an array of 1-2 ids; `industryIdForName()` always returns an array;
+  `company-discovery-extraction.js`'s `resolveIndustryIds()` updated to spread each id array into the facet
+  list. `onboarding.js` needed no changes (already iterates `CONFIRMED_INDUSTRIES` as opaque strings). Flagged
+  directly: this is a rename, not just an addition - any previously-saved industry selections were stored
+  under the OLD LinkedIn-label names and will stop showing as checked (only "Utilities" reads the same in both
+  schemes) - re-pick from the new 11-item list after upgrading.
+- **Company Aliases imported and wired into Target Account matching, 2026-09-19**: the user's latest ChatGPT
+  research workbook (`Swiss_AI_Prospects_544_V66_FULL_17-9-2026.xlsx`) "has now a very extensive list of
+  aliases for each company... it could be a good idea to import and integrate these aliases now." Investigated
+  first: confirmed a real gap - neither `normalizeCompanyName()` (generic suffix-stripping) nor the existing
+  `companyAliases` (a manual LinkedIn-slug map, discovery-phase only) fed `evaluateTargetAccountMatch()`, the
+  function driving every scan's auto-priority scoring - a post author shown under a former/trading name never
+  matched. `xlsx-lite.js`'s `RELATIONAL_SHEETS` gained `aliases: ["Aliases"]` (2707 rows/544 companies
+  confirmed live, zero new parsing code needed - the existing generic camelCase sheet reader handled it).
+  `target-accounts.js`'s import handler groups these by `companyId` and attaches an `aliases: string[]` array to
+  each company entry. `storage.js`'s `importTargetAccounts()` now runs a second pass registering each alias as
+  an additional lookup key pointing at the same record (a company's own primary name always wins a collision).
+  A real regression surfaced via live testing - "LinkedIn company IDs resolved: 2139 of 2242" against a
+  544-company workbook, since 3 display functions counted `Object.values(targetAccounts)` directly (every alias
+  key counted as its own company). First fix attempt (dedupe by object identity) silently failed live, because
+  `chrome.storage.local` serializes on every save/read, destroying JS object identity - fixed by deduping on
+  each record's own `company` string instead, confirmed correct via the user's live re-test: "502 of 544,"
+  matching the real company count exactly. The function that actually feeds the live resolver's queue
+  (`getTargetAccountsMissingLinkedinId()`) was confirmed safe throughout - it already compared plain strings,
+  never object identity, so no duplicate live LinkedIn lookups were ever queued. Same-day follow-up: the import
+  status/Activity Log said "plus full Explorer data (Contacts, Initiatives, etc.)" with no real numbers -
+  "shouldn't it also mention those? XXX contacts read or something like that?" - fixed to show actual counts
+  (e.g. "544 companies plus 1,200 contacts, 300 initiatives imported"), omitting a sheet entirely rather than
+  showing "0" when a workbook doesn't have one.
+- **Contact coverage pie: 0-contacts bucket and percentages, same day, 2026-09-19**: "is missing the number of
+  Accounts with 0 contacts. Please add this number to the Pie chart as well as a Percentage next to each number
+  (the % from the total of 544)." The 0-contacts exclusion had itself been a deliberate prior decision
+  (2026-09-18, "drowned out the actual coverage signal") - explicitly reversed now that V66's contact coverage
+  is much higher (~90%), making zero-contact accounts the actionable gap rather than noise. `CONTACT_COVERAGE_
+  ORDER`/`_COLORS` gained a "0 contacts" bucket (red, at the risk end of the existing gradient);
+  `renderGenericPieChart()` gained an opt-in `percentOf` option (every other pie's legend untouched) - Contact
+  coverage passes `percentOf: workbook.companies.length`, the full company count, not just this pie's own
+  filtered subtotal.
+- **A real scoping bug caught live, same day, 2026-09-19**: reported directly after a real re-import -
+  "Importing Swiss_AI_Prospects_544_V66_FULL_17-9-2026.xlsx… / LinkedIn company IDs resolved: 502 of 544" - the
+  import status stayed stuck on its initial "Importing…" text, never reaching completion. Root cause, a genuine
+  bug in this round's own aliases edit: `aliasesByCompanyId` was declared with `const` inside the block that
+  parses an uploaded `.xlsx`, but reused later in a different block (attaching the same aliases onto
+  `fullWorkbook.companies` for the Explorer-side dedup fix) - out of that `const`'s scope, throwing a
+  `ReferenceError` before `importTargetAccountsWorkbook()` ever ran. The flat scoring/alias-matching map DID
+  import successfully just before the crash (explaining why "502 of 544" looked correct), but the richer
+  Explorer workbook (Contacts/Initiatives/Investment/Sources) never did - flagged clearly to the user that their
+  most recent import needed re-running after the fix. Fixed by moving the declaration to the outer function
+  scope, assigned (not re-declared) inside the block that builds it.
+- **Resolve LinkedIn Company IDs progress lost on interruption, same day, 2026-09-19**: reported directly -
+  "this stopped the Resolve LinkedIn Company IDs that was already running. I re-ran it now again, but it seems
+  to start again at 502... even though it should have continued from were it last stopped." Root cause:
+  `runCompanyIdResolution()` accumulates every company's result in memory for the whole run and only ever
+  hands it to the caller once, at the end - the caller's `applyResolvedCompanyIds`/`markLinkedinResolveAttempted`
+  calls are the only place any of it gets persisted. A graceful Stop click still works (the function returns
+  normally either way), but reloading the extension mid-run (exactly what the previous fix required) tears
+  down the JS execution instantly - nothing "at the end" ever runs, and every company that run had already
+  resolved was simply gone. Fixed by adding an `onCompanyDone(key, linkedinCompanyId)` callback invoked after
+  every single company's own outcome, so the caller persists each result immediately - an abrupt interruption
+  now loses at most one in-flight company, never the whole run. Flagged honestly: the specific progress
+  already lost in that run was unrecoverable (it was never persisted anywhere) - this only prevents the same
+  loss going forward.
+- **Contact coverage pie's percentages didn't reconcile, same day, 2026-09-19**: reported directly, with a
+  screenshot - "The percentages do not add up to 100% and it says there are only 332 companies and not 544."
+  Root cause: `computeContactCoverageCounts()` still filtered to `isRelevantAccount` (332 of 544 companies, a
+  pre-existing filter meant to keep Insufficient-Evidence companies from diluting the 0-contacts signal), while
+  `percentOf` (added the round before) was computed against the full 544 - the two numbers could never
+  reconcile once a third of all companies were excluded from the pie's own total. That filter's original
+  justification stopped applying the moment 0-contacts became its own explicit bucket rather than something
+  silently excluded. Fixed by dropping the filter from this one pie entirely - every company is now bucketed,
+  so the pie's own total always equals the percentage denominator. `isRelevantAccount` itself is untouched and
+  still used by this page's other pies.
+- **Resolve status line live-update race, 2026-09-19**: reported directly, after a live resolve run and a
+  direct storage-read diagnostic had already confirmed the true state was 539 of 544 - "still reads 514... I
+  assume because the last 5 companies were not resolved" (514 matched neither the pre- nor post-run true
+  count). Root cause: the previous round's incremental persistence fires 2 storage writes per company during a
+  run, each triggering this page's `chrome.storage.onChanged` listener - up to ~50 rapid calls to
+  `renderLinkedinResolveStatus()` per run, each with its own async storage read that could resolve out of
+  order, letting an earlier call finish last and silently overwrite the DOM with stale data. Fixed with a
+  token guard so only the most recently *started* call may update the display. A related bug found while
+  investigating: the same `onChanged` listener chained its 4 conditions as `if`/`else if`, so a single batched
+  event touching more than one watched key at once would skip every branch after the first match - changed to
+  4 independent `if`s.
+- **Pitch deck refreshed for today, still Unlisted**: a new dated copy (`SalesTeam - Pitch Deck -
+  19-9-2026.pptx`) of the 17-9 deck, with slide 10/12's version references updated to v1.0.0 and self-service
+  Discovery/AI prioritization added to the "shipped" list - patched directly via `python-pptx` rather than
+  regenerated from `build_deck.py` (which had drifted from the hand-touched-up dated file). Public listing
+  status deliberately left as NEXT, not moved to NOW, per direct correction.
+- **Evidence level pie missing 3 buckets, 2026-09-19**: "The Evidence coverage pie needs to also include the
+  'insufficiently evidenced' number so we will make up the 100% and 561 companies." A live diagnostic (direct
+  `chrome.storage.local` read) found the same class of bug Contact coverage had two rounds earlier, but worse:
+  the real V66 workbook's evidence statuses are Rich Evidence (158), Sufficient Evidence (176), **Provisional
+  Evidence (156, entirely new)**, **Full Evidence (1, entirely new)**, Insufficient Evidence (53, label
+  changed - dropped "- Missing baseline"), and 27 with no status set - only Rich/Sufficient matched the old
+  hardcoded 3-value list, silently dropping 184 of 571 companies. Fixed to not just patch today's values but
+  to never silently drop a company again: an unrecognized or missing `evidenceStatus` now falls into a "Not
+  yet researched" bucket rather than disappearing, so this pie's total always equals the company count
+  regardless of future label drift.
+- **The real "514 vs 539" root cause, found via live diagnostics, same day**: the previous round's token-guard
+  fix was real and correct but didn't explain a reproducible, same-moment contradiction between a direct
+  storage read (539) and the on-page header (514), confirmed by the user checking both in the same tab at the
+  same instant. Root cause: the dedup approach built a `Map` keyed on each record's company name from every
+  entry (primary AND alias keys alike) - since a company's alias keys are always inserted into storage AFTER
+  its primary key (`importTargetAccounts`'s two-pass construction), and `applyResolvedCompanyIds` only ever
+  updates the PRIMARY key's own record when a company resolves, the Map's last-write-wins collapse always
+  preferred an alias key's permanently-stale (unresolved) copy over its own company's correctly-resolved
+  primary entry - undercounting exactly the resolved companies that have aliases. Fixed by switching to the
+  same pattern already used correctly in `getTargetAccountsMissingLinkedinId()`: filter to entries whose own
+  key equals their record's normalized company name, so alias-keyed duplicates never enter the count.
+
+- **Future milestone (parked, 2026-09-19, NOT started): use by a whole sales team, not one salesperson.**
+
+  The trigger: providing SalesTeam to the members of the user's wife's sales team, several of whom work in the
+  same region and possibly on the same accounts. Today it is single-user by design (all data in one browser's
+  local storage - see Non-goals), so two people would each hold their own diverging copy. This needs its own
+  design and plan before any code.
+
+  Proposed first step (the user's own suggestion): keep all the data the extension uses in a shared OneDrive
+  folder that every team member's extension reads and writes, so the whole team sees the same accounts,
+  contacts, leads and functionality. Not yet analysed: how to share, modify and act on that data without
+  collisions or inconsistencies.
+
+  Three common strategies for avoiding collisions, as listed by the user: (1) everyone can access everything,
+  with a lock on the entity (account, contact, lead...) to prevent write races; (2) a person must first
+  request/assign an entity to themselves, which puts it in their work queue, and only they work it - suits
+  work that flows in continuously and is similar for everyone; (3) fixed assignment of accounts to users - no
+  overlap or races, but resources are used badly (one person overloaded while another idles, or one person's
+  absence stalls their whole book). The user's current preference is option 2 (believed easier than option 1,
+  and it uses the team's capacity well).
+
+  Beyond that, a real team has a leader: a team-leader/admin role that sees everything, assigns accounts and
+  work, and defines users and roles - which means role-based access to the tool, and then admin and operations
+  dashboards and reports. All of this is a large step in its own right and must be planned as a milestone; the
+  shared-folder step is only the possible first stage.
+
+  Related groundwork already in place (2026-09-19): the full backup (one dated zip of everything, with CSV
+  spreadsheets) and the user-chosen backup folder (File System Access) - the same folder-handle approach may
+  be a starting point for a shared folder, but sharing live data is a much harder problem than backing it up,
+  and that comparison has not been analysed yet.
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **0.31.0**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.1.3**.

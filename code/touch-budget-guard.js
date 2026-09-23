@@ -14,7 +14,7 @@
 import { getLinkedinTouchStats, TOUCH_DANGER_THRESHOLD_24H } from "./linkedin-touch-log.js";
 
 export const TOUCH_BUDGET_STOP_MESSAGE =
-  "Stopped automatically - today's automated LinkedIn activity limit was reached. Resume tomorrow.";
+  "Stopped automatically - the automated LinkedIn activity limit (99 in any rolling 24 hours) was reached.";
 
 // Returns true (and sets scanAbortRequested) the first time the daily budget
 // is hit. Callers should check this at the same per-item checkpoint they

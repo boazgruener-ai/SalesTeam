@@ -5,6 +5,7 @@
   --gray: #555;
   --gray-light: #888;
   --border: #ddd;
+  --nav-header: #0d3868;
 }
 
 * { box-sizing: border-box; }
@@ -14,8 +15,331 @@ body {
   font-size: 14px;
   color: var(--ink);
   margin: 0;
-  padding: 24px 32px 60px;
   background: #fafafa;
+}
+
+/* PRD 6.20 Phase 10 (2026-09-18) - left-nav shell, same shape as the other
+   two pages (duplicated per-file, not shared, kept visually identical on
+   purpose). This page is a long scroll of topic cards, not action buttons -
+   each nav item is a plain <a href="#section-id"> jumping to its own
+   section, so nothing here needed any JS wiring at all. */
+/* 27th round of direct feedback (2026-09-19), same-day follow-up - see
+   target-accounts.css's own copy of this comment for the full reasoning:
+   hard-capped to one viewport (height + overflow: hidden, align-items:
+   flex-start removed) so the outer/document level can never scroll -
+   #app-main (below) now owns its own dedicated overflow-y: auto instead.
+   This page's own #section-id jump-links (see the comment above) still
+   work correctly - native anchor navigation scrolls the nearest scrollable
+   ancestor, which is now #app-main itself rather than the document. */
+#app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+#app-shell.embedded-mode #app-nav {
+  display: none;
+}
+
+#app-nav {
+  width: 236px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+#app-nav-brand {
+  padding: 0 20px 14px 20px;
+  border-bottom: 1px solid #eef0f2;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - collapsible nav, see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+#nav-collapse-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--gray-light);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#nav-collapse-btn:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+#app-shell.nav-collapsed #app-nav {
+  width: 44px;
+  overflow: hidden;
+}
+
+#app-shell.nav-collapsed #app-nav-brand {
+  padding: 0 11px 14px 11px;
+  justify-content: center;
+}
+
+#app-shell.nav-collapsed #app-nav-brand-name,
+#app-shell.nav-collapsed #version-text,
+#app-shell.nav-collapsed .nav-group {
+  display: none;
+}
+
+#app-nav {
+  transition: width 0.15s ease;
+}
+
+/* 19th round of direct feedback (2026-09-19) - see target-accounts.css's
+   own copy of this comment for the full reasoning: clicking the brand name
+   now does what the removed "<- Back" button used to (hideEmbeddedPage),
+   so there's still a way back to this page's own real content. */
+#app-nav-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+#app-nav #version-text {
+  font-size: 11px;
+  color: var(--gray-light);
+}
+
+.nav-group {
+  padding: 0 12px;
+  margin-bottom: 18px;
+}
+
+.nav-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+  padding: 0 8px 6px 8px;
+}
+
+.nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 8px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.nav-item:hover {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+.nav-item-top {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+}
+
+.nav-item-top:hover {
+  color: var(--blue);
+}
+
+/* Reported directly, 2026-09-19: bold was doing double duty (group
+   headers AND the current item), making the two hard to tell apart at a
+   glance. Bold is now group-headers-only (.nav-group-label); the current
+   item is marked by this background pill alone, no weight change. */
+.nav-item.active {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+.nav-item-badge {
+  float: right;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-light);
+}
+
+.nav-item.active .nav-item-badge {
+  color: var(--blue);
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - the nav is now the full
+   cross-app menu on every page (native <details>/<summary>, no JS needed
+   for expand/collapse) - see target-accounts.html's own #app-nav comment
+   for the full reasoning. */
+details.nav-group summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details.nav-group summary::-webkit-details-marker {
+  display: none;
+}
+
+details.nav-group summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  transition: transform 0.15s ease;
+}
+
+details.nav-group[open] summary::before {
+  transform: rotate(90deg);
+}
+
+details.nav-group > .nav-item,
+details.nav-group > div > .nav-item {
+  margin-left: 20px;
+  width: calc(100% - 20px);
+}
+
+.nav-group-sublabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--gray-light);
+  opacity: 0.75;
+  margin: 10px 0 4px 20px;
+}
+
+/* Reported directly: Debug test panels aren't for normal use, only support
+   sessions - kept navigable from within Settings (so someone who arrived
+   via the hub's own discrete Debug link can still switch between the 3
+   panels), but visually de-emphasized and pushed to the very bottom of the
+   nav rather than sitting alongside real settings. */
+.nav-group-debug {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.nav-group-debug .nav-group-label,
+.nav-group-debug .nav-item {
+  color: var(--gray-light);
+  font-size: 12px;
+}
+
+.nav-group-debug .nav-item:hover {
+  color: var(--blue);
+}
+
+/* 27th round of direct feedback (2026-09-19), same-day follow-up - see
+   #app-shell's own comment above and target-accounts.css's copy of this
+   comment for the full reasoning: overflow-y: auto makes this its own
+   dedicated, self-contained scroll region - never the outer document. */
+#app-main {
+  flex-grow: 1;
+  min-width: 0;
+  padding: 24px 32px 60px;
+  position: relative;
+  overflow-y: auto;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - every cross-page nav item
+   embeds in place now (6th round of direct feedback), see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+/* Reverted the earlier `#app-main { min-height: 100vh }` fix + fixed
+   properly, 2026-09-19 - see target-accounts.css's own copy of this
+   comment for the full reasoning (that fix produced a real second, nested
+   outer scrollbar on top of the embedded iframe's own internal one,
+   reported directly: "the outer one moves the main page and also the
+   menu, the inner one moves only the central page"). Sizes itself (no
+   dependency on #app-main's own height) instead of stretching to match a
+   forced-tall #app-main.
+   height, not min-height (2026-09-19, see target-accounts.css's own copy
+   of this comment for the full reasoning) - min-height briefly broke the
+   embedded iframe's own sizing (a flex container's min-height doesn't
+   reliably give a flex: 1 child a definite height), reported directly as
+   a missing top scrollbar inside the embedded page. */
+#embedded-page-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+}
+
+#embedded-page-wrap[hidden] {
+  display: none;
+}
+
+#embedded-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  flex-shrink: 0;
+}
+
+/* Same fix as #embedded-page-wrap[hidden] above (round 6) - an ID
+   selector's own display:flex silently beats the browser's native
+   [hidden] { display: none }, so hiding this bar (19th round of direct
+   feedback, 2026-09-19) needs the same explicit, more-specific override. */
+#embedded-page-bar[hidden] {
+  display: none;
+}
+
+#embedded-page-close-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#embedded-page-close-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+#embedded-page-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+#embedded-page-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+}
+
+/* #app-nav is sticky within the WINDOW's own scroll (not an internal
+   #app-main scroll region), so the anchor-jump smoothing belongs on the
+   root element, not #app-main itself. */
+html {
+  scroll-behavior: smooth;
 }
 
 h1 {
@@ -61,7 +385,7 @@ h3 {
   margin: 16px 0 6px;
 }
 
-#page-header {
+#page-header-bar {
   margin-bottom: 24px;
   padding-bottom: 12px;
   border-bottom: 2px solid var(--blue);
@@ -75,6 +399,9 @@ h3 {
 
 #settings-main {
   max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .settings-card {
@@ -82,6 +409,37 @@ h3 {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 18px 20px;
+  scroll-margin-top: 20px;
+}
+
+/* Onboarding progress bar (setup-section) - same "X of N completed" count
+   as the nav item's own badge, just with a visual bar alongside it. */
+#onboarding-progress-wrap {
+  margin: 4px 0 14px;
+}
+
+#onboarding-progress-label {
+  font-size: 12px;
+  color: var(--gray-light);
+  margin-bottom: 4px;
+}
+
+#onboarding-progress-track {
+  height: 8px;
+  border-radius: 4px;
+  background: #eef0f2;
+  overflow: hidden;
+}
+
+#onboarding-progress-fill {
+  height: 100%;
+  background: var(--blue);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+#onboarding-progress-fill.onboarding-progress-fill-done {
+  background: #2e7d32;
 }
 
 .field-hint {
@@ -123,8 +481,29 @@ textarea {
   font-size: 13px;
 }
 
-#target-account-threshold-input {
-  max-width: 120px;
+.debug-state-display {
+  background: #f7f7f7;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 6px 0 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* Reported directly, 2026-09-19: "why do 2nd and 3rd debug panels have 2
+   rectangles under their buttons?" - these <pre>s (settings.js sets
+   .textContent = "" between runs, so :empty matches reliably) show a
+   result summary/list only once a debug action has actually populated
+   them - empty, they were still rendering their background/border/padding
+   box with nothing in it. Hidden until there's real content to show. */
+.debug-state-display:empty {
+  display: none;
 }
 
 .settings-buttons-row {
@@ -161,138 +540,67 @@ textarea {
   resize: vertical;
 }
 
-#location-filter-continents-wrap {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 16px;
-  margin: 6px 0 12px;
-}
 
-#location-filter-continents-wrap label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  font-weight: 400;
-}
+/* Storage-used bar in Settings > Backup & Restore */
+#backup-storage-bar { width: 100%; height: 10px; accent-color: #2e9e5b; }
+#backup-storage-bar[data-level="warn"] { accent-color: #e0a100; }
+#backup-storage-bar[data-level="danger"] { accent-color: #c62828; }
 
-#location-filter-continents-wrap input[type="checkbox"] {
-  margin: 0;
-}
+/* Save row in Settings > Backup & Restore */
+.backup-save-row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.backup-save-row .field-hint { margin: 0; }
 
-.dual-listbox {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
-  margin-top: 6px;
-}
+.nav-item[hidden] { display: none !important; }
 
-.dual-listbox-col {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.dual-listbox-col label {
-  font-size: 11px;
-  color: var(--gray);
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  margin-bottom: 4px;
-}
-
-.dual-listbox-col input[type="text"] {
-  margin-bottom: 4px;
-  padding: 6px 8px;
-}
-
-.dual-listbox-col select[multiple] {
-  flex: 1;
-  padding: 4px;
-  font-size: 12.5px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-}
-
-.dual-listbox-buttons {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 8px;
-  padding-top: 20px;
-}
-
-.dual-listbox-buttons button {
-  width: 34px;
-  height: 30px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: #f7f7f7;
-  cursor: pointer;
+/* "Loading..." shown over an embedded page until it has loaded (see showEmbeddedPage). */
+#embedded-page-wrap.embedded-loading::after {
+  content: "Loading…";
+  position: absolute;
+  top: 38%;
+  left: 0;
+  right: 0;
+  text-align: center;
   font-size: 14px;
+  color: #666;
+  pointer-events: none;
 }
 
-#prioritization-rules-wrap {
-  overflow-x: auto;
-  margin-bottom: 12px;
+/* Billing page */
+.billing-table { border-collapse: collapse; font-size: 12px; margin: 8px 0; width: 100%; }
+.billing-table th, .billing-table td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--border, #ddd); white-space: nowrap; }
+.billing-table th:first-child, .billing-table td:first-child { text-align: left; }
+.billing-table tr.billing-total-row td { font-weight: 700; }
+.billing-heading { margin: 16px 0 4px; font-size: 13px; }
+.billing-scroll { max-height: 300px; overflow: auto; }
+
+/* Web Findings - Automatic Arbitration (2026-09-22). The seven rule rows are
+   built from ARBITRATION_RULES in settings.js rather than written out here, so
+   a rule added to the mechanism cannot go missing from its own settings. */
+.settings-card h4 {
+  margin: 18px 0 6px;
+  font-size: 13px;
 }
 
-#prioritization-rules-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12.5px;
-  background: #fff;
+#web-findings-rules .web-findings-rule {
+  display: block;
+  margin-bottom: 10px;
 }
 
-#prioritization-rules-table th {
-  text-align: left;
-  padding: 7px 8px;
-  border-bottom: 2px solid var(--border);
-  color: var(--gray);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
+#web-findings-rules .web-findings-rule-detail {
+  margin: 2px 0 0 24px;
 }
 
-#prioritization-rules-table td {
-  padding: 7px 8px;
-  border-bottom: 1px solid #eee;
-  vertical-align: top;
+/* Exchange rates (Revenue & Currency) - a label/input pair per currency, generated in settings.js
+   from SUPPORTED_CURRENCIES so a new currency needs no edit here. */
+#revenue-rates-grid {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: 6px 12px;
+  align-items: center;
+  margin: 10px 0;
 }
 
-#prioritization-rules-table td.rule-description {
-  color: var(--gray);
-  max-width: 360px;
-}
-
-#prioritization-rules-table input[type="number"] {
-  width: 55px;
-  margin-bottom: 0;
-  padding: 4px 6px;
-}
-
-#prioritization-rules-table .rule-value-empty {
-  color: var(--gray-light);
-}
-
-.template-card {
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 8px;
-  margin-bottom: 8px;
-}
-
-.template-name {
-  font-weight: 600;
+#revenue-rates-grid label {
+  margin: 0;
   font-size: 12px;
-  color: #333;
-  margin-bottom: 4px;
-}
-
-.template-card textarea {
-  min-height: 55px;
-  margin-bottom: 0;
 }

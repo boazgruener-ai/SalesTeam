@@ -5,16 +5,145 @@
   --gray: #555;
   --gray-light: #888;
   --border: #ddd;
+  --nav-header: #0d3868;
 }
 
 * { box-sizing: border-box; }
 
+#merge-discovered-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: 520px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+#merge-discovered-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+#merge-discovered-dialog h3 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+#merge-discovered-dialog p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  margin: 0 0 12px;
+}
+
+#merge-discovered-dialog-preview {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+#merge-discovered-dialog-preview h4 {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--gray);
+  background: #fafafa;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+}
+
+#merge-discovered-dialog-preview ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#merge-discovered-dialog-preview li {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#merge-discovered-dialog-preview li:last-child {
+  border-bottom: none;
+}
+
+#merge-discovered-dialog-preview li a {
+  color: var(--blue);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+#merge-discovered-dialog-preview li a:hover {
+  text-decoration: underline;
+}
+
+#merge-discovered-dialog-preview .merge-preview-more {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--gray-light);
+  font-style: italic;
+}
+
+.merge-discovered-dialog-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.merge-discovered-dialog-actions button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+#merge-discovered-confirm-btn {
+  background: var(--blue);
+  color: white;
+}
+
+#merge-discovered-cancel-btn {
+  background: #f0f0f0;
+  color: var(--ink);
+}
+
+/* 27th round of direct feedback (2026-09-19): "I managed to get 3 vertical
+   scroll bars at the same time." Root cause: this rule used to carry
+   `padding: 24px 32px 60px` (a leftover from before the Phase 10 mega-menu
+   redesign, when this page was a flat single column with no #app-shell).
+   Once #app-main got its OWN equivalent padding, body's copy became a
+   silent duplicate that just stacked on top - it doesn't show up in any
+   normal layout diagram, but it permanently inflates <body> to 84px taller
+   than the #app-shell it wraps (which is otherwise exactly one viewport
+   tall), forcing a real, permanent, near-empty outer/document scrollbar no
+   matter how short the actual content is. Combined with #app-nav's own
+   independent overflow-y: auto (needed since round 23's "show every item"
+   change made nav content routinely taller than one viewport) and
+   #app-nav's position: sticky (which only stays visually still while its
+   containing block, #app-shell, has spare room - once the outer scroll
+   passes that point, nav starts moving too), one single stray 84px of dead
+   padding was enough to produce 3 different-feeling scroll behaviors:
+   nav's own bar, the outer bar's first stretch (nav still pinned, only
+   main content visibly moves), and the outer bar's last stretch (nav runs
+   out of room and moves too). settings.css/scanner.css never had this bug
+   because they already fold the same spacing into #app-main alone (see
+   its own comment below) - moved this file to match. */
 body {
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
   color: var(--ink);
   margin: 0;
-  padding: 24px 32px 60px;
   background: #fafafa;
 }
 
@@ -43,37 +172,396 @@ h1 {
   color: var(--gray-light);
 }
 
-#page-header {
-  margin-bottom: 20px;
+/* PRD 6.20 Phase 10 (2026-09-17/18) - left-nav shell, replacing the old flat
+   stack of always-visible header button rows. #app-shell is the outer flex
+   row (nav + main content); #app-nav is a fixed-width sidebar, grouped by
+   topic (.nav-group), each item either navigating (the Views group, same
+   ids/behavior as the old #list-tab-bar it replaces) or opening a <dialog>
+   (Enrichment/Prioritization items - see the .action-dialog rules below). */
+/* 27th round of direct feedback (2026-09-19), same-day follow-up: "the
+   ideal situation is... the inner vertical scroll is often needed when we
+   have a Dashboard in the central tab because the whole table cannot fit
+   in one normal height frame. The problem is with the outer vertical
+   scroll... it should not appear at all." Removing body's stray padding
+   (above) stops the outer scrollbar from appearing when there's nothing to
+   scroll, but a genuinely tall #app-main (a big table) could still grow
+   past one viewport and drag the WHOLE document (and #app-nav along with
+   it) into scrolling too - the exact "outer bar moves both frames"
+   behavior, just not permanently forced any more. Fixed at the actual
+   layout level instead: #app-shell is now a hard-capped one viewport tall
+   (height, not min-height, plus overflow: hidden as a safety net) and no
+   longer stretches to whichever child is tallest (align-items: flex-start
+   removed - #app-nav already sets its own explicit height regardless, so
+   this has no effect on it). #app-main (below) now stretches to fill that
+   fixed height and owns its own overflow-y: auto, exactly matching what
+   #app-nav already does - two independent, self-contained scroll regions,
+   with the outer/document level never able to scroll at all. */
+#app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - when this page is
+   embedded inside another page's own #embedded-page-wrap (?embedded=1),
+   its own nav would otherwise nest a second sidebar inside the host's one
+   - hidden entirely; #app-main (the only remaining #app-shell child)
+   takes the full width automatically via its existing flex-grow: 1. */
+#app-shell.embedded-mode #app-nav {
+  display: none;
+}
+
+#app-nav {
+  width: 236px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+#app-nav-brand {
+  padding: 0 20px 14px 20px;
+  border-bottom: 1px solid #eef0f2;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - "the left main menu, should
+   be a dynamic frame that I can extend... or retract, to have more space
+   for the main window." #nav-collapse-btn toggles .nav-collapsed on
+   #app-shell (JS, target-accounts.js) - the nav shrinks to a slim rail
+   (just the collapse button itself) rather than disappearing outright, so
+   there's always an obvious way back to full width. */
+#nav-collapse-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--gray-light);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#nav-collapse-btn:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+#app-shell.nav-collapsed #app-nav {
+  width: 44px;
+  overflow: hidden;
+}
+
+#app-shell.nav-collapsed #app-nav-brand {
+  padding: 0 11px 14px 11px;
+  justify-content: center;
+}
+
+#app-shell.nav-collapsed #app-nav-brand-name,
+#app-shell.nav-collapsed #version-text,
+#app-shell.nav-collapsed .nav-group {
+  display: none;
+}
+
+#app-nav {
+  transition: width 0.15s ease;
+}
+
+/* 19th round of direct feedback (2026-09-19): "remove [the Back button]
+   from all pages!" - but it was the ONLY way to return from an embedded
+   page to THIS page's own real content (no other nav item points back to
+   "here," since every page's own cross-page group links to OTHER pages).
+   Removing it outright without another way back would strand the user -
+   clicking the brand name now does what the close button used to
+   (hideEmbeddedPage), a common enough "click the logo to go home" pattern
+   that it doesn't need its own visible button/label. */
+#app-nav-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+#app-nav #version-text {
+  font-size: 11px;
+  color: var(--gray-light);
+}
+
+.nav-group {
+  padding: 0 12px;
+  margin-bottom: 18px;
+}
+
+/* Reported directly, 2026-09-19 (8th round): open vs. closed group headers
+   used to render at different colors (grey when closed, dark when open),
+   read as "why are unopened sub-menu headers less prominent?" - now a
+   single fixed, headers-only color (dark navy, distinct from --blue/--ink
+   so a header can never be mistaken for an item or the active-item pill)
+   regardless of open/closed state. Capitalization removed per the same
+   feedback ("remove the capitalization of all letters for sub-menu
+   headers"). */
+.nav-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+  padding: 0 8px 6px 8px;
+}
+
+/* Shared by the Views group's <a> tabs (was #list-tab-bar/.list-tab) and
+   every action nav item's <button> - same look either way, only the click
+   behavior differs (navigate vs. open a dialog). font-family: inherit is
+   load-bearing: without it, a <button> falls back to the browser's own UA
+   default (Arial on Windows Chrome) instead of the page's Segoe UI stack,
+   which is what was actually behind "sub-menu items look semi-bold" -
+   items were never bold, they were rendering in a different, heavier-
+   looking font than the header/body text around them. */
+.nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 8px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+/* Advisors/Activity Log/Help sit at the same level as a group header (no
+   sub-items, no "More" grouping label needed - reported directly: "MORE
+   is also in grey. What is this? ... You can remove it... should be in
+   the same font as [group headers]") - same typography as
+   .nav-group-label, still a real clickable .nav-item underneath. */
+.nav-item-top {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+}
+
+.nav-item-top:hover {
+  color: var(--blue);
+}
+
+.nav-item:hover {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+/* Reported directly, 2026-09-19: bold was doing double duty (group
+   headers AND the current item), making the two hard to tell apart at a
+   glance. Bold is now group-headers-only (.nav-group-label); the current
+   item is marked by this background pill alone, no weight change. */
+.nav-item.active {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+.nav-item:disabled {
+  color: var(--gray-light);
+  cursor: default;
+}
+
+.nav-item:disabled:hover {
+  background: none;
+  color: var(--gray-light);
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - the nav is now the full
+   cross-app menu on every page (native <details>/<summary>, no JS needed
+   for expand/collapse) - see this page's own #app-nav comment. */
+details.nav-group summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details.nav-group summary::-webkit-details-marker {
+  display: none;
+}
+
+details.nav-group summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  transition: transform 0.15s ease;
+}
+
+details.nav-group[open] summary::before {
+  transform: rotate(90deg);
+}
+
+/* Real, visible right-indent for items inside a group, relative to the
+   group's own flush-left header - was 4px (easy to miss); 16px reads
+   clearly as "inside this group" at a glance. */
+details.nav-group > .nav-item,
+details.nav-group > div > .nav-item {
+  margin-left: 20px;
+  width: calc(100% - 20px);
+}
+
+/* A sub-heading INSIDE an open group's own item list (e.g. "Scoring"/
+   "Enrichment"/"Export" within the Posts Dashboard group) - one level
+   smaller/lighter than .nav-group-label, indented to match the items
+   below it, so the hierarchy (page > category > item) stays legible. */
+.nav-group-sublabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--gray-light);
+  opacity: 0.75;
+  margin: 10px 0 4px 20px;
+}
+
+/* Deliberately last, and visually muted - reported directly: "it is not
+   something that a normal user will use... only in case of a support
+   session." */
+.nav-group-debug summary,
+.nav-group-debug .nav-item {
+  color: var(--gray-light);
+  font-size: 12px;
+}
+
+.nav-group-debug .nav-item:hover {
+  color: var(--blue);
+}
+
+/* 27th round of direct feedback (2026-09-19) - see the `body` rule's own
+   comment above for the full reasoning: the bottom value here (60px) now
+   carries the spacing body's own padding used to duplicate, matching
+   settings.css's already-correct #app-main. overflow-y: auto (same-day
+   follow-up) makes this its own dedicated, self-contained scroll region -
+   see #app-shell's own comment above - so a tall table scrolls WITHIN
+   #app-main, never the outer document. */
+#app-main {
+  flex-grow: 1;
+  min-width: 0;
+  padding: 24px 32px 60px;
+  overflow-y: auto;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - every cross-page nav item
+   embeds in place now, 6th round of direct feedback (see #app-main's own
+   comment in the HTML) - none open a new browser tab any more. Full-bleed
+   (negates #app-main's own padding) so the embedded page isn't awkwardly
+   boxed in twice.
+   Reverted the earlier `#app-main { min-height: 100vh }` fix + fixed
+   properly, 2026-09-19: that fix (for #app-main collapsing to near-0 when
+   #page-native-content is hidden, "a small scrollable area at the top")
+   worked, but forcing the OUTER #app-main to always be >= 100vh - even
+   while genuinely showing native content that's naturally taller, or
+   while embedded - made the OUTER document itself taller than it needed
+   to be too, producing a second, real (not cosmetic) outer scrollbar on
+   TOP of the embedded iframe's own internal one - reported directly:
+   "the outer one moves the main page and also the menu, the inner one
+   moves only the central page." Fixed at the actual source instead: since
+   #embedded-page-wrap is position: absolute (out of flow), giving IT its
+   own height directly (replacing the old `bottom: 0`, which only worked
+   by stretching to match #app-main's own height - the actual thing that
+   needed #app-main inflated in the first place) makes it correctly one
+   viewport tall on its own, with no dependency on #app-main's height at
+   all - #app-main can go back to sizing purely from its own real content,
+   whether that's native or nothing.
+   height (not min-height), 2026-09-19: min-height briefly regressed 2
+   other things - a flex container's min-height (vs. a definite height)
+   doesn't reliably give a flex: 1 child (#embedded-page-frame, the real
+   iframe) a definite height to size against, so the iframe itself could
+   render shorter than intended, breaking the embedded page's own internal
+   layout (reported directly: "Target Contacts Dashboard is missing the
+   upper horizontal scroll slide"). The wrap never actually needs to grow
+   past one viewport anyway - an <iframe>'s box is exactly whatever CSS
+   gives it; a taller embedded document scrolls WITHIN that fixed-size
+   iframe on its own, it doesn't need the wrap itself to grow. */
+#embedded-page-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+}
+
+/* An ID selector outranks the browser's own [hidden] { display: none }
+   default (attribute selector, lower specificity) - without this, the
+   flex rule above would win and the "hidden" wrap would show empty. */
+#embedded-page-wrap[hidden] {
+  display: none;
+}
+
+#app-main {
+  position: relative;
+}
+
+#embedded-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  flex-shrink: 0;
+}
+
+/* Same fix as #embedded-page-wrap[hidden] above (round 6) - an ID
+   selector's own display:flex silently beats the browser's native
+   [hidden] { display: none }, so hiding this bar (19th round of direct
+   feedback, 2026-09-19) needs the same explicit, more-specific override. */
+#embedded-page-bar[hidden] {
+  display: none;
+}
+
+#embedded-page-close-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#embedded-page-close-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+#embedded-page-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+#embedded-page-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+}
+
+#page-header-bar {
+  margin-bottom: 18px;
   padding-bottom: 12px;
   border-bottom: 2px solid var(--blue);
 }
 
-/* Switches between the Target Accounts and Target Contacts list views
-   (PRD 6.19) - only ever shown on a list-type view, never on an Account/
-   Contact detail view (showView, target-accounts.js). */
-#list-tab-bar {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-}
-
-.list-tab {
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--gray);
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-}
-
-.list-tab:hover {
-  color: var(--blue);
-}
-
-.list-tab.active {
-  color: var(--blue);
-  border-bottom-color: var(--blue);
+#page-header-bar h1 {
+  margin: 0;
 }
 
 /* ---- pie charts (Target Accounts / Target Contacts Dashboards) - same
@@ -145,26 +633,125 @@ h1 {
   max-width: 900px;
 }
 
-#page-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
+/* PRD 6.20 Phase 10 - the action dialogs opened from #app-nav's own nav
+   items (resolve/discover-contacts/fetch-size/prioritize). Same base look as
+   #merge-discovered-dialog above; limit-label/input/checkbox ids inside them
+   are unchanged from the old always-visible rows, so their own rules below
+   just keep working without a selector change. */
+.action-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: 480px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
 }
 
-#page-header-actions button {
-  background: none;
+.action-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.action-dialog h3 {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.action-dialog-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #eef0f2;
+}
+
+.action-dialog-actions button {
+  font-size: 13px;
+  padding: 8px 16px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--gray);
-  font-size: 12px;
-  padding: 6px 12px;
+  background: #fff;
+  color: var(--ink);
   cursor: pointer;
 }
 
-#page-header-actions button:hover {
-  color: var(--ink);
-  border-color: var(--gray-light);
+.action-dialog-actions button:first-child {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+  font-weight: 600;
+}
+
+.action-dialog-actions button:first-child:hover {
+  background: #084d94;
+}
+
+.action-dialog-actions button.danger-btn {
+  background: #fff;
+  border-color: #c23b3b;
+  color: #c23b3b;
+}
+
+.action-dialog-actions .action-dialog-close-btn {
+  margin-left: auto;
+  background: none;
+  border-color: transparent;
+  color: var(--gray);
+}
+
+.action-dialog .status-text {
+  display: block;
+  margin-top: 10px;
+}
+
+#resolve-company-ids-limit-label,
+#discover-contacts-existing-limit-label,
+#prioritize-companies-limit-label,
+#fetch-company-size-limit-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--gray);
+  margin-top: 10px;
+}
+
+#resolve-company-ids-limit-input,
+#discover-contacts-existing-limit-input,
+#prioritize-companies-limit-input,
+#fetch-company-size-limit-input {
+  width: 5em;
+}
+
+#prioritize-companies-rescore-label,
+#prioritize-companies-ai-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--gray);
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+/* The Review & Merge nav item (Enrichment group) - only shown when a
+   Discovery run has pending, not-yet-merged results (target-accounts.js
+   toggles this the same way it always has). Reported directly, found live
+   2026-09-16: an id selector's own `display` can out-specificity the
+   browser's built-in `[hidden] { display: none }` rule - kept explicit here
+   since this wrapper still sets its own layout. */
+#page-header-merge-row {
+  margin-top: 4px;
+}
+
+#page-header-merge-row[hidden] {
+  display: none;
+}
+
+#page-header-merge-row .status-text {
+  display: block;
+  padding: 4px 8px 0 8px;
+  font-size: 11px;
 }
 
 .status-text {
@@ -178,14 +765,16 @@ h1 {
   padding: 24px 0;
 }
 
-#explorer-controls {
+#explorer-controls,
+#contacts-explorer-controls {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
 }
 
-#search-input {
+#search-input,
+#contacts-search-input {
   flex: 1 1 320px;
   min-width: 200px;
   padding: 6px 8px;
@@ -194,7 +783,8 @@ h1 {
   font-size: 13px;
 }
 
-#columns-btn {
+#columns-btn,
+#contacts-columns-btn {
   background: none;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -204,12 +794,14 @@ h1 {
   cursor: pointer;
 }
 
-#columns-btn:hover {
+#columns-btn:hover,
+#contacts-columns-btn:hover {
   color: var(--gray);
   border-color: var(--gray-light);
 }
 
-#result-count {
+#result-count,
+#contacts-result-count {
   color: var(--gray-light);
   font-size: 12px;
   margin-left: auto;
@@ -268,29 +860,52 @@ h1 {
    accounts.js) - reported directly, the scrollbar to see columns off to
    the right should be reachable without scrolling all the way down to the
    table's own bottom edge first. */
-#table-scroll-top {
+/* Reported directly, 2026-09-18: the Target Contacts table's own top/bottom
+   scroll bars didn't work at all - same root cause as the sort/filter gap
+   below, one more instance of it: #contacts-table-scroll-top/
+   #contacts-table-scroll-top-filler/#contacts-table-wrap were never given
+   any CSS of their own (only the Companies table's #table-scroll-top/
+   #table-scroll-top-filler/#table-wrap were), so the top bar had no height/
+   overflow to actually scroll and the wrapper had no overflow-x to produce
+   a bottom one either - the JS scroll-sync listeners (already correct,
+   already wired for both tables) had nothing to sync. Merged into shared
+   selectors so the two tables can't drift out of sync like this again. */
+#table-scroll-top,
+#contacts-table-scroll-top {
   overflow-x: auto;
   overflow-y: hidden;
   height: 16px;
   margin-bottom: 2px;
 }
 
-#table-scroll-top-filler {
+#table-scroll-top-filler,
+#contacts-table-scroll-top-filler {
   height: 1px;
 }
 
-#table-wrap {
+#table-wrap,
+#contacts-table-wrap {
   overflow-x: auto;
 }
 
-#companies-table {
+/* Reported directly, 2026-09-18: the Target Contacts table had no sort/
+   filter menu, unlike Target Accounts - root cause was that #contacts-table
+   never had ANY of its own CSS rules (only #companies-table was ever
+   styled), so its header cells lacked position: relative, which the
+   absolutely-positioned .col-menu-btn depends on to place itself inside the
+   header rather than at the page's own top-left corner. Merged into one
+   shared rule per element rather than two to keep in sync, since both
+   tables are meant to look identical. */
+#companies-table,
+#contacts-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
   background: #fff;
 }
 
-#companies-table th {
+#companies-table th,
+#contacts-table th {
   position: relative;
   text-align: left;
   padding: 8px 22px 8px 10px;
@@ -376,6 +991,51 @@ h1 {
   background: var(--blue-light);
 }
 
+.col-menu-item:disabled {
+  color: #b7bcc2;
+  cursor: default;
+}
+
+.col-menu-item:disabled:hover {
+  background: none;
+}
+
+.col-menu-item.danger:hover:not(:disabled) {
+  background: #fdeaea;
+  color: #a00;
+}
+
+/* Row-level kebab menu (PRD 6.20 Phase 10, 2026-09-17) - per-row actions for
+   the Accounts/Contacts tables, which had none before (only whole-row-click
+   to open). Reuses .col-menu-popup/.col-menu-item above (same visual
+   language as this file's own column-header menu) rather than a second
+   near-identical set of classes - only the trigger button is new. Same
+   visual language as dashboard.css's own .kebab-btn/.row-menu-* for the
+   Posts Dashboard's row menu (a separate file, duplicated per this
+   codebase's existing convention, not shared). */
+.kebab-btn {
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--gray);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0 auto;
+}
+
+.kebab-btn:hover {
+  background: var(--blue-light);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
 .col-filter-input {
   width: 100%;
   box-sizing: border-box;
@@ -452,7 +1112,8 @@ h1 {
   overflow: visible;
 }
 
-#companies-table td {
+#companies-table td,
+#contacts-table td {
   padding: 7px 10px;
   border-bottom: 1px solid #eee;
   vertical-align: top;
@@ -471,6 +1132,47 @@ h1 {
   font-weight: 600;
 }
 
+/* Reported directly, 2026-09-18: the kebab column sat at the far right of a
+   wide, horizontally-scrolling table (both Accounts and Contacts) - once
+   scrolled right to actually see it, it was no longer obvious which row it
+   belonged to. Pinned via position: sticky (both the header cell and every
+   body cell), same "actions-col" class shared by both tables. Needs an
+   opaque background (content would otherwise show through as it scrolls
+   underneath) and a low z-index bump so it paints over scrolled-under cells
+   but not over the column menu popup/kebab dropdown - the shadow is purely
+   a visual cue that this column floats above the row, not part of it.
+   Scoped with each table's own id (2026-09-19, same root cause found and
+   fixed on dashboard.css's equivalent .actions-cell) - a plain ".actions-
+   col" selector (one class, specificity 0-1-0) loses to "#companies-table
+   th, #contacts-table th" above (one id + one element, 1-0-1), silently
+   knocking the HEADER cell's position back to relative while the body td
+   (no competing #companies-table td rule exists) stayed correctly sticky -
+   so while scrolled, the "Actions" header label was never visible above
+   the (correctly pinned) kebab buttons, reading as though they belonged to
+   whatever column was last visible instead of their own labeled column. */
+#companies-table th.actions-col,
+#companies-table td.actions-col,
+#contacts-table th.actions-col,
+#contacts-table td.actions-col {
+  position: sticky;
+  right: 0;
+  background: #fff;
+  z-index: 2;
+  box-shadow: -6px 0 6px -6px rgba(0, 0, 0, 0.2);
+}
+
+thead .actions-col {
+  z-index: 3;
+}
+
+.company-row:hover td.actions-col {
+  background: var(--blue-light);
+}
+
+.company-row.expanded td.actions-col {
+  background: var(--blue-light);
+}
+
 .priority-pill {
   display: inline-block;
   padding: 2px 8px;
@@ -483,6 +1185,68 @@ h1 {
 .priority-pill-veryhigh { background: #fde2e2; color: #b3261e; }
 .priority-pill-high { background: #fdead1; color: #a05a00; }
 .priority-pill-other { background: #f1f1f1; color: var(--gray); }
+.priority-pill-discovered { background: var(--blue-light); color: var(--blue); }
+
+/* PRD 6.20 Phase 8 (2026-09-17) - salesTeamPriority's own P1-P5 scale,
+   distinct from aiPriority's Very High/High/... labels above (a different
+   scoring system on the same row - see storage.js's own Phase 8 header
+   comment). Same 5 colors as dashboard.css's lead-priority badges
+   (--priority-1..5), copied rather than shared, so a Priority pill looks
+   the same wherever it appears without pulling in a second stylesheet. */
+.priority-pill-p1 { background: #b71c1c; color: #fff; }
+.priority-pill-p2 { background: #e64a19; color: #fff; }
+.priority-pill-p3 { background: #f9a825; color: var(--ink); }
+.priority-pill-p4 { background: #689f38; color: #fff; }
+.priority-pill-p5 { background: #78909c; color: #fff; }
+
+/* accountStatus/contactStatus (2026-09-18) - same 3 colors as the pie
+   charts' own CONTACT_STATUS_COLORS/ACCOUNT_STATUS_COLORS (target-accounts.js),
+   copied rather than shared so the row pill and the pie legend look
+   identical without threading a color value through the DOM. */
+.priority-pill-status-notcontacted { background: #f1f1f1; color: #757575; }
+.priority-pill-status-contacted { background: var(--blue-light); color: var(--blue); }
+.priority-pill-status-responded { background: #e6f4ea; color: #2e7d32; }
+
+/* Bulk edit (2026-09-22) - the bar only exists while something is selected, so it is
+   allowed to be visually loud: it is the only thing on the page that says a later click
+   will change many rows at once. */
+/* `display: flex` below would otherwise defeat the `hidden` attribute entirely - an author display
+   rule beats the UA stylesheet's `[hidden] { display: none }`, so the bar stayed on screen reading
+   "0 accounts selected" (spotted 2026-09-22). Same guard for the extend button. */
+.bulk-bar[hidden],
+.bulk-bar .text-link-btn[hidden] { display: none; }
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: var(--blue-light);
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+}
+.bulk-bar-count { font-weight: 600; color: var(--blue); }
+/* The "all N are selected" state is the same element as the "select all N" action, just disabled -
+   so it has to stop looking like a link without disappearing. */
+.bulk-bar .text-link-btn:disabled { color: var(--gray); text-decoration: none; cursor: default; }
+
+.bulk-edit-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 14px;
+  align-items: center;
+  margin: 12px 0;
+}
+.bulk-edit-due { display: flex; gap: 8px; align-items: center; }
+.bulk-edit-remove { display: flex; gap: 8px; align-items: center; margin: 4px 0 8px; }
+.select-cell { text-align: center; }
+
+/* webFindings (2026-09-22) - amber for "something is waiting for you to look at it",
+   deliberately not one of the status colors above so a glance down the row never reads
+   a finding as a contact status. */
+.priority-pill-findings-open { background: #fff4e0; color: #b26a00; }
+.priority-pill-findings-done { background: #f1f1f1; color: #757575; }
 
 .detail-row td {
   background: #f7f9fc;
@@ -632,6 +1396,14 @@ h1 {
   gap: 10px 20px;
 }
 
+/* Grid items default to min-width: auto (their content's own min-content
+   width), not the track width - a wide field (e.g. the Status pill+select)
+   would otherwise spill visibly into the next column instead of shrinking
+   or wrapping to fit its own track. */
+.overview-grid > div {
+  min-width: 0;
+}
+
 .overview-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -672,6 +1444,73 @@ h1 {
   white-space: normal;
   overflow: visible;
   word-break: break-word;
+}
+
+/* PRD 6.20 Phase 10 Step 3 (2026-09-18) - Edit mode for the Account/Contact
+   overview card (buildEditForm, target-accounts.js). Reuses .overview-grid/
+   .overview-label/.overview-long-field so an edit form's layout matches the
+   read-only card exactly - only the value cells change from text to
+   inputs. */
+.overview-edit-form .overview-label {
+  margin-bottom: 4px;
+}
+
+.edit-field-input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.edit-field-input:focus {
+  outline: none;
+  border-color: var(--blue);
+}
+
+.edit-field-textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.overview-edit-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.edit-save-btn {
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.edit-save-btn:hover {
+  opacity: 0.9;
+}
+
+.edit-cancel-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--gray-light);
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.edit-cancel-btn:hover {
+  background: #f5f5f5;
 }
 
 .overview-long-field {
@@ -765,6 +1604,25 @@ h1 {
   text-transform: none;
 }
 
+/* PRD 6.20 Phase 10 (2026-09-17) - replaces the old #account-delete-btn/
+   #contact-delete-btn (a prominent red "Remove Account…" link sitting right
+   under the title, reported directly as too easy to click by accident and
+   presented as if destructive when it's really just a reversible soft
+   delete). The same action now lives in this kebab's dropdown alongside
+   Edit/Merge, off to the side rather than the first thing on the page. */
+#account-title-row,
+#contact-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+#account-title-row h2,
+#contact-title-row h2 {
+  margin: 0;
+}
+
 .agent-history {
   max-height: 320px;
   overflow-y: auto;
@@ -794,6 +1652,72 @@ h1 {
 .agent-bubble-agent {
   background: var(--blue-light);
   color: var(--ink);
+}
+
+.agent-bubble-text {
+  display: block;
+}
+
+.agent-bubble-copy-btn {
+  display: block;
+  margin-top: 6px;
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--blue);
+  background: #fff;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+.agent-bubble-copy-btn:hover {
+  background: var(--blue-light);
+}
+
+.agent-bubble-copy-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.status-field-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.status-manual-select {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--gray-light);
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* salesTeamPriorityFieldNode's reason box - only shown once a manual P1-P5
+   value is picked (see the field's own JS comment for why a reason is
+   required, not optional, unlike Status's instant-save select). */
+.priority-override-reason-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.priority-override-reason-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.priority-override-set-btn {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .agent-bubble-tool {
@@ -839,3 +1763,103 @@ h1 {
   border-color: #9cbfe0;
   cursor: default;
 }
+
+/* Small green dot after a table value that came from the imported research workbook (see appendImportedDot in target-accounts.js). */
+.imported-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: #2e9e5b; vertical-align: middle; cursor: help; }
+
+/* Merge duplicate accounts dialog */
+#merge-accounts-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: 520px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+#merge-accounts-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+#merge-accounts-dialog h3 { margin: 0 0 10px; color: var(--ink); font-size: 16px; }
+#merge-accounts-dialog p { font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0 0 12px; }
+.merge-accounts-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-bottom: 12px; }
+.merge-accounts-field select { padding: 6px; font-size: 13px; }
+.merge-accounts-keep { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 12px; padding: 8px 12px; font-size: 13px; }
+.merge-accounts-keep label { display: block; padding: 3px 0; }
+.merge-accounts-keep legend { font-size: 12px; color: var(--gray-light); padding: 0 4px; }
+#merge-accounts-confirm-btn:disabled { opacity: 0.45; cursor: default; }
+#merge-accounts-confirm-btn { background: var(--blue); color: white; }
+#merge-accounts-cancel-btn { background: #f0f0f0; color: var(--ink); }
+
+/* Find & Merge Duplicates dialog */
+#find-duplicates-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: 640px;
+  max-width: 92vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+#find-duplicates-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+#find-duplicates-dialog h3 { margin: 0 0 10px; color: var(--ink); font-size: 16px; }
+#find-duplicates-dialog p { font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0 0 12px; }
+#find-duplicates-list { max-height: 50vh; overflow-y: auto; margin-bottom: 12px; }
+.duplicate-group { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }
+.duplicate-group label { display: block; padding: 2px 0; }
+.duplicate-group-reason { font-size: 12px; color: var(--gray-light); margin-bottom: 4px; }
+.duplicate-merge-btn { margin-top: 6px; padding: 5px 14px; border: none; border-radius: 6px; background: var(--blue); color: #fff; font-weight: 600; cursor: pointer; }
+.duplicate-merge-btn:disabled { opacity: 0.45; cursor: default; }
+#find-duplicates-merge-all-btn { background: var(--blue); color: white; }
+#find-duplicates-close-btn { background: #f0f0f0; color: var(--ink); }
+
+.nav-item[hidden] { display: none !important; }
+
+/* "Loading..." shown over an embedded page until it has loaded (see showEmbeddedPage). */
+#embedded-page-wrap.embedded-loading::after {
+  content: "Loading…";
+  position: absolute;
+  top: 38%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 14px;
+  color: #666;
+  pointer-events: none;
+}
+
+/* Import Research Workbook dialog - helpers for people who do not have a workbook yet */
+.import-help-heading { margin: 16px 0 6px; font-size: 13px; color: var(--ink); }
+.import-help-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.import-help-buttons button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; }
+.import-columns-details { margin-top: 8px; font-size: 12px; }
+.import-columns-details summary { cursor: pointer; color: var(--blue); }
+#import-columns-list { max-height: 220px; overflow-y: auto; margin-top: 6px; line-height: 1.5; }
+#import-columns-list p { margin: 0 0 6px; }
+
+.duplicate-actions { display: flex; gap: 8px; margin-top: 6px; }
+.duplicate-actions .duplicate-merge-btn { margin-top: 0; }
+.duplicate-separate-btn { padding: 5px 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--ink); font-weight: 600; cursor: pointer; }
+.duplicate-separate-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Web research card on the Account page */
+.web-research-card { margin: 14px 0; padding: 12px 16px; background: #fff; border: 1px solid var(--border); border-radius: 8px; }
+.web-research-card .section-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.web-research-card h3 { margin: 0; font-size: 14px; color: var(--ink); }
+.web-research-text { white-space: pre-wrap; font-size: 13px; line-height: 1.55; color: var(--ink); margin-top: 8px; }
+.web-research-sources { margin: 8px 0 0; padding-left: 18px; font-size: 12px; }
+.web-research-sources li { margin-bottom: 2px; }
+
+.hubspot-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin: 8px 0; }
+.hubspot-field select { padding: 6px; font-size: 13px; }
+
+.web-research-buttons { display: inline-flex; gap: 8px; }
+#account-web-research-stop-btn { background: #b3261e; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; font-weight: 600; cursor: pointer; }
+.web-research-text.clamped { max-height: 12.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.web-research-apply-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.web-research-sources-details { margin-top: 8px; font-size: 12px; }
+.web-research-sources-details summary { cursor: pointer; color: var(--blue); }
+.web-research-apply-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; }
+.web-research-apply-table th, .web-research-apply-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+
+/* Research all accounts on the web */
+.bulk-research-group { border: 1px solid #ddd; border-radius: 6px; margin: 8px 0; padding: 6px 12px 10px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
+.bulk-research-group legend { font-weight: 600; padding: 0 4px; }
+.bulk-research-group label { display: inline-flex; gap: 4px; align-items: center; }
+.bulk-research-group .bulk-research-wide { flex-basis: 100%; }

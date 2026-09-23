@@ -8,22 +8,53 @@
 </head>
 <body>
   <header id="page-header">
-    <h1>SalesTeam Setup <span id="version-text"></span></h1>
-    <p class="page-subtitle">
+    <a id="wizard-main-menu-link" href="settings.html" title="Open the SalesTeam menu (dashboards, scanner, settings, backup). Your answers so far are saved automatically.">&#9776; SalesTeam menu</a>
+    <h1><span id="page-title-text">SalesTeam Setup</span> <span id="version-text"></span></h1>
+    <p class="page-subtitle" id="page-subtitle-setup">
       Tell us who you're looking for. This scopes every future Target Account &amp; Contact Discovery scan -
-      you can change any of it later from Settings' "Edit Setup".
+      you can change any of it later from Settings' "Change Settings".
     </p>
+    <p class="page-subtitle" id="page-subtitle-change" hidden>
+      Pick the setting you want to change. Changes are saved as you make them; press Save to be sure.
+    </p>
+    <div id="linkedin-use-note" class="wizard-note">
+      <strong>How SalesTeam works with online platforms and data sources.</strong> SalesTeam is built with the rules of the online platforms and data sources it works with in mind. Its research draws on publicly available sources: the research prompt has an AI assistant consult public company registries and websites, and SalesTeam's own scans read pages of platforms such as LinkedIn. It is designed for personal use, the way a person would use these sites: every scan starts when you click a button, every search and page visit happens in a browser tab you can see, and your browser has to stay open while it runs. There are no scheduled scans and no bulk collection of pages. A built-in safety limit keeps the number of searches and page visits per day modest - within what one person could do by hand. SalesTeam has no server or database of its own, so it never collects, resells or shares anyone's data: everything it finds stays on your device, for your own use, and it never sends messages or connection requests for you. Because each platform's terms of use apply to how any tool is used on it (LinkedIn's terms, for example), we recommend keeping your use moderate and within the daily limit.
+    </div>
     <div id="step-progress"></div>
   </header>
+
+  <!-- Shared, fixed-position wizard nav bar (PRD 6.20, redesigned 2026-09-16) -
+       one persistent Back/Save & Exit/Next, not duplicated per step and not
+       tied to each step's own content height, per the user's own stated
+       preference. onboarding.js rewires its handlers/visibility on every
+       showStep() call rather than binding once per per-step button. Also
+       carries a step index (added 2026-09-16, reported directly: even with
+       Save & Exit, jumping straight to a specific step to edit it still
+       meant scrolling/clicking through - one button per step, clicking any
+       of them jumps there directly. -->
+  <div id="wizard-nav-bar">
+    <a href="#" id="change-back-to-menu-link" class="wizard-back-link" hidden>&larr; Back to menu</a>
+    <div id="wizard-step-list"></div>
+    <div id="wizard-nav-buttons">
+      <button type="button" id="nav-back-btn">Back</button>
+      <button type="button" id="nav-exit-btn" title="Leave the setup and open the SalesTeam menu. Your answers so far are saved automatically.">Exit to menu</button>
+      <button type="button" id="nav-save-btn" title="Save this step now and stay here">Save</button>
+      <span id="nav-save-status" class="status-text" role="status"></span>
+      <button type="button" id="nav-save-exit-btn">Save &amp; Exit</button>
+      <button type="button" id="nav-next-btn">Next</button>
+    </div>
+  </div>
 
   <main id="onboarding-main">
 
     <!-- Step 1: Location -->
     <section id="enter-location" class="wizard-step">
-      <h2>Where are your target companies?</h2>
+      <h2>Where are your target companies and leads?</h2>
       <p class="step-intro">
-        This scopes which companies we search for. Only countries with a live-verified LinkedIn location code
-        are offered below - more are added over time.
+        This is your one target geography - it scopes both which companies Discovery searches for and which
+        of your already-scanned leads (Posts/Jobs) get kept. Discovery's own company search can only actually
+        query LinkedIn for countries with a live-verified location code (more are added over time) - anything
+        you pick beyond that still applies to filtering leads, just not to the search itself yet.
       </p>
       <label for="location-mode-select">Filter by</label>
       <select id="location-mode-select">
@@ -41,7 +72,7 @@
       <div id="location-countries-wrap">
         <div class="dual-listbox">
           <div class="dual-listbox-col">
-            <label for="location-countries-search">Available (confirmed countries only)</label>
+            <label for="location-countries-search">Available countries</label>
             <input type="text" id="location-countries-search" placeholder="Search…" />
             <select id="location-countries-available" multiple size="8"></select>
           </div>
@@ -57,41 +88,28 @@
         <p class="field-hint">Double-click a country to move it, or select one or more (Ctrl/Shift-click) and use the arrows.</p>
       </div>
       <p id="location-error" class="step-error" hidden>Choose at least one continent or country.</p>
-      <div class="wizard-buttons">
-        <button type="button" class="step-next-btn" data-step="location">Next</button>
-      </div>
+
+      <h3>Location priority</h3>
+      <p class="step-intro">
+        How much should each location count when we prioritize what we find? Defaults to Medium - only touch
+        the ones you want to push up or down. Shown per continent if you picked more than one continent above,
+        per country otherwise.
+      </p>
+      <div id="location-priority-wrap" class="priority-item-list"></div>
     </section>
 
     <!-- Step 2: Size + cap -->
     <section id="enter-size" class="wizard-step" hidden>
       <h2>What size companies?</h2>
       <p class="step-intro">
-        Either target the N largest matching companies, or a specific employee-count range. Either way, a
-        Discovery scan never returns more than the cap below in one run.
+        Check the size ranges you want to include, each with its own priority - a Discovery scan never returns
+        more than the cap below in one run.
       </p>
-      <label for="size-mode-select">Size targeting</label>
-      <select id="size-mode-select">
-        <option value="topN">Top N largest</option>
-        <option value="range">Employee-count range</option>
-      </select>
-      <div id="size-topn-wrap">
-        <label for="size-topn-input">Top N largest companies</label>
-        <input type="number" id="size-topn-input" min="1" value="200" />
-      </div>
-      <div id="size-range-wrap" hidden>
-        <label for="size-min-input">Minimum employees (optional)</label>
-        <input type="number" id="size-min-input" min="1" />
-        <label for="size-max-input">Maximum employees (optional)</label>
-        <input type="number" id="size-max-input" min="1" />
-      </div>
+      <div id="size-buckets-wrap" class="priority-item-list"></div>
       <label for="size-max-companies-input">Maximum companies per Discovery run</label>
       <input type="number" id="size-max-companies-input" min="1" max="500" value="200" />
       <p class="field-hint">Hard-capped at 500 to keep any one run's LinkedIn touch-budget cost bounded.</p>
       <p id="size-error" class="step-error" hidden></p>
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="size">Next</button>
-      </div>
     </section>
 
     <!-- Step 3: Industry (optional) -->
@@ -100,21 +118,44 @@
       <p class="step-intro">
         Leave unchecked for no industry restriction. Only industries with a live-verified LinkedIn code are
         offered below (same reasoning as Location) - more are added over time; LinkedIn's own catalog has
-        200+ entries in total.
+        200+ entries in total. Each checked industry also gets its own priority for scoring, defaulting to
+        Medium.
       </p>
-      <div id="industry-checkbox-wrap" class="checkbox-list"></div>
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="industry">Next</button>
-      </div>
+      <button type="button" id="industry-select-none-btn" class="step-inline-btn">Any industry (clear selection - no filter)</button>
+      <button type="button" id="industry-select-all-btn" class="step-inline-btn">Select all</button>
+      <div id="industry-checkbox-wrap" class="priority-item-list"></div>
+
+      <h3>Organization types (optional)</h3>
+      <p class="step-intro">
+        A nonprofit or government body isn't automatically disqualifying - it can be a completely legitimate
+        buyer depending on its size and budget, or a bad fit purely because it's too small, not because of its
+        type. Choose per type: <strong>Yes</strong> (treat as a normal candidate, the default), <strong>No</strong>
+        (exclude wholesale), or <strong>Review</strong> (keep it, but flag it for you to look at yourself rather
+        than deciding automatically). Only catches a discovered company when its own LinkedIn card literally
+        displays one of these type names - a company categorized here but displaying a more specific label
+        (e.g. a non-profit whose card says "International Affairs") won't be caught without visiting its own
+        page, a real cost this doesn't spend automatically. Only types with a live-verified LinkedIn code are
+        offered below - more are added over time.
+      </p>
+      <div id="organization-type-wrap" class="organization-type-list"></div>
+
+      <h3>Languages to consider</h3>
+      <p class="step-intro">
+        Which languages should we consider when building search terms (e.g. a country's own local name)?
+        English is always included.
+      </p>
+      <div id="languages-checkbox-wrap" class="checkbox-list"></div>
     </section>
 
     <!-- Step 4: Priority guidelines -->
     <section id="enter-priority" class="wizard-step" hidden>
-      <h2>How should we prioritize what we find?</h2>
+      <h2>Discovery Prioritization: how should we rank the companies we find?</h2>
       <p class="step-intro">
-        Rank the three criteria by importance, then pick your top pick(s) in each - drawn from what you
-        entered on the previous steps. This feeds automatic company scoring once Discovery scanning ships.
+        Rank the three criteria by overall importance. Which specific locations/sizes/industries matter most is
+        set per-item on their own steps (Location/Size/Industry) - this just orders the three criteria against
+        each other. Feeds automatic company scoring once Discovery scanning ships. This governs Discovery's own
+        company search - for the separate rules that already prioritize scanned Topic leads today, see the next
+        step, Leads Prioritization.
       </p>
       <label for="priority-rank-1">Most important</label>
       <select id="priority-rank-1"></select>
@@ -123,26 +164,61 @@
       <label for="priority-rank-3">3rd</label>
       <select id="priority-rank-3"></select>
       <p id="priority-rank-error" class="step-error" hidden>Each rank must be a different criterion.</p>
+    </section>
 
-      <label for="priority-top-size">Top size bucket</label>
-      <select id="priority-top-size">
-        <option value="">(no preference)</option>
-        <option value="Small">Small</option>
-        <option value="Medium">Medium</option>
-        <option value="Large">Large</option>
-      </select>
-
-      <label>Top location(s) - up to 3</label>
-      <div id="priority-top-locations-wrap" class="checkbox-list"></div>
-
-      <label>Top industries - up to 2</label>
-      <div id="priority-top-industries-wrap" class="checkbox-list"></div>
-      <p id="priority-top-industries-empty" class="field-hint" hidden>No industries entered on the previous step.</p>
-
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="priority">Next</button>
+    <!-- Step 4b: Leads Prioritization (moved from settings.html 2026-09-16) -->
+    <section id="enter-leads-prioritization" class="wizard-step" hidden>
+      <h2>Leads Prioritization: how should we rank the leads (posts) we already scan?</h2>
+      <p class="step-intro">
+        These layer on top of the Sales Mentor's own judgment for a lead whose company is in your Target
+        Accounts list (Target Accounts Dashboard) - not the Discovery step above, which governs company
+        search instead. The Sales Mentor's own judgment is always the base decision and can never itself be
+        disabled; these only ever constrain or override it for a lead that satisfies their specific
+        condition. Saved immediately as you change them, same as everywhere else in this wizard.
+      </p>
+      <label for="leads-prioritization-threshold-input">Target Account confidence threshold (Job rules)</label>
+      <input type="number" id="leads-prioritization-threshold-input" min="0" max="100" title="A company only triggers the Job rules below once your research labels it 'Very High' or 'High' (never Provisional/lower, regardless of score) AND its score is at or above this. Post rules (further down) set their own thresholds per rule instead - changing this number doesn't affect them." />
+      <p class="field-hint">
+        A company is treated as confidently matched once it's labeled "Very High" or "High" by your research
+        (never Provisional or lower, whatever its score) <strong>and</strong> its score is at or above this
+        number. Doesn't affect the Target Accounts Dashboard's own Import/Export - every company there is
+        included regardless of this threshold. Only governs the <strong>Job</strong> rules below - the
+        <strong>Post</strong> rules further down set their own thresholds, one per rule.
+      </p>
+      <p id="leads-prioritization-threshold-error" class="step-error" hidden>Target Account confidence threshold must be a number from 0 to 100.</p>
+      <h3>Job rules</h3>
+      <div id="leads-prioritization-rules-wrap">
+        <table id="leads-prioritization-rules-table">
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>Description</th>
+              <th>Ceiling</th>
+              <th>Floor</th>
+              <th>Decisive</th>
+              <th>Enabled</th>
+            </tr>
+          </thead>
+          <tbody id="leads-prioritization-rules-tbody"></tbody>
+        </table>
       </div>
+
+      <h3>Post rules</h3>
+      <p class="field-hint">
+        <strong>Post leads</strong> (a real, named individual - a stronger signal than a Job listing) are
+        checked against the rules below, top to bottom. Each rule is a set of conditions that <strong>all</strong>
+        have to match (AND) - build one from a Workbook column check, "Account is in the Target Accounts
+        list", "Post author is a Target Contact" and/or "Post matched a Topic". The first <strong>enabled</strong>
+        rule whose conditions all match wins and applies its Floor/Ceiling/Decisive effect; if no rule
+        matches, the Sales Mentor scores the lead entirely on its own. Order matters - only the first match
+        is used, so reorder with ↑/↓ to put more specific rules above more general ones. A Workbook column
+        condition's column field suggests every column actually found in your imported Target Accounts
+        workbook's Companies sheet as you type - or type any column name directly, even one not currently
+        suggested.
+      </p>
+      <div id="post-rules-list"></div>
+      <button type="button" id="add-post-rule-btn">+ Add rule</button>
+      <datalist id="post-rule-column-options"></datalist>
     </section>
 
     <!-- Step 5: Company Context -->
@@ -150,32 +226,33 @@
       <h2>What do you sell?</h2>
       <p class="step-intro">
         Describe your company and what you actually offer. Shared with AI drafting, the Sales Mentor, and
-        Customer Voice - same field as Settings' "What We Offer".
+        Customer Voice.
       </p>
-      <textarea id="company-context-input" placeholder="e.g. We specialize in AI-based automation and process optimization for mid/large companies, using Microsoft, Google and IBM tooling plus custom-built solutions we've already developed."></textarea>
+      <textarea id="company-context-input" placeholder="e.g. We specialize in process optimization and custom solutions for mid/large companies, built on established, proven tooling plus our own in-house development."></textarea>
       <label for="company-website-input">Company website (optional)</label>
       <input type="text" id="company-website-input" placeholder="https://yourcompany.com" />
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="company-context">Next</button>
-      </div>
     </section>
 
-    <!-- Step 6: Ideal Customer Profile -->
+    <!-- Step 6: Things you can offer (optional) -->
+    <section id="enter-value-add-offers" class="wizard-step" hidden>
+      <h2>What can you offer as a value-add? (optional)</h2>
+      <p class="step-intro">
+        Real resources only, one per line — an article link, a report, "free 20-min demo". The AI will only
+        ever mention something from this list when drafting, never invent one.
+      </p>
+      <textarea id="value-add-offers-input" placeholder="https://yourcompany.com/ai-readiness-report&#10;Free 20-minute demo at their convenience"></textarea>
+    </section>
+
+    <!-- Step 7: Ideal Customer Profile -->
     <section id="enter-icp" class="wizard-step" hidden>
       <h2>Who's your ideal customer?</h2>
       <p class="step-intro">
-        Company size, geography, what they're investing in - independent of what you offer. Same field as
-        Settings' "Ideal Customer Profile".
+        Company size, geography, what they're investing in - independent of what you offer.
       </p>
-      <textarea id="icp-input" placeholder="e.g. Mid-to-large Swiss companies actively investing in AI/digital transformation, with a dedicated innovation or digital team."></textarea>
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="icp">Next</button>
-      </div>
+      <textarea id="icp-input" placeholder="e.g. Mid-to-large companies in your target market actively investing in the kind of initiative you help with, with a dedicated team or budget for it."></textarea>
     </section>
 
-    <!-- Step 7: Target-contact profile -->
+    <!-- Step 8: Target-contact profile -->
     <section id="enter-contacts" class="wizard-step" hidden>
       <h2>Who should we look for at each company?</h2>
       <p class="step-intro">
@@ -183,45 +260,77 @@
         is required - this is who a future contact-discovery scan searches each company for.
       </p>
       <label for="contacts-exact-titles-input">Exact titles</label>
-      <textarea id="contacts-exact-titles-input" placeholder="e.g. Chief AI Officer&#10;VP of Digital Transformation"></textarea>
+      <textarea id="contacts-exact-titles-input" placeholder="e.g. Chief Operating Officer&#10;VP of Digital Transformation"></textarea>
       <label for="contacts-title-keywords-input">Title keywords</label>
-      <textarea id="contacts-title-keywords-input" placeholder="e.g. AI&#10;Digital Transformation&#10;Innovation"></textarea>
+      <textarea id="contacts-title-keywords-input" placeholder="e.g. Operations&#10;Digital Transformation&#10;Innovation"></textarea>
+      <label>Preferred seniority (optional)</label>
+      <p class="field-hint">
+        LinkedIn has no seniority filter on a company's People tab, so each checked level just adds its own
+        keywords (e.g. VP-level adds "VP", "Vice President", "SVP"...) to the title search above - it never
+        replaces your exact titles or title keywords. The priority you set for each level also lets Post-lead
+        prioritization rules require a minimum seniority.
+      </p>
+      <div id="seniority-checkbox-wrap" class="priority-item-list"></div>
+      <label for="contacts-max-per-account-input">Maximum contacts per target account</label>
+      <input type="number" id="contacts-max-per-account-input" min="1" max="50" value="10" />
+      <p class="field-hint">
+        When a company has more qualifying people than this, exact-title matches are kept ahead of
+        keyword-only matches, not just whichever appeared first.
+      </p>
       <p id="contacts-error" class="step-error" hidden>Enter at least one exact title or title keyword.</p>
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="contacts">Next</button>
-      </div>
     </section>
 
-    <!-- Step 8: Competitors to exclude (optional) -->
-    <section id="enter-competitors" class="wizard-step" hidden>
-      <h2>Any competitors to exclude? (optional)</h2>
+    <!-- Step 9: Companies to exclude (optional) - unified 2026-09-17 from 4
+         separate steps (Competitors/Recruiters/Existing customers/Existing
+         partners) into one, backed by storage.js's single companyExclusions
+         list (one LinkedIn URL per line per category, same as before - only
+         the storage shape and step count changed, not the per-line UX). -->
+    <section id="enter-exclusions" class="wizard-step" hidden>
+      <h2>Any companies to exclude? (optional)</h2>
       <p class="step-intro">
-        One LinkedIn company-page URL per line - not a company name, since names are too easy to mismatch
-        (legal suffixes, short vs. long names, misspellings). Each line is checked as you go.
+        A company here is never treated as a lead, regardless of anything else about it. One LinkedIn
+        company-page URL per line in each box below - not a company name, since names are too easy to
+        mismatch (legal suffixes, short vs. long names, misspellings). Each line is checked as you go.
       </p>
-      <textarea id="competitors-input" placeholder="https://www.linkedin.com/company/example-competitor/"></textarea>
-      <div id="competitors-parsed-list"></div>
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="competitors">Next</button>
-      </div>
+
+      <label for="exclusions-competitor-input">Competitors</label>
+      <textarea id="exclusions-competitor-input" placeholder="https://www.linkedin.com/company/example-competitor/"></textarea>
+      <div id="exclusions-competitor-parsed-list"></div>
+
+      <label for="exclusions-recruiter-input">Recruiters / staffing agencies</label>
+      <p class="field-hint">Pre-filled with well-known global agencies to save you the lookup; add your local ones and remove any that don't apply, or clear the list entirely if you'd rather skip this.</p>
+      <textarea id="exclusions-recruiter-input" placeholder="https://www.linkedin.com/company/example-agency/"></textarea>
+      <div id="exclusions-recruiter-parsed-list"></div>
+
+      <label for="exclusions-customer-input">Existing customers</label>
+      <textarea id="exclusions-customer-input" placeholder="https://www.linkedin.com/company/example-customer/"></textarea>
+      <div id="exclusions-customer-parsed-list"></div>
+
+      <label for="exclusions-partner-input">Existing partners / resellers</label>
+      <textarea id="exclusions-partner-input" placeholder="https://www.linkedin.com/company/example-partner/"></textarea>
+      <div id="exclusions-partner-parsed-list"></div>
+
+      <label for="exclusions-other-input">Other</label>
+      <p class="field-hint">Anything else that doesn't fit the categories above.</p>
+      <textarea id="exclusions-other-input" placeholder="https://www.linkedin.com/company/example/"></textarea>
+      <div id="exclusions-other-parsed-list"></div>
     </section>
 
-    <!-- Step 9: Recruiters/staffing agencies to exclude (optional) -->
-    <section id="enter-recruiters" class="wizard-step" hidden>
-      <h2>Any recruiters or staffing agencies to exclude? (optional)</h2>
+    <!-- Step 13: Company aliases (optional) -->
+    <section id="enter-aliases" class="wizard-step" hidden>
+      <h2>Any company aliases to map? (optional)</h2>
       <p class="step-intro">
-        Same idea as competitors, and for the same reason - one LinkedIn company-page URL per line, not a
-        name. Pre-filled with well-known global agencies to save you the lookup; add your local ones and
-        remove any that don't apply, or clear the list entirely if you'd rather skip this.
+        Some LinkedIn company pages aren't independently relevant buying organizations - they're a brand,
+        program, or local-market name run by a real company (e.g. "Audi Schweiz" is really AMAG). Map those here
+        so a discovered page like that is attributed to its real, canonical company instead of becoming a
+        duplicate account. One pair per line: the alias's LinkedIn company URL, then <strong>-&gt;</strong>, then
+        the canonical company's LinkedIn URL.
       </p>
-      <textarea id="recruiters-input" placeholder="https://www.linkedin.com/company/example-agency/"></textarea>
-      <div id="recruiters-parsed-list"></div>
-      <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
-        <button type="button" class="step-next-btn" data-step="recruiters">Next</button>
-      </div>
+      <textarea
+        id="aliases-input"
+        placeholder="https://www.linkedin.com/company/audi-schweiz/ -> https://www.linkedin.com/company/amag-automobil-und-motoren-ag/"
+      ></textarea>
+      <div id="aliases-parsed-list"></div>
     </section>
 
     <!-- Shared confirm view (content built per-step by onboarding.js) -->
@@ -234,22 +343,65 @@
       </div>
     </section>
 
-    <!-- Step 9: Finish -->
+    <!-- Step 14: Finish -->
     <section id="enter-finish" class="wizard-step" hidden>
       <h2>Setup complete</h2>
       <div id="finish-summary"></div>
       <p class="field-hint">
-        Target Account &amp; Contact Discovery scanning itself isn't available in this build yet - your
-        targeting profile is saved and ready for when it ships. You can revisit any of this any time from
-        Settings' "Edit Setup".
+        Your targeting profile is saved. You can revisit any of this any time from Settings' "Edit Setup". This
+        takes you back to Settings once saved.
       </p>
       <div class="wizard-buttons">
-        <button type="button" class="step-back-btn">Back</button>
         <button type="button" id="finish-btn">Finish Setup</button>
+        <a href="#" id="finish-back-to-menu-link" class="wizard-back-link">&larr; Back to menu</a>
       </div>
     </section>
 
   </main>
+
+  <!-- Stale-Discovery warning (redesigned 2026-09-16 as a real dialog with
+       explicitly-labeled buttons, replacing a native confirm() whose OK/
+       Cancel labels can't be relabeled and were reported directly as
+       unclear - see onboarding.js's showStaleDiscoveryDialog. #stale-
+       discovery-changed-list is filled in with only the category/ies that
+       actually changed (Location/Size/Industry/Target-contact titles-
+       keywords), not a static list of every category this dialog can ever
+       check - reported directly: naming all four regardless of which
+       genuinely changed read as a guess and was misleading. -->
+  <dialog id="rescore-dialog">
+    <h3>Scoring rules changed</h3>
+    <p>
+      You changed the scoring rules. <strong>They are already saved</strong> and apply to every new scan.
+      Leads you already have keep their old scores until they are re-scored.
+    </p>
+    <div class="stale-discovery-dialog-actions">
+      <button type="button" id="rescore-now-btn">Re-score existing leads now</button>
+      <button type="button" id="rescore-later-btn">Not now</button>
+    </div>
+  </dialog>
+
+  <dialog id="stale-discovery-dialog">
+    <h3>Discovery criteria changed</h3>
+    <p>
+      You've changed <strong id="stale-discovery-changed-list"></strong> since your last Discovery run.
+      <strong>This edit is already saved either way</strong> - this is only about what to do with the
+      companies/contacts already found, which no longer fully match your current settings.
+    </p>
+    <p class="field-hint">
+      Re-running Discovery from scratch with the new criteria can take several days under the shared daily
+      LinkedIn activity limit.
+    </p>
+    <div class="stale-discovery-dialog-actions">
+      <button type="button" id="stale-discovery-clear-btn">Clear Current Discovery</button>
+      <button type="button" id="stale-discovery-keep-btn">Keep Current Discovery</button>
+    </div>
+    <p class="field-hint">
+      <strong>Clear Current Discovery</strong> resets the Discovery queue and clears what's been found so
+      far - it does <strong>not</strong> start a new run by itself, you'll still start one yourself from
+      Settings when ready. <strong>Keep Current Discovery</strong> leaves everything exactly as it is; you
+      can reset later from Settings instead.
+    </p>
+  </dialog>
 
   <script type="module" src="onboarding.js"></script>
 </body>

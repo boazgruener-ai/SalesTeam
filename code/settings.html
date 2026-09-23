@@ -7,182 +7,527 @@
   <link rel="stylesheet" href="settings.css" />
 </head>
 <body>
-  <header id="page-header">
-    <h1>SalesTeam Settings <span id="version-text"></span></h1>
-    <p class="page-subtitle">
-      Shared by the Sales Mentor, Customer Voice, and the Dashboard's per-lead Draft Message — configure once
-      here. Any other general (non-lead-specific) settings added later will live on this page too.
-    </p>
-    <div id="settings-save-status">All changes saved</div>
-    <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
-  </header>
+  <!-- PRD 6.20 Phase 10 (2026-09-18), restructured same day from direct
+       feedback: each nav item now shows/hides its own section (route(),
+       settings.js) instead of anchor-jumping down one long shared scroll -
+       only the selected section's content renders in #app-main at all, so
+       the Setup Wizard's own explanation and the 3 debug test panels don't
+       show by default any more. -->
+  <div id="app-shell">
+    <nav id="app-nav">
+      <div id="app-nav-brand">
+        <div id="app-nav-brand-name" title="Return to this page's own content">SalesTeam</div>
+        <span id="version-text"></span>
+        <button type="button" id="nav-collapse-btn" title="Collapse the menu">«</button>
+      </div>
 
-  <main id="settings-main">
-    <section class="settings-card">
+      <!-- 14th round of direct feedback (2026-09-19): "the main menu
+           changes its order and puts [the current page] first. It should
+           not do that. The menus should always keep its order of sub-
+           menus" - every page's own group used to be moved to the front of
+           its own markup (open/current), which meant the REST of the list
+           reshuffled depending on which page you were on. Reordered to a
+           single fixed order, identical across all 4 pages (Target
+           Accounts, Target Contacts, Posts Dashboard, Scanner, Settings,
+           Debug last) - only which group carries `open`/is the current
+           page changes now, never their relative order. -->
+      <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
+           own copy of this comment for the full reasoning (every group now
+           duplicates target-accounts.html's own real items, each
+           auto-triggered on arrival via "#action=X"; Import/Export Target
+           Accounts left out - file picker/hidden-by-default constraints). -->
+      <details class="nav-group">
+        <summary class="nav-group-label">Target Accounts Dashboard</summary>
+        <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
+        <button id="nav-import-target-accounts-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
+        <button id="nav-restore-accounts-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="nav-hubspot-export-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
+        <button id="nav-hubspot-import-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Target Contacts Dashboard</summary>
+        <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
+        <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Posts Dashboard</summary>
+        <!-- 23rd round of direct feedback (2026-09-19) - see
+             target-accounts.html's own copy of this comment for the full
+             reasoning. -->
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
+        <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 7th round - see
+           scanner.html's own copy of this comment for the full reasoning
+           (anchor-jumping to a Scanner section mostly landed in the wrong
+           place, and Run Scan/Results didn't visibly do anything since
+           both sit in the always-visible right column there - replaced
+           with real functionality instead of navigation: Export/Import
+           Settings and Leads work directly from here, no need to open
+           Scanner at all). -->
+      <details class="nav-group">
+        <summary class="nav-group-label">Scanner</summary>
+        <button id="open-scanner-page-btn" type="button" class="nav-item" title="Configure Topics and run a new LinkedIn scan">Open Scanner</button>
+      </details>
+
+      <!-- Onboarding/General merged into one open "Settings" group (still
+           the exact same nav-setup-section/nav-profile-section/etc ids
+           routeSettings() already depends on) - only the wrapping element
+           changed (<details> instead of two separate <div>s). -->
+      <details class="nav-group" open>
+        <summary class="nav-group-label">Settings</summary>
+        <a href="#setup-section" class="nav-item" id="nav-setup-section" hidden>
+          Onboarding Setup
+          <span id="nav-onboarding-progress" class="nav-item-badge"></span>
+        </a>
+        <a href="#change-settings" class="nav-item" id="nav-change-settings" title="Change one setting directly - location, size, industry, what you sell...">Change Settings</a>
+        <div class="nav-group-sublabel">General</div>
+        <a href="#profile-section" class="nav-item" id="nav-profile-section">User Profile</a>
+        <a href="#language-section" class="nav-item" id="nav-language-section">Message / Response Language</a>
+        <a href="#api-key-section" class="nav-item" id="nav-api-key-section">Anthropic API Key</a>
+        <a href="#backup-section" class="nav-item" id="nav-backup-section">Backup</a>
+        <a href="#restore-section" class="nav-item" id="nav-restore-section">Restore</a>
+        <a href="#billing-section" class="nav-item" id="nav-billing-section" title="What SalesTeam's AI features and web research have used on your Anthropic API key">Billing</a>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
+           target-accounts.html's own copy of this comment for the full
+           reasoning (nothing in this nav opens a new tab any more;
+           "Pipeline Overview" removed entirely). -->
+      <!-- 8th round of direct feedback (2026-09-19): "MORE is also in
+           grey. What is this? ... You can remove it" - these 3 sit at the
+           same level as a group header, styled to match (.nav-item-top),
+           no label needed above them. -->
+      <div class="nav-group">
+        <button id="open-advisors-btn" type="button" class="nav-item nav-item-top" title="Sales Mentor and Customer Voice chats">Advisors</button>
+        <button id="open-activity-log-btn" type="button" class="nav-item nav-item-top" title="Every user and extension action, with old/new values and errors">Activity Log</button>
+        <button id="open-help-btn" type="button" class="nav-item nav-item-top" title="Common questions and how-tos">Help</button>
+      </div>
+
+      <!-- Deliberately last, and visually muted (.nav-group-debug,
+           settings.css) - reported directly: "it is not something that a
+           normal user will use... only in case of a support session." -->
+      <details class="nav-group nav-group-debug">
+        <summary class="nav-group-label">Advanced tools</summary>
+        <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
+        <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
+        <button id="nav-resolve-target-accounts-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
+        <button id="nav-fetch-size-target-accounts-btn" type="button" class="nav-item" title="Visit each company currently missing a real employee count on its own LinkedIn page and read it off there">Fetch Company Size…</button>
+        <button id="nav-prioritize-unscored-btn" type="button" class="nav-item" title="Score every unscored 'New' lead with the Sales Mentor">Prioritize Unscored Leads</button>
+        <button id="nav-rescore-all-btn" type="button" class="nav-item" title="Re-run AI prioritization on every already-scored 'New' lead (manual overrides are skipped)">Re-score All Priorities</button>
+        <button id="nav-extract-companies-btn" type="button" class="nav-item" title="Auto-extract a company name for every Post lead that doesn't have one yet">Extract Companies</button>
+        <button id="nav-extract-companies-profiles-btn" type="button" class="nav-item" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
+        <button id="nav-prioritize-target-accounts-btn" type="button" class="nav-item" title="Score every eligible company's Priority (P1-P5)">Prioritize Companies…</button>
+        <a href="#revenue-currency-section" class="nav-item" id="nav-revenue-currency-section" title="Clean-up and currency conversion for revenue and employee figures">Revenue &amp; Currency</a>
+        <a href="#web-findings-section" class="nav-item" id="nav-web-findings-section" title="The rules behind &quot;Resolve Web Findings Automatically…&quot; on the Target Accounts Dashboard">Web Findings &ndash; Automatic Arbitration</a>
+        <a href="#discovery-queue-section" class="nav-item" id="nav-discovery-queue-section">Discovery Queue (support)</a>
+        <a href="#company-discovery-section" class="nav-item" id="nav-company-discovery-section">Company Discovery (support)</a>
+        <a href="#contact-discovery-section" class="nav-item" id="nav-contact-discovery-section">Contact Discovery (support)</a>
+      </details>
+    </nav>
+
+    <main id="app-main">
+      <div id="page-native-content">
+      <div id="page-header-bar">
+        <h1>SalesTeam Settings</h1>
+        <p class="page-subtitle">
+          Shared by the Sales Mentor, Customer Voice, and the Dashboard's per-lead Draft Message — configure once
+          here. Any other general (non-lead-specific) settings added later will live on this page too.
+        </p>
+        <div id="settings-save-status">All changes saved</div>
+        <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
+      </div>
+
+  <div id="settings-main">
+    <section class="settings-card" id="setup-section">
       <h3>Target Account &amp; Contact Discovery Setup</h3>
       <p class="field-hint">
         Who/where/what size to search for once Discovery scanning ships (PRD 6.20) - location, company size,
         industry, priority guidelines, target-contact titles, and competitors to exclude. Walked through once
         on install; revisit it any time here.
       </p>
+      <p class="field-hint">
+        "What We Offer," "Ideal Customer Profile," "Things you can offer," and the Location/Prioritization
+        settings that used to live further down this page all moved into this same wizard - edit them there,
+        with "Save &amp; Exit" to jump back here right after.
+      </p>
+      <div id="onboarding-progress-wrap">
+        <div id="onboarding-progress-label"></div>
+        <div id="onboarding-progress-track">
+          <div id="onboarding-progress-fill"></div>
+        </div>
+      </div>
       <div class="settings-buttons-row">
-        <button type="button" id="edit-setup-btn">Edit Setup…</button>
+        <button type="button" id="edit-setup-btn">Continue Setup…</button>
       </div>
       <p id="edit-setup-status" class="field-hint"></p>
     </section>
 
-    <section class="settings-card">
-      <label for="output-language-select">Message / response language</label>
+    <!-- PRD 6.20 Phase 10 follow-up (2026-09-18), user's own request - no
+         user-account/login system exists in this local-only, single-user
+         extension (confirmed: nothing here is stored anywhere but
+         chrome.storage.local on this one device), so there's no real
+         "login email"/"password"/CRM-connection data to show, unlike the
+         reference screenshot's multi-user SaaS mockup. Scoped instead to
+         what the user actually confirmed useful: a name/title for drafted-
+         message sign-offs (userProfileBlock, agent-shared.js) and an email
+         address saved ahead of a future notification feature - not used
+         anywhere yet, but the user's own reasoning for adding it now. -->
+    <section class="settings-card" id="profile-section">
+      <h3>User Profile</h3>
+      <p class="field-hint">
+        SalesTeam runs entirely on this device - there's no account, login, or server, so there's nothing to
+        sign in with or connect here. What's below is used for drafted-message personalization (the Sales
+        Mentor and Customer Voice chats, and the Dashboard's Draft Message) and, for email, a future
+        notification feature.
+      </p>
+      <label for="profile-name-input">Your name</label>
+      <input type="text" id="profile-name-input" placeholder="e.g. Jane Doe" />
+      <label for="profile-title-input">Your title / role</label>
+      <input type="text" id="profile-title-input" placeholder="e.g. Account Executive at Acme" />
+      <label for="profile-email-input">Your email</label>
+      <input type="email" id="profile-email-input" placeholder="you@example.com" />
+      <p class="field-hint">
+        Not used for anything yet - saved for when a notification feature ships, so it doesn't need its own
+        setup step later. Stored only on this device, same as everything else on this page.
+      </p>
+    </section>
+
+    <section class="settings-card" id="discovery-queue-section">
+      <h3>Discovery Queue (debug - Phase 4 test harness)</h3>
+      <p class="field-hint">
+        Temporary test panel for the resumable Discovery scan queue (PRD 6.20 Phase 4) - Phase 5/6 (the
+        actual company/contact discovery scans) don't exist yet to drive this for real, so these buttons
+        simulate one loop iteration each, exercising the same state machine those phases will call into.
+        Remove or fold into real progress UI once Phase 5/6 ship.
+      </p>
+      <pre id="discovery-queue-state-display" class="debug-state-display"></pre>
+      <div class="settings-buttons-row">
+        <button type="button" id="discovery-queue-start-btn">Start (test)</button>
+        <button type="button" id="discovery-queue-checkpoint-company-btn">Checkpoint company (test)</button>
+        <button type="button" id="discovery-queue-advance-contacts-btn">Advance to contacts</button>
+        <button type="button" id="discovery-queue-checkpoint-contact-btn">Checkpoint contact (test)</button>
+        <button type="button" id="discovery-queue-complete-btn">Complete</button>
+        <button type="button" id="discovery-queue-stop-btn">Set abort flag</button>
+        <button type="button" id="discovery-queue-reset-btn" class="danger-btn">Reset</button>
+      </div>
+    </section>
+
+    <section class="settings-card" id="company-discovery-section">
+      <h3>Company Discovery (debug - Phase 5 live test)</h3>
+      <p class="field-hint">
+        Temporary test panel for the real Company discovery scan (PRD 6.20 Phase 5) - runs a live LinkedIn
+        Company Search using your saved onboarding criteria, checkpointing into the Discovery Queue above.
+        Remove or fold into real progress UI once Phase 5 is fully wired into the main scan flow.
+      </p>
+      <p id="company-discovery-status" class="field-hint"></p>
+      <div class="settings-buttons-row">
+        <button type="button" id="company-discovery-start-btn">Start fresh + run</button>
+        <button type="button" id="company-discovery-resume-btn">Resume existing run</button>
+        <button type="button" id="company-discovery-stop-btn">Stop</button>
+        <button type="button" id="company-discovery-clear-cache-btn" class="danger-btn">Clear location cache</button>
+        <button type="button" id="company-discovery-show-companies-btn">Show discovered companies</button>
+        <button type="button" id="company-discovery-compare-dashboard-btn">Compare with Dashboard</button>
+      </div>
+      <pre id="company-discovery-results-display" class="debug-state-display"></pre>
+      <pre id="company-discovery-companies-display" class="debug-state-display"></pre>
+    </section>
+
+    <section class="settings-card" id="contact-discovery-section">
+      <h3>Contact Discovery (debug - Phase 6 live test)</h3>
+      <p class="field-hint">
+        Temporary test panel for the real Contact discovery scan (PRD 6.20 Phase 6) - visits each Phase-5-
+        discovered company's own People tab with your saved Target Contacts profile, checkpointing into the
+        Discovery Queue above. Only runs when the queue is in "discovering_contacts" status (i.e. Phase 5 has
+        already run to completion). Remove or fold into real progress UI once Phase 6 is fully wired in.
+      </p>
+      <p id="contact-discovery-status" class="field-hint"></p>
+      <div class="settings-buttons-row">
+        <button type="button" id="contact-discovery-run-btn">Run contact discovery</button>
+        <button type="button" id="contact-discovery-stop-btn">Stop</button>
+        <button type="button" id="contact-discovery-show-btn">Show discovered contacts</button>
+        <button type="button" id="contact-discovery-restart-btn" class="danger-btn">Restart from company 1</button>
+        <button type="button" id="contact-discovery-clear-btn" class="danger-btn">Clear discovered contacts</button>
+      </div>
+      <pre id="contact-discovery-results-display" class="debug-state-display"></pre>
+      <pre id="contact-discovery-contacts-display" class="debug-state-display"></pre>
+    </section>
+
+    <section class="settings-card" id="language-section">
+      <h3>Message / Response Language</h3>
+      <label for="output-language-select">Language</label>
       <select id="output-language-select">
         <option value="english">English</option>
         <option value="german">German (Hochdeutsch)</option>
+        <option value="french">French</option>
       </select>
       <p class="field-hint">
-        Customer Voice always mirrors a specific lead's own post language when grounded in one, and falls
-        back to this for general questions.
+        This is the DEFAULT language for everything SalesTeam's AI writes - the Sales Mentor's chat replies,
+        Customer Voice's replies, drafted LinkedIn messages, and every other AI-generated text in the
+        extension. The one exception: when Customer Voice is grounded in one specific real lead (via
+        get_lead_details), it replies in THAT lead's own post language instead, whatever it is - a French
+        lead gets a French reaction even if this is set to English, since that's what a real reply from them
+        would look like. Everywhere else, this setting is what's actually used.
       </p>
+    </section>
 
-      <h3>What We Offer</h3>
-      <p class="field-hint">
-        Describe your company and what you actually sell. Shared by AI drafting, the Sales Mentor, and
-        Customer Voice, so they can reason about real fit against a lead — not just react to the lead's own
-        post in isolation.
-      </p>
-      <textarea id="company-context-input" placeholder="e.g. We specialize in AI-based automation and process optimization for mid/large companies, using Microsoft, Google and IBM tooling plus custom-built solutions we've already developed."></textarea>
-
-      <h3>Ideal Customer Profile</h3>
-      <p class="field-hint">
-        Who you're specifically targeting — company size, geography, industry, what they're investing in.
-        Separate from "What We Offer" on purpose: this is about the customer, not the product. Shared by the
-        same AI features, so they can judge fit against your actual target profile, not just topical overlap.
-      </p>
-      <textarea id="ideal-customer-profile-input" placeholder="e.g. Medium to large enterprise companies, located in Switzerland, who are investing in AI development, automation, or transformation projects, and may need AI engineering, custom model development, or strategic support."></textarea>
-
-      <h3>Target Accounts</h3>
-      <p class="field-hint">
-        Import a curated list of target companies (name, AI-priority score, industry, initiatives) straight
-        from the .xlsx research workbook - pick the file below, no conversion step needed. A scanned lead
-        whose company matches a "Very High" or "High" (non-provisional) entry at or above the threshold below
-        automatically gets Priority 1. Provisional or lower-scoring matches are still shown to the Sales
-        Mentor as a signal when it prioritizes leads, not a guarantee.
-      </p>
-      <p id="target-accounts-status" class="field-hint">No target accounts imported yet.</p>
-      <div class="settings-buttons-row">
-        <button id="import-target-accounts-btn" type="button" title="Import the Swiss AI prospects .xlsx workbook directly (its 'Companies' sheet), or restore a previously exported backup .json">Import Target Accounts</button>
-        <input type="file" id="import-target-accounts-file-input" accept=".xlsx,application/json" hidden />
-        <button id="export-target-accounts-btn" type="button" title="Download a full backup (the target-accounts map plus the full Explorer workbook) as a .json file you can later restore with Import Target Accounts">Export Target Accounts</button>
-      </div>
-      <label for="target-account-threshold-input">Target Account confidence threshold</label>
-      <input type="number" id="target-account-threshold-input" min="0" max="100" title="Companies scored at or above this (and labeled Very High/High, non-provisional) 'qualify' - see the Prioritization Rules below for exactly what that triggers" />
-
-      <div class="settings-buttons-row">
-        <button id="resolve-company-ids-btn" type="button" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID - needed for a future feature that scopes Post search to only these companies' employees">Resolve LinkedIn Company IDs…</button>
-        <button id="stop-resolve-company-ids-btn" type="button" class="danger-btn" hidden title="Stop the running resolve - companies resolved so far are already saved">Stop</button>
-        <label for="resolve-company-ids-limit-input" class="field-hint" style="display:inline-flex; align-items:center; gap:4px;">
-          Limit to
-          <input type="number" id="resolve-company-ids-limit-input" min="1" style="width:5em;" title="Only resolve this many companies this run - leave blank to resolve everything still missing an ID. Useful for a quick test before committing to a full run." />
-          (blank = all)
-        </label>
-      </div>
-      <p id="resolve-company-ids-status" class="field-hint"></p>
-
-      <h3>Location Filter</h3>
-      <p class="field-hint">
-        Restrict leads to your actual sales territory, using each lead's own location (filled in from a
-        Job listing's own location, or from an opt-in profile visit for Posts - see the Dashboard's "Extract
-        Companies from Profiles"). A lead whose location is confidently classified outside what you choose
-        below gets marked Irrelevant automatically - reviewable and reversible, exactly like a Negative
-        Topic below, never a silent delete. A lead with no location data yet, or text that can't be
-        confidently classified, is never touched. This makes a Topic's own location keywords unnecessary
-        going forward (existing topics are untouched either way).
-      </p>
-      <label for="location-filter-mode-select">Filter mode</label>
-      <select id="location-filter-mode-select">
-        <option value="off">Off</option>
-        <option value="continent">By continent</option>
-        <option value="country">By country</option>
-      </select>
-      <div id="location-filter-continents-wrap">
-        <label><input type="checkbox" class="location-continent-checkbox" value="northAmerica" /> North America</label>
-        <label><input type="checkbox" class="location-continent-checkbox" value="latinAmerica" /> Latin America</label>
-        <label><input type="checkbox" class="location-continent-checkbox" value="europe" /> Europe (including UK and Switzerland)</label>
-        <label><input type="checkbox" class="location-continent-checkbox" value="africa" /> Africa</label>
-        <label><input type="checkbox" class="location-continent-checkbox" value="middleEast" /> Middle East</label>
-        <label><input type="checkbox" class="location-continent-checkbox" value="southEastAsia" /> South East Asia</label>
-      </div>
-      <div id="location-filter-countries-wrap">
-        <div class="dual-listbox">
-          <div class="dual-listbox-col">
-            <label for="location-filter-countries-search">All countries</label>
-            <input type="text" id="location-filter-countries-search" placeholder="Search…" />
-            <select id="location-filter-countries-available" multiple size="10"></select>
-          </div>
-          <div class="dual-listbox-buttons">
-            <button type="button" id="location-filter-country-add-btn" title="Add the selected countries to the filter">→</button>
-            <button type="button" id="location-filter-country-remove-btn" title="Remove the selected countries from the filter">←</button>
-          </div>
-          <div class="dual-listbox-col">
-            <label>In the filter (<span id="location-filter-countries-count">0</span>)</label>
-            <select id="location-filter-countries-selected" multiple size="10"></select>
-          </div>
-        </div>
-        <p class="field-hint">Double-click a country to move it, or select one or more (Ctrl/Shift-click) and use the arrows. Nothing here takes effect until you click Save.</p>
-        <div class="settings-buttons-row">
-          <button type="button" id="location-filter-countries-save-btn">Save Countries</button>
-        </div>
-        <p id="location-filter-countries-save-status" class="field-hint"></p>
-      </div>
-      <div class="settings-buttons-row">
-        <button id="apply-location-filter-btn" type="button" title="Re-check every existing lead against the current location filter, right now, without a new scan">Apply Location Filter</button>
-      </div>
-      <p id="apply-location-filter-status" class="field-hint"></p>
-
-      <h3>Prioritization Rules</h3>
-      <p class="field-hint">
-        These layer on top of the Sales Mentor's own judgment for a lead whose company qualifies as a Target
-        Account (above). A <strong>Decisive</strong> rule fixes the priority outright - the Sales Mentor
-        never sees that lead. A <strong>Ceiling</strong>/<strong>Floor</strong> rule instead caps or raises
-        whatever the Mentor itself would have said. The Sales Mentor is always the base decision and can't be
-        disabled - disable a rule here to let it decide those leads entirely on its own instead.
-      </p>
-      <div id="prioritization-rules-wrap">
-        <table id="prioritization-rules-table">
-          <thead>
-            <tr>
-              <th>Rule</th>
-              <th>Description</th>
-              <th>Ceiling</th>
-              <th>Floor</th>
-              <th>Decisive</th>
-              <th>Enabled</th>
-            </tr>
-          </thead>
-          <tbody id="prioritization-rules-tbody"></tbody>
-        </table>
-      </div>
-
-      <label for="anthropic-api-key-input">Anthropic API key</label>
+    <section class="settings-card" id="api-key-section">
+      <h3>Anthropic API Key</h3>
+      <label for="anthropic-api-key-input">API key</label>
       <input type="password" id="anthropic-api-key-input" placeholder="sk-ant-..." />
+      <div class="settings-buttons-row">
+        <button type="button" id="api-key-save-btn" disabled>Save</button>
+        <button type="button" id="api-key-cancel-btn" disabled>Cancel</button>
+        <span id="api-key-status" class="status-text" role="status"></span>
+      </div>
       <p class="field-hint">
         Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>.
         Stored only on this device, and used only to call Anthropic's API directly from your browser.
       </p>
-
-      <h3>Message templates</h3>
-      <p class="field-hint">
-        Auto-picked per lead based on connection status, or choose manually on the Dashboard. Edit the
-        instructions so drafts sound like you.
-      </p>
-      <div id="message-templates-list"></div>
-
-      <h3>Things you can offer (optional, one per line)</h3>
-      <p class="field-hint">
-        Real resources only — an article link, a report, "free 20-min demo". The AI will only ever mention
-        something from this list, never invent one.
-      </p>
-      <textarea id="value-add-offers-input" placeholder="https://yourcompany.com/ai-readiness-report&#10;Free 20-minute demo at their convenience"></textarea>
     </section>
-  </main>
+
+    <section class="settings-card" id="billing-section">
+      <h3>Billing</h3>
+      <p class="field-hint">
+        What SalesTeam's AI features have used on <strong>your own Anthropic API key</strong>: tokens, web searches and an
+        <strong>estimated</strong> cost in US dollars, worked out from Anthropic's published prices. Your Anthropic Console is the
+        official figure. Only calls made by this extension are counted, from the day this page started keeping count.
+      </p>
+      <table id="billing-totals" class="billing-table"></table>
+      <p id="billing-average" class="field-hint"></p>
+      <h4 class="billing-heading">Day by day (last 31 days)</h4>
+      <div class="billing-scroll"><table id="billing-days" class="billing-table"></table></div>
+      <h4 class="billing-heading">By feature (all time)</h4>
+      <table id="billing-features" class="billing-table"></table>
+      <h4 class="billing-heading">Warning before an expensive action</h4>
+      <p class="field-hint">
+        Before an AI action that could cost more than this amount (for example scoring hundreds of leads), SalesTeam asks you to
+        confirm. Set 0 to switch the warning off. SalesTeam does not stop spending by itself - to cap it for real, set a spend
+        limit in your Anthropic Console.
+      </p>
+      <div class="settings-buttons-row">
+        <label for="billing-warning-input">Warn me above US$</label>
+        <input type="number" id="billing-warning-input" min="0" step="0.5" style="width: 90px" />
+        <button type="button" id="billing-warning-save-btn" disabled>Save</button>
+        <span id="billing-warning-status" class="field-hint" role="status"></span>
+      </div>
+      <p class="field-hint">
+        For the official usage, cost and spend limits, open your
+        <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer">Anthropic Console</a>
+        (Usage / Cost, and the limits settings).
+      </p>
+      <p class="field-hint">
+        <strong>Web research</strong> = the "Research this account on the web" button (searches + the AI reading them).
+        <strong>Other AI features</strong> = everything else on your API key: message drafting, lead and company prioritization, company
+        extraction, topic suggestions, search-quality analysis and the Advisors chats. Prices used: Claude Sonnet $2 in / $10 out per million
+        tokens, Claude Haiku $1 / $5, and about $0.01 per web search.
+      </p>
+      <div class="settings-buttons-row">
+        <button type="button" id="billing-reset-btn">Reset the counters…</button>
+      </div>
+    </section>
+
+    <section class="settings-card" id="restore-section">
+      <h3>Restore</h3>
+      <p class="field-hint">
+        Bring your data back from a SalesTeam backup file - the backup zip made on the Backup page (or an older
+        .json backup). This is what to use after reinstalling SalesTeam or when setting it up on another computer.
+      </p>
+      <p class="field-hint">
+        After you pick the file you choose <strong>what to restore</strong>: settings, accounts / contacts / initiatives,
+        your edits to them, leads and conversations, the activity log, and display preferences. Only the parts you
+        tick are replaced; everything else stays as it is. A safety copy of your current data is saved first.
+      </p>
+      <button id="backup-restore-btn" type="button" title="Choose a backup file (.zip, or an older .json) - you then choose which parts to restore">Restore from backup…</button>
+      <input type="file" id="backup-restore-file-input" accept=".zip,.json,application/zip,application/json" hidden />
+      <p id="restore-action-status" class="field-hint" role="status"></p>
+      <p class="field-hint">
+        Backups are kept in the folder chosen on the Backup page.
+        <button id="backup-find-btn" type="button" class="text-link-btn" hidden title="Reinstalled SalesTeam? Point at your backup folder and pick the backup to restore">Look for backups in a folder…</button>
+      </p>
+    </section>
+
+    <section class="settings-card" id="backup-section">
+      <h3>Backup</h3>
+      <p class="field-hint">
+        One backup holds everything - settings, accounts, contacts, leads, chats and the activity log - as a single dated zip.
+        The zip also contains your accounts and leads as CSV spreadsheets, ready to open in Excel or upload to another system.
+      </p>
+
+      <label>Backup folder</label>
+      <p id="backup-folder-name" class="field-hint"></p>
+      <div id="backup-folder-path-row" hidden>
+        <label for="backup-folder-path-note">Folder's full path (optional)</label>
+        <input type="text" id="backup-folder-path-note" placeholder="Paste the full path here to show it above" />
+        <p class="field-hint">Chrome only tells SalesTeam the folder's name, never its full path. If you want the path shown here, paste it once - it is for display only and is cleared if you pick a different folder.</p>
+      </div>
+      <button id="backup-choose-folder-btn" type="button" title="Pick the folder backups are saved into (Daily, Manual and Before-restore subfolders are created inside it)">Choose folder…</button>
+      <button id="backup-use-downloads-btn" type="button" hidden title="Save backups to the browser's Downloads folder again">Use Downloads folder</button>
+
+      <label class="checkbox-label">
+        <input type="checkbox" id="backup-auto-enabled" checked />
+        Back up automatically every day
+      </label>
+      <label for="backup-time-input">Daily backup time</label>
+      <input type="time" id="backup-time-input" value="02:00" />
+      <p class="field-hint">
+        SalesTeam makes the daily backup the first time it is open at or after this time - it cannot run while Chrome
+        or the extension is closed. Daily backups are saved in a folder per month.
+      </p>
+
+      <label for="backup-retention-select">Keeping old backups</label>
+      <select id="backup-retention-select">
+        <option value="all">Keep every backup</option>
+        <option value="smart">Thin out older backups (30 days daily, then weekly, then monthly)</option>
+        <option value="year">Keep one year of daily backups</option>
+      </select>
+      <p id="backup-retention-info" class="field-hint"></p>
+      <button id="backup-retention-run-btn" type="button" hidden title="Delete the older daily backups this setting would remove, now">Remove them now…</button>
+
+      <div class="backup-save-row">
+        <button id="backup-save-btn" type="button" disabled title="Save the folder path, daily backup switch, time and retention setting above">Save backup settings</button>
+        <span id="backup-save-status" class="field-hint"></span>
+      </div>
+
+      <label class="checkbox-label">
+        <input type="checkbox" id="backup-include-api-key" />
+        Include my Anthropic API key in backups I make with "Back up now" (stored as plain text)
+      </label>
+      <button id="backup-now-btn" type="button">Back up now</button>
+      <p id="backup-action-status" class="field-hint"></p>
+      <p id="backup-last-status" class="field-hint"></p>
+
+      <label>Storage</label>
+      <progress id="backup-storage-bar" max="100" value="0"></progress>
+      <p id="backup-storage-usage" class="field-hint"></p>
+    </section>
+
+    <!-- Deliberately in Advanced tools and closed by default. Every decision this mechanism makes is
+         written to the Activity Log, which is how a user would ever discover a bad pattern and come
+         looking for these controls - they are the remedy, not the safeguard, so they should be
+         findable when sought rather than noise for the great majority who never need them. -->
+
+    <!-- Revenue figures arrive in whatever currency and shape the source used. This is where they are
+         given one meaning: cleaned up ("102M" -> 102,000,000, "CHF 102m" -> the number plus its
+         currency) and then expressed in a single currency everywhere they are compared. -->
+    <section class="settings-card" id="revenue-currency-section">
+      <h3>Revenue &amp; Currency</h3>
+      <p class="field-hint">
+        Revenue reaches SalesTeam written every possible way &ndash; <code>102M</code>, <code>CHF 102m</code>,
+        <code>102'000</code>, <code>1.2bn</code>, sometimes just <code>USD</code> with no number at all. It is cleaned up
+        into plain digits (<code>102M</code> becomes <code>102,000,000</code>) and anything not already in the currency
+        below is converted into it, so two figures can actually be compared instead of merely looking different.
+        The same clean-up rescues employee counts stored as text, like <code>6,500+</code>, which otherwise give a
+        company no size at all when it is scored.
+      </p>
+
+      <label for="revenue-currency-select">Show and compare all revenue in</label>
+      <select id="revenue-currency-select"></select>
+
+      <details id="revenue-rates-details">
+        <summary>Exchange rates</summary>
+        <p class="field-hint" id="revenue-rates-asof"></p>
+        <p class="field-hint">
+          These are approximate starting values, not a live feed &ndash; SalesTeam never calls out to a rates service.
+          Correct any of them by hand and set the date so you can see at a glance how old they are. Each one is how
+          many US dollars one unit of that currency is worth.
+        </p>
+        <label for="revenue-rates-asof-input">Rates last checked on</label>
+        <input type="date" id="revenue-rates-asof-input" />
+        <div id="revenue-rates-grid"></div>
+        <button type="button" id="revenue-rates-reset-btn">Put the rates back to the defaults</button>
+      </details>
+      <span id="revenue-currency-status" class="status-text" role="status"></span>
+    </section>
+
+    <section class="settings-card" id="web-findings-section">
+      <h3>Web Findings &ndash; Automatic Arbitration</h3>
+      <p class="field-hint">
+        When a web research turns up a fact that disagrees with what an account already holds, most of the time it is
+        not a mistake: two correct figures counted differently (84,146 employees or 150,000 &ndash; direct staff against
+        staff-and-contractors), or a field that is never used to score a company at all. <strong>Resolve Web Findings
+        Automatically&hellip;</strong> on the Target Accounts Dashboard settles those by the rules below and leaves you only
+        the ones that can genuinely change something. It always shows you what it will do before it does it, writes
+        every single decision to the Activity Log, and can be undone in one action.
+      </p>
+
+      <h4>Rules</h4>
+      <p class="field-hint">
+        Turning a rule off always moves in the safe direction. For the rules that decide something, that case stops
+        being decided and comes to you instead. For the rules that always ask, it stops forcing a question and lets the
+        remaining rules try &ndash; but a value that fails the &ldquo;looks wrong&rdquo; checks is never written into an account
+        whatever these are set to, so the most a switched-off rule can do is keep what you already have.
+      </p>
+      <div id="web-findings-rules"></div>
+
+      <h4>Settings the rules use</h4>
+      <label for="web-findings-tolerance">Treat two employee counts as the same when they differ by less than (%)</label>
+      <input type="number" id="web-findings-tolerance" min="0" max="100" step="1" style="width: 110px" />
+      <p class="field-hint">
+        Only used when the two counts fall in different size bands. Higher means fewer questions and more decided for you.
+      </p>
+
+      <label for="web-findings-preference">When a rule decides for you, prefer</label>
+      <select id="web-findings-preference">
+        <option value="existing">Existing/imported data</option>
+        <option value="web">New web research</option>
+      </select>
+      <p class="field-hint">
+        Keeping your own data is the safer default: it is your curated set and it is consistent across every account.
+        Choose the web research instead if your imported data is older or less trustworthy than a fresh search.
+      </p>
+
+      <label class="checkbox-label">
+        <input type="checkbox" id="web-findings-linkedin-authoritative" />
+        Trust an employee count read from LinkedIn when deciding which size band a company is in
+      </label>
+      <p class="field-hint">
+        A count fetched from LinkedIn is the size band the company publishes about itself. It is not an exact headcount,
+        but it is the most reliable thing available for putting a company in the right band &ndash; so when it disagrees with
+        the web research about the band, this keeps LinkedIn's rather than asking you.
+      </p>
+
+      <details id="web-findings-illogical">
+        <summary>What counts as a value that &ldquo;looks wrong&rdquo;</summary>
+        <p class="field-hint">
+          Checked on both sides &ndash; the found value and the one already stored. Alongside these numbers, rule 2 also
+          catches an employee count that is not a number at all (values like &ldquo;6,500+&rdquo; are stored on some accounts and
+          can never be used for sizing), a local employee count larger than the worldwide one, any negative value, and
+          revenue that looks like it was entered in millions where the other side is in units.
+        </p>
+        <label for="web-findings-max-employees">Too many employees to be real</label>
+        <input type="number" id="web-findings-max-employees" min="1" step="1000" style="width: 160px" />
+        <label for="web-findings-rev-floor">Revenue below this, when the other side is at least the next figure, is a units mistake</label>
+        <input type="number" id="web-findings-rev-floor" min="0" step="100" style="width: 160px" />
+        <label for="web-findings-rev-ceil">&hellip;and the other side is at least</label>
+        <input type="number" id="web-findings-rev-ceil" min="0" step="100000" style="width: 160px" />
+        <label for="web-findings-rpe-min">Lowest believable revenue per employee</label>
+        <input type="number" id="web-findings-rpe-min" min="0" step="100" style="width: 160px" />
+        <label for="web-findings-rpe-max">Highest believable revenue per employee</label>
+        <input type="number" id="web-findings-rpe-max" min="0" step="100000" style="width: 160px" />
+      </details>
+
+      <div class="settings-buttons-row">
+        <button type="button" id="web-findings-reset-btn">Put everything back to the defaults</button>
+        <span id="web-findings-status" class="status-text" role="status"></span>
+      </div>
+    </section>
+  </div>
+      </div>
+
+      <div id="embedded-page-wrap" hidden>
+        <div id="embedded-page-bar">
+          <button type="button" id="embedded-page-close-btn" title="Close and return to this page">← Back</button>
+          <span id="embedded-page-title"></span>
+        </div>
+        <iframe id="embedded-page-frame" title="Embedded page"></iframe>
+      </div>
+    </main>
+  </div>
 
   <script type="module" src="settings.js"></script>
 </body>

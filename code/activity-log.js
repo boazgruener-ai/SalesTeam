@@ -62,12 +62,27 @@ function applyFilters() {
     : `${filtered.length} of ${allEntries.length} entries`;
 }
 
-function valueCell(value) {
+// Long values (a pasted JSON blob, a list of diagnostic samples) are clamped to 4 lines, like the
+// Posts Dashboard's Content cell; a click expands/collapses. Only a value that actually overflows
+// gets the pointer cursor and hover tip (markExpandableValues, after the rows are in the DOM).
+function valueCell(value, { wide = false } = {}) {
   const td = document.createElement("td");
   const text = formatValue(value);
-  td.className = "log-value" + (text === "—" ? " log-value-empty" : "");
-  td.textContent = text;
+  td.className = "log-value" + (text === "—" ? " log-value-empty" : "") + (wide ? " log-value-wide" : "");
+  const inner = document.createElement("div");
+  inner.className = "log-value-inner clamped";
+  inner.textContent = text;
+  td.appendChild(inner);
   return td;
+}
+
+function markExpandableValues() {
+  for (const inner of tbodyEl.querySelectorAll(".log-value-inner")) {
+    if (inner.scrollHeight <= inner.clientHeight + 1) continue;
+    inner.classList.add("log-value-expandable");
+    inner.title = "Click to expand/collapse";
+    inner.addEventListener("click", () => inner.classList.toggle("expanded"));
+  }
 }
 
 function renderRows(entries) {
@@ -120,9 +135,10 @@ function renderRows(entries) {
       actionTd.appendChild(errDetail);
     }
 
-    tr.append(timeTd, actorTd, actionTd, valueCell(entry.prevValue), valueCell(entry.newValue));
+    tr.append(timeTd, actorTd, actionTd, valueCell(entry.prevValue), valueCell(entry.newValue, { wide: true }));
     tbodyEl.appendChild(tr);
   }
+  markExpandableValues();
 }
 
 async function loadLog() {

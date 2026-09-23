@@ -3,6 +3,7 @@
 // in real lead data via tool calls) and the Customer Voice (a simulated buyer
 // persona to pressure-test outreach messages against). Also owns the persona/
 // company-context/template settings that shape both agents' system prompts.
+import { askConfirm } from "./confirm-dialog.js";
 import {
   getAnthropicApiKey,
   getMessageTemplates,
@@ -11,6 +12,7 @@ import {
   getIdealCustomerProfile,
   getMentorPersona,
   saveMentorPersona,
+  getUserProfile,
   getCustomerPersona,
   saveCustomerPersona,
   getOutputLanguage,
@@ -53,6 +55,7 @@ let idealCustomerProfile = "";
 let mentorPersona = "";
 let customerPersona = "";
 let outputLanguage = "english";
+let userProfile = { name: "", title: "", email: "" };
 
 async function draftSettings() {
   return {
@@ -60,6 +63,7 @@ async function draftSettings() {
     messageTemplates,
     valueAddOffers,
     companyContext,
+    userProfile,
     outputLanguage,
   };
 }
@@ -132,7 +136,7 @@ function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputE
     }
   });
   clearBtn.addEventListener("click", async () => {
-    if (!confirm("Clear this conversation? This can't be undone.")) return;
+    if (!(await askConfirm("Clear this conversation? This can't be undone.", { okLabel: "Clear conversation", cancelLabel: "Keep it", danger: true }))) return;
     const prevLength = history.length;
     history = [];
     await clearHistoryFn();
@@ -225,6 +229,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.outputLanguage) outputLanguage = changes.outputLanguage.newValue || "english";
   if (changes.messageTemplates) messageTemplates = changes.messageTemplates.newValue || [];
   if (changes.valueAddOffers) valueAddOffers = changes.valueAddOffers.newValue || [];
+  if (changes.userProfile) userProfile = { name: "", title: "", email: "", ...(changes.userProfile.newValue || {}) };
 });
 
 async function init() {
@@ -235,6 +240,7 @@ async function init() {
   idealCustomerProfile = await getIdealCustomerProfile();
   messageTemplates = await getMessageTemplates();
   valueAddOffers = await getValueAddOffers();
+  userProfile = await getUserProfile();
 
   mentorPersona = await getMentorPersona();
   mentorPersonaInput.value = mentorPersona;

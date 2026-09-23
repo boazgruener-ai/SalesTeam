@@ -16,16 +16,23 @@
   --priority-3: #f9a825;
   --priority-4: #689f38;
   --priority-5: #78909c;
+  --nav-header: #0d3868;
 }
 
 * { box-sizing: border-box; }
 
+/* 27th round of direct feedback (2026-09-19) - see target-accounts.css's
+   own copy of this comment for the full reasoning: this rule's own
+   `padding: 24px 32px 60px` was a leftover, pre-Phase-10 duplicate of
+   #app-main's own equivalent padding below - stacking silently inflated
+   <body> 84px past the #app-shell it wraps, forcing a permanent, real
+   outer/document scrollbar. Moved to match settings.css/scanner.css, which
+   never had this bug (#app-main alone carries the spacing there). */
 body {
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
   color: var(--ink);
   margin: 0;
-  padding: 24px 32px 60px;
   background: #fafafa;
 }
 
@@ -59,21 +66,304 @@ h3 {
   margin: 0 0 8px;
 }
 
-#page-header {
+/* PRD 6.20 Phase 10 (2026-09-18) - left-nav shell, same shape as
+   target-accounts.css's own #app-shell/#app-nav/#app-main (duplicated here,
+   not shared, per this codebase's existing per-file convention - kept
+   visually identical on purpose, for consistency across dashboards). */
+/* 27th round of direct feedback (2026-09-19), same-day follow-up - see
+   target-accounts.css's own copy of this comment for the full reasoning:
+   hard-capped to one viewport (height + overflow: hidden, align-items:
+   flex-start removed) so the outer/document level can never scroll -
+   #app-main (below) now owns its own dedicated overflow-y: auto instead. */
+#app-shell {
   display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+#app-shell.embedded-mode #app-nav {
+  display: none;
+}
+
+#app-nav {
+  width: 236px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+#app-nav-brand {
+  padding: 0 20px 14px 20px;
+  border-bottom: 1px solid #eef0f2;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: baseline;
   justify-content: space-between;
+  gap: 8px;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - collapsible nav, see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+#nav-collapse-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--gray-light);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#nav-collapse-btn:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+#app-shell.nav-collapsed #app-nav {
+  width: 44px;
+  overflow: hidden;
+}
+
+#app-shell.nav-collapsed #app-nav-brand {
+  padding: 0 11px 14px 11px;
+  justify-content: center;
+}
+
+#app-shell.nav-collapsed #app-nav-brand-name,
+#app-shell.nav-collapsed #version-text,
+#app-shell.nav-collapsed .nav-group {
+  display: none;
+}
+
+#app-nav {
+  transition: width 0.15s ease;
+}
+
+/* 19th round of direct feedback (2026-09-19) - see target-accounts.css's
+   own copy of this comment for the full reasoning: clicking the brand name
+   now does what the removed "<- Back" button used to (hideEmbeddedPage),
+   so there's still a way back to this page's own real content. */
+#app-nav-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+#app-nav #version-text {
+  font-size: 11px;
+  color: var(--gray-light);
+}
+
+.nav-group {
+  padding: 0 12px;
+  margin-bottom: 18px;
+}
+
+.nav-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+  padding: 0 8px 6px 8px;
+}
+
+.nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 8px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.nav-item:hover {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+.nav-item-top {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+}
+
+.nav-item-top:hover {
+  color: var(--blue);
+}
+
+.nav-item:disabled {
+  color: var(--gray-light);
+  cursor: default;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - the nav is now the full
+   cross-app menu on every page (native <details>/<summary>, no JS needed
+   for expand/collapse) - see target-accounts.html's own #app-nav comment
+   for the full reasoning. */
+details.nav-group summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details.nav-group summary::-webkit-details-marker {
+  display: none;
+}
+
+details.nav-group summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  transition: transform 0.15s ease;
+}
+
+details.nav-group[open] summary::before {
+  transform: rotate(90deg);
+}
+
+details.nav-group > .nav-item,
+details.nav-group > div > .nav-item {
+  margin-left: 20px;
+  width: calc(100% - 20px);
+}
+
+/* Deliberately last, and visually muted - reported directly: "it is not
+   something that a normal user will use... only in case of a support
+   session." */
+.nav-group-debug summary,
+.nav-group-debug .nav-item {
+  color: var(--gray-light);
+  font-size: 12px;
+}
+
+.nav-group-debug .nav-item:hover {
+  color: var(--blue);
+}
+
+/* 27th round of direct feedback (2026-09-19) - see `body`'s own comment
+   above: the bottom value here (60px) now carries the spacing body's own
+   padding used to duplicate, matching settings.css's already-correct
+   #app-main. overflow-y: auto (same-day follow-up, see #app-shell's own
+   comment above) makes this its own dedicated, self-contained scroll
+   region - a tall table scrolls WITHIN #app-main, never the outer
+   document. */
+#app-main {
+  flex-grow: 1;
+  min-width: 0;
+  padding: 24px 32px 60px;
+  position: relative;
+  overflow-y: auto;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - every cross-page nav item
+   embeds in place now (6th round of direct feedback), see
+   target-accounts.css's own copy of this comment for the full reasoning.
+   Reverted the earlier `#app-main { min-height: 100vh }` fix + fixed
+   properly, 2026-09-19 - see target-accounts.css's own copy of this
+   comment for the full reasoning (that fix produced a real second, nested
+   outer scrollbar on top of the embedded iframe's own internal one,
+   reported directly: "the outer one moves the main page and also the
+   menu, the inner one moves only the central page"). #embedded-page-wrap
+   now sizes itself (no dependency on #app-main's own height) instead of
+   stretching to match a forced-tall #app-main.
+   height, not min-height (2026-09-19, see target-accounts.css's own copy
+   of this comment for the full reasoning) - min-height briefly broke the
+   embedded iframe's own sizing (a flex container's min-height doesn't
+   reliably give a flex: 1 child a definite height), reported directly as
+   a missing top scrollbar inside the embedded page. */
+#embedded-page-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+}
+
+#embedded-page-wrap[hidden] {
+  display: none;
+}
+
+#embedded-page-bar {
+  display: flex;
   align-items: center;
-  margin-bottom: 24px;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  flex-shrink: 0;
+}
+
+/* Same fix as #embedded-page-wrap[hidden] above (round 6) - an ID
+   selector's own display:flex silently beats the browser's native
+   [hidden] { display: none }, so hiding this bar (19th round of direct
+   feedback, 2026-09-19) needs the same explicit, more-specific override. */
+#embedded-page-bar[hidden] {
+  display: none;
+}
+
+#embedded-page-close-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#embedded-page-close-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+#embedded-page-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+#embedded-page-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+}
+
+#page-header-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
   padding-bottom: 12px;
   border-bottom: 2px solid var(--blue);
 }
 
-#header-actions {
-  display: flex;
-  gap: 8px;
+#page-header-bar h1 {
+  margin: 0;
+  font-size: 20px;
 }
 
-#header-actions button,
 #detail-status-select,
 #status-filter-select,
 #sort-select,
@@ -92,7 +382,6 @@ h3 {
   cursor: pointer;
 }
 
-#header-actions button,
 #detail-draft-btn,
 .agent-send-btn {
   background: var(--blue);
@@ -102,14 +391,24 @@ h3 {
 }
 
 /* ---- pie charts ---- */
+/* 6 cards (2026-09-18: Priority/Status/Source added alongside the original
+   3 time-windowed ones) no longer fit one row at a normal window width -
+   a horizontally-scrolling strip ("slide" through the cards) beats either
+   wrapping to a second row (pushes the table down further) or squishing
+   every card to fit, same reasoning as the wide Posts/Accounts tables'
+   own horizontal scroll. flex-shrink: 0 on .pie-card keeps each one at a
+   fixed, readable width instead of shrinking to squeeze into view. */
 #stats-section {
   display: flex;
   gap: 20px;
   margin-bottom: 28px;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 
 .pie-card {
-  flex: 1;
+  flex: 0 0 auto;
+  width: 260px;
   background: white;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -192,9 +491,18 @@ h3 {
   background: var(--blue-light, #eef4fb);
   font-weight: 600;
   padding: 8px 10px;
+}
+
+/* Name + button laid out here, inside the (still real, full-width) table cell. Sticky so they stay in view when the
+   table is scrolled sideways. */
+.group-header-bar {
   display: flex;
   align-items: center;
   gap: 10px;
+  position: sticky;
+  left: 0;
+  width: max-content;
+  max-width: 100%;
 }
 
 .group-caret-btn {
@@ -207,10 +515,14 @@ h3 {
 }
 
 .group-header-label {
-  flex: 1;
+  /* one line for any normal name; only a very long one wraps, at 560px */
+  flex: 0 1 auto;
+  max-width: 560px;
 }
 
 .group-summary-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: 12px;
   padding: 4px 10px;
   border: 1px solid #ccc;
@@ -221,6 +533,12 @@ h3 {
 
 .group-summary-btn:hover {
   background: #f2f2f2;
+}
+
+.group-summary-text {
+  max-width: 900px;
+  position: sticky;
+  left: 0;
 }
 
 .company-group-summary-row td {
@@ -238,11 +556,32 @@ h3 {
 }
 
 /* ---- table ---- */
+/* Reverted same day, 2026-09-19 - see the HTML's own comment above
+   #table-section for the full reasoning (a genuinely separate,
+   non-scrolling Actions table guaranteed no overlap but "doesn't look
+   good" compared to Target Accounts/Contacts' single-table look; back to
+   one table, sticky last column, matching those 2). */
 #table-section {
   background: white;
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow-x: auto;
+}
+
+/* 18th round of direct feedback (2026-09-19) - mirrors target-accounts.css's
+   own #table-scroll-top/#table-scroll-top-filler rules exactly (a thin
+   scrollable strip above the table, synced to #table-section's own native
+   scrollbar via JS - reachable without scrolling down to the table's bottom
+   edge first). */
+#table-scroll-top {
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 16px;
+  margin-bottom: 2px;
+}
+
+#table-scroll-top-filler {
+  height: 1px;
 }
 
 table#results-table {
@@ -524,10 +863,44 @@ table#results-table {
   text-decoration: underline;
 }
 
-.actions-cell {
-  display: flex;
-  gap: 4px;
-  white-space: nowrap;
+/* 20th round of direct feedback (2026-09-19): the JS that builds this
+   column moved to the shared actions-column.js (both this table and
+   target-accounts.js's Companies/Contacts tables call it now) - class
+   renamed from .actions-cell to .actions-col to match, so both files'
+   own CSS is at least keyed off the same name even though the actual
+   CSS stays duplicated per file (this codebase's existing convention).
+   Pinned to the right edge of #table-section's own horizontal scroll
+   frame, same mechanism as target-accounts.css's .actions-col. Scoped
+   with the table's own id so this rule's specificity beats #results-table
+   th's own position: relative for the header cell too (round 12's fix,
+   2026-09-19 - without it, only the HEADER cell silently un-sticks, since
+   no competing #results-table td rule exists to affect the body cells the
+   same way). */
+#results-table th.actions-col,
+#results-table td.actions-col {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  box-shadow: -6px 0 6px -6px rgba(0, 0, 0, 0.2);
+}
+
+/* Reported directly, same round: "there is an Action column in Posts, with
+   the column header appearing as a white box" - the sticky rule's own
+   background: #fff (needed on the BODY cell, to mask scrolled-under row
+   content) was also landing on the HEADER cell, at higher specificity than
+   #results-table th's own background: var(--blue-light), so the actions
+   header broke from every other header's own blue tint. target-
+   accounts.css's own header cells never set a background at all (plain
+   white already), so the identical mechanism there never produces this
+   mismatch - split apart here instead of copying that no-background
+   scheme wholesale, since dashboard.html's blue header tint predates this
+   whole nav/table saga and wasn't part of what was reported. */
+#results-table td.actions-col {
+  background: #fff;
+}
+
+thead th.actions-col {
+  z-index: 3;
 }
 
 .icon-btn {
@@ -552,6 +925,75 @@ table#results-table {
 .icon-btn.dismiss-btn:hover {
   background: #fdeaea;
   border-color: #a00;
+}
+
+/* Row-level kebab menu (PRD 6.20 Phase 10, 2026-09-17) - replaces the 6
+   always-visible icon buttons that used to fill .actions-cell. Same visual
+   language as target-accounts.css's .col-menu-popup/.col-menu-item, kept as
+   its own copy here (not a shared module) per this codebase's existing
+   convention of duplicating small per-file UI helpers rather than sharing
+   them across unrelated pages. */
+.kebab-btn {
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--gray);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.kebab-btn:hover {
+  background: var(--blue-light);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.row-menu-popup {
+  position: fixed;
+  z-index: 1000;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 6px;
+  width: 200px;
+  text-align: left;
+  cursor: default;
+}
+
+.row-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 4px;
+  color: var(--ink);
+  font-weight: normal;
+}
+
+.row-menu-item:hover:not(:disabled) {
+  background: var(--blue-light);
+}
+
+.row-menu-item.danger:hover:not(:disabled) {
+  background: #fdeaea;
+  color: #a00;
+}
+
+.row-menu-item:disabled {
+  color: #b7bcc2;
+  cursor: default;
 }
 
 #pagination-row {
@@ -791,6 +1233,56 @@ table#results-table {
   text-transform: none;
 }
 
+/* Same idea as .text-link-btn, neutral color for a non-destructive toggle -
+   "Edit templates" next to Draft Message's own controls (moved here from
+   Settings, 2026-09-16). */
+.text-link-btn-neutral {
+  background: none;
+  border: none;
+  color: #0a66c2;
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 12px;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+#detail-templates-editor {
+  margin: -4px 0 10px;
+  padding: 8px 10px;
+  background: #f7f7f7;
+  border-radius: 6px;
+}
+
+.template-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.template-card:last-child {
+  margin-bottom: 0;
+}
+
+.template-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.template-card textarea {
+  min-height: 55px;
+  margin-bottom: 0;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px;
+}
+
 /* Deliberately small and muted, tucked into the pagination row below the
    table rather than the main controls row - a bulk status change touches
    every currently-filtered lead at once, so this isn't meant to be a
@@ -962,4 +1454,101 @@ table#results-table {
 #bulk-undo-btn:disabled {
   color: var(--gray-light);
   cursor: default;
+}
+
+/* Post detail: explicit Save button for Status / Priority (reported directly, 2026-09-21). */
+#detail-save-btn {
+  background: var(--blue, #1a56b0);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 8px;
+}
+#detail-save-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Visible progress/result toast for the left-menu actions (see setupActionToast in dashboard.js). */
+#action-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+  padding: 10px 14px;
+  background: #1f2937;
+  color: #fff;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+#action-toast[hidden] { display: none; }
+#action-toast.action-toast-error { background: #b3261e; }
+.action-toast-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: action-toast-spin 0.8s linear infinite;
+}
+.action-toast-spinner[hidden] { display: none; }
+@keyframes action-toast-spin { to { transform: rotate(360deg); } }
+.action-toast-close {
+  flex: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.8;
+}
+@media (prefers-reduced-motion: reduce) { .action-toast-spinner { animation: none; } }
+
+/* "Re-score now?" prompt shown after the scoring rules changed (see maybeShowRescorePrompt in dashboard.js). */
+.rescore-prompt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 12px;
+  padding: 10px 14px;
+  background: #fff8e1;
+  border: 1px solid #f0d98a;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.rescore-prompt button:not(.text-link-btn) {
+  background: var(--blue, #0a66c2);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nav-item[hidden] { display: none !important; }
+
+/* "Loading..." shown over an embedded page until it has loaded (see showEmbeddedPage). */
+#embedded-page-wrap.embedded-loading::after {
+  content: "Loading…";
+  position: absolute;
+  top: 38%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 14px;
+  color: #666;
+  pointer-events: none;
 }

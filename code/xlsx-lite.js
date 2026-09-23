@@ -11,7 +11,21 @@
 // DecompressionStream for the actual inflate) and reuses the browser's own
 // DOMParser for the XML, so nothing outside the platform is required.
 
-const NEEDED_HEADERS = ["Company", "Industry", "AI_Priority_Score", "AI_Priority", "Research_Status", "Top_AI_Initiatives"];
+// v38+ workbooks (2026-09-15) rename every "AI_"-prefixed sheet/column to
+// drop the "AI_" - the user deliberately genericized the ChatGPT template
+// so it can be reused for a non-AI product line later, not an accident.
+// Each entry below is a list of acceptable header spellings for one
+// logical column, newest first - the first one found in a given workbook
+// wins, so this reads either vintage with no separate code path.
+const NEEDED_HEADER_ALIASES = {
+  Company: ["Company"],
+  Industry: ["Industry"],
+  AI_Priority_Score: ["Priority_Score", "AI_Priority_Score"],
+  AI_Priority: ["Priority", "AI_Priority"],
+  Research_Status: ["Research_Status"],
+  Top_AI_Initiatives: ["Top_Initiatives", "Top_AI_Initiatives"],
+};
+const NEEDED_HEADERS = Object.values(NEEDED_HEADER_ALIASES).flat();
 
 // Spreadsheet XML parts aren't guaranteed to use the default (unprefixed)
 // namespace - a workbook produced by some tools (confirmed with a real
@@ -198,13 +212,23 @@ function parseCompanyRows(sheetXml, sharedStrings) {
     const value = cellValue(c, sharedStrings);
     if (value != null) headerByCol[col] = String(value).trim();
   }
+  // Resolved per logical key (colByHeader.AI_Priority_Score etc.), not per
+  // literal header string - a workbook only ever has one spelling of each
+  // column present, so this picks whichever of NEEDED_HEADER_ALIASES'
+  // candidates actually exists, newest spelling first.
   const colByHeader = {};
-  for (const [col, header] of Object.entries(headerByCol)) {
-    if (NEEDED_HEADERS.includes(header)) colByHeader[header] = col;
+  for (const [logicalKey, candidates] of Object.entries(NEEDED_HEADER_ALIASES)) {
+    for (const [col, header] of Object.entries(headerByCol)) {
+      if (candidates.includes(header)) {
+        colByHeader[logicalKey] = col;
+        break;
+      }
+    }
   }
-  const missing = NEEDED_HEADERS.filter((h) => !(h in colByHeader));
+  const missing = Object.keys(NEEDED_HEADER_ALIASES).filter((k) => !(k in colByHeader));
   if (missing.length > 0) {
-    throw new Error(`This workbook's "Companies" sheet is missing expected column(s): ${missing.join(", ")}.`);
+    const spellings = missing.map((k) => NEEDED_HEADER_ALIASES[k].join(" or ")).join(", ");
+    throw new Error(`This workbook's "Companies" sheet is missing expected column(s): ${spellings}.`);
   }
 
   const entries = [];
@@ -256,6 +280,84 @@ export async function parseTargetAccountsWorkbook(arrayBuffer) {
 // whole row per sheet, not just the handful of fields Idea 1's prioritization
 // logic cares about. A row with every cell blank is dropped; anything with
 // at least one real value is kept, even if some of its columns are empty.
+// v38+ workbooks (2026-09-15) rename every "AI_"-prefixed column to drop
+// the "AI_" (e.g. "AI_Priority_Score" -> "Priority_Score", camelCased to
+// priorityScore instead of the aiPriorityScore every downstream consumer
+// - storage.js, target-accounts.js, agent-shared.js - already expects).
+// Rather than touch every one of those call sites, each short name is
+// aliased onto its "ai"-prefixed key right here at parse time, same
+// "normalize at import, callers never need to know which schema produced
+// a row" approach already used for the Contacts sheet's three schema
+// variants.
+//
+// Bidirectional as of 2026-09-17 (was short-to-ai only) - the user's own
+// rule-builder UI (onboarding.js) and its default seed rules (storage.js)
+// were reported directly as still showing "aiPriority" etc. even after the
+// user's workbook fully dropped every AI mention "in the last several file
+// versions." Fixed by having both the UI and the seed rules reference the
+// short, real column name instead (see their own comments) - which only
+// works correctly for an OLDER, still-"AI_"-prefixed workbook too if the
+// short key gets backfilled from the ai-prefixed one as well, not just the
+// other way around. Each direction only fires when its own target is
+// still missing, so neither a modern (short-only) nor a legacy (ai-prefixed-
+// only) workbook is a no-op for whichever key some caller happens to ask
+// for.
+export const AI_FIELD_ALIASES = {
+  priorityScore: "aiPriorityScore",
+  priority: "aiPriority",
+  portfolioProfile: "aiPortfolioProfile",
+  portfolioProfileConfidence: "aiPortfolioProfileConfidence",
+  investmentGlobal: "aiInvestmentGlobal",
+  investmentSwitzerland: "aiInvestmentSwitzerland",
+  investmentConfidence: "aiInvestmentConfidence",
+  topInitiatives: "topAiInitiatives",
+  maturityFitScore: "aiMaturityFitScore",
+  useCaseFitScore: "aiUseCaseFitScore",
+  relevance: "aiRelevance",
+  // Reported directly 2026-09-17 (the same "AI" mentions ChatGPT was asked
+  // to drop from every column/field, "already in the last several file
+  // versions") - this one entry was missing from the list above, found by
+  // cross-checking every "ai"-prefixed id target-accounts.js's own
+  // COMPANY_COLUMNS expects against this alias table.
+  investmentScore: "aiInvestmentScore",
+};
+
+// Country-neutral workbook headers (what the generic research prompt produces:
+// "Home" = the country of the user's own company, "Registry" = that country's
+// official company registry) -> the internal field ids, which keep the older
+// swiss*/zefix* spelling that the first workbook (V66) used, so existing data
+// and every consumer of those ids (LinkedIn resolver, size scoring, Explorer
+// columns) stay untouched. Only fills the internal id when it is still missing,
+// so a legacy workbook imports exactly as before.
+export const HOME_FIELD_ALIASES = {
+  registryOfficialName: "zefixOfficialName",
+  registryId: "zefixUid",
+  registryAddress: "zefixAddress",
+  mainHomeLocation: "mainSwissLocation",
+  homeDecisionAuthority: "swissDecisionAuthority",
+  homeRevenue: "swissRevenue",
+  homeRevenueCurrency: "swissRevenueCurrency",
+  homeRevenuePeriod: "swissRevenuePeriod",
+  homeRevenueConfidence: "swissRevenueConfidence",
+  homeEmployees: "swissEmployees",
+  homeEmployeesPeriod: "swissEmployeesPeriod",
+  homeEmployeesConfidence: "swissEmployeesConfidence",
+  investmentHome: "investmentSwitzerland",
+  homeSizeFitScore: "swissSizeFitScore",
+  homeBased: "swissBased",
+};
+
+function applyAiFieldAliases(row) {
+  for (const [homeKey, legacyKey] of Object.entries(HOME_FIELD_ALIASES)) {
+    if (row[legacyKey] === undefined && row[homeKey] !== undefined) row[legacyKey] = row[homeKey];
+  }
+  for (const [shortKey, aiKey] of Object.entries(AI_FIELD_ALIASES)) {
+    if (row[aiKey] === undefined && row[shortKey] !== undefined) row[aiKey] = row[shortKey];
+    else if (row[shortKey] === undefined && row[aiKey] !== undefined) row[shortKey] = row[aiKey];
+  }
+  return row;
+}
+
 function parseGenericSheetRows(sheetXml, sharedStrings) {
   const doc = parseXml(sheetXml);
   const rows = Array.from(tag(doc, "row"));
@@ -295,7 +397,7 @@ function parseGenericSheetRows(sheetXml, sharedStrings) {
       rowValues[header] = value;
       if (value != null) hasAny = true;
     }
-    if (hasAny) entries.push(rowValues);
+    if (hasAny) entries.push(applyAiFieldAliases(rowValues));
   }
   return entries;
 }
@@ -304,13 +406,42 @@ function parseGenericSheetRows(sheetXml, sharedStrings) {
 // Company_ID (camelCased to companyId) - see PRD 6.12. Sheets not listed
 // here (README, Dashboard, Scoring_Model, Lookup_Lists, Prospect_List) are
 // presentation/methodology content, not per-company records, so the
-// Explorer has no use for them.
+// Explorer has no use for them. Each value is a list of acceptable sheet
+// names, newest first - v38+ workbooks (2026-09-15) renamed AI_Initiatives
+// -> Initiatives and AI_Investment -> Investment along with their column
+// renames above; the first name found in a given workbook wins.
+// exclusionList (added 2026-09-17): a newer ChatGPT workbook carries its own
+// "Exclusion_List" sheet - confirmed live (Swiss_AI_Prospects_528_V55_FULL_
+// 17-9-2026.xlsx) as exactly 3 columns, Company_ID/Company/Exclusion_Reason
+// (camelCased: companyId/company/exclusionReason) - one row per company the
+// Companies sheet's own new Excluded column marks "Yes" (confirmed: 10 of
+// 528 rows, all reason "Competitor" in this file, though the user's own
+// description of the feature says Exclusion_Reason can also be Customer/
+// Partner/Other). Company_ID is the reliable join back to Companies (the
+// same column both sheets already use for every other relational join in
+// this workbook) - see storage.js's backfillCompanyExclusionsFromWorkbook.
+// aliases (added 2026-09-19, 28th round of direct feedback): "It has now a
+// very extensive list of aliases for each company and also the type of
+// alias (short name, German/French, Group brand, etc.)... it could be a
+// good idea to import and integrate these aliases now." Confirmed live
+// (Swiss_AI_Prospects_544_V66_FULL_17-9-2026.xlsx) as one row per name
+// variant - Company_ID/Canonical_Name/Alias/Alias_Type/Language/
+// Search_Priority/Normalized_Alias/Source_or_Notes/Source_URL/
+// Verification_Status (camelCased: companyId/canonicalName/alias/
+// aliasType/language/searchPriority/normalizedAlias/sourceOrNotes/
+// sourceUrl/verificationStatus) - 2707 rows across 544 companies in that
+// workbook, joined back to Companies the same way every other relational
+// sheet here already is. See storage.js's importTargetAccounts for what
+// actually consumes these (indexing the Target Accounts lookup by every
+// known alias, not just each company's own primary name).
 const RELATIONAL_SHEETS = {
-  companies: "Companies",
-  contacts: "Contacts",
-  aiInitiatives: "AI_Initiatives",
-  aiInvestment: "AI_Investment",
-  sources: "Sources",
+  companies: ["Companies"],
+  contacts: ["Contacts"],
+  aiInitiatives: ["Initiatives", "AI_Initiatives"],
+  aiInvestment: ["Investment", "AI_Investment"],
+  sources: ["Sources"],
+  exclusionList: ["Exclusion_List", "Exclusion List", "ExclusionList"],
+  aliases: ["Aliases"],
 };
 
 // Reads the full relational slice of the workbook - every column of every
@@ -327,8 +458,12 @@ export async function parseFullTargetAccountsWorkbook(arrayBuffer) {
     : [];
 
   const result = {};
-  for (const [key, sheetName] of Object.entries(RELATIONAL_SHEETS)) {
-    const sheetPath = resolveSheetPath(workbookXml, relsXml, sheetName);
+  for (const [key, sheetNameCandidates] of Object.entries(RELATIONAL_SHEETS)) {
+    let sheetPath = null;
+    for (const candidate of sheetNameCandidates) {
+      sheetPath = resolveSheetPath(workbookXml, relsXml, candidate);
+      if (sheetPath) break;
+    }
     result[key] = sheetPath ? parseGenericSheetRows(await zip.readText(sheetPath), sharedStrings) : [];
   }
   return result;

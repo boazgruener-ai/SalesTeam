@@ -89,6 +89,45 @@ python code/gen_release_notes_docx.py
 Chrome's "Load unpacked" (underscore-reserved name). There is no Node on PATH, so any JS
 build/test tooling needs a different path.
 
+## Syntax-checking the JS without Node
+
+There is still no Node/deno/bun on this machine, but `code/check_js_syntax.py` covers the one
+failure mode that actually hurts: a parse error or a duplicate top-level declaration renders the
+whole page **blank**, with nothing in the UI to say why. It parses every `code/*.js` with
+tree-sitter's JavaScript grammar (modern syntax included — optional chaining, nullish coalescing,
+class fields) and reports ERROR/MISSING nodes plus duplicate top-level bindings, with line numbers.
+
+```
+set PYTHONDONTWRITEBYTECODE=1
+python code/check_js_syntax.py
+```
+
+One-off install if it is missing: `python -m pip install tree_sitter tree_sitter_javascript`.
+
+**Run it after every batch of JS edits, before saying anything is done.** It is a SYNTAX check, not
+a type or lint check — a clean run does not mean the code works, only that every page will at least
+load and run. Reloading the extension and exercising the feature is still the real test.
+
+## Running the pure modules for real
+
+`py_mini_racer` ships a prebuilt V8, so any module that touches neither `chrome.*` nor the DOM can
+actually be executed and asserted on. `code/test_pure_modules.py` does that for
+`value-normalize.js`, `web-research-apply.js` and `web-findings-arbitration.js`.
+
+```
+set PYTHONDONTWRITEBYTECODE=1
+python code/test_pure_modules.py
+```
+
+One-off install if missing: `python -m pip install py_mini_racer`.
+
+**This is why the pure modules are kept pure.** The harness concatenates them with `export`/`import`
+stripped, and refuses to run if one of them has started importing something impure — which is the
+signal to lift the logic back out into a pure module, not to weaken the harness. When a rule or a
+parser needs changing, add the case here first: it has already caught a regex that could never match
+(`\b` never matches between a digit and a letter, so `/\bm\b/` missed the "m" in "1.5m") and a wrong
+assumption about which rule fires on an illogical value.
+
 ## Versioning and store submission
 
 - **Default to bumping the patch digit only** (1.1.3 -> 1.1.4). Minor and major bumps are

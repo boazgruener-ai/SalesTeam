@@ -1,0 +1,1025 @@
+:root {
+  --blue: #0a66c2;
+  --blue-light: #eef4fb;
+  --ink: #1a1a1a;
+  --gray: #555;
+  --gray-light: #888;
+  --border: #ddd;
+  --nav-header: #0d3868;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  margin: 0;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+/* PRD 6.20 Phase 10 (2026-09-18) - left-nav shell, same shape as the other
+   full-tab pages (duplicated per-file, not shared, kept visually identical
+   on purpose). This file otherwise IS the original sidepanel.css unchanged -
+   every rule below this point still applies exactly as it did in the
+   narrow side panel, just with more room around it now that it's a full
+   tab; #scanner-settings-col caps the settings column at a readable width
+   instead of letting it stretch edge-to-edge (see #scanner-columns below
+   for the two-vertical layout added in the same-day follow-up). */
+#app-shell {
+  display: flex;
+  align-items: flex-start;
+  min-height: 100vh;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+#app-shell.embedded-mode #app-nav {
+  display: none;
+}
+
+#app-nav {
+  width: 236px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+#app-nav-brand {
+  padding: 0 20px 14px 20px;
+  border-bottom: 1px solid #eef0f2;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+/* 19th round of direct feedback (2026-09-19) - see target-accounts.css's
+   own copy of this comment for the full reasoning: clicking the brand name
+   now does what the removed "<- Back" button used to (hideEmbeddedPage),
+   so there's still a way back to this page's own real content. */
+#app-nav-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+#app-nav #version-text {
+  font-size: 11px;
+  color: var(--gray-light);
+}
+
+.nav-group {
+  padding: 0 12px;
+  margin-bottom: 18px;
+}
+
+.nav-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+  padding: 0 8px 6px 8px;
+}
+
+.nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 8px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.nav-item {
+  font-weight: 400;
+}
+
+.nav-item:hover {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+.nav-item-top {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+}
+
+.nav-item-top:hover {
+  color: var(--blue);
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - the nav is now the full
+   cross-app menu on every page (native <details>/<summary>, no JS needed
+   for expand/collapse) - see target-accounts.html's own #app-nav comment
+   for the full reasoning. */
+details.nav-group summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details.nav-group summary::-webkit-details-marker {
+  display: none;
+}
+
+details.nav-group summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  transition: transform 0.15s ease;
+}
+
+details.nav-group[open] summary::before {
+  transform: rotate(90deg);
+}
+
+details.nav-group > .nav-item,
+details.nav-group > div > .nav-item {
+  margin-left: 20px;
+  width: calc(100% - 20px);
+}
+
+/* Deliberately last, and visually muted - reported directly: "it is not
+   something that a normal user will use... only in case of a support
+   session." */
+.nav-group-debug summary,
+.nav-group-debug .nav-item {
+  color: var(--gray-light);
+  font-size: 12px;
+}
+
+.nav-group-debug .nav-item:hover {
+  color: var(--blue);
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - collapsible nav, see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+#nav-collapse-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--gray-light);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#nav-collapse-btn:hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+#app-nav-brand {
+  gap: 8px;
+}
+
+#app-shell.nav-collapsed #app-nav {
+  width: 44px;
+  overflow: hidden;
+}
+
+#app-shell.nav-collapsed #app-nav-brand {
+  padding: 0 11px 14px 11px;
+  justify-content: center;
+}
+
+#app-shell.nav-collapsed #app-nav-brand-name,
+#app-shell.nav-collapsed #version-text,
+#app-shell.nav-collapsed .nav-group {
+  display: none;
+}
+
+#app-nav {
+  transition: width 0.15s ease;
+}
+
+#app-main {
+  flex-grow: 1;
+  min-width: 0;
+  height: 100vh;
+  padding: 20px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* #app-main is itself a flex column (the 2-vertical Scan Settings/Run+
+   Results layout, #scanner-columns, relies on being its direct flex
+   child) - #page-native-content wraps this page's own real content one
+   level deeper than before (see #app-main's own comment in the HTML), so
+   it needs the same flex treatment passed through, or #scanner-columns'
+   own flex: 1 would have nothing to size against. */
+#page-native-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - every cross-page nav item
+   embeds in place now (6th round of direct feedback), see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+/* #app-main here is always exactly height: 100vh (needed for its own
+   2-column Scan Settings/Run+Results layout), so bottom: 0 was never
+   actually buggy in this specific file - changed anyway, 2026-09-19, to
+   match the fix applied to the other 3 pages (target-accounts.css's own
+   copy of this comment has the full reasoning) rather than leave this one
+   file structurally different for no real reason. height, not min-height
+   - a flex container's min-height doesn't reliably give a flex: 1 child
+   (#embedded-page-frame) a definite height to size against. */
+#embedded-page-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+}
+
+#embedded-page-wrap[hidden] {
+  display: none;
+}
+
+#embedded-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  flex-shrink: 0;
+}
+
+/* Same fix as #embedded-page-wrap[hidden] above (round 6) - an ID
+   selector's own display:flex silently beats the browser's native
+   [hidden] { display: none }, so hiding this bar (19th round of direct
+   feedback, 2026-09-19) needs the same explicit, more-specific override. */
+#embedded-page-bar[hidden] {
+  display: none;
+}
+
+#embedded-page-close-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#embedded-page-close-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+#embedded-page-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+#embedded-page-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+}
+
+#page-header-bar {
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.warning-banner {
+  flex-shrink: 0;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-18) - Scan Settings (left) and Run +
+   Results (right) as two independently-scrolling verticals instead of one
+   long page, so the scan-progress status and Results list are always
+   reachable without hunting through the settings sections above them. */
+#scanner-columns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 24px;
+  align-items: stretch;
+}
+
+.scanner-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+#scanner-settings-col {
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding-right: 4px;
+  padding-bottom: 40px;
+  max-width: 760px;
+}
+
+#scanner-run-col {
+  display: flex;
+  flex-direction: column;
+}
+
+#run-section {
+  flex-shrink: 0;
+}
+
+#results-section {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding-bottom: 40px;
+}
+
+section {
+  scroll-margin-top: 20px;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+
+.warning-banner {
+  background: #fff8e1;
+  border: 1px solid #e6b800;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5c4a00;
+}
+
+.warning-banner code {
+  background: #f0e6c0;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+#linkedin-touch-stat {
+  margin: -6px 0 12px;
+}
+
+.linkedin-touch-stat-warn {
+  color: #a66a00;
+  font-weight: 600;
+}
+
+.linkedin-touch-stat-danger {
+  color: #a00;
+  font-weight: 600;
+}
+
+#version-text {
+  font-size: 11px;
+  font-weight: normal;
+  color: #888;
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #555;
+  margin: 0 0 8px;
+}
+
+h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #777;
+  margin: 4px 0 6px;
+}
+
+section {
+  margin-bottom: 16px;
+}
+
+/* #top-nav-buttons removed 2026-09-18 - those cross-page links now live as
+   plain .nav-item buttons in #app-nav's own "Other pages" group above. */
+
+.topic-card {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.topic-header-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.topic-header-row input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.topic-header-row input[type="text"] {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.negative-topic-source-label {
+  flex: 1;
+  font-size: 13px;
+}
+
+.topic-card input[type="text"] {
+  box-sizing: border-box;
+  font-weight: 600;
+  padding: 4px;
+}
+
+.topic-card.topic-disabled {
+  opacity: 0.5;
+}
+
+.topic-card .and-keywords-label {
+  display: block;
+  font-size: 11px;
+  color: #555;
+  margin: 4px 0 2px;
+}
+
+.topic-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 60px;
+  padding: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.keyword-limit-hint {
+  color: #777;
+  font-size: 11px;
+  margin: -2px 0 6px;
+}
+
+.keyword-limit-hint-warn {
+  color: #a66a00;
+  font-weight: 600;
+}
+
+.topic-card .remove-topic-btn {
+  margin-top: 6px;
+  color: #a00;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+/* Per-topic Location Filter override (PRD Phase 9, added 2026-09-16) -
+   compact version of onboarding.css's/settings.css's own dual-listbox
+   pattern, scoped to fit inside a narrow topic card rather than a full
+   page. */
+.topic-location-override {
+  margin: 6px 0;
+  padding: 6px 0;
+  border-top: 1px dashed #ddd;
+}
+
+.topic-location-override-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #555;
+  margin-bottom: 0;
+}
+
+.topic-location-override-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+.topic-location-picker-wrap {
+  margin-top: 6px;
+}
+
+.topic-location-picker-wrap select {
+  font-size: 12px;
+  padding: 3px;
+  margin-bottom: 6px;
+}
+
+.topic-location-continents-wrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 10px;
+  margin-bottom: 6px;
+}
+
+.topic-location-continents-wrap label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.topic-location-continents-wrap input[type="checkbox"] {
+  margin: 0;
+}
+
+.topic-location-picker-wrap .dual-listbox {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.topic-location-picker-wrap .dual-listbox-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topic-location-picker-wrap .dual-listbox-col label {
+  font-size: 10px;
+  color: #777;
+  margin-bottom: 2px;
+}
+
+.topic-location-picker-wrap .dual-listbox-col input[type="text"] {
+  margin-bottom: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.topic-location-picker-wrap .dual-listbox-col select[multiple] {
+  flex: 1;
+  padding: 2px;
+  font-size: 11px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+  margin-bottom: 0;
+}
+
+.topic-location-picker-wrap .dual-listbox-buttons {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding-top: 14px;
+}
+
+.topic-location-picker-wrap .dual-listbox-buttons button {
+  width: 26px;
+  height: 24px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f7f7f7;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.topic-header-row select {
+  flex-shrink: 0;
+  padding: 3px;
+  font-size: 12px;
+}
+
+#reapply-existing-label {
+  margin: 14px 0 18px;
+  padding: 8px 10px;
+  background: #f5f5f5;
+  border-radius: 6px;
+}
+
+#scan-section label,
+#job-search-section label {
+  display: block;
+  color: #555;
+  margin-bottom: 4px;
+}
+
+#job-search-location-select,
+#job-search-timeframe-select {
+  width: 100%;
+  padding: 6px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.job-result-card {
+  border-color: #d9c08a;
+  background: #fffdf5;
+}
+
+#timeframe-select {
+  width: 100%;
+  padding: 6px;
+  margin-bottom: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.section-heading {
+  color: #0a66c2;
+  border-bottom: 2px solid #0a66c2;
+  padding-bottom: 4px;
+  margin-bottom: 10px !important;
+}
+
+#add-job-topic-btn {
+  width: 100%;
+  padding: 6px;
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f0f0f0;
+  color: #333;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#add-job-location-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+#add-job-location-row input {
+  flex: 1;
+  padding: 6px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 12px;
+  min-width: 0;
+}
+
+#add-job-location-btn {
+  padding: 6px 10px;
+  border: 1px solid #0a66c2;
+  border-radius: 6px;
+  background: none;
+  color: #0a66c2;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.field-hint {
+  color: #888;
+  font-size: 11px;
+  margin: 0 0 10px;
+}
+
+.field-hint code {
+  background: #f0f0f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.result-card .headline {
+  color: #555;
+  font-size: 12px;
+  margin: 2px 0 6px;
+}
+
+#add-topic-btn,
+#scan-btn {
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: #0a66c2;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#add-topic-btn {
+  background: #f0f0f0;
+  color: #333;
+}
+
+#scan-btn:disabled {
+  background: #9cbfe0;
+  cursor: default;
+}
+
+#stop-scan-btn {
+  width: 100%;
+  padding: 6px;
+  margin-top: 6px;
+  border: 1px solid #c23b3b;
+  border-radius: 6px;
+  background: white;
+  color: #c23b3b;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#stop-scan-btn:disabled {
+  border-color: #d99;
+  color: #d99;
+  cursor: default;
+}
+
+#progress-text {
+  color: #555;
+  min-height: 16px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: #444;
+  margin: 4px 0 10px;
+  cursor: pointer;
+}
+
+.checkbox-label input {
+  margin-top: 2px;
+}
+
+/* 17th round of direct feedback (2026-09-19) - "Include API key in Settings
+   export" moved out of the nav into a real dialog ("should be in a pop up
+   window as with all other items that require input from the user") - same
+   action-dialog look as target-accounts.css's own nav-triggered dialogs,
+   duplicated here per this codebase's existing convention rather than
+   shared across unrelated pages. */
+.page-subtitle {
+  color: #555;
+  font-size: 13px;
+  margin: 6px 0 0;
+  max-width: 900px;
+}
+
+.action-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: 480px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+.action-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.action-dialog h3 {
+  margin: 0 0 8px;
+  color: #1a1a1a;
+  font-size: 16px;
+}
+
+.action-dialog-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #eef0f2;
+}
+
+.action-dialog-actions button {
+  font-size: 13px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: #1a1a1a;
+  cursor: pointer;
+}
+
+.action-dialog-actions button:first-child {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+  font-weight: 600;
+}
+
+.action-dialog-actions button:first-child:hover {
+  background: #084d94;
+}
+
+.action-dialog-actions .action-dialog-close-btn {
+  margin-left: auto;
+  background: none;
+  border-color: transparent;
+  color: #555;
+}
+
+#suggest-topics-results,
+#search-quality-results {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 10px;
+  margin: 0 0 12px;
+  background: #fafafa;
+}
+
+.search-quality-diagnosis {
+  background: #eef4fb;
+  border-radius: 4px;
+  padding: 8px;
+  margin: 0 0 10px;
+  color: #333;
+}
+
+.lookalike-suggestion-row {
+  margin-bottom: 8px;
+}
+
+.lookalike-suggestion-row .checkbox-label {
+  margin-bottom: 4px;
+}
+
+.lookalike-suggestion-row select {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px;
+}
+
+#suggest-topics-add-btn {
+  margin-top: 4px;
+}
+
+.result-card .job-ad-badge {
+  background: #7a4b00;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.result-card .hiring-badge {
+  background: #6a1b9a;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.result-card .freelance-badge {
+  background: #00695c;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+#results-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+#export-csv-btn {
+  background: none;
+  border: 1px solid #0a66c2;
+  color: #0a66c2;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+#clear-results-btn {
+  background: none;
+  border: none;
+  color: #a00;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+.result-card {
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.result-card .result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.result-card .author {
+  font-weight: 600;
+}
+
+.result-card .timestamp {
+  color: #888;
+  font-size: 11px;
+}
+
+.result-card .snippet {
+  margin: 6px 0;
+  color: #333;
+}
+
+.result-card .topic-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.result-card .topic-tag {
+  background: #eef4fb;
+  color: #0a66c2;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.result-card .new-badge {
+  background: #2e7d32;
+  color: white;
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.result-card a {
+  color: #0a66c2;
+  text-decoration: none;
+  margin-right: 12px;
+  font-size: 12px;
+}
+
+.empty-state {
+  color: #888;
+  font-style: italic;
+}
+
+.connection-degree {
+  background: #eef4fb;
+  color: #0a66c2;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+.nav-item[hidden] { display: none !important; }
+
+/* "Loading..." shown over an embedded page until it has loaded (see showEmbeddedPage). */
+#embedded-page-wrap.embedded-loading::after {
+  content: "Loading…";
+  position: absolute;
+  top: 38%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 14px;
+  color: #666;
+  pointer-events: none;
+}
+
+.results-stats { margin: 4px 0 10px; font-size: 12px; color: #444; }

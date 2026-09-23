@@ -4,8 +4,9 @@
 // panel) can reuse exactly the same logic instead of a second, drifting copy.
 // Every tool here reads chrome.storage.local fresh on each call - there is no
 // module-level cache - so it's safe to call from any page.
-import { getResults, updateResultDraft } from "./storage.js";
+import { getResults, updateResultDraft, computeCompanyDeterministicPreScore, bucketCompanyScore } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
+import { recordApiUsage, estimateCostUsd } from "./api-usage.js";
 
 // Cheap/fast model, well-suited to drafting a short message - see the
 // environment's model list for current Claude model IDs.
@@ -83,14 +84,34 @@ async function withHeartbeat(promise, label, onStatus) {
 // ASCII range guards against invisible/smart-typography characters that can
 // sneak in when copy-pasting (from a chat UI, a doc, etc.), which otherwise
 // make fetch() reject the request outright ("non ISO-8859-1 code point").
+// Why Anthropic refused the call, when the reason is money rather than the request itself:
+//   "credit" - no prepaid credit left on the account      -> buy credits
+//   "limit"  - a spend limit set in the Console was hit   -> raise it, or wait for the reset
+// Both arrive as HTTP 400, NOT 402, so neither can be recognised by status code alone, and a
+// caller that only checks 401/402/403/429 treats them as ordinary failures and keeps retrying
+// against an account that cannot possibly succeed.
+export function apiBlockedReason(err) {
+  if (!err) return null;
+  const text = `${err.body || ""} ${err.message || ""}`;
+  if (/credit balance is too low|insufficient[_ ]?credits?|purchase credits/i.test(text)) return "credit";
+  // "You have reached your specified API usage limits. You will regain access on <date>."
+  // Deliberately narrow, so an ordinary 429 rate-limit is not mistaken for a spend cap.
+  if (/specified api usage limit|regain access on|spend limit/i.test(text)) return "limit";
+  return null;
+}
+
 export function sanitizeApiKey(value) {
   return value.replace(/[^\x20-\x7E]/g, "").trim();
 }
 
+// French added 2026-09-16, per the user's own request for consistency with
+// the wizard's keyword-search languages (German/French) - same 3-way shape,
+// English the implicit default for anything else (same reasoning as
+// storage.js's CONFIRMED_KEYWORD_LANGUAGES not needing to re-list it).
 export function languageInstruction(outputLanguage) {
-  return outputLanguage === "german"
-    ? "Write your entire response in German (Hochdeutsch/standard business German), not English."
-    : "Write your entire response in English.";
+  if (outputLanguage === "german") return "Write your entire response in German (Hochdeutsch/standard business German), not English.";
+  if (outputLanguage === "french") return "Write your entire response in French (standard business French), not English.";
+  return "Write your entire response in English.";
 }
 
 // Both prompts are built fresh per turn (not fixed constants) so they always
@@ -122,6 +143,23 @@ export function customerPersonaBlock(customerPersona) {
   return (customerPersona || "").trim()
     ? `\nYour default persona, when no specific lead is named: ${customerPersona.trim()}\n`
     : "";
+}
+
+// Settings' User Profile section (2026-09-18, user's own request) - only
+// wired into prompts that can write a draft message directly in their own
+// reply (buildDraftPrompt, buildAccountScopedMentorPrompt,
+// buildContactScopedMentorPrompt). buildMentorSystemPrompt/
+// buildLeadScopedMentorPrompt don't need it - they're instructed to always
+// go through the draft_message tool (buildDraftPrompt) rather than write a
+// draft themselves, so the sign-off only needs to exist in one place for
+// lead-scoped drafts.
+export function userProfileBlock(userProfile) {
+  const name = (userProfile?.name || "").trim();
+  const title = (userProfile?.title || "").trim();
+  if (!name && !title) return "";
+  const who = [name, title].filter(Boolean).join(", ");
+  return `\nThe salesperson's own name and role, for a natural self-introduction or sign-off ONLY where the ` +
+    `message's own format/length genuinely calls for it (never force it in): ${who}.\n`;
 }
 
 export function buildMentorSystemPrompt({ mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
@@ -252,26 +290,27 @@ function accountOverviewBlock(company) {
     company.industry ? `Industry: ${company.industry}` : null,
     company.companyType ? `Type: ${company.companyType}` : null,
     company.aiPriority
-      ? `AI Priority: ${company.aiPriority}${company.aiPriorityScore ? ` (${Math.round(company.aiPriorityScore)}/100)` : ""}`
+      ? `Priority: ${company.aiPriority}${company.aiPriorityScore ? ` (${Math.round(company.aiPriorityScore)}/100)` : ""}`
       : null,
-    company.topAiInitiatives ? `Top AI initiatives: ${company.topAiInitiatives}` : null,
+    company.topAiInitiatives ? `Top initiatives: ${company.topAiInitiatives}` : null,
     company.aiInvestmentGlobal || company.aiInvestmentSwitzerland
-      ? `AI investment: ${[company.aiInvestmentGlobal, company.aiInvestmentSwitzerland].filter(Boolean).join(" / ")}`
+      ? `Investment: ${[company.aiInvestmentGlobal, company.aiInvestmentSwitzerland].filter(Boolean).join(" / ")}`
       : null,
   ].filter(Boolean);
   return lines.join("\n");
 }
 
-export function buildAccountScopedMentorPrompt(company, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
+export function buildAccountScopedMentorPrompt(company, { mentorPersona, companyContext, idealCustomerProfile, userProfile, outputLanguage }) {
   return (
     `You are acting as a sales mentor to a salesperson, discussing ONE specific Target Account they're looking ` +
     `at right now - real, externally-researched company data, not a scanned lead. Your persona: ` +
     `${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
+    userProfileBlock(userProfile) +
     `\nThe account being discussed:\n${accountOverviewBlock(company)}\n\n` +
     "Answer questions about this account directly using the details above - never invent facts beyond what's " +
-    "given. Ground advice in the company's actual AI initiatives/priority where relevant, not generic advice. " +
+    "given. Ground advice in the company's actual initiatives/priority where relevant, not generic advice. " +
     "Be direct and specific. Keep answers focused.\n" +
     languageInstruction(outputLanguage)
   );
@@ -285,7 +324,7 @@ export function buildAccountScopedCustomerVoicePrompt(company, { companyContext,
     customerPersonaBlock(customerPersona) +
     `\nThe account you represent:\n${accountOverviewBlock(company)}\n\n` +
     "The salesperson will ask you to react to a proposed message or approach aimed at this account. React as " +
-    "someone at this specific company would, grounded in its real industry/AI-priority/initiatives above - " +
+    "someone at this specific company would, grounded in its real industry/priority/initiatives above - " +
     "never invent facts beyond what's given. Be honest and even critical - point out specifically what would " +
     "make you ignore a message, what would make you reply, and why. Keep answers concise and concrete.\n" +
     languageInstruction(outputLanguage)
@@ -302,21 +341,22 @@ function contactOverviewBlock(contact) {
     contact.jobTitle ? `Title: ${contact.jobTitle}` : null,
     contact.function ? `Function: ${contact.function}` : null,
     contact.seniority ? `Seniority: ${contact.seniority}` : null,
-    contact.aiRelevance ? `AI relevance: ${contact.aiRelevance}` : null,
+    contact.aiRelevance ? `Relevance: ${contact.aiRelevance}` : null,
   ].filter(Boolean);
   return lines.join("\n");
 }
 
-export function buildContactScopedMentorPrompt(contact, account, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
+export function buildContactScopedMentorPrompt(contact, account, { mentorPersona, companyContext, idealCustomerProfile, userProfile, outputLanguage }) {
   return (
     `You are acting as a sales mentor to a salesperson, discussing ONE specific Target Contact they're looking ` +
     `at right now. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
+    userProfileBlock(userProfile) +
     `\nThe contact being discussed:\n${contactOverviewBlock(contact)}\n` +
     (account ? `\nTheir company (${account.company}):\n${accountOverviewBlock(account)}\n` : "") +
     "\nAnswer questions about this contact directly using the details above - never invent facts beyond " +
-    "what's given. When drafting or suggesting outreach, ground it in the company's own real AI initiative(s) " +
+    "what's given. When drafting or suggesting outreach, ground it in the company's own real initiative(s) " +
     "where one is given (e.g. \"I read that you're doing a project to automate your customer support...\"), " +
     "and in this specific contact's role - not generic outreach. If this contact has an actual scanned post " +
     "(shown separately on this page), point the salesperson to that post's own page to use the reviewed " +
@@ -335,7 +375,7 @@ export function buildContactScopedCustomerVoicePrompt(contact, account, { compan
     `\nWho you are:\n${contactOverviewBlock(contact)}\n` +
     (account ? `\nYour company (${account.company}):\n${accountOverviewBlock(account)}\n` : "") +
     "\nThe salesperson will ask you to react to a proposed message aimed at you specifically. React as this " +
-    "exact person would, grounded in their real role and their company's real AI initiatives above - never " +
+    "exact person would, grounded in their real role and their company's real initiatives above - never " +
     "invent facts beyond what's given. Be honest and even critical - point out specifically what would make " +
     "you ignore a message, what would make you reply, and why. Keep answers concise and concrete.\n" +
     languageInstruction(outputLanguage)
@@ -417,7 +457,7 @@ export function pickDefaultTemplateId(result, messageTemplates) {
   return findTemplateId("warm-content");
 }
 
-function buildDraftPrompt(result, template, { valueAddOffers, companyContext, outputLanguage }) {
+function buildDraftPrompt(result, template, { valueAddOffers, companyContext, userProfile, outputLanguage }) {
   const context = `Name: ${result.author}\nHeadline: ${result.headline || "n/a"}\nTheir post: "${result.snippet || ""}"`;
   const topicNames = result.matchedTopics.map((t) => t.topicName).join(", ");
   const connectionLine = `Connection status: ${
@@ -432,7 +472,7 @@ function buildDraftPrompt(result, template, { valueAddOffers, companyContext, ou
     : "";
 
   return `You are helping a B2B software & AI-services salesperson write a short, polite, non-pushy opening LinkedIn message to a potential lead.
-${companyLine ? "\n" + companyLine + "\n" : ""}
+${companyLine ? "\n" + companyLine + "\n" : ""}${userProfileBlock(userProfile)}
 ${context}
 Matched on: ${topicNames}
 ${connectionLine}
@@ -480,6 +520,7 @@ export async function generateDraft(result, templateId, settings) {
   }
 
   const data = await response.json();
+  recordApiUsage("other", "Message drafting", data.model, data.usage);
   const draft = (data.content || []).map((block) => block.text || "").join("").trim();
   if (!draft) throw new Error("Empty response from API.");
 
@@ -556,8 +597,8 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "signal, is a real account-level lead, not an urgent one. " +
     "Use the full 1-5 range across the batch rather than clustering everyone in the middle - these are meant " +
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
-    "A lead may carry a `targetAccountSignal` - independent research on that company's AI investment/maturity " +
-    "from a separate Swiss AI target-account list, with a priorityLabel (e.g. \"Very High\", " +
+    "A lead may carry a `targetAccountSignal` - independent research on that company's investment/maturity " +
+    "from a separate target-account list, with a priorityLabel (e.g. \"Very High\", " +
     "\"High - Provisional\") and a 0-100 score. For a post lead (a real, named individual you can actually " +
     "message), treat it as a real, meaningful positive signal toward a higher priority - weigh it more " +
     "heavily when the label isn't marked Provisional and the score is high. For a job lead specifically, " +
@@ -689,8 +730,200 @@ export async function prioritizeLeads(leads, settings) {
   }
 
   const data = await response.json();
+  recordApiUsage("other", "Lead prioritization", data.model, data.usage);
   const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "assign_priorities");
   return toolUse?.input?.priorities || [];
+}
+
+// ---------------------------------------------------------------------------
+// PRD 6.20 Phase 8 - Company-level AI prioritization (2026-09-17). The AI
+// half only (Strategic Fit) - the deterministic half (Location/Size/
+// Industry/Contacts) and the scenario classification live in storage.js,
+// which stays dependency-free (see its own Phase 8 header comment for the
+// full 4-scenario design). This mirrors prioritizeLeads above rather than
+// inventing a second AI-calling mechanism.
+const ASSIGN_COMPANY_FIT_TOOL = {
+  name: "assign_company_fit",
+  description: "Records a Strategic Fit score for every company given, from 0 (poor fit) to 100 (excellent fit).",
+  input_schema: {
+    type: "object",
+    properties: {
+      companies: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            companyId: { type: "string", description: "The company's id, exactly as given." },
+            fitScore: { type: "integer", minimum: 0, maximum: 100 },
+            reason: { type: "string", description: "Under 12 words - why this fit score." },
+          },
+          required: ["companyId", "fitScore"],
+        },
+      },
+    },
+    required: ["companies"],
+  },
+};
+
+function buildCompanyFitPrompt({ companyContext, idealCustomerProfile, outputLanguage }) {
+  return (
+    "You are a sales strategist judging Strategic Fit for a batch of target companies - how well each one " +
+    "matches what this specific seller actually offers and who they sell to. This is independent of plain " +
+    "firmographic facts like size/location/industry match, which are already scored separately by " +
+    "deterministic rules - not your job here." +
+    companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
+    "For each company, weigh whatever research text is given (topInitiatives, priorityRationale, or similar " +
+    "free-text notes, when present) against the offering and ideal customer profile above - does this " +
+    "company's own situation, stated initiatives, or context genuinely suggest a need for what's being sold? " +
+    "A company with no research text at all should get a neutral-to-cautious score (40-55), not a guess " +
+    "dressed up as confidence - there is no real basis for anything stronger from firmographic facts alone. " +
+    "Assign a 0-100 fitScore: 0-30 for poor or no evident fit, 40-60 for plausible but unconfirmed, 70-100 " +
+    "for a strong, well-evidenced fit with this specific offering. Use the full range across the batch - " +
+    "don't cluster everyone near 50 by default. " +
+    "Call assign_company_fit exactly once, with one entry (fitScore plus a short, specific reason) for EVERY " +
+    "company listed below - do not skip any, and do not invent one that isn't listed.\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
+function summarizeCompanyForFitScoring(company) {
+  return {
+    companyId: company.companyId,
+    company: company.company,
+    industry: company.industry || null,
+    topInitiatives: company.topInitiatives || null,
+    priorityRationale: company.priorityRationale || null,
+  };
+}
+
+// Batch-scores Strategic Fit for a list of companies in ONE call (same
+// forced-tool-call pattern as prioritizeLeads above). Deliberately ONLY
+// returns a fit score/reason, never a final P1-P5 - prioritizeCompanies
+// below combines it with the deterministic pre-score as one more additive
+// nudge on the same 0-100 scale as Location/Size/Industry/Contacts, never a
+// full override of the deterministic signal. Returns [] (not throw) on a
+// missing API key or empty input, same non-fatal-skip contract as
+// prioritizeLeads.
+export async function scoreCompanyStrategicFit(companies, settings) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey || companies.length === 0) return [];
+
+  const userText = "Companies to judge (JSON):\n" + JSON.stringify(companies.map(summarizeCompanyForFitScoring));
+
+  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: AGENT_MODEL,
+      max_tokens: 8192,
+      system: buildCompanyFitPrompt(settings),
+      tools: [ASSIGN_COMPANY_FIT_TOOL],
+      tool_choice: { type: "tool", name: "assign_company_fit" },
+      messages: [{ role: "user", content: userText }],
+    }),
+  }, AGENT_FETCH_TIMEOUT_MS);
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`API error ${response.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await response.json();
+  recordApiUsage("other", "Company strategic fit", data.model, data.usage);
+  const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "assign_company_fit");
+  return toolUse?.input?.companies || [];
+}
+
+// Strategic Fit is a single forced-tool-call batch, capped by max_tokens
+// (8192) same as every other tool call in this file - fine for a handful of
+// companies, but a real bug found live (2026-09-17): a several-hundred-
+// company "score everything remaining" run sent the WHOLE forAI list in one
+// call, the model's JSON response got silently truncated once it ran out of
+// output tokens, and every company past that cutoff point just never
+// appeared in toolUse.input.companies - no error, no warning, the
+// "Strategic Fit" clause simply never got appended for them. Same class of
+// bug as Contact Discovery's own keyword-search overflow earlier this
+// session (too much crammed into one request silently drops the tail) -
+// same fix: chunk it, one real Claude call per chunk, not one giant one.
+const MAX_COMPANIES_PER_FIT_CALL = 25;
+
+// Orchestrates Phase 8 end to end for a batch of already-classified,
+// eligible companies (storage.js's getCompaniesForPrioritization). Scenario
+// 2/3 need no AI call at all (direct label mapping / a hard P5 floor
+// respectively, handled entirely here without touching the deterministic
+// pre-score) - only Scenario 1/4 reach computeCompanyDeterministicPreScore,
+// and only then the optional Strategic Fit call (useAI) on top of it: a
+// fitScore of 0-100 becomes a -20..+20 nudge around its own neutral
+// midpoint of 50, added to the deterministic score before bucketing - never
+// a full override of the deterministic signal. Pure aside from the network
+// calls, and skips them entirely when useAI is false, so a first, free pass
+// over a whole workbook costs nothing. onProgress (optional) is only ever
+// called between Strategic Fit chunks - the deterministic pass and
+// Scenario 2/3 resolution are fast enough not to need it.
+export async function prioritizeCompanies(eligible, targetUniverseConfig, settings, { useAI = false, onProgress } = {}) {
+  const results = [];
+  const forAI = [];
+  const preScoreById = new Map();
+
+  for (const { company, contactCount, scenario } of eligible) {
+    if (scenario === 2) {
+      const label = company.aiPriority;
+      results.push({
+        companyId: company.companyId,
+        priority: label === "Very High" ? "P1" : "P2",
+        priorityScore: company.aiPriorityScore,
+        priorityReason: `Imported research already confident (${label}, score ${Math.round(company.aiPriorityScore)}).`,
+      });
+      continue;
+    }
+    if (scenario === 3) {
+      results.push({
+        companyId: company.companyId,
+        priority: "P5",
+        priorityScore: null,
+        priorityReason: "Insufficient evidence in the import, and no SalesTeam signal (matched contact) yet.",
+      });
+      continue;
+    }
+    // Scenario 1 or 4 - real scoring.
+    preScoreById.set(company.companyId, computeCompanyDeterministicPreScore(company, contactCount, targetUniverseConfig));
+    if (useAI) forAI.push(company);
+  }
+
+  const fitByCompanyId = new Map();
+  if (useAI && forAI.length > 0) {
+    const totalChunks = Math.ceil(forAI.length / MAX_COMPANIES_PER_FIT_CALL);
+    for (let i = 0; i < forAI.length; i += MAX_COMPANIES_PER_FIT_CALL) {
+      const chunk = forAI.slice(i, i + MAX_COMPANIES_PER_FIT_CALL);
+      if (onProgress) onProgress({ chunkIndex: i / MAX_COMPANIES_PER_FIT_CALL, totalChunks, companiesInChunk: chunk.length });
+      const fitResults = await scoreCompanyStrategicFit(chunk, settings);
+      for (const f of fitResults) fitByCompanyId.set(f.companyId, f);
+    }
+  }
+
+  for (const [companyId, pre] of preScoreById) {
+    const fit = fitByCompanyId.get(companyId);
+    let finalScore = pre.score;
+    const reasonParts = [...pre.reasonParts];
+    if (fit && typeof fit.fitScore === "number") {
+      finalScore = Math.max(0, Math.min(100, finalScore + Math.round((fit.fitScore - 50) * 0.4)));
+      reasonParts.push(`Strategic Fit: ${fit.reason || fit.fitScore + "/100"}`);
+    }
+    results.push({
+      companyId,
+      priority: bucketCompanyScore(finalScore),
+      priorityScore: finalScore,
+      priorityReason: reasonParts.length > 0 ? reasonParts.join("; ") + "." : "No strong deterministic signal either way.",
+    });
+  }
+
+  return results;
 }
 
 // Post leads only ever carry a free-text headline (e.g. "Head of AI for IT @
@@ -768,6 +1001,7 @@ export async function extractCompaniesForLeads(leads, settings) {
   }
 
   const data = await response.json();
+  recordApiUsage("other", "Company extraction", data.model, data.usage);
   const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "extract_companies");
   return (toolUse?.input?.companies || []).filter((entry) => entry.company && entry.company.trim());
 }
@@ -863,6 +1097,7 @@ export async function suggestLookalikeTopics(leads, settings) {
   }
 
   const data = await response.json();
+  recordApiUsage("other", "Topic suggestions", data.model, data.usage);
   const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "suggest_topics");
   return toolUse?.input?.suggestions || [];
 }
@@ -995,6 +1230,7 @@ export async function analyzePostSearch(leads, topics, negativeTopics, stats, se
   }
 
   const data = await response.json();
+  recordApiUsage("other", "Search quality analysis", data.model, data.usage);
   const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "analyze_post_search");
   return { diagnosis: toolUse?.input?.diagnosis || "", suggestions: toolUse?.input?.suggestions || [] };
 }
@@ -1167,6 +1403,7 @@ export async function runAgentTurn(userText, {
       }
 
       const data = await response.json();
+      recordApiUsage("other", "Advisor chat", data.model, data.usage);
       history.push({ role: "assistant", content: data.content });
       onProgress?.();
 
@@ -1201,4 +1438,242 @@ export async function runAgentTurn(userText, {
   } finally {
     onStatus?.("");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Web research for one Target Account (2026-09-21). Uses Anthropic's own server-side web search tool, so the search
+// runs on Anthropic's infrastructure with the user's own API key: SalesTeam's browser never fetches those pages
+// itself, and no extra site permission is needed. The answer is read as a STREAM, so a Stop (or the 4-minute limit)
+// can end it gracefully and keep everything collected so far.
+const WEB_SEARCH_TOOL_CURRENT = "web_search_20260209"; // dynamic filtering, current models
+const WEB_SEARCH_TOOL_BASIC = "web_search_20250305"; // older models / faster
+const WEB_RESEARCH_MAX_SEARCHES = 4;
+const WEB_RESEARCH_TIME_LIMIT_MS = 240000;
+
+function buildWebResearchSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries }) {
+  const home = (targetCountries && targetCountries[0]) || "the target country";
+  return (
+    "You are a B2B account researcher. Use web search to find current, PUBLICLY AVAILABLE facts about the company you are " +
+    "given: prefer the company's own website, official company registers, annual or financial reports, and reputable news. " +
+    "Never invent facts - if something cannot be found, say \"not found\". Every fact should be traceable to a source you used." +
+    companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
+    "Write a concise plain-text briefing (no markdown symbols like ** or #) with these short sections, each starting on its own line:\n" +
+    "Overview: what the company does, in two or three sentences.\n" +
+    "Size and structure: employees, revenue (say the year), headquarters, ownership, and its local entity in " + home + " if relevant.\n" +
+    "Official registry: legal name, registry number and address, if you found the official register entry.\n" +
+    "Website: the official website address.\n" +
+    "Recent initiatives and news: up to five items from roughly the last two years that could matter to the seller, each with its date.\n" +
+    "Fit and gaps: one or two sentences on how relevant this company looks for the seller, and what you could not verify.\n" +
+    "Then, as the very last line, write DATA: followed by ONE line of JSON with exactly these keys, using null for anything you " +
+    "did not find (numbers as plain numbers without units or separators): " +
+    "{\"employeesGlobal\":number|null,\"employeesLocal\":number|null (employees in " + home + "),\"revenueGlobal\":number|null,\"revenueLocal\":number|null," +
+    "\"revenueCurrency\":\"ISO code\"|null,\"hqCity\":string|null,\"hqCountry\":string|null,\"website\":string|null,\"registryName\":string|null," +
+    "\"registryId\":string|null,\"registryAddress\":string|null,\"initiatives\":[{\"name\":string,\"description\":string,\"date\":\"YYYY-MM\"|null," +
+    "\"status\":string|null,\"sourceUrl\":string|null}]}\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
+function summarizeAccountForWebResearch(company, targetCountries, onlyTopics) {
+  const lines = [`Company: ${company.company}`];
+  if (onlyTopics && onlyTopics.length) {
+    lines.push(`We already have the other facts about this company. Research ONLY these topics: ${onlyTopics.join(", ")}. ` +
+      "Keep the briefing short and limited to them, and use null in the DATA line for everything else.");
+  }
+  if (company.alternativeCompanyName) lines.push(`Also known as: ${[].concat(company.alternativeCompanyName).join(", ")}`);
+  if (company.industry) lines.push(`Industry: ${company.industry}`);
+  if (company.linkedinLink) lines.push(`LinkedIn page: ${company.linkedinLink}`);
+  if (company.primarySourceUrl) lines.push(`A source we already have: ${company.primarySourceUrl}`);
+  if (company.zefixOfficialName) lines.push(`Registered name: ${company.zefixOfficialName}`);
+  if (targetCountries && targetCountries.length) lines.push(`The seller's target market: ${targetCountries.join(", ")}`);
+  return lines.join("\n");
+}
+
+// Reads one streamed Messages response into { content, stop_reason }. Ends quietly (with what has arrived so far) when the
+// signal aborts.
+async function streamWebResearch(apiKey, body, signal, onSearch) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({ ...body, stream: true }),
+    signal,
+  });
+  if (!response.ok) {
+    const errBody = await response.text();
+    let reason = errBody.slice(0, 300);
+    try { reason = JSON.parse(errBody).error?.message || reason; } catch { /* keep the raw text */ }
+    const err = new Error(`Anthropic replied with an error (HTTP ${response.status}): ${reason}`);
+    err.status = response.status;
+    err.body = errBody;
+    throw err;
+  }
+  const blocks = [];
+  let stopReason = null;
+  let model = null;
+  const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  const takeUsage = (u) => {
+    if (!u) return;
+    for (const k of Object.keys(usage)) if (typeof u[k] === "number" && u[k] > 0) usage[k] = u[k];
+  };
+  const handle = (raw) => {
+    const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
+    if (!dataLine) return;
+    let ev;
+    try { ev = JSON.parse(dataLine.slice(5).trim()); } catch { return; }
+    if (ev.type === "message_start") { model = ev.message?.model || model; takeUsage(ev.message?.usage); }
+    else if (ev.type === "content_block_start") {
+      const block = { ...ev.content_block };
+      if (block.type === "text") { block.text = block.text || ""; block.citations = block.citations || []; }
+      if (block.type === "server_tool_use") { block._json = ""; if (onSearch) onSearch(); }
+      blocks[ev.index] = block;
+    } else if (ev.type === "content_block_delta") {
+      const block = blocks[ev.index];
+      if (!block) return;
+      const d = ev.delta || {};
+      if (d.type === "text_delta") block.text += d.text;
+      else if (d.type === "citations_delta" && d.citation) block.citations.push(d.citation);
+      else if (d.type === "input_json_delta") block._json += d.partial_json || "";
+    } else if (ev.type === "content_block_stop") {
+      const block = blocks[ev.index];
+      if (block && block.type === "server_tool_use") {
+        try { block.input = block._json ? JSON.parse(block._json) : {}; } catch { block.input = {}; }
+        delete block._json;
+      }
+    } else if (ev.type === "message_delta") { stopReason = ev.delta?.stop_reason || stopReason; takeUsage(ev.usage); }
+    else if (ev.type === "error") throw new Error(ev.error?.message || "Anthropic reported an error while streaming.");
+  };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        handle(buffer.slice(0, idx));
+        buffer = buffer.slice(idx + 2);
+      }
+    }
+  } catch (err) {
+    if (err.name !== "AbortError") throw err;
+    return { content: blocks.filter(Boolean), stop_reason: "aborted", model, usage };
+  }
+  return { content: blocks.filter(Boolean), stop_reason: stopReason, model, usage };
+}
+
+// Splits the model's answer into the readable briefing and the DATA: json line.
+function splitBriefingAndData(text) {
+  const idx = text.lastIndexOf("DATA:");
+  if (idx < 0) return { briefing: text.trim(), data: null };
+  const briefing = text.slice(0, idx).trim();
+  let data = null;
+  try {
+    const jsonText = text.slice(idx + 5).trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    data = JSON.parse(jsonText.split("\n")[0].trim() || jsonText);
+  } catch {
+    data = null;
+  }
+  return { briefing, data };
+}
+
+// Returns { text, data, sources: [{url, title}], searches, model, stopped: null | "user" | "timeout" }.
+// `signal` (optional) is the Stop button: it ends the research gracefully and keeps what was collected.
+// Throws a readable Error only when nothing at all could be collected.
+// `onlyTopics` (optional, e.g. ["employees", "revenue"]) limits the research to what is missing, which needs fewer searches.
+export async function researchAccountOnWeb(company, settings, { onStatus, signal, onlyTopics } = {}) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
+
+  const controller = new AbortController();
+  let stopped = null;
+  const timer = setTimeout(() => { stopped = stopped || "timeout"; controller.abort(); }, WEB_RESEARCH_TIME_LIMIT_MS);
+  const onUserStop = () => { stopped = stopped || "user"; controller.abort(); };
+  if (signal) {
+    if (signal.aborted) onUserStop();
+    else signal.addEventListener("abort", onUserStop, { once: true });
+  }
+
+  const messages = [{ role: "user", content: summarizeAccountForWebResearch(company, settings.targetCountries, onlyTopics) }];
+  const system = buildWebResearchSystemPrompt(settings);
+  let toolType = WEB_SEARCH_TOOL_BASIC;
+  let sendThinkingOff = true;
+  const sources = new Map();
+  let text = "";
+  let searches = 0;
+  let model = AGENT_MODEL;
+  const usageTotal = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+
+  try {
+    for (let turn = 0; turn < 4; turn++) {
+      const body = {
+        model: AGENT_MODEL,
+        max_tokens: 3500,
+        system,
+        tools: [{ type: toolType, name: "web_search", max_uses: onlyTopics && onlyTopics.length ? 2 : WEB_RESEARCH_MAX_SEARCHES }],
+        messages,
+        ...(sendThinkingOff ? { thinking: { type: "disabled" } } : {}),
+      };
+      let data;
+      try {
+        data = await streamWebResearch(apiKey, body, controller.signal, () => {
+          searches++;
+          if (onStatus) onStatus(`Searching the web (${searches} search${searches === 1 ? "" : "es"} so far)…`);
+        });
+      } catch (err) {
+        if (err.status === 400 && sendThinkingOff && /thinking/i.test(err.body || "")) { sendThinkingOff = false; turn--; continue; }
+        if (err.status === 400 && toolType === WEB_SEARCH_TOOL_BASIC && /web_search|tool/i.test(err.body || "")) { toolType = WEB_SEARCH_TOOL_CURRENT; turn--; continue; }
+        if (err.status === 400 && /web.?search/i.test(err.body || "")) {
+          throw new Error(`${err.message} - if web search is not switched on for your Anthropic account, ask its owner to enable it in the Anthropic Console settings, then try again.`);
+        }
+        throw err;
+      }
+      model = data.model || model;
+      for (const k of Object.keys(usageTotal)) usageTotal[k] += data.usage?.[k] || 0;
+      text = "";
+      for (const block of data.content || []) {
+        if (block.type === "web_search_tool_result") {
+          if (Array.isArray(block.content)) {
+            for (const r of block.content) if (r.url && !sources.has(r.url)) sources.set(r.url, { url: r.url, title: r.title || r.url });
+          } else if (block.content && block.content.error_code && ["unavailable", "too_many_requests"].includes(block.content.error_code)) {
+            throw new Error(`The web search service reported "${block.content.error_code}". Try again in a few minutes.`);
+          }
+        } else if (block.type === "text") {
+          text += block.text;
+          for (const c of block.citations || []) if (c.url && !sources.has(c.url)) sources.set(c.url, { url: c.url, title: c.title || c.url });
+        }
+      }
+      if (data.stop_reason === "aborted") break;
+      if (data.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: data.content });
+        continue;
+      }
+      break;
+    }
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onUserStop);
+    // charged whether it finished, was stopped or failed part-way
+    await recordApiUsage("webResearch", "Account web research", model, { ...usageTotal, searches });
+  }
+  const costUsd = estimateCostUsd(model, { ...usageTotal, searches }).totalUsd;
+
+  const { briefing, data } = splitBriefingAndData(text);
+  let finalText = briefing;
+  if (stopped) {
+    finalText = (finalText ? finalText + "\n\n" : "") +
+      (stopped === "user" ? "[Stopped early - this briefing is incomplete.]" : "[Stopped after 4 minutes - this briefing is incomplete.]");
+  }
+  if (!briefing && sources.size === 0 && searches === 0) {
+    throw new Error(stopped ? "Stopped before anything was collected." : "The web research returned no text. Please try again.");
+  }
+  if (!briefing) finalText = stopped === "user" ? "[Stopped before the briefing was written - only the sources found so far are kept.]" : "[No briefing was written - only the sources found are kept.]";
+  return { text: finalText, data, sources: [...sources.values()], searches, model, stopped, costUsd };
 }

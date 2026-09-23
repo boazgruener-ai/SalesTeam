@@ -1,3 +1,169 @@
+# SalesTeam — v1.1.3
+
+## Settings in the side panel; Backup and Restore are now two separate pages
+
+- **Settings button in the side panel** - Settings opens straight from the side panel, no need to open a dashboard first.
+- **"How SalesTeam works with online platforms and data sources"** - a short note at the top of the Setup wizard and a Help entry explaining how SalesTeam is
+  built for personal use (started by you, visible in your browser, no scheduled scans, daily limit, no server, no resale).
+- **Web research on an account** - a new **Research this account on the web** button on every Account page searches the
+  public web (company website, official registers, news) through Anthropic's own web search, with your own API key, and
+  saves a short briefing on the account. A **Stop** button ends it at any time and keeps what was found; sources sit in a
+  collapsed list; initiatives found are added to the account's Initiatives list; and **Review findings…** offers
+  employees, revenue, headquarters and registry data to save on the account (empty fields ticked, differing values left
+  for you to decide). Up to 3 accounts can be researched at once. No new permission.
+- **Billing page** (Settings → Billing, also in every page's Settings menu) - tokens, web searches and an estimated US$ cost of the
+  AI calls made on your own Anthropic API key: today, this month so far, all time, day by day, and split into Web research and
+  Other AI features, with a per-feature table (tokens in/out, web searches, US$ today / this month / all time) and a link to
+  your Anthropic Console for the official figures and spend limits. The web research card also shows the estimated cost of
+  each research.
+- **Warning before an expensive action** - before an AI action that could cost more than a limit you set (default US$2.00,
+  0 = off, in Settings → Billing), SalesTeam shows the estimated cost and asks you to confirm.
+- **Research Accounts on the Web…** (Target Accounts menu) - web research for many accounts in one go, in the background: pick
+  the priorities (P1-P5, not scored), only what is missing on each account (employees, revenue, headquarters, registry,
+  initiatives) or everything, and whether empty fields are filled in automatically. It shows the estimated cost first, runs two
+  accounts at a time in the extension's background (a bar at the top of every SalesTeam page shows the progress and has a Stop
+  button, and a pop-up reports the result), stops by itself at a cost limit you set, and keeps everything found so far.
+- **One batch process at a time** - SalesTeam runs a single batch process at once (a scan, discovery, web research of many
+  accounts, an AI prioritization, profile/company look-ups). If you try to start another, a pop-up names what is running and
+  asks you to stop it or wait for it to finish.
+- **HubSpot import and export by file** - **Export to HubSpot…** saves a companies file and a contacts file that HubSpot's
+  import maps automatically (with SalesTeam priority and status as extra columns); **Import from HubSpot…** adds the
+  companies and contacts from a HubSpot CSV export that SalesTeam does not have yet, without changing anything existing.
+- **Backup and Restore split** - the Settings menu now has **Backup** (folder, daily schedule, retention, Back up now) and
+  **Restore** (one page with its own explanation and a single Restore from backup button).
+
+---
+
+# SalesTeam — v1.1.2
+
+## Cleaner menus, Change Settings, Find & Merge Duplicates, and feedback on every action
+
+- **Change Settings** - a new Settings item that opens any setup topic directly (Location, Size, Industry, scoring,
+  what you sell...) as a plain list with a Save button - no steps. **Onboarding Setup** now shows only until the
+  setup is complete, with its progress in the name, and its last screen has a Back to menu link.
+- **Shorter main menu** - repair actions (Resolve LinkedIn IDs, Fetch Company Size, Prioritize, Extract Companies,
+  Apply Location Filter...) moved into a collapsed **Advanced tools** group. Hints appear on the Accounts page only
+  when something needs fixing. Compare via People Search was removed.
+- **Find & Merge Duplicates** (Advanced tools) and **Merge…** on each account: combine two entries of the same
+  company - contacts, initiatives, sources, Post leads and status move to the account you keep.
+- **Import split in two** - "Import Research Workbook…" (the Excel workbook from the research prompt) and "Restore
+  Accounts from Backup…" (a backup zip or older .json). The import dialog now offers the research prompt (copy or
+  download), an empty Excel template with the mandatory columns marked, and a list of mandatory columns.
+- **API key Save / Cancel**; every confirmation now uses SalesTeam's own pop-up with clear button names.
+- **Scanner** - clearer headings (Posts Search Configuration, Job Listing Search); Job Listing Search can use the
+  location from your main settings; a summary line above the Results (leads by kind and priority); the company filters
+  are grouped together under Negative Topics, whose texts no longer mention Irrelevant; "All" replaces "All resolved companies".
+- **Find & Merge Duplicates** - Merge all, a "Merging…" status, and Keep separate (remembered).
+- **Results as pop-ups** - the progress and result of every menu action (and of import / restore) now appear in a
+  pop-up with an OK button instead of a small line of text.
+- **Status can be edited** from the account and contact Edit forms; **Post detail** has a Save button.
+- **Re-score prompt** after you change the scoring rules; the Discovery question only appears when you changed
+  Location, Size, Industry or contact titles.
+- **Feedback everywhere** - every menu action shows what is running and its result, asks first when it changes
+  data or uses LinkedIn activity or your API key, and pages show "Loading…" while opening.
+- **Counts** - leads marked Irrelevant (filtered by Negative Topics or Location) are no longer counted in the side
+  panel and Dashboard charts. Company Type and Local / Global are separate columns.
+- **Fixes** - account Edit could get stuck after Save; Bühler-shows-Vitol display bug; Change Settings' Back to
+  menu now returns to the page you came from, and opening it a second time no longer shows a blank screen; Compare via People Search now uses your target countries (before removal).
+
+---
+
+# SalesTeam — v1.1.0
+
+## Backup & Restore, format-neutral import, tidier tables (submitted to the Chrome Web Store as an update to 1.0.0)
+
+- **Backup & Restore** - one dated zip holds your settings, target accounts, leads and CSV copies. Daily schedule,
+  a folder you choose (or Downloads), retention options, restore chooser with a safety copy, restore after a
+  reinstall, and a storage bar. Replaces the old Export/Import buttons and the per-scan JSON downloads.
+- **Import** - accepts the new generic ChatGPT research workbook; priorities are calculated automatically after
+  an import; the Type column shows Local / Global. Import is reachable from every page and the empty Accounts page.
+- **Setup wizard** now runs inside Settings, so the menu stays visible.
+- **Tables** - new Accounts, Contacts and Posts column layouts; Employees and Seniority merged with a green dot for
+  imported values; fixed misaligned cells, the group-by-company header and Get Account Summary needing 3 clicks.
+- **Scanner** - company scope selector (default Priority 1-2), correct search total, touch-budget release times.
+- **Activity Log** - long values are clamped.
+- **New permission `unlimitedStorage`** - lets saved data grow past Chrome's 10 MB default; no install warning.
+
+---
+
+# SalesTeam — v1.0.0
+
+## First stable release - feature freeze after the left-nav mega-menu redesign, submitted for Chrome Web Store review
+
+This is the first release versioned 1.0.0, not another 0.x increment - the user's own call once the extension
+reached a state worth calling "the main version": a full guided onboarding wizard, self-service company/contact
+discovery, AI-assisted prioritization and outreach, and a consistent, user-tested navigation shell across every
+page. From here, in-between fixes bump the patch number (1.0.1, 1.0.2, ...); the minor version (1.1.0) only
+moves at the next actual Chrome Web Store submission.
+
+## Added: Target Account & Contact Discovery, Phases 3-9 - self-service discovery scanning, AI prioritization, and workbook merging (built since v0.31.0, first documented here)
+
+- **Phase 4** - a resumable, multi-day discovery scan queue (`discovery-queue.js`) so a Company/Contact
+  Discovery run can span multiple sessions without losing progress or re-scanning what's already been covered.
+- **Phase 5 (Company Discovery)** - `company-discovery-extraction.js`/`company-discovery-content-script.js`
+  scan LinkedIn Company Search using the onboarding wizard's own targeting profile (Location/Size/Industry),
+  staging results in `discoveredCompanies` for review before anything is committed to the real Target Accounts
+  list.
+- **Phase 6 (Contact Discovery)** - the equivalent scan for people at already-identified target companies,
+  staged in `discoveredContacts`.
+- **Phase 7 (Merge)** - `mergeDiscoveredIntoWorkbook` folds staged discoveries into the real Target Accounts
+  workbook, matching against existing rows by LinkedIn company ID (when resolved) or normalized company name
+  so a company ChatGPT's own research already covers is never duplicated as a second, confusing row.
+- **Phase 8 (AI Company Prioritization)** - `prioritizeCompanies` asks the Sales Mentor to judge Strategic Fit
+  for companies (both ChatGPT-imported and self-discovered) that don't already have a score, on top of a
+  deterministic pre-score.
+- **Phase 9** - per-Topic Location Filter overrides, so an individual scan Topic can narrow to a location set
+  different from the account-wide default when that makes sense for it.
+
+## Added: Left-nav mega-menu redesign (PRD 6.20 Phase 10) - a full navigation-shell rebuild, the single biggest UI change since the extension's first version
+
+- Every "big" page (Target Accounts Dashboard, Posts Dashboard, Scanner, Settings) now shares a persistent
+  left-hand navigation sidebar, grouped by destination, replacing the old flat row of always-visible header
+  buttons. The side panel was correspondingly trimmed down to a small persistent launcher + live pipeline
+  stats, since it's the one surface that stays visible the whole time a user is actually browsing LinkedIn.
+- **Cross-page navigation embeds in place** - clicking any other page's nav item loads that page directly
+  inside the current tab (via an in-page iframe), rather than opening a new browser tab, so a user never loses
+  their place.
+- **Every nav group shows its full, real item list on every page, and each item does what it says** - after
+  direct, repeated feedback that a group should never show only a single "open this page" link when viewed
+  from elsewhere, every group's real action items (Prioritize Unscored Leads, Resolve LinkedIn Company IDs,
+  Discover Contacts, etc.) are now available and fully functional from any page, not just the one they
+  natively belong to - clicking one, from anywhere, opens the right page and immediately performs that exact
+  action.
+- Numerous real, user-reported layout bugs fixed along the way in the embedded-page/scrolling mechanism, kebab
+  action menus, and the side panel's own launcher - full detail in the plan file for anyone tracing a
+  regression back to its root cause.
+
+## Added: Industry targeting rebuilt on the 11 GICS Sectors, replacing the old flat 9-entry LinkedIn label list
+
+- `industry-id-map.js`'s industry picker (onboarding wizard + Settings) now offers the 11 top-level GICS
+  (Global Industry Classification Standard) Sectors - Energy, Materials, Industrials, Consumer Discretionary,
+  Consumer Staples, Health Care, Financials, Information Technology, Communication Services, Utilities, Real
+  Estate - each silently mapped to its own confirmed LinkedIn `industryCompanyVertical` id(s) under the hood
+  (1-2 per sector; GICS Materials, for example, needs both "Mining" and "Chemical Manufacturing", since
+  LinkedIn's own taxonomy doesn't split the same way GICS does). Every id was confirmed live against LinkedIn's
+  real Company Search filter, never guessed. This is a rename, not just an addition - a previously-saved
+  industry selection under the old LinkedIn-label names needs re-picking from the new list.
+
+## Added: Company Aliases imported from the research workbook and wired into lead-to-account matching
+
+- The ChatGPT research workbook's own "Aliases" sheet (legal names, former names, trading names, and search
+  variants - 2707 entries across 544 companies in the current workbook) is now imported alongside Companies/
+  Contacts/Initiatives and actually used: a scanned lead whose company is shown under a former or trading name
+  (e.g. "Zurich Financial Services" for what's now "Zurich Insurance Group") now correctly matches its Target
+  Account, where previously only an exact or suffix-stripped match on the account's own primary name worked.
+- The Accounts Dashboard's Contact coverage pie now includes an explicit "0 contacts" bucket (previously
+  excluded outright) and shows each bucket's share of the full company count.
+
+## Fixed: LinkedIn company ID resolution no longer loses progress if interrupted
+
+- The live "Resolve LinkedIn Company IDs" run used to hold every result in memory for the entire run and only
+  save it once, at the very end - reloading the extension (or any other abrupt interruption) mid-run silently
+  discarded everything that run had already resolved. It now saves each company's result the moment it's
+  known, so an interruption loses at most the one company still in progress, never the whole run.
+
+---
+
 # SalesTeam — v0.31.0
 
 ## Added: Target Account & Contact Discovery onboarding wizard (PRD 6.20 Phase 1/2) - full guided setup, tested end-to-end by the user for a real second-team pilot

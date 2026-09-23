@@ -59,6 +59,79 @@ h1 {
   max-width: 640px;
 }
 
+/* Shared, fixed-position wizard nav bar (redesigned 2026-09-16) - sticks to
+   the top of the viewport as the page scrolls, so it's always in the same
+   place regardless of how long the current step's own content is, per the
+   user's own stated preference ("fixed position at the top of every step,
+   not tied to content length at all") - not a per-step duplicate anymore. */
+#wizard-nav-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  max-width: 640px;
+  background: #fafafa;
+  padding: 8px 0 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Step index (added 2026-09-16) - one small button per real step (not
+   Finish, not the shared confirm-view), clicking jumps straight there via
+   showStep(). Wraps onto multiple lines rather than scrolling, so every
+   step stays visible/clickable at a glance without its own scroll area. */
+#wizard-step-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+#wizard-step-list button {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+  color: var(--gray);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#wizard-step-list button.wizard-step-list-active {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+
+#wizard-nav-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+#wizard-nav-buttons button {
+  padding: 9px 18px;
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+  background: var(--blue);
+  color: white;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#wizard-nav-buttons #nav-back-btn,
+#wizard-nav-buttons #nav-exit-btn,
+#wizard-nav-buttons #nav-save-exit-btn {
+  background: white;
+  color: var(--blue);
+}
+
+#wizard-nav-buttons #nav-back-btn {
+  margin-right: auto;
+}
+
 .wizard-step {
   background: white;
   border: 1px solid var(--border);
@@ -69,6 +142,11 @@ h1 {
 .wizard-step h2 {
   margin: 0 0 8px;
   font-size: 17px;
+}
+
+.wizard-step h3 {
+  margin: 20px 0 8px;
+  font-size: 14px;
 }
 
 .step-intro {
@@ -135,14 +213,22 @@ textarea {
   font-weight: 600;
 }
 
-.wizard-buttons button#confirm-change-btn,
-.wizard-buttons button.step-back-btn {
+.wizard-buttons button#confirm-change-btn {
   background: white;
   color: var(--blue);
 }
 
-.wizard-buttons button.step-back-btn {
-  margin-right: auto;
+.step-inline-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+  background: white;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  margin-right: 8px;
 }
 
 #location-continents-wrap {
@@ -241,17 +327,318 @@ textarea {
   margin: 0;
 }
 
-#competitors-parsed-list {
+.organization-type-list {
+  margin: 4px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.organization-type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.organization-type-row .organization-type-name {
+  font-size: 12.5px;
+}
+
+.organization-type-row .organization-type-choices {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.organization-type-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.organization-type-row input[type="radio"] {
+  margin: 0;
+}
+
+/* Shared row layout (added 2026-09-16) for Location/Size/Industry's
+   per-item priority pickers - a checkbox (Size/Industry only - Location's
+   items are always "in" by virtue of already being selected on this same
+   step, so it has no checkbox) plus a name and a Low/Medium/High select.
+   Same list/row shape as .organization-type-list/-row above, generalized
+   under its own name since these rows carry a priority select, not a
+   Yes/No/Review radio group. */
+.priority-item-list {
+  margin: 4px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.priority-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.priority-item-row input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.priority-item-row .priority-item-name {
+  font-size: 12.5px;
+  flex: 1;
+}
+
+.priority-item-row .priority-item-select {
+  width: auto;
+  margin-bottom: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.priority-item-row.priority-item-unchecked .priority-item-name {
+  color: var(--gray-light);
+}
+
+#leads-prioritization-rules-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+
+#leads-prioritization-rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  background: #fff;
+}
+
+#leads-prioritization-rules-table th {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 2px solid var(--border);
+  color: var(--gray);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+#leads-prioritization-rules-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+
+#leads-prioritization-rules-table td.rule-description {
+  color: var(--gray);
+  max-width: 360px;
+}
+
+#leads-prioritization-rules-table input[type="number"] {
+  width: 55px;
+  margin-bottom: 0;
+  padding: 4px 6px;
+}
+
+#leads-prioritization-rules-table .rule-value-empty {
+  color: var(--gray-light);
+}
+
+/* Post rule builder (PRD 6.20, generalized 2026-09-16) - one card per rule,
+   built by onboarding.js's renderPostPrioritizationRules/buildPostRuleCard. */
+#post-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.rule-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.rule-card-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.rule-card-header .post-rule-name-input {
+  flex: 1 1 180px;
+  min-width: 140px;
+  width: auto;
+  margin-bottom: 0;
+}
+
+.rule-card-header .post-rule-effect-select {
+  width: auto;
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.rule-card-header .post-rule-value-input {
+  width: 55px;
+  margin-bottom: 0;
+  padding: 4px 6px;
+  flex: 0 0 auto;
+}
+
+.post-rule-enabled-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: normal;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.post-rule-enabled-label input[type="checkbox"] {
+  margin: 0;
+}
+
+.rule-move-btn,
+.rule-remove-btn,
+.cond-remove-btn,
+.add-condition-btn,
+#add-post-rule-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: white;
+  color: var(--gray);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.rule-remove-btn {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.rule-move-btn {
+  padding: 4px 8px;
+}
+
+.rule-conditions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.rule-condition-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  background: var(--blue-light);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+.rule-condition-and-label {
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: var(--blue);
+  padding-top: 6px;
+}
+
+.rule-condition-type-label {
+  flex: 0 0 auto;
+  padding-top: 6px;
+  white-space: nowrap;
+}
+
+.rule-condition-fields {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rule-condition-fields input,
+.rule-condition-fields select,
+.rule-condition-fields textarea {
+  margin-bottom: 0;
+}
+
+.rule-condition-fields .cond-column-input {
+  flex: 1 1 120px;
+  width: auto;
+}
+
+.rule-condition-fields .cond-operator-select {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.rule-condition-fields .cond-numeric-value-input {
+  flex: 0 0 70px;
+  width: 70px;
+}
+
+.rule-condition-fields .cond-values-textarea,
+.rule-condition-fields .cond-topics-textarea {
+  flex: 1 1 100%;
+  min-height: 46px;
+}
+
+.rule-condition-fields .field-hint {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.cond-remove-btn {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+}
+
+.rule-condition-add-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--gray);
+}
+
+/* Shared by every step's own parsed-list feedback (Competitors/Recruiters/
+   Existing customers/Existing partners/Aliases) - was scoped to just
+   #competitors-parsed-list before 2026-09-16, silently missing the
+   green/red coloring on every list added since. */
+#exclusions-competitor-parsed-list,
+#exclusions-recruiter-parsed-list,
+#exclusions-customer-parsed-list,
+#exclusions-partner-parsed-list,
+#exclusions-other-parsed-list,
+#aliases-parsed-list {
   margin: -4px 0 12px;
   font-size: 12px;
   line-height: 1.7;
 }
 
-#competitors-parsed-list .competitor-line-ok {
+.competitor-line-ok {
   color: var(--good);
 }
 
-#competitors-parsed-list .competitor-line-bad {
+.competitor-line-bad {
   color: var(--bad);
 }
 
@@ -278,3 +665,110 @@ textarea {
   letter-spacing: 0.02em;
   color: var(--gray);
 }
+
+/* Stale-Discovery dialog (added 2026-09-16, replacing a native confirm()
+   whose OK/Cancel couldn't be relabeled) - same <dialog>/::backdrop pattern
+   as dashboard.css's own assign-*/bulk-change dialogs. */
+#stale-discovery-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: 460px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+#stale-discovery-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+#stale-discovery-dialog h3 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+#stale-discovery-dialog p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  margin: 0 0 12px;
+}
+
+.stale-discovery-dialog-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stale-discovery-dialog-actions button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+#stale-discovery-clear-btn {
+  background: var(--bad);
+  color: white;
+}
+
+#stale-discovery-keep-btn {
+  background: #f0f0f0;
+  color: var(--ink);
+}
+
+/* Always-visible way out to the main app menu, on every wizard screen (the wizard page has no menu of its own). */
+#wizard-main-menu-link {
+  float: right;
+  margin: 4px 0 0 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+#wizard-main-menu-link:hover { background: #eef3ff; }
+
+/* Shown inside the Settings page (which has the menu): no second way out to the menu needed. */
+.in-settings-shell #wizard-main-menu-link { display: none; }
+
+/* Re-score prompt dialog (after the scoring rules changed) - same look as the stale-Discovery dialog. */
+#rescore-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 20px 24px;
+  width: 460px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+#rescore-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+#rescore-dialog h3 { margin: 0 0 10px; color: var(--ink); font-size: 16px; }
+#rescore-dialog p { font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0 0 12px; }
+#rescore-now-btn { background: var(--blue, #0a66c2); color: white; }
+#rescore-later-btn { background: #f0f0f0; color: var(--ink); }
+#nav-save-status { margin: 0 6px; font-size: 12px; }
+
+/* Change Settings mode (onboarding.html?mode=settings): a plain list of settings, no step workflow. */
+body.settings-mode #nav-back-btn,
+body.settings-mode #nav-next-btn,
+body.settings-mode #nav-save-exit-btn,
+body.settings-mode #nav-exit-btn,
+body.settings-mode #step-progress,
+body.settings-mode #wizard-main-menu-link { display: none !important; }
+.wizard-back-link { display: inline-block; margin-left: 12px; font-size: 13px; color: var(--blue, #0a66c2); text-decoration: none; }
+.wizard-back-link:hover { text-decoration: underline; }
+#change-back-to-menu-link { margin: 0 12px 8px 0; }
+#change-settings-hint { padding: 18px 4px; color: var(--ink); font-size: 14px; }
+
+html:not(.wizard-ready) #onboarding-main,
+html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
+
+/* "How SalesTeam works with LinkedIn" note at the top of the setup wizard */
+.wizard-note { margin: 10px 0 6px; padding: 10px 14px; background: #eef4fb; border: 1px solid #d3e2f3; border-radius: 8px; font-size: 12px; line-height: 1.5; color: #1f2933; max-width: 900px; }

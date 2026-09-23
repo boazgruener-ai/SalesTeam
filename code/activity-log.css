@@ -168,3 +168,21 @@ h1 {
 .log-value-empty {
   color: var(--gray-light);
 }
+
+/* New Value is the column that holds long JSON/diagnostic text, so it gets the room. */
+.log-value-wide {
+  min-width: 460px;
+  max-width: 900px;
+}
+
+/* Clamped to 4 lines; a click on an overflowing value expands it (see markExpandableValues). */
+.log-value-inner.clamped:not(.expanded) {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.log-value-expandable {
+  cursor: pointer;
+}

@@ -3,6 +3,11 @@
 // leads table, and per-lead priority scoring. Also owns the "Bulk Change"
 // dialog (mass status changes with a confirmation step and one-level undo)
 // and the "Prioritize Unscored Leads" action.
+import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { confirmIfCostly } from "./api-usage.js";
+import { guardBatchStart, withBatch } from "./batch-jobs.js";
+import { initBatchStatus } from "./batch-status.js";
+import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
   getResults,
   updateLeadStatus,
@@ -12,9 +17,11 @@ import {
   getAnthropicApiKey,
   getMentorPersona,
   getCompanyContext,
+  getUserProfile,
   getIdealCustomerProfile,
   getOutputLanguage,
   getMessageTemplates,
+  saveMessageTemplates,
   getValueAddOffers,
   getLastScanStartedAt,
   applyLeadPriorities,
@@ -31,11 +38,15 @@ import {
   appendActivityLog,
   reapplyLocationFilter,
   classifyLocation,
-  applyPeopleSearchComparison,
   getTargetAccountsWorkbook,
   findTargetContactMatch,
   contactKeyFor,
+  exportSettings,
+  exportLeads,
+  importSettings,
+  importLeads,
 } from "./storage.js";
+import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
   sanitizeApiKey,
@@ -50,12 +61,7 @@ import {
   buildAccountSummaryPrompt,
 } from "./agent-shared.js";
 import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
-import {
-  leadsForPeopleSearchComparison,
-  uniquePeopleSearchAuthorCount,
-  peopleSearchConfirmText,
-  runPeopleSearchComparison,
-} from "./people-search-extraction.js";
+import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -66,9 +72,145 @@ const STATUS_COLORS = {
   Irrelevant: "#c62828",
 };
 
+// PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round of direct feedback -
+// see target-accounts.js's own copy of this comment for the full
+// reasoning: every cross-page item now embeds in place, none open a new
+// tab any more, and this page's own #app-nav hides itself when embedded
+// elsewhere (the ?embedded=1 check below).
+const pageNativeContentEl = document.getElementById("page-native-content");
+const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
+const embeddedPageBarEl = document.getElementById("embedded-page-bar");
+const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
+const embeddedPageTitleEl = document.getElementById("embedded-page-title");
+
+// 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
+// copy of this comment for the full reasoning: the host's own #app-nav
+// stays visible the whole time an embedded page is showing and already
+// works to switch away, so the bar/button is hidden unconditionally now.
+function showEmbeddedPage(page, title) {
+  const [base, hash] = page.split("#");
+  const sep = base.includes("?") ? "&" : "?";
+  const url = hash ? `${base}${sep}embedded=1#${hash}` : `${base}${sep}embedded=1`;
+  const resolvedUrl = chrome.runtime.getURL(url);
+  pageNativeContentEl.hidden = true;
+  embeddedPageTitleEl.textContent = title;
+  embeddedPageBarEl.hidden = true;
+  // 26th round of direct feedback (2026-09-19) - see target-accounts.js's
+  // own copy of this comment for the full reasoning: bounced through
+  // about:blank first when re-requesting the exact same URL already
+  // loaded, since an identical src assignment is a browser no-op
+  // (re-clicking the same action item twice in a row would otherwise never
+  // re-fire it).
+  // Re-requesting the page that is already loaded: navigate the frame in place. (The old "bounce through about:blank
+  // then set src again" could be dropped by the browser, leaving the frame blank - reported 2026-09-21: pressing
+  // Change Settings a second time showed an empty screen.) A URL that differs only by its #hash is a same-page
+  // navigation, so the page's own hashchange routing runs; an identical URL reloads it, re-running its action.
+  let sameDocument = false;
+  let willLoad = true;
+  try {
+    sameDocument = Boolean(embeddedPageFrameEl.contentWindow) &&
+      embeddedPageFrameEl.contentWindow.location.href.split("#")[0] === resolvedUrl.split("#")[0];
+  } catch (err) { /* cross-origin or not loaded yet: fall through to a plain src assignment */ }
+  if (sameDocument) {
+    // Identical URL (same action pressed again, e.g. after Cancel): a fragment-only "navigation" to it would do
+    // nothing, so reload; a URL that differs only by #hash is routed by the page's own hashchange handler.
+    const frameWindow = embeddedPageFrameEl.contentWindow;
+    if (frameWindow.location.href === resolvedUrl) {
+      frameWindow.location.reload();
+    } else {
+      frameWindow.location.replace(resolvedUrl);
+      willLoad = false; // same-page navigation: no load event will follow
+    }
+  } else {
+    embeddedPageFrameEl.src = resolvedUrl;
+  }
+  // Say so while the page loads - an opening page used to look like a blank screen.
+  if (willLoad) {
+    embeddedPageWrapEl.classList.add("embedded-loading");
+    embeddedPageFrameEl.onload = () => {
+      if (!embeddedPageFrameEl.src.startsWith("about:")) embeddedPageWrapEl.classList.remove("embedded-loading");
+    };
+  } else {
+    embeddedPageWrapEl.classList.remove("embedded-loading");
+  }
+  embeddedPageWrapEl.hidden = false;
+}
+
+function hideEmbeddedPage() {
+  embeddedPageWrapEl.hidden = true;
+  embeddedPageFrameEl.src = "about:blank";
+  pageNativeContentEl.hidden = false;
+}
+
+// Pages shown inside this one can ask it to close them (e.g. the "Back to menu" link of Change Settings).
+window.addEventListener("message", (event) => {
+  if (event.origin === location.origin && event.data && event.data.type === "salesteam-close-embedded") hideEmbeddedPage();
+});
+
+document.getElementById("embedded-page-close-btn").addEventListener("click", hideEmbeddedPage);
+document.getElementById("app-nav-brand-name").addEventListener("click", hideEmbeddedPage);
+// 20th round of direct feedback (2026-09-19) - see the HTML's own comment
+// on this button for the full reasoning: a findable, self-referential way
+// back to Posts Dashboard's own real content, matching target-accounts.js's
+// own "Target Accounts" self tab.
+document.getElementById("open-posts-dashboard-self-btn").addEventListener("click", hideEmbeddedPage);
+
+if (new URLSearchParams(location.search).has("embedded")) {
+  document.getElementById("app-shell").classList.add("embedded-mode");
+}
+
+document.getElementById("open-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html", "Target Accounts Dashboard"));
+document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
+document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
+document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
+document.getElementById("nav-resolve-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=resolve", "Target Accounts Dashboard"));
+document.getElementById("nav-fetch-size-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=fetch-size", "Target Accounts Dashboard"));
+document.getElementById("nav-prioritize-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=prioritize", "Target Accounts Dashboard"));
+document.getElementById("open-target-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#contacts", "Target Contacts Dashboard"));
+document.getElementById("nav-discover-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=discover-contacts", "Target Contacts Dashboard"));
+document.getElementById("open-scanner-page-btn").addEventListener("click", () => showEmbeddedPage("scanner.html", "Scanner"));
+
+document.getElementById("open-settings-setup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#setup-section", "Settings"));
+document.getElementById("open-settings-change-btn").addEventListener("click", () => showEmbeddedPage("settings.html#change-settings", "Settings"));
+applyOnboardingNavState(document.getElementById("open-settings-setup-btn")).catch(() => {});
+document.getElementById("open-settings-profile-btn").addEventListener("click", () => showEmbeddedPage("settings.html#profile-section", "Settings"));
+document.getElementById("open-settings-language-btn").addEventListener("click", () => showEmbeddedPage("settings.html#language-section", "Settings"));
+document.getElementById("open-settings-apikey-btn").addEventListener("click", () => showEmbeddedPage("settings.html#api-key-section", "Settings"));
+document.getElementById("open-settings-backup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#backup-section", "Settings"));
+document.getElementById("open-settings-restore-btn").addEventListener("click", () => showEmbeddedPage("settings.html#restore-section", "Settings"));
+document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
+document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
+document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
+document.getElementById("open-help-btn").addEventListener("click", () => showEmbeddedPage("help.html", "Help"));
+document.getElementById("open-debug-queue-btn").addEventListener("click", () => showEmbeddedPage("settings.html#discovery-queue-section", "Settings"));
+document.getElementById("open-debug-company-btn").addEventListener("click", () => showEmbeddedPage("settings.html#company-discovery-section", "Settings"));
+document.getElementById("open-debug-contact-btn").addEventListener("click", () => showEmbeddedPage("settings.html#contact-discovery-section", "Settings"));
+
+// PRD 6.20 Phase 10 follow-up (2026-09-19) - collapsible nav, see
+// target-accounts.js's own copy of this comment for the full reasoning.
+const NAV_COLLAPSED_KEY = "salesteam-nav-collapsed";
+const navCollapseBtn = document.getElementById("nav-collapse-btn");
+function applyNavCollapsed(collapsed) {
+  document.getElementById("app-shell").classList.toggle("nav-collapsed", collapsed);
+  navCollapseBtn.textContent = collapsed ? "»" : "«";
+  navCollapseBtn.title = collapsed ? "Expand the menu" : "Collapse the menu";
+}
+applyNavCollapsed(localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
+navCollapseBtn.addEventListener("click", () => {
+  const collapsed = !document.getElementById("app-shell").classList.contains("nav-collapsed");
+  applyNavCollapsed(collapsed);
+  localStorage.setItem(NAV_COLLAPSED_KEY, collapsed ? "1" : "0");
+});
+
 const listViewEl = document.getElementById("list-view");
 const detailViewEl = document.getElementById("detail-view");
 const tbody = document.getElementById("results-tbody");
+const resultsTableEl = document.getElementById("results-table");
+const tableSectionEl = document.getElementById("table-section");
+const tableScrollTopEl = document.getElementById("table-scroll-top");
+const tableScrollTopFillerEl = document.getElementById("table-scroll-top-filler");
 const resultCountEl = document.getElementById("result-count");
 const searchInput = document.getElementById("search-input");
 const statusFilterSelect = document.getElementById("status-filter-select");
@@ -93,8 +235,6 @@ const extractCompaniesProfilesBtn = document.getElementById("extract-companies-p
 const extractCompaniesProfilesStatusEl = document.getElementById("extract-companies-profiles-status");
 const applyLocationFilterBtn = document.getElementById("apply-location-filter-btn");
 const applyLocationFilterStatusEl = document.getElementById("apply-location-filter-status");
-const peopleSearchCompareBtn = document.getElementById("people-search-compare-btn");
-const peopleSearchCompareStatusEl = document.getElementById("people-search-compare-status");
 
 const SHOW_IRRELEVANT_STORAGE_KEY = "salesteam-dashboard-show-irrelevant";
 let showIrrelevant = false;
@@ -119,6 +259,7 @@ let companyContext = "";
 let idealCustomerProfile = "";
 let mentorPersona = "";
 let outputLanguage = "english";
+let userProfile = { name: "", title: "", email: "" };
 
 let statusFilter = "all";
 let pageSize = 20;
@@ -228,17 +369,19 @@ async function currentSettings() {
     messageTemplates,
     valueAddOffers,
     companyContext,
+    userProfile,
     outputLanguage,
   };
 }
 
 async function loadSettings() {
-  [messageTemplates, valueAddOffers, companyContext, idealCustomerProfile, mentorPersona, outputLanguage] = await Promise.all([
+  [messageTemplates, valueAddOffers, companyContext, idealCustomerProfile, mentorPersona, userProfile, outputLanguage] = await Promise.all([
     getMessageTemplates(),
     getValueAddOffers(),
     getCompanyContext(),
     getIdealCustomerProfile(),
     getMentorPersona(),
+    getUserProfile(),
     getOutputLanguage(),
   ]);
 }
@@ -347,11 +490,125 @@ function renderPieChart(containerEl, leads, onSliceClick) {
   containerEl.append(svg, legend);
 }
 
+// Generic {label, count, color}[] pie - same shape/rendering as
+// target-accounts.js's own renderGenericPieChart (duplicated here, not
+// shared, per this codebase's existing per-file convention), used for the
+// 3 new stat breakdowns (Priority/Status/Source) that aren't time-windowed
+// and don't share renderPieChart's status-only assumptions.
+function renderGenericPieChart(containerEl, slices, onSliceClick) {
+  containerEl.innerHTML = "";
+  const nonZero = slices.filter((s) => s.count > 0);
+  const total = nonZero.reduce((sum, s) => sum + s.count, 0);
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox", "0 0 120 120");
+
+  if (total === 0) {
+    const circle = document.createElementNS(svgNS, "circle");
+    circle.setAttribute("cx", "60");
+    circle.setAttribute("cy", "60");
+    circle.setAttribute("r", "54");
+    circle.setAttribute("fill", "#eee");
+    svg.appendChild(circle);
+  } else {
+    let startAngle = -Math.PI / 2;
+    for (const slice of nonZero) {
+      const sliceAngle = (slice.count / total) * Math.PI * 2;
+      const endAngle = startAngle + sliceAngle;
+      const path = document.createElementNS(svgNS, "path");
+      let d;
+      if (slice.count === total) {
+        d = "M 60 6 A 54 54 0 1 1 59.99 6 Z";
+      } else {
+        const [x1, y1] = polarPoint(60, 60, 54, startAngle);
+        const [x2, y2] = polarPoint(60, 60, 54, endAngle);
+        const largeArc = sliceAngle > Math.PI ? 1 : 0;
+        d = `M 60 60 L ${x1} ${y1} A 54 54 0 ${largeArc} 1 ${x2} ${y2} Z`;
+      }
+      path.setAttribute("d", d);
+      path.setAttribute("fill", slice.color);
+      if (onSliceClick) {
+        path.style.cursor = "pointer";
+        path.addEventListener("click", () => onSliceClick(slice.label));
+      }
+      const titleEl = document.createElementNS(svgNS, "title");
+      titleEl.textContent = `${slice.label}: ${slice.count}`;
+      path.appendChild(titleEl);
+      svg.appendChild(path);
+      startAngle = endAngle;
+    }
+  }
+
+  const legend = document.createElement("div");
+  legend.className = "pie-legend";
+  if (total === 0) {
+    legend.innerHTML = '<span class="pie-empty">No leads.</span>';
+  } else {
+    const totalRow = document.createElement("div");
+    totalRow.style.fontWeight = "600";
+    totalRow.style.marginBottom = "6px";
+    totalRow.textContent = `${total} lead${total === 1 ? "" : "s"}`;
+    legend.appendChild(totalRow);
+    for (const slice of nonZero) {
+      const row = document.createElement("div");
+      row.className = "pie-legend-row";
+      const swatch = document.createElement("span");
+      swatch.className = "pie-legend-swatch";
+      swatch.style.background = slice.color;
+      row.append(swatch, document.createTextNode(` ${slice.label}: ${slice.count}`));
+      if (onSliceClick) {
+        row.title = "Click to filter the table";
+        row.style.cursor = "pointer";
+        row.addEventListener("click", () => onSliceClick(slice.label));
+      }
+      legend.appendChild(row);
+    }
+  }
+
+  containerEl.append(svg, legend);
+}
+
+// Same 5-tier colors as the table's own .priority-pill.priority-N classes
+// (dashboard.css) - kept in sync manually, same as STATUS_COLORS above vs.
+// dashboard.css's status pill colors elsewhere in this file.
+const PRIORITY_COLORS = { 1: "#b71c1c", 2: "#e64a19", 3: "#f9a825", 4: "#689f38", 5: "#78909c" };
+
+function computePriorityCounts(leads) {
+  const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let unscored = 0;
+  for (const lead of leads) {
+    if (lead.priority) counts[lead.priority] = (counts[lead.priority] || 0) + 1;
+    else unscored++;
+  }
+  return [1, 2, 3, 4, 5]
+    .map((p) => ({ label: `P${p}`, count: counts[p], color: PRIORITY_COLORS[p] }))
+    .concat([{ label: "Not scored", count: unscored, color: "#cfd8dc" }]);
+}
+
+function computeStatusSlices(leads) {
+  const counts = computeStatusCounts(leads);
+  return LEAD_STATUSES.map((s) => ({ label: s, count: counts[s] || 0, color: STATUS_COLORS[s] }));
+}
+
+const SOURCE_COLORS = { Post: "#0a66c2", "In-Post Job Ad": "#8e24aa", "Job Listing": "#c9860a" };
+
+function computeSourceCounts(leads) {
+  const counts = { Post: 0, "In-Post Job Ad": 0, "Job Listing": 0 };
+  for (const lead of leads) {
+    const label = leadSourceLabel(lead);
+    counts[label] = (counts[label] || 0) + 1;
+  }
+  return Object.entries(counts).map(([label, count]) => ({ label, count, color: SOURCE_COLORS[label] }));
+}
+
 function renderAllPieCharts() {
   const now = Date.now();
   const since = (days) => now - days * 24 * 60 * 60 * 1000;
-  const last7 = allLeads.filter((l) => leadDate(l) >= since(7));
-  const last30 = allLeads.filter((l) => leadDate(l) >= since(30));
+  // Irrelevant leads (auto-filtered by Negative Topics / Location Filter) are not real leads: keep them out of every
+  // chart, like the table does by default (reported directly, 2026-09-21).
+  const relevantLeads = allLeads.filter((l) => (l.status || "New") !== "Irrelevant");
+  const last7 = relevantLeads.filter((l) => leadDate(l) >= since(7));
+  const last30 = relevantLeads.filter((l) => leadDate(l) >= since(30));
   const onSliceClick = (status) => {
     statusFilterSelect.value = status;
     statusFilter = status;
@@ -359,7 +616,10 @@ function renderAllPieCharts() {
   };
   renderPieChart(document.getElementById("pie-7"), last7, onSliceClick);
   renderPieChart(document.getElementById("pie-30"), last30, onSliceClick);
-  renderPieChart(document.getElementById("pie-all"), allLeads, onSliceClick);
+  renderPieChart(document.getElementById("pie-all"), relevantLeads, onSliceClick);
+  renderGenericPieChart(document.getElementById("pie-priority"), computePriorityCounts(relevantLeads));
+  renderGenericPieChart(document.getElementById("pie-status-all"), computeStatusSlices(relevantLeads), onSliceClick);
+  renderGenericPieChart(document.getElementById("pie-source"), computeSourceCounts(relevantLeads));
 }
 
 // ---------------------------------------------------------------------
@@ -370,8 +630,8 @@ function renderAllPieCharts() {
 
 const MIN_COL_WIDTH = 70;
 const COL_WIDTHS_STORAGE_KEY = "salesteam-dashboard-column-widths";
-const HIDDEN_COLUMNS_STORAGE_KEY = "salesteam-dashboard-hidden-columns";
-const FILTER_SORT_STATE_STORAGE_KEY = "salesteam-dashboard-filter-sort-state";
+const HIDDEN_COLUMNS_STORAGE_KEY = "salesteam-dashboard-hidden-columns-v2";
+const FILTER_SORT_STATE_STORAGE_KEY = "salesteam-dashboard-filter-sort-state-v2";
 
 // "NEW" here means "first appeared in the most recent scan" - a different
 // concept from status "New" (meaning "not yet acted on"), see the storage.js
@@ -398,13 +658,24 @@ function sourceCell(td, lead) {
 // count, so it wraps naturally at the column's actual width); clicking
 // toggles the full text, which grows the row in place, then click again to
 // collapse back to 3 lines.
+//
+// The clamp (display: -webkit-box) must sit on an element INSIDE the <td>, never on the <td> itself: a cell that is no
+// longer display: table-cell gets wrapped in an anonymous cell by the browser, and two such cells next to each other
+// (Priority Reason, then Content) merge into ONE - shifting every later column one place left, so statuses appeared
+// under "Content" and dates under "Status" (reported directly, 2026-09-20).
+function clampedText(td, text, { expandable = true } = {}) {
+  const inner = document.createElement("div");
+  inner.className = "content-cell";
+  inner.textContent = text;
+  if (expandable) {
+    inner.title = "Click to expand/collapse";
+    inner.addEventListener("click", () => inner.classList.toggle("expanded"));
+  }
+  td.appendChild(inner);
+}
+
 function contentCell(td, lead) {
-  td.className = "content-cell";
-  td.textContent = leadContent(lead);
-  td.title = "Click to expand/collapse";
-  td.addEventListener("click", () => {
-    td.classList.toggle("expanded");
-  });
+  clampedText(td, leadContent(lead));
 }
 
 // Reported directly (PRD 6.19): flag when a post's author is already a
@@ -524,12 +795,7 @@ function priorityCell(td, lead) {
 // or seen without a mouse - this makes the same text real, selectable table
 // content, same clamp/click-to-expand pattern as the Content column.
 function priorityReasonCell(td, lead) {
-  td.className = "content-cell";
-  td.textContent = lead.priorityReason || "—";
-  if (lead.priorityReason) {
-    td.title = "Click to expand/collapse";
-    td.addEventListener("click", () => td.classList.toggle("expanded"));
-  }
+  clampedText(td, lead.priorityReason || "—", { expandable: Boolean(lead.priorityReason) });
 }
 
 function makeIconBtn(icon, title, onClick, extraClass) {
@@ -542,18 +808,77 @@ function makeIconBtn(icon, title, onClick, extraClass) {
   return btn;
 }
 
-function actionsCell(td, lead) {
-  td.className = "actions-cell";
-  td.append(
-    makeIconBtn("✎", "Open / Edit", () => openDetail(lead.key)),
-    makeIconBtn("🧭", "Consult Mentor", () => openDetail(lead.key, "mentor")),
-    makeIconBtn("✉", "Send Message", () => openDetail(lead.key, "draft")),
-    makeIconBtn("🏢", "Assign Company", () => openAssignCompanyDialog(lead)),
-    makeIconBtn("📍", "Assign Location", () => openAssignLocationDialog(lead)),
-    makeIconBtn(
-      "✕",
-      "Dismiss",
-      async () => {
+// Row-level kebab menu (PRD 6.20 Phase 10, 2026-09-17) - replaces the 6
+// always-visible icon buttons this cell used to render, per the user's own
+// observation that 6 icons per row (Posts Dashboard) and no per-row actions
+// at all (Target Accounts/Contacts) were two different, inconsistent
+// patterns for the same underlying need. Same action set as before, purely
+// collapsed into a menu - no behavior change. Same open/position/close-on-
+// outside-click shape as target-accounts.js's own toggleColumnMenu,
+// duplicated rather than shared (this file has no dependency on that one).
+let openRowMenuKey = null;
+function closeRowMenu() {
+  openRowMenuKey = null;
+  document.querySelectorAll(".row-menu-popup").forEach((el) => el.remove());
+}
+function onDocumentClickCloseRowMenu(event) {
+  if (!event.target.closest(".row-menu-popup") && !event.target.closest(".kebab-btn")) {
+    closeRowMenu();
+  } else {
+    document.addEventListener("click", onDocumentClickCloseRowMenu, { once: true });
+  }
+}
+function openRowMenu(anchorEl, rowKey, items) {
+  if (openRowMenuKey === rowKey) {
+    closeRowMenu();
+    return;
+  }
+  closeRowMenu();
+  openRowMenuKey = rowKey;
+
+  const popup = document.createElement("div");
+  popup.className = "row-menu-popup";
+  for (const item of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "row-menu-item" + (item.danger ? " danger" : "");
+    btn.textContent = item.label;
+    if (item.title) btn.title = item.title;
+    if (item.disabled) {
+      btn.disabled = true;
+    } else {
+      btn.addEventListener("click", () => {
+        closeRowMenu();
+        item.onClick();
+      });
+    }
+    popup.appendChild(btn);
+  }
+
+  document.body.appendChild(popup);
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const popupWidth = popup.offsetWidth;
+  const left = Math.min(anchorRect.right - popupWidth, window.innerWidth - popupWidth - 8);
+  popup.style.left = `${Math.max(8, left)}px`;
+  popup.style.top = `${anchorRect.bottom + 2}px`;
+
+  setTimeout(() => document.addEventListener("click", onDocumentClickCloseRowMenu, { once: true }), 0);
+}
+
+// The kebab column's own STRUCTURE (colgroup width, bare header, the
+// button's own look) is shared - see actions-column.js's own header
+// comment. Only this table's real menu items stay here.
+function buildLeadActionsMenu(lead) {
+  return [
+    { label: "Open / Edit", onClick: () => openDetail(lead.key) },
+    { label: "Consult Mentor", onClick: () => openDetail(lead.key, "mentor") },
+    { label: "Send Message", onClick: () => openDetail(lead.key, "draft") },
+    { label: "Assign Company", onClick: () => openAssignCompanyDialog(lead) },
+    { label: "Assign Location", onClick: () => openAssignLocationDialog(lead) },
+    {
+      label: "Dismiss",
+      danger: true,
+      onClick: async () => {
         const prevValue = lead.status || "New";
         await updateLeadStatus(lead.key, "Dismissed");
         await loadLeads();
@@ -561,36 +886,56 @@ function actionsCell(td, lead) {
         renderTable();
         appendActivityLog({ actor: "user", action: "lead_status_changed", label: `Lead "${leadTitle(lead)}" status changed`, prevValue, newValue: "Dismissed" });
       },
-      "dismiss-btn"
-    )
-  );
+    },
+  ];
 }
 
 // Every column in one place: how to sort by it (getSortValue - omitted for
 // non-sortable columns), how to match it against a per-column filter
 // (getFilterText - omitted for non-filterable columns), and how to render
 // its cell. Default widths are starting points only - see loadColumnWidths.
+// Narrowed from their original values, 16th round of direct feedback,
+// 2026-09-19 - reverted back to a sticky last "actions" column (see
+// #table-section's own comment in the HTML for the full back-and-forth),
+// closer to Target Accounts/Contacts' own narrower (auto-sized) columns so
+// any overlap while actively scrolling covers much less area; "actions"
+// itself shrunk the most (150 -> 48) since it only ever needs to fit one
+// button, not a full data column's worth of width.
 const COLUMNS = [
-  { id: "date", label: "Post Date", width: 150, getSortValue: leadDate, getFilterText: (l) => formatDateTime(leadDate(l)),
+  // Shown by default, in this order (reordered 2026-09-19, reported directly). Columns without
+  // `visible: true` start hidden and are one click away via the Columns button.
+  { id: "company", label: "Company", visible: true, width: 130, getSortValue: (l) => l.company || "", getFilterText: (l) => l.company || "", render: companyCell },
+  { id: "creator", label: "Creator", visible: true, width: 140, getSortValue: leadCreatorName, getFilterText: leadCreatorName, render: creatorCell },
+  { id: "connection", label: "Connection", visible: true, width: 90, getSortValue: (l) => l.connectionDegree || "", getFilterText: (l) => l.connectionDegree || "", render: connectionCell },
+  { id: "title", label: "Title", visible: true, width: 200, getSortValue: leadTitle, getFilterText: leadTitle, render: titleCell },
+  { id: "priority", label: "Priority", visible: true, width: 80, getSortValue: leadPrioritySortValue, getFilterText: (l) => leadPriorityLabel(l) || "not scored", render: priorityCell },
+  { id: "priorityReason", label: "Priority Reason", visible: true, width: 200, getFilterText: (l) => l.priorityReason || "", render: priorityReasonCell },
+  { id: "content", label: "Content", visible: true, width: 240, getFilterText: leadContent, render: contentCell },
+  { id: "status", label: "Status", visible: true, width: 90, getSortValue: (l) => l.status || "New", getFilterText: (l) => l.status || "New", render: statusCell },
+  { id: "date", label: "Post Date", visible: true, width: 130, getSortValue: leadDate, getFilterText: (l) => formatDateTime(leadDate(l)),
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(leadDate(l)); } },
-  { id: "firstScanned", label: "First Scanned", width: 150, getSortValue: (l) => l.firstSeenAt || 0, getFilterText: (l) => formatDateTime(l.firstSeenAt),
-    render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
-  { id: "source", label: "Source", width: 130, getSortValue: leadSourceLabel, getFilterText: leadSourceLabel, render: sourceCell },
-  { id: "matchedTopics", label: "Matched Topic", width: 150, getSortValue: leadMatchedTopicNames, getFilterText: leadMatchedTopicNames, render: matchedTopicsCell },
-  { id: "matchedKeywords", label: "Matched Keywords", width: 180, getSortValue: leadMatchedKeywords, getFilterText: leadMatchedKeywords, render: matchedKeywordsCell },
-  { id: "title", label: "Title", width: 220, getSortValue: leadTitle, getFilterText: leadTitle, render: titleCell },
-  { id: "content", label: "Content", width: 280, getFilterText: leadContent, render: contentCell },
-  { id: "creator", label: "Creator", width: 160, getSortValue: leadCreatorName, getFilterText: leadCreatorName, render: creatorCell },
-  { id: "company", label: "Company", width: 150, getSortValue: (l) => l.company || "", getFilterText: (l) => l.company || "", render: companyCell },
-  { id: "location", label: "Location", width: 150, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
-  { id: "connection", label: "Connection", width: 110, getSortValue: (l) => l.connectionDegree || "", getFilterText: (l) => l.connectionDegree || "", render: connectionCell },
-  { id: "status", label: "Status", width: 110, getSortValue: (l) => l.status || "New", getFilterText: (l) => l.status || "New", render: statusCell },
-  { id: "priority", label: "Priority", width: 100, getSortValue: leadPrioritySortValue, getFilterText: (l) => leadPriorityLabel(l) || "not scored", render: priorityCell },
-  { id: "priorityReason", label: "Priority Reason", width: 240, getFilterText: (l) => l.priorityReason || "", render: priorityReasonCell },
-  { id: "lastActivity", label: "Last Activity", width: 150, getSortValue: leadLastActivity, getFilterText: (l) => formatDateTime(leadLastActivity(l)),
+  { id: "lastActivity", label: "Last Activity", visible: true, width: 130, getSortValue: leadLastActivity, getFilterText: (l) => formatDateTime(leadLastActivity(l)),
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(leadLastActivity(l)); } },
-  { id: "actions", label: "Actions", width: 150, render: actionsCell },
+  { id: "source", label: "Source", visible: true, width: 110, getSortValue: leadSourceLabel, getFilterText: leadSourceLabel, render: sourceCell },
+  { id: "matchedTopics", label: "Matched Topic", visible: true, width: 130, getSortValue: leadMatchedTopicNames, getFilterText: leadMatchedTopicNames, render: matchedTopicsCell },
+  { id: "matchedKeywords", label: "Matched Keywords", visible: true, width: 150, getSortValue: leadMatchedKeywords, getFilterText: leadMatchedKeywords, render: matchedKeywordsCell },
+  // Hidden by default
+  { id: "firstScanned", label: "First Scanned", width: 130, getSortValue: (l) => l.firstSeenAt || 0, getFilterText: (l) => formatDateTime(l.firstSeenAt),
+    render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
+  { id: "location", label: "Location", width: 130, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
 ];
+// 18th round of direct feedback (2026-09-19): "only in the Posts Dashboard,
+// the Kebabs have a column header called Action[s]... this whole back and
+// forth... is telling me that the code... is not re-using common
+// components" - "actions" is no longer just another COLUMNS entry (a label,
+// a resize handle - what was actually causing the header text and the extra
+// width eating into it); removed from COLUMNS entirely, handled directly in
+// renderColgroup/renderTableHead/buildRow via the shared actions-column.js
+// helpers (appendActionsCol/appendActionsTh/appendActionsTd) - the SAME
+// functions target-accounts.js's own Companies/Contacts tables call now
+// too, extracted 20th round of direct feedback, same day: "why can't you
+// simply re-use the code that displays the Kebabs in the Target and
+// Contacts Dashboard, instead of keep trying to find workarounds."
 
 let columnWidths = {};
 let columnFilters = {}; // { [columnId]: { text: "filter text", emptyOnly: boolean } }
@@ -602,7 +947,9 @@ let columnFilters = {}; // { [columnId]: { text: "filter text", emptyOnly: boole
 function hasActiveFilter(filter) {
   return Boolean(filter && (filter.text || filter.emptyOnly));
 }
-let sortColumn = "date";
+// "default" = the composite order below (Priority, Status, Post Date); clicking a column header or
+// a menu Sort item switches to sorting by that single column.
+let sortColumn = "default";
 let sortDirection = "desc";
 let openMenuColumnId = null;
 let hiddenColumns = new Set();
@@ -661,9 +1008,10 @@ function saveColumnWidths() {
 
 function loadHiddenColumns() {
   try {
-    hiddenColumns = new Set(JSON.parse(localStorage.getItem(HIDDEN_COLUMNS_STORAGE_KEY) || "[]"));
+    const saved = JSON.parse(localStorage.getItem(HIDDEN_COLUMNS_STORAGE_KEY));
+    hiddenColumns = new Set(Array.isArray(saved) ? saved : COLUMNS.filter((c) => !c.visible).map((c) => c.id));
   } catch {
-    hiddenColumns = new Set();
+    hiddenColumns = new Set(COLUMNS.filter((c) => !c.visible).map((c) => c.id));
   }
 }
 
@@ -718,6 +1066,17 @@ function setColumnHidden(columnId, hidden) {
   return true;
 }
 
+// Default Posts order: Priority P1 to P5 (unscored last), then Status (New, Contacted, Responded,
+// then Converted, Dismissed, Irrelevant), then Post Date newest first.
+const LEAD_STATUS_SORT_ORDER = { New: 0, Contacted: 1, Responded: 2, Converted: 3, Dismissed: 4, Irrelevant: 5 };
+
+function sortLeadsDefault(leads) {
+  return leads.sort((a, b) =>
+    leadPrioritySortValue(a) - leadPrioritySortValue(b)
+    || (LEAD_STATUS_SORT_ORDER[a.status || "New"] ?? 9) - (LEAD_STATUS_SORT_ORDER[b.status || "New"] ?? 9)
+    || leadDate(b) - leadDate(a));
+}
+
 function applyFilterSortSearch() {
   let leads = allLeads.slice();
 
@@ -751,6 +1110,7 @@ function applyFilterSortSearch() {
     }
   }
 
+  if (sortColumn === "default") return sortLeadsDefault(leads);
   const sortCol = COLUMNS.find((c) => c.id === sortColumn);
   if (sortCol && sortCol.getSortValue) {
     leads.sort((a, b) => {
@@ -956,6 +1316,15 @@ function startColumnResize(event, column) {
   document.addEventListener("mouseup", onUp);
 }
 
+// 18th round of direct feedback (2026-09-19) - mirrors target-accounts.js's
+// own syncTopScrollWidth() exactly: a dummy filler div matching the real
+// table's scrollWidth is what gives the thin strip above the table
+// (#table-scroll-top) something to scroll; the two-way scroll listeners
+// below keep it and #table-section's own native scrollbar in sync.
+function syncTopScrollWidth() {
+  tableScrollTopFillerEl.style.width = `${resultsTableEl.scrollWidth}px`;
+}
+
 function renderColgroup() {
   const colgroup = document.getElementById("results-colgroup");
   colgroup.innerHTML = "";
@@ -965,6 +1334,7 @@ function renderColgroup() {
     colEl.style.width = columnWidths[col.id] + "px";
     colgroup.appendChild(colEl);
   }
+  appendActionsCol(colgroup);
 }
 
 function renderTableHead() {
@@ -1025,6 +1395,8 @@ function renderTableHead() {
     tr.appendChild(th);
   }
 
+  appendActionsTh(tr);
+
   thead.appendChild(tr);
 }
 
@@ -1035,6 +1407,7 @@ function buildRow(lead) {
     column.render(td, lead);
     tr.appendChild(td);
   }
+  appendActionsTd(tr, (kebabBtn) => openRowMenu(kebabBtn, lead.key, buildLeadActionsMenu(lead)));
   return tr;
 }
 
@@ -1085,9 +1458,12 @@ async function showAccountSummary(group) {
     return;
   }
   openAccountSummaries.add(group.key);
+  // Mark the summary as loading BEFORE drawing the row: the row's text reads that mark ("Thinking…"), so drawing first
+  // showed an empty one-line box on the first click, and it took a second and third click to see anything.
+  const needsFetch = !accountSummaryCache.has(group.key) && !loadingAccountSummaries.has(group.key);
+  if (needsFetch) loadingAccountSummaries.add(group.key);
   renderTable();
-  if (accountSummaryCache.has(group.key) || loadingAccountSummaries.has(group.key)) return;
-  loadingAccountSummaries.add(group.key);
+  if (!needsFetch) return;
   try {
     const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
     if (!apiKey) {
@@ -1119,7 +1495,11 @@ function buildGroupHeaderRow(group) {
   const tr = document.createElement("tr");
   tr.className = "company-group-header";
   const td = document.createElement("td");
-  td.colSpan = visibleColumns().length;
+  // +1: the always-present actions column isn't in visibleColumns() any
+  // more (18th round of direct feedback, 2026-09-19 - actions is now built
+  // separately, same shape as target-accounts.js's own bare actionsTh/Td),
+  // but the row still needs to span it too.
+  td.colSpan = visibleColumns().length + 1;
 
   const isCollapsed = collapsedCompanyGroups.has(group.key);
   const caret = document.createElement("button");
@@ -1137,7 +1517,14 @@ function buildGroupHeaderRow(group) {
   label.className = "group-header-label";
   label.textContent = `${group.displayName} (${group.leads.length} lead${group.leads.length === 1 ? "" : "s"})`;
 
-  td.append(caret, label);
+  // The flex layout lives on an inner bar, NOT on the <td>: a <td> that is display:flex stops being a table cell, the
+  // browser wraps it in an anonymous one-column-wide cell, and the header collapsed into a narrow strip (name wrapped
+  // over 4-6 lines, the button clipped, the rest of the row blank). Same failure as the shifted clamped cells.
+  const bar = document.createElement("div");
+  bar.className = "group-header-bar";
+  label.title = label.textContent;
+  bar.append(caret, label);
+  td.appendChild(bar);
 
   if (group.key) {
     // No summary for the "Unknown company" bucket (key "") - there's no
@@ -1148,7 +1535,7 @@ function buildGroupHeaderRow(group) {
     summaryBtn.title = "Ask the Sales Mentor to synthesize every lead seen at this company";
     summaryBtn.textContent = "Get Account Summary";
     summaryBtn.addEventListener("click", () => showAccountSummary(group));
-    td.appendChild(summaryBtn);
+    bar.appendChild(summaryBtn);
   }
 
   tr.appendChild(td);
@@ -1159,8 +1546,12 @@ function buildGroupSummaryRow(group) {
   const tr = document.createElement("tr");
   tr.className = "company-group-summary-row";
   const td = document.createElement("td");
-  td.colSpan = visibleColumns().length;
-  td.textContent = loadingAccountSummaries.has(group.key) ? "Thinking…" : (accountSummaryCache.get(group.key) || "");
+  td.colSpan = visibleColumns().length + 1;
+  // capped width + sticky left: a summary is several paragraphs and must not stretch across every column of a wide table
+  const text = document.createElement("div");
+  text.className = "group-summary-text";
+  text.textContent = loadingAccountSummaries.has(group.key) ? "Thinking…" : (accountSummaryCache.get(group.key) || "");
+  td.appendChild(text);
   tr.appendChild(td);
   return tr;
 }
@@ -1170,9 +1561,19 @@ function renderTable() {
   renderTableHead();
 
   const leads = applyFilterSortSearch();
-  const anyColumnFilter = Object.values(columnFilters).some(hasActiveFilter);
-  const filtered = anyColumnFilter || statusFilter !== "all" || searchText.trim() || !showIrrelevant;
-  resultCountEl.textContent = `${leads.length} of ${allLeads.length} leads${filtered ? " (filtered)" : ""}`;
+  // Say WHAT is hiding leads, not just "filtered": the default view hides Irrelevant leads (those the negative
+  // topics or the location filter dismissed) until "Show Irrelevant" is ticked.
+  const reasons = [];
+  if (!showIrrelevant && statusFilter === "all") {
+    const hidden = allLeads.filter((l) => (l.status || "New") === "Irrelevant").length;
+    if (hidden > 0) reasons.push(`${hidden} auto-filtered as Irrelevant, not counted - tick "Show Irrelevant" to see them`);
+  }
+  if (statusFilter !== "all") reasons.push(`Status: ${statusFilter}`);
+  if (searchText.trim()) reasons.push(`search "${searchText.trim()}"`);
+  const filteredColumns = COLUMNS.filter((c) => hasActiveFilter(columnFilters[c.id])).map((c) => c.label);
+  if (filteredColumns.length > 0) reasons.push(`column filter: ${filteredColumns.join(", ")}`);
+  const countBase = showIrrelevant || statusFilter === "Irrelevant" ? allLeads.length : allLeads.filter((l) => (l.status || "New") !== "Irrelevant").length;
+  resultCountEl.textContent = `${leads.length} of ${countBase} leads${reasons.length ? ` (${reasons.join("; ")})` : ""}`;
 
   renderPaginationControls(leads.length);
 
@@ -1180,11 +1581,12 @@ function renderTable() {
   if (leads.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = visibleColumns().length;
+    td.colSpan = visibleColumns().length + 1;
     td.className = "empty-state";
     td.textContent = allLeads.length === 0 ? "No leads yet. Run a scan from the side panel." : "No leads match your filters.";
     tr.appendChild(td);
     tbody.appendChild(tr);
+    syncTopScrollWidth();
     return;
   }
 
@@ -1196,6 +1598,7 @@ function renderTable() {
         for (const lead of group.leads) tbody.appendChild(buildRow(lead));
       }
     }
+    syncTopScrollWidth();
     return;
   }
 
@@ -1204,6 +1607,7 @@ function renderTable() {
     : leads.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   for (const lead of pageLeads) tbody.appendChild(buildRow(lead));
+  syncTopScrollWidth();
 }
 
 // Any change to what's being shown (search, a filter, sort, status) should
@@ -1269,6 +1673,8 @@ function renderDetail(lead) {
   statusSelect.value = lead.status || "New";
 
   document.getElementById("detail-priority-select").value = lead.priority ? String(lead.priority) : "";
+  document.getElementById("detail-save-btn").disabled = true;
+  document.getElementById("detail-save-status").textContent = "";
 
   document.getElementById("detail-full-content").textContent = leadContent(lead) || "(no content captured)";
 
@@ -1300,6 +1706,54 @@ function renderDetail(lead) {
   document.getElementById("detail-mentor-status").textContent = "";
 }
 
+// Message template editing (moved here from settings.html, 2026-09-16 - the
+// user's own reasoning: templates aren't raw setup input, they're
+// instructions the Sales Mentor consumes while drafting, so editing them
+// belongs next to where drafting actually happens, not in Settings).
+// messageTemplates itself stays the one shared, global list it always was
+// (storage.js's getMessageTemplates/saveMessageTemplates, fixed ids -
+// first-degree/warm-content/hiring-lead) - editing here changes it
+// everywhere it's used (every other lead's template dropdown, and the
+// Sales Mentor's own draft_message tool call from the standalone Advisors
+// page), same as it already did when this UI lived in Settings. Not a
+// per-lead override; the data model doesn't support one.
+function renderTemplatesEditor() {
+  const listEl = document.getElementById("detail-templates-list");
+  listEl.innerHTML = "";
+  for (const template of messageTemplates) {
+    const wrap = document.createElement("div");
+    wrap.className = "template-card";
+    const label = document.createElement("div");
+    label.className = "template-name";
+    label.textContent = template.name;
+    const textarea = document.createElement("textarea");
+    textarea.value = template.instructions;
+    let valueAtFocus = textarea.value;
+    textarea.addEventListener("focus", () => { valueAtFocus = textarea.value; });
+    textarea.addEventListener("input", () => {
+      template.instructions = textarea.value;
+      saveMessageTemplates(messageTemplates);
+    });
+    textarea.addEventListener("blur", () => {
+      if (textarea.value !== valueAtFocus) {
+        appendActivityLog({
+          actor: "user", action: "message_template_changed",
+          label: `Message Template "${template.name}" changed`,
+          prevValue: valueAtFocus, newValue: textarea.value,
+        });
+      }
+    });
+    wrap.append(label, textarea);
+    listEl.appendChild(wrap);
+  }
+}
+
+document.getElementById("detail-edit-templates-btn").addEventListener("click", () => {
+  const editor = document.getElementById("detail-templates-editor");
+  editor.hidden = !editor.hidden;
+  if (!editor.hidden) renderTemplatesEditor();
+});
+
 function showDetailView(lead, focus) {
   listViewEl.hidden = true;
   detailViewEl.hidden = false;
@@ -1325,37 +1779,54 @@ document.getElementById("back-to-list-link").addEventListener("click", (event) =
   location.hash = "";
 });
 
-document.getElementById("detail-priority-select").addEventListener("change", async (event) => {
-  if (!currentDetailLead) return;
-  const prevValue = currentDetailLead.priority || null;
-  const value = event.target.value;
-  await setLeadPriority(currentDetailLead.key, value ? Number(value) : null);
-  await loadLeads();
-  currentDetailLead = allLeads.find((l) => l.key === currentDetailLead.key) || currentDetailLead;
-  renderTable();
-  appendActivityLog({ actor: "user", action: "lead_priority_changed", label: `Lead "${leadTitle(currentDetailLead)}" priority manually set`, prevValue, newValue: value ? Number(value) : null });
-});
+// Status and Priority are edited with an explicit Save button (not silently on every change - reported directly,
+// 2026-09-21): changing either select only marks the form unsaved; Save applies whatever actually changed.
+const detailSaveBtn = document.getElementById("detail-save-btn");
+const detailSaveStatus = document.getElementById("detail-save-status");
 
-document.getElementById("detail-status-select").addEventListener("change", async (event) => {
+function markDetailDirty() {
   if (!currentDetailLead) return;
-  const prevValue = currentDetailLead.status || "New";
-  await updateLeadStatus(currentDetailLead.key, event.target.value);
+  const statusChanged = document.getElementById("detail-status-select").value !== (currentDetailLead.status || "New");
+  const priorityChanged = document.getElementById("detail-priority-select").value !== (currentDetailLead.priority ? String(currentDetailLead.priority) : "");
+  const dirty = statusChanged || priorityChanged;
+  detailSaveBtn.disabled = !dirty;
+  detailSaveStatus.textContent = dirty ? "Unsaved changes" : "";
+}
+document.getElementById("detail-priority-select").addEventListener("change", markDetailDirty);
+document.getElementById("detail-status-select").addEventListener("change", markDetailDirty);
+
+detailSaveBtn.addEventListener("click", async () => {
+  if (!currentDetailLead) return;
+  detailSaveBtn.disabled = true;
+  const key = currentDetailLead.key;
+  const prevStatus = currentDetailLead.status || "New";
+  const prevPriority = currentDetailLead.priority || null;
+  const newStatus = document.getElementById("detail-status-select").value;
+  const priorityValue = document.getElementById("detail-priority-select").value;
+  const newPriority = priorityValue ? Number(priorityValue) : null;
+  if (newPriority !== prevPriority) await setLeadPriority(key, newPriority);
+  if (newStatus !== prevStatus) await updateLeadStatus(key, newStatus);
   await loadLeads();
-  currentDetailLead = allLeads.find((l) => l.key === currentDetailLead.key) || currentDetailLead;
+  currentDetailLead = allLeads.find((l) => l.key === key) || currentDetailLead;
   renderAllPieCharts();
   renderTable();
-  // relatedCompanyKey (PRD 6.19): best-effort only - lets an Account view's
-  // Activity Log pick this up when the lead's company matches a Target
-  // Account, without requiring every status-change site in this file to be
-  // updated for the new views to work at all.
-  appendActivityLog({
-    actor: "user",
-    action: "lead_status_changed",
-    label: `Lead "${leadTitle(currentDetailLead)}" status changed`,
-    prevValue,
-    newValue: event.target.value,
-    relatedCompanyKey: currentDetailLead.company ? normalizeCompanyName(currentDetailLead.company) : undefined,
-  });
+  if (newPriority !== prevPriority) {
+    appendActivityLog({ actor: "user", action: "lead_priority_changed", label: `Lead "${leadTitle(currentDetailLead)}" priority manually set`, prevValue: prevPriority, newValue: newPriority });
+  }
+  if (newStatus !== prevStatus) {
+    // relatedCompanyKey (PRD 6.19): best-effort only - lets an Account view's Activity Log pick this up when the
+    // lead's company matches a Target Account.
+    appendActivityLog({
+      actor: "user",
+      action: "lead_status_changed",
+      label: `Lead "${leadTitle(currentDetailLead)}" status changed`,
+      prevValue: prevStatus,
+      newValue: newStatus,
+      relatedCompanyKey: currentDetailLead.company ? normalizeCompanyName(currentDetailLead.company) : undefined,
+    });
+  }
+  detailSaveStatus.textContent = "Saved ✓";
+  setTimeout(() => { if (detailSaveStatus.textContent === "Saved ✓") detailSaveStatus.textContent = ""; }, 3000);
 });
 
 document.getElementById("detail-draft-btn").addEventListener("click", async () => {
@@ -1505,7 +1976,7 @@ document.getElementById("detail-mentor-input").addEventListener("keydown", (even
 
 document.getElementById("detail-mentor-clear-btn").addEventListener("click", async () => {
   if (!currentDetailLead) return;
-  if (!confirm("Clear this conversation? This can't be undone.")) return;
+  if (!(await askConfirm("Clear this conversation? This can't be undone.", { okLabel: "Clear conversation", cancelLabel: "Keep it", danger: true }))) return;
   mentorHistory = [];
   await updateLeadMentorHistory(currentDetailLead.key, []);
   renderMentorHistory();
@@ -1553,6 +2024,8 @@ function exportLeadsToCsv(leads, filenameTag) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  const exportStatusEl = document.getElementById("export-status");
+  if (exportStatusEl) exportStatusEl.textContent = `Done - exported ${leads.length} lead${leads.length === 1 ? "" : "s"} to your Downloads folder (exports/${a.download.split("/").pop()}).`;
 }
 
 document.getElementById("export-csv-all-btn").addEventListener("click", () => {
@@ -1568,7 +2041,11 @@ document.getElementById("export-csv-all-btn").addEventListener("click", () => {
 // the very end) so a later chunk's failure doesn't lose earlier progress.
 const PRIORITIZE_CHUNK_SIZE = 20;
 
-async function prioritizeLeadsInChunks(leads, settings, onProgress) {
+function prioritizeLeadsInChunks(leads, settings, onProgress) {
+  return withBatch("Prioritizing leads with AI", () => prioritizeLeadsInChunksImpl(leads, settings, onProgress));
+}
+
+async function prioritizeLeadsInChunksImpl(leads, settings, onProgress) {
   let totalChanged = 0;
   for (let i = 0; i < leads.length; i += PRIORITIZE_CHUNK_SIZE) {
     const chunk = leads.slice(i, i + PRIORITIZE_CHUNK_SIZE);
@@ -1587,12 +2064,24 @@ async function prioritizeLeadsInChunks(leads, settings, onProgress) {
 // configured yet. Scores ALL currently-unscored "New" leads regardless of
 // the table's active filters (unlike Bulk Change below, which deliberately
 // only touches what's filtered) - the whole point is to leave nothing behind.
+// The status texts of the left-menu actions (Prioritize Unscored Leads, Re-score, Extract Companies, ...) sit in a
+// small grey line next to the page title, which is easy to miss. Every one of them is mirrored into a pop-up: it
+// shows the progress while the action runs and its result with an OK button (see confirm-dialog.js).
+const ACTION_STATUS_IDS = [
+  "prioritize-status", "rescore-all-status", "extract-companies-status", "extract-companies-profiles-status",
+  "apply-location-filter-status", "export-status",
+];
+mirrorStatusToPopup(ACTION_STATUS_IDS);
+
 prioritizeUnscoredBtn.addEventListener("click", async () => {
+  if (!(await guardBatchStart("Prioritizing leads with AI", askConfirm))) return;
   const toScore = allLeads.filter((l) => l.status === "New" && !l.priority);
   if (toScore.length === 0) {
     prioritizeStatusEl.textContent = "Nothing to do - every \"New\" lead already has a priority.";
     return;
   }
+  if (!(await askConfirm(`Score ${toScore.length} unscored "New" lead${toScore.length === 1 ? "" : "s"}?\n\nThis sets their priority. Leads that match a Target Account are set directly; the rest are scored by the Sales Mentor, which uses your Anthropic API key (a small cost). No LinkedIn activity is used.`))) return;
+  if (!(await confirmIfCostly("leadScoring", toScore.length, "Scoring these leads", askConfirm))) return;
   prioritizeUnscoredBtn.disabled = true;
   prioritizeStatusEl.textContent = `Prioritizing ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
   try {
@@ -1636,15 +2125,45 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
 // leads scored before those existed. Never touches a manually-set priority
 // (setLeadPriority clears priorityScoredAt precisely so this can tell the
 // difference) - same guard as background.js's correlated re-scoring.
+// Offered only after the scoring rules were changed in the Setup wizard (flag set by onboarding.js), never as a
+// permanent menu item.
+async function maybeShowRescorePrompt() {
+  const { scoringRulesChangedAt, scoringRulesRescoredAt } = await chrome.storage.local.get(["scoringRulesChangedAt", "scoringRulesRescoredAt"]);
+  if (!scoringRulesChangedAt || (scoringRulesRescoredAt || 0) >= scoringRulesChangedAt) return;
+  if (document.getElementById("rescore-prompt")) return;
+  const bar = document.createElement("div");
+  bar.id = "rescore-prompt";
+  bar.className = "rescore-prompt";
+  const text = document.createElement("span");
+  text.textContent = "You changed the scoring rules. Re-score your existing leads with the new rules?";
+  const yes = document.createElement("button");
+  yes.type = "button";
+  yes.textContent = "Re-score now";
+  yes.addEventListener("click", () => { bar.remove(); rescoreAllBtn.click(); });
+  const later = document.createElement("button");
+  later.type = "button";
+  later.className = "text-link-btn";
+  later.textContent = "Not now";
+  later.addEventListener("click", async () => {
+    await chrome.storage.local.set({ scoringRulesRescoredAt: Date.now() });
+    bar.remove();
+  });
+  bar.append(text, yes, later);
+  const anchor = document.getElementById("page-header-bar");
+  anchor.after(bar);
+}
+
 rescoreAllBtn.addEventListener("click", async () => {
+  if (!(await guardBatchStart("Prioritizing leads with AI", askConfirm))) return;
   const toScore = allLeads.filter((l) => l.status === "New" && (!l.priority || l.priorityScoredAt));
   if (toScore.length === 0) {
     rescoreAllStatusEl.textContent = "Nothing to do - no \"New\" leads are eligible (manually-set priorities are left alone).";
     return;
   }
-  if (!confirm(`Re-score ${toScore.length} "New" lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor? This overwrites their current AI-assigned priority (manually-set priorities are skipped).`)) {
+  if (!(await askConfirm(`Re-score ${toScore.length} "New" lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor? This overwrites their current AI-assigned priority (manually-set priorities are skipped).`))) {
     return;
   }
+  if (!(await confirmIfCostly("leadScoring", toScore.length, "Re-scoring these leads", askConfirm))) return;
   rescoreAllBtn.disabled = true;
   const oldPriorities = new Map(toScore.map((l) => [l.key, l.priority || null]));
   rescoreAllStatusEl.textContent = `Re-scoring ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
@@ -1676,6 +2195,7 @@ rescoreAllBtn.addEventListener("click", async () => {
       return updated && (updated.priority || null) !== oldPriorities.get(lead.key);
     }).length;
     rescoreAllStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} re-scored, ${priorityChangedCount} changed priority.`;
+    await chrome.storage.local.set({ scoringRulesRescoredAt: Date.now() });
     renderAllPieCharts();
     renderTable();
     appendActivityLog({ actor: "user", action: "leads_rescored_manual", label: `Re-score All Priorities: ${changed} re-scored, ${priorityChangedCount} changed priority`, newValue: { changed, priorityChangedCount } });
@@ -1693,11 +2213,14 @@ rescoreAllBtn.addEventListener("click", async () => {
 // touches a lead that already has a company - AI-extracted or manually
 // assigned - so this can only ever fill gaps, never overwrite a correction.
 extractCompaniesBtn.addEventListener("click", async () => {
+  if (!(await guardBatchStart("Finding the company for leads with AI", askConfirm))) return;
   const toExtract = allLeads.filter((l) => l.type !== "job" && !l.company);
   if (toExtract.length === 0) {
     extractCompaniesStatusEl.textContent = "Nothing to do - every lead already has a company.";
     return;
   }
+  if (!(await askConfirm(`Find the company for ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"}?\n\nThe AI reads each lead's headline and fills in an empty Company field. Existing companies are not changed. This uses your Anthropic API key (a small cost); no LinkedIn activity is used.`))) return;
+  if (!(await confirmIfCostly("companyExtraction", toExtract.length, "Finding these companies", askConfirm))) return;
   extractCompaniesBtn.disabled = true;
   extractCompaniesStatusEl.textContent = `Extracting companies for ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"}…`;
   try {
@@ -1706,7 +2229,7 @@ extractCompaniesBtn.addEventListener("click", async () => {
       extractCompaniesStatusEl.textContent = "Add an Anthropic API key on the Settings page first.";
       return;
     }
-    const extracted = await extractCompaniesForLeads(toExtract, { apiKey });
+    const extracted = await withBatch("Finding the company for leads with AI", () => extractCompaniesForLeads(toExtract, { apiKey }));
     const changed = await applyExtractedCompanies(extracted);
     extractCompaniesStatusEl.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} got a company.`;
     await loadLeads();
@@ -1734,12 +2257,13 @@ extractCompaniesBtn.addEventListener("click", async () => {
 // Orchestration itself lives in profile-extraction.js, shared with the side
 // panel's post-scan prompt (6.3) so both entry points behave identically.
 extractCompaniesProfilesBtn.addEventListener("click", async () => {
+  if (!(await guardBatchStart("Reading LinkedIn profiles", askConfirm))) return;
   const toVisit = leadsMissingProfileData(allLeads);
   if (toVisit.length === 0) {
     extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is missing a company or location with a profile URL to visit.";
     return;
   }
-  if (!confirm(profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length))) return;
+  if (!(await askConfirm(profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length)))) return;
 
   extractCompaniesProfilesBtn.disabled = true;
   try {
@@ -1780,100 +2304,31 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
   }
 });
 
-// EXPERIMENTAL (v0.29.24, see PRD 6.15): compares the People-Search method
-// against whatever the profile-visit extraction already found, WITHOUT
-// overwriting it - purely to judge the new method's accuracy before trusting
-// it as a real source. Location agreement is judged via classifyLocation's
-// {country}, not exact string equality, since the same real place can be
-// phrased differently between the two methods (e.g. German vs English
-// spelling) without actually disagreeing.
-function locationsAgree(a, b) {
-  if (!a || !b) return null;
-  const ca = classifyLocation(a);
-  const cb = classifyLocation(b);
-  if (!ca || !cb) return null;
-  return ca.country === cb.country;
-}
-
-function companiesAgree(a, b) {
-  if (!a || !b) return null;
-  const na = a.trim().toLowerCase();
-  const nb = b.trim().toLowerCase();
-  return na.includes(nb) || nb.includes(na);
-}
-
-peopleSearchCompareBtn.addEventListener("click", async () => {
-  const toCheck = leadsForPeopleSearchComparison(allLeads);
-  if (toCheck.length === 0) {
-    peopleSearchCompareStatusEl.textContent = "Nothing to do - no Post lead with a known author is left unchecked.";
-    return;
-  }
-  if (!confirm(peopleSearchConfirmText(uniquePeopleSearchAuthorCount(toCheck), toCheck.length))) return;
-
-  peopleSearchCompareBtn.disabled = true;
-  try {
-    const { results: compared, debugSamples, hardTimeoutCount, stoppedByTouchBudget } = await runPeopleSearchComparison(toCheck, {
-      onProgress: (i, total) => { peopleSearchCompareStatusEl.textContent = `Looking up author ${i} of ${total}…`; },
-    });
-    await applyPeopleSearchComparison(compared);
-    await loadLeads();
-    renderTable();
-
-    const leadByKey = new Map(allLeads.map((l) => [l.key, l]));
-    let matchedCount = 0, locationAgree = 0, locationDisagree = 0, companyAgree = 0, companyDisagree = 0;
-    for (const c of compared) {
-      if (!c.matched) continue;
-      matchedCount++;
-      const lead = leadByKey.get(c.key);
-      if (!lead) continue;
-      const locAgreement = locationsAgree(lead.location, c.peopleSearchLocation);
-      if (locAgreement === true) locationAgree++;
-      else if (locAgreement === false) locationDisagree++;
-      const compAgreement = companiesAgree(lead.company, c.peopleSearchCompany);
-      if (compAgreement === true) companyAgree++;
-      else if (compAgreement === false) companyDisagree++;
-    }
-    peopleSearchCompareStatusEl.textContent = `Done - ${matchedCount} of ${toCheck.length} lead${toCheck.length === 1 ? "" : "s"} matched via People Search` +
-      (matchedCount > 0 ? ` (location: ${locationAgree} agreed/${locationDisagree} disagreed; company: ${companyAgree} agreed/${companyDisagree} disagreed, where both had data)` : "") +
-      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
-      // v0.30.0: this run can now stop itself early when the shared 75/99
-      // LinkedIn touch budget is hit (touch-budget-guard.js) - said plainly
-      // rather than silently under-reporting how many leads were checked.
-      (stoppedByTouchBudget ? " - stopped automatically, daily LinkedIn activity limit reached (resume tomorrow)." : ".");
-    appendActivityLog({
-      actor: "user",
-      action: "people_search_compared",
-      label: `Compare via People Search: ${matchedCount} of ${toCheck.length} lead${toCheck.length === 1 ? "" : "s"} matched` +
-        (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
-        (debugSamples.length > 0 ? ` - ${debugSamples.length} unmatched sample(s) attached for diagnosis` : ""),
-      newValue: { matchedCount, total: toCheck.length, locationAgree, locationDisagree, companyAgree, companyDisagree, hardTimeoutCount, debugSamples },
-    });
-  } catch (err) {
-    peopleSearchCompareStatusEl.textContent = `Something went wrong: ${err.message}`;
-    appendActivityLog({ actor: "user", action: "people_search_compared", label: "Compare via People Search failed", error: true, errorMessage: err.message });
-  } finally {
-    peopleSearchCompareBtn.disabled = false;
-  }
-});
-
 // Re-checks every lead against Settings' Location Filter config right now,
 // without a new scan or a profile-extraction run - the same "Apply
 // Negative Filters" idea, for after a Settings change (e.g. adding a
 // country) rather than after fresh data arrives (that case is handled
 // automatically above).
 applyLocationFilterBtn.addEventListener("click", async () => {
+  const total = allLeads.length;
+  if (total === 0) {
+    applyLocationFilterStatusEl.textContent = "Nothing to do - there are no leads yet.";
+    return;
+  }
+  if (!(await askConfirm(`Check all ${total} lead${total === 1 ? "" : "s"} against your Location Filter now?\n\nLeads outside your target locations are marked Irrelevant (hidden and not counted); leads that now match are restored to New. Nothing is deleted. No LinkedIn activity is used.`))) return;
   applyLocationFilterBtn.disabled = true;
+  applyLocationFilterStatusEl.textContent = `Checking ${total} lead${total === 1 ? "" : "s"} against the Location Filter…`;
   try {
     const { blockedCount, restoredCount } = await reapplyLocationFilter();
     await loadLeads();
     renderTable();
     if (blockedCount === 0 && restoredCount === 0) {
-      applyLocationFilterStatusEl.textContent = "Done - no leads needed to change.";
+      applyLocationFilterStatusEl.textContent = `Done - checked ${total} lead${total === 1 ? "" : "s"}, none needed to change.`;
     } else {
       const parts = [];
       if (blockedCount > 0) parts.push(`${blockedCount} lead${blockedCount === 1 ? "" : "s"} newly marked Irrelevant`);
       if (restoredCount > 0) parts.push(`${restoredCount} lead${restoredCount === 1 ? "" : "s"} restored to New`);
-      applyLocationFilterStatusEl.textContent = `Done - ${parts.join(", ")}.`;
+      applyLocationFilterStatusEl.textContent = `Done - checked ${total} lead${total === 1 ? "" : "s"}: ${parts.join(", ")}.`;
     }
     appendActivityLog({
       actor: "user", action: "location_filter_applied",
@@ -1942,7 +2397,7 @@ bulkApplyBtn.addEventListener("click", async () => {
     bulkStatusText.textContent = "No leads match the current filters.";
     return;
   }
-  if (!confirm(`Change ${filteredLeads.length} currently-filtered lead${filteredLeads.length === 1 ? "" : "s"} to "${targetStatus}"? You can undo this specific change from this same dialog afterward, but not once you've made another bulk change.`)) {
+  if (!(await askConfirm(`Change ${filteredLeads.length} currently-filtered lead${filteredLeads.length === 1 ? "" : "s"} to "${targetStatus}"? You can undo this specific change from this same dialog afterward, but not once you've made another bulk change.`))) {
     return;
   }
   bulkApplyBtn.disabled = true;
@@ -2151,7 +2606,19 @@ document.getElementById("page-last-btn").addEventListener("click", () => {
   renderTable();
 });
 
-window.addEventListener("hashchange", route);
+// 23rd round of direct feedback (2026-09-19), same-day follow-up - see
+// target-accounts.js's own copy of this comment for the full reasoning:
+// when the embedding host sets the iframe's src to a new URL that only
+// differs in the #hash from what it's ALREADY showing (e.g. clicking
+// Extract Companies right after Apply Location Filter, both
+// dashboard.html, just a different #action=), the browser treats that as
+// an in-page hash change, not a real navigation - init()'s own one-time
+// call to runActionFromHash() never gets a chance to run again.
+// hashchange fires either way, so calling it here too covers both cases.
+window.addEventListener("hashchange", () => {
+  route();
+  runActionFromHash();
+});
 
 // Keeps the Dashboard live if a scan completes (or a lead's status/draft
 // changes) while this tab is open, e.g. run from the side panel in another
@@ -2172,6 +2639,65 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// Two-way scroll sync between the thin strip above the table and the
+// table's own native horizontal scrollbar below it - same pattern as
+// target-accounts.js's own copy of this (a `scrollLeft` write that matches
+// the current value doesn't re-fire this element's own "scroll" event, so
+// this can't loop between the two listeners).
+let syncingTableScroll = false;
+tableScrollTopEl.addEventListener("scroll", () => {
+  if (syncingTableScroll) return;
+  syncingTableScroll = true;
+  tableSectionEl.scrollLeft = tableScrollTopEl.scrollLeft;
+  syncingTableScroll = false;
+});
+tableSectionEl.addEventListener("scroll", () => {
+  if (syncingTableScroll) return;
+  syncingTableScroll = true;
+  tableScrollTopEl.scrollLeft = tableSectionEl.scrollLeft;
+  syncingTableScroll = false;
+});
+
+// 23rd round of direct feedback (2026-09-19) - see target-accounts.js's
+// own copy of this comment for the full reasoning. Every OTHER page's own
+// copy of "Posts Dashboard" now duplicates these same action buttons (not
+// just the base "open this page" button) - each one links here with
+// "#action=X" (see those pages' own HTML comments), triggered
+// automatically on load with a real .click() (so any of these buttons'
+// own existing confirm() gates - e.g. Re-score All Priorities - still run
+// normally, same as a direct click would).
+const ACTION_BUTTON_IDS = {
+  "prioritize-unscored": "prioritize-unscored-btn",
+  "rescore-all": "rescore-all-btn",
+  "extract-companies": "extract-companies-btn",
+  "extract-companies-profiles": "extract-companies-profiles-btn",
+  "apply-location-filter": "apply-location-filter-btn",
+  "export-csv-all": "export-csv-all-btn",
+  "export-csv-filtered": "export-csv-filtered-btn",
+};
+// 25th round of direct feedback (2026-09-19): "when I clicked Re-score AI
+// Priorities from the Posts menu [cross-page, from a different page], it
+// did NOT change the underlying Accounts Dashboard to Posts" - even though
+// the confirm() popup itself appeared correctly. Root cause: confirm() is
+// synchronous and render-blocking. When this page has JUST loaded (a real
+// cross-page navigation, not the same-page hashchange case) and this
+// function's own .click() immediately triggers a confirm() (e.g. Re-score
+// All Priorities), the browser can block BEFORE ever painting this page's
+// first frame - so the iframe's visual layer stays frozen on whatever the
+// PREVIOUS page last painted, underneath the popup, no matter which button
+// the user clicks in the dialog. Deferred one frame (double
+// requestAnimationFrame - the standard "wait for a real paint" idiom) so a
+// first paint of this page's own content always happens before any
+// confirm()/alert() gate can run and block it.
+function runActionFromHash() {
+  const action = new URLSearchParams(location.hash.replace(/^#/, "")).get("action");
+  const btnId = ACTION_BUTTON_IDS[action];
+  if (!btnId) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.getElementById(btnId).click();
+  }));
+}
+
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
   loadColumnWidths();
@@ -2188,6 +2714,12 @@ async function init() {
   renderAllPieCharts();
   renderTable();
   route();
+  runActionFromHash();
+  maybeShowRescorePrompt().catch(() => {});
 }
 
 init();
+
+// Automatic daily backup (once per 24h across all open pages) - see backup-restore.js.
+startAutoBackup();
+initBatchStatus();

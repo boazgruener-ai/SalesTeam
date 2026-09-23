@@ -16,7 +16,7 @@ import {
   getTimeframe,
   getJobSearchEnabled,
   getJobSearchUsePostTopics,
-  getJobSearchLocation,
+  getEffectiveJobSearchLocation,
   getJobSearchTimeframe,
   saveLastScanStartedAt,
   getNegativeTopics,
@@ -32,11 +32,15 @@ import {
   tagPrioritiesWithTargetAccountSignal,
   appendActivityLog,
   getTargetAccounts,
+  getScanCompanyScope,
+  getScanTargetCompanyIds,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
-import { recordLinkedinTouch } from "./linkedin-touch-log.js";
+import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease } from "./linkedin-touch-log.js";
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
+import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
+import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
 // Used only for the two independent AND-group searches below (concept-only,
@@ -89,7 +93,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   // banner (sidepanel.js/target-accounts.js still show that banner too, for
   // anyone who closes this tab without finishing).
   if (details.reason === "install") {
-    chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
+    chrome.tabs.create({ url: chrome.runtime.getURL("settings.html#wizard") });
   }
 });
 
@@ -438,7 +442,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     const negativeTopics = await getNegativeTopics();
 
     const jobSearchEnabled = await getJobSearchEnabled();
-    const jobSearchLocation = await getJobSearchLocation();
+    const jobSearchLocation = await getEffectiveJobSearchLocation();
     const jobSearchTimeframe = await getJobSearchTimeframe();
 
     // Job Search's topics are additive with Posts', not either/or: job-only
@@ -465,7 +469,8 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     const jobSubQueries = jobKeywordChunks.reduce((sum, chunks) => sum + chunks.length, 0);
 
     // EXPERIMENTAL (v0.29.26, see PRD 6.17): companies already resolved to a
-    // LinkedIn ID via Settings' "Resolve LinkedIn Company IDs" (6.16).
+    // LinkedIn ID via the Target Accounts Dashboard's "Resolve LinkedIn
+    // Company IDs" (6.16, moved there from Settings 2026-09-16).
     // Deduped since two Target Account entries could theoretically resolve
     // to the same ID. Every enabled topic's keywords (both groups) are
     // merged into ONE list here - deliberately not per-topic - so this
@@ -473,7 +478,8 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
     // topics exist; a dedicated search per topic per company-chunk would
     // multiply instead of add.
     const targetAccounts = await getTargetAccounts();
-    const resolvedCompanyIds = [...new Set(Object.values(targetAccounts).map((a) => a.linkedinCompanyId).filter(Boolean))];
+    // Scoped by the Scanner's "Target Account companies to scan" setting (default P1-P2).
+    const resolvedCompanyIds = await getScanTargetCompanyIds(await getScanCompanyScope());
     const mergedTopicKeywords = [...new Set(topics.flatMap((t) => [...t.keywords, ...(t.andKeywords || [])]))];
     const taKeywordChunks = chunk(mergedTopicKeywords, MAX_OR_TERMS);
     const taCompanyChunks = chunk(resolvedCompanyIds, AUTHOR_COMPANY_CHUNK_SIZE);
@@ -890,8 +896,9 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
       // the wording actually says which one happened, not just "stopped by
       // you" when it wasn't.
       const isBudgetStop = err.message === TOUCH_BUDGET_STOP_MESSAGE;
+      const releaseText = isBudgetStop ? formatTouchRelease(await getLinkedinTouchStats()) : "";
       const stoppedMessage = isBudgetStop
-        ? `${TOUCH_BUDGET_STOP_MESSAGE} Leads found before stopping were saved and won't be lost - but scanning ` +
+        ? `${TOUCH_BUDGET_STOP_MESSAGE}${releaseText ? " " + releaseText : ""} Leads found before stopping were saved and won't be lost - but scanning ` +
           "again starts over from the first topic (there's no partial-resume point)."
         : "Scan stopped by you. Leads found before stopping were saved and won't be lost - " +
           "but scanning again starts over from the first topic (there's no partial-resume point).";
@@ -934,8 +941,18 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
   }
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "SCAN_ALL") {
-    scanAllTopics({ reapplyToExisting: Boolean(message.reapplyToExisting) });
+    // one batch process at a time: the page checks first (and explains); this is the safety net
+    acquireBatch("Scanner (searching LinkedIn for posts and jobs)").then((release) => {
+      scanAllTopics({ reapplyToExisting: Boolean(message.reapplyToExisting) }).finally(release);
+    }).catch((err) => {
+      if (err instanceof BatchBusyError) chrome.runtime.sendMessage({ type: "SCAN_ERROR", message: err.message }).catch(() => {});
+    });
+  } else if (message?.type === "BULK_WEB_RESEARCH_START") {
+    startBulkResearch(message).then(() => sendResponse({ ok: true })).catch((err) => sendResponse({ ok: false, error: err.message, busy: err instanceof BatchBusyError }));
+    return true;
+  } else if (message?.type === "BULK_WEB_RESEARCH_STOP") {
+    sendResponse(stopBulkResearch());
   }
 });

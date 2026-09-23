@@ -55,11 +55,18 @@ const QA = [
     answer: "Every step of a scan (page load, waiting for results) is time-bounded, so it should never hang forever - if something genuinely fails, you'll get an error message instead of silence. If a scan still looks stuck for several minutes with no progress update, try again and let us know so it can be looked into.",
   },
   {
+    id: "linkedin-use",
+    category: "Scanning & Topics",
+    question: "How SalesTeam works with online platforms and data sources?",
+    keywords: ["linkedin", "terms", "policy", "policies", "rules", "safe", "safety", "ban", "banned", "restricted", "account", "scraping", "compliance", "limit", "touch budget", "resell", "data", "registry", "registries", "website", "websites", "public data", "platform", "platforms", "research"],
+    answer: "SalesTeam is built with the rules of the online platforms and data sources it works with in mind. Its research draws on publicly available sources: the research prompt has an AI assistant consult public company registries and websites, and SalesTeam's own scans read pages of platforms such as LinkedIn. It is designed for personal use, the way a person would use these sites: every scan starts when you click a button, every search and page visit happens in a browser tab you can see, and your browser has to stay open while it runs. There are no scheduled scans and no bulk collection of pages. A built-in safety limit keeps the number of searches and page visits per day modest - within what one person could do by hand. SalesTeam has no server or database of its own, so it never collects, resells or shares anyone's data: everything it finds stays on your device, for your own use, and it never sends messages or connection requests for you. Because each platform's terms of use apply to how any tool is used on it (LinkedIn's terms, for example), we recommend keeping your use moderate and within the daily limit.",
+  },
+  {
     id: "manual-only",
     category: "Scanning & Topics",
     question: "Does SalesTeam scan automatically, or only when I click?",
     keywords: ["automatic", "background", "schedule", "scheduled", "run on its own", "manual"],
-    answer: 'Manual only, by design - nothing runs on a schedule or in the background. Every scan starts with you clicking "Scan All Topics," so it behaves like a person browsing, not a bot.',
+    answer: 'Manual only, by design - nothing runs on a schedule or in the background. Every scan starts with you clicking "Scan All Topics."',
   },
   {
     id: "what-is-negative-topic",
@@ -73,7 +80,7 @@ const QA = [
     category: "Negative Topics & Filtering",
     question: "How do I stop competitors or recruiters from showing up as leads?",
     keywords: ["competitor", "competitors", "recruiter", "recruiters", "staffing", "headhunter", "head hunter", "hide competitors"],
-    answer: 'Two Negative Topics are built in for exactly this - "Competitor Blocklist" and "Recruiter/Staffing Headline Filter" - in the Scanner tile. Edit their keyword lists any time, or add your own Negative Topic for any other kind of noise.',
+    answer: 'Several Negative Topics are built in for exactly this, in the Scanner tile. "Competitor Blocklist," "Recruiting Companies," "Existing Customers," and "Existing Partners" are each just a checkbox now - the actual company lists live in the Setup wizard, not here, so edit them there. "Recruiter/Staffing Headline Filter" is still its own separate, fully editable keyword list (it catches a person\'s own recruiter/staffing job title, not their employer). Add your own Negative Topic for any other kind of noise.',
   },
   {
     id: "apply-negative-filters",

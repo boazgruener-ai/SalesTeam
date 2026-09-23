@@ -52,6 +52,41 @@ export async function getLinkedinTouchStats() {
   const now = Date.now();
   const last24h = log.filter((ts) => now - ts < 24 * 60 * 60 * 1000).length;
   const last7d = log.filter((ts) => now - ts < 7 * 24 * 60 * 60 * 1000).length;
+  // today - purely informational, added 2026-09-15 per the user's own
+  // request ("easier for me to know what I ran today vs. the last 24
+  // hours"), local calendar-day (midnight to now), NOT the basis for
+  // `level`/the warn/danger threshold below - deliberately left on the
+  // rolling last24h window instead, since that's what actually caught the
+  // real incident this module exists because of (v0.29.49) and a
+  // calendar-day reset would blind the hard-stop to a burst that straddles
+  // midnight (e.g. 90 touches at 23:58 + 90 more at 00:05 would show as two
+  // separate, smaller-looking days and might never trigger it).
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const today = log.filter((ts) => ts >= todayStart.getTime()).length;
   const level = last24h >= TOUCH_DANGER_THRESHOLD_24H ? "danger" : last24h >= TOUCH_WARN_THRESHOLD_24H ? "warn" : "ok";
-  return { last24h, last7d, level };
+
+  // When room frees up: each touch leaves the rolling window exactly 24h after it happened. After the
+  // k oldest active touches have expired, `available` touches are free (whatever is free right now
+  // plus those k). Reported at 25 and 50 expired (only if that many are active), earliest first.
+  const active = log.filter((ts) => now - ts < 24 * 60 * 60 * 1000).sort((a, b) => a - b);
+  const availableNow = Math.max(0, TOUCH_DANGER_THRESHOLD_24H - last24h);
+  const release = [25, 50]
+    .filter((k) => active.length >= k)
+    .map((k) => ({ at: active[k - 1] + 24 * 60 * 60 * 1000, available: availableNow + k }));
+  return { last24h, last7d, today, level, availableNow, release };
+}
+
+// e.g. "By 22:05 you'll have 32 touches available, by 22:40 57." - empty when nothing is expiring yet.
+export function formatTouchRelease(stats) {
+  if (!stats.release || stats.release.length === 0) return "";
+  const todayStr = new Date().toDateString();
+  const fmt = (ms) => {
+    const d = new Date(ms);
+    const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return d.toDateString() === todayStr ? time : `tomorrow ${time}`;
+  };
+  return stats.release
+    .map((r, i) => (i === 0 ? `By ${fmt(r.at)} you'll have ${r.available} touches available` : `by ${fmt(r.at)}, ${r.available}`))
+    .join(", ") + ".";
 }

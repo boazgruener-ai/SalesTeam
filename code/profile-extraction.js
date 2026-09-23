@@ -1,3 +1,4 @@
+import { withBatch } from "./batch-jobs.js";
 // Shared orchestration for visiting individual LinkedIn profile pages to
 // recover a company/location a search-results-feed scrape couldn't see
 // (see PRD 6.3). Used by both the Dashboard's "Extract Companies from
@@ -202,7 +203,7 @@ const MAX_DEBUG_SAMPLES = 3;
 // Never touches chrome.storage.local's results map itself - the caller
 // applies `found` (applyExtractedCompanies, storage.js) and re-checks the
 // Location Filter on its own terms.
-export async function runProfileExtraction(leads, { onProgress } = {}) {
+async function runProfileExtractionImpl(leads, { onProgress } = {}) {
   // Deduped to one visit per real profile (see groupByProfile above) - a
   // result found for the shared profile is applied to every lead pointing
   // at it, so two posts from the same person cost one visit, not two.
@@ -274,4 +275,8 @@ export async function runProfileExtraction(leads, { onProgress } = {}) {
     if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
   }
   return { found, debugSamples, hardTimeoutCount };
+}
+
+export function runProfileExtraction(...args) {
+  return withBatch("Reading LinkedIn profiles", () => runProfileExtractionImpl(...args));
 }

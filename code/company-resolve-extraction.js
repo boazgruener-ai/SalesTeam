@@ -1,3 +1,4 @@
+import { withBatch } from "./batch-jobs.js";
 // Shared orchestration for resolving a Target Account company's name to its
 // LinkedIn numeric company ID - the missing piece needed to eventually scope
 // Post search by authorCompany (see PRD 6.15's "what this doesn't solve").
@@ -301,6 +302,9 @@ async function resolveOneName(tab, searchName) {
     finalUrl,
     usedFallback,
     fallbackFinalUrl,
+    // Only ever set once the name matched confidently (see
+    // company-resolve-content-script.js), so it is safe to store as the company's own page.
+    companyPageUrl,
   };
 }
 
@@ -350,7 +354,23 @@ async function resolveViaDirectLink(tab, company) {
 //   all is never guessed at - simply left unresolved for a future run).
 // - debugSamples, hardTimeoutCount: same diagnostic shape as the other
 //   extraction modules.
-export async function runCompanyIdResolution(companies, { onProgress, shouldAbort } = {}) {
+// 29th round of direct feedback (2026-09-19): "it seems that this stopped
+// the Resolve LinkedIn Company IDs that was already running... it seems to
+// start again at 502, even though it should have continued from were it
+// last stopped." Root cause: this function held every result in memory for
+// the WHOLE run and only ever persisted them once, at the very end (the
+// caller's applyResolvedCompanyIds/markLinkedinResolveAttempted calls,
+// after this promise resolves). A graceful Stop click still works fine
+// (shouldAbort just ends the loop early, this function still returns
+// normally, the caller's end-of-run persistence still runs) - but reloading
+// the extension (exactly what an unrelated code change asked the user to
+// do) tears down the whole JS execution context instantly, with no chance
+// for anything "at the end" to ever run. Every company this run had already
+// resolved, gone. onCompanyDone (new) is called after EVERY company's own
+// outcome is known, so the caller can persist immediately, one company at a
+// time - an abrupt interruption now loses at most whichever single company
+// was still in flight, never the whole run's progress.
+async function runCompanyIdResolutionImpl(companies, { onProgress, shouldAbort, onCompanyDone } = {}) {
   const results = [];
   const debugSamples = [];
   // v0.29.45: every company actually reached this run, success or failure -
@@ -474,11 +494,17 @@ export async function runCompanyIdResolution(companies, { onProgress, shouldAbor
         }
       }
 
-      const { resolved, linkedinCompanyId, debug, navCompleted, finalUrl, usedFallback, fallbackFinalUrl } = attempt;
+      const { resolved, linkedinCompanyId, debug, navCompleted, finalUrl, usedFallback, fallbackFinalUrl, companyPageUrl } = attempt;
       const hardTimedOut = Boolean(debug?.timedOut);
       if (hardTimedOut) hardTimeoutCount++;
       else if (!resolved) notConfidentCount++;
-      if (resolved && linkedinCompanyId) results.push({ key: company.key, linkedinCompanyId });
+      // companyPageUrl is the company's REAL LinkedIn page url, read off the page this run just
+      // landed on. It used to be captured and then dropped here, which left accounts that resolved
+      // an id but had no linkedinLink in the imported workbook with no link at all - and, because
+      // getCompaniesNeedingSize() requires linkedinLink, permanently ineligible for Fetch Company
+      // Size too (2026-09-22). Passed through so applyResolvedCompanyIds can fill a MISSING link.
+      if (resolved && linkedinCompanyId) results.push({ key: company.key, linkedinCompanyId, companyPageUrl: companyPageUrl || null });
+      if (onCompanyDone) await onCompanyDone(company.key, resolved && linkedinCompanyId ? linkedinCompanyId : null, companyPageUrl || null);
       if (!resolved && debug && debugSamples.length < MAX_DEBUG_SAMPLES) {
         // finalUrl/fallbackFinalUrl - see navigateAndWaitResolve's own
         // comment: lets a hard timeout distinguish "the tab genuinely
@@ -508,4 +534,8 @@ export async function runCompanyIdResolution(companies, { onProgress, shouldAbor
     if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
   }
   return { results, debugSamples, hardTimeoutCount, notConfidentCount, attemptedKeys, stoppedByTouchBudget };
+}
+
+export function runCompanyIdResolution(...args) {
+  return withBatch("Looking up LinkedIn company IDs", () => runCompanyIdResolutionImpl(...args));
 }

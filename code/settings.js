@@ -1,47 +1,63 @@
 // Settings tab: form-bound persistence (via storage.js) for the Anthropic API
-// key, per-scenario message templates, value-add offers, company context, and
-// the AI output language - the shared configuration the Advisors and lead-
-// drafting features read from.
+// key and the AI output language. "What We Offer"/"Ideal Customer Profile"/
+// "Things you can offer", Location Filter, and Prioritization Rules all
+// moved into the onboarding wizard (2026-09-16 - the wizard's Location step
+// is now the one setting driving both Discovery's company search and lead
+// filtering, and Prioritization Rules is now its own "Leads Prioritization"
+// wizard step) - see onboarding.js for all of these. "Message templates"
+// moved into dashboard.js's lead-detail view instead (2026-09-16, next to
+// the template-select dropdown that already used them). Target Accounts
+// (import/export, confidence threshold, Resolve LinkedIn Company IDs) moved
+// to target-accounts.js instead (2026-09-16, reported directly: it belongs
+// next to the data it actually affects, not on a separate settings page).
+import { getApiUsage, sumDays, clearApiUsage, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
+import { askConfirm } from "./confirm-dialog.js";
+import { initBatchStatus } from "./batch-status.js";
 import {
   getAnthropicApiKey,
   saveAnthropicApiKey,
-  getMessageTemplates,
-  saveMessageTemplates,
-  getValueAddOffers,
-  saveValueAddOffers,
-  getCompanyContext,
-  saveCompanyContext,
-  getIdealCustomerProfile,
-  saveIdealCustomerProfile,
   getOutputLanguage,
   saveOutputLanguage,
-  importTargetAccounts,
-  getTargetAccountsMeta,
-  getTargetAccountScoreThreshold,
-  saveTargetAccountScoreThreshold,
-  importTargetAccountsWorkbook,
-  exportTargetAccountsBackup,
-  importTargetAccountsBackup,
-  getTargetAccountsMissingLinkedinId,
-  applyResolvedCompanyIds,
-  markLinkedinResolveAttempted,
-  getPrioritizationRules,
-  savePrioritizationRuleOverride,
   appendActivityLog,
-  getNegativeTopics,
-  saveNegativeTopics,
-  getLocationFilterConfig,
-  saveLocationFilterConfig,
-  reapplyLocationFilter,
   getOnboardingCompletedAt,
-  CONTINENT_LABELS,
-  ALL_COUNTRIES,
+  getOnboardingProgressStepIndex,
+  getUserProfile,
+  saveUserProfile,
+  getTargetUniverseConfig,
+  getTargetContactProfile,
+  clearCompanyLocationSizeCache,
+  getDiscoveredCompanies,
+  getDiscoveredContacts,
+  clearDiscoveredContacts,
+  getTargetAccountsWorkbook,
+  getTargetAccounts,
+  normalizeCompanyName,
+  exportSettings,
+  exportLeads,
+  importSettings,
+  importLeads,
+  getWebFindingsArbitration,
+  saveWebFindingsArbitration,
+  getRevenueNormalization,
+  saveRevenueNormalization,
 } from "./storage.js";
+import { RULES as ARBITRATION_RULES, DEFAULT_ARBITRATION_SETTINGS } from "./web-findings-arbitration.js";
+import { SUPPORTED_CURRENCIES, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
+import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sanitizeApiKey } from "./agent-shared.js";
-import { mountLocationPicker } from "./location-picker.js";
-import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
-import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
-import { getLinkedinTouchStats } from "./linkedin-touch-log.js";
+import {
+  getDiscoveryQueueState,
+  startDiscoveryQueue,
+  resumeDiscoveryQueue,
+  checkpointCompanyPhase,
+  checkpointContactPhase,
+  advanceToContactPhase,
+  completeDiscoveryQueue,
+  resetDiscoveryQueue,
+} from "./discovery-queue.js";
+import { runCompanyDiscoveryPhase } from "./company-discovery-extraction.js";
+import { runContactDiscoveryPhase } from "./contact-discovery-extraction.js";
+import { getLinkedinTouchStats, formatTouchRelease } from "./linkedin-touch-log.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -74,72 +90,15 @@ function flashSaved() {
   }, 1500);
 }
 
+let currentUserProfile = { name: "", title: "", email: "" };
+
 const editSetupBtn = document.getElementById("edit-setup-btn");
 const editSetupStatusEl = document.getElementById("edit-setup-status");
 const outputLanguageSelect = document.getElementById("output-language-select");
-const companyContextInput = document.getElementById("company-context-input");
-const idealCustomerProfileInput = document.getElementById("ideal-customer-profile-input");
 const anthropicApiKeyInput = document.getElementById("anthropic-api-key-input");
-const messageTemplatesListEl = document.getElementById("message-templates-list");
-const valueAddOffersInput = document.getElementById("value-add-offers-input");
-const targetAccountsStatusEl = document.getElementById("target-accounts-status");
-const importTargetAccountsBtn = document.getElementById("import-target-accounts-btn");
-const importTargetAccountsFileInput = document.getElementById("import-target-accounts-file-input");
-const exportTargetAccountsBtn = document.getElementById("export-target-accounts-btn");
-const resolveCompanyIdsBtn = document.getElementById("resolve-company-ids-btn");
-const stopResolveCompanyIdsBtn = document.getElementById("stop-resolve-company-ids-btn");
-const resolveCompanyIdsStatusEl = document.getElementById("resolve-company-ids-status");
-// Module-scoped, not local to the click handler below - the Stop button has
-// its own separate click listener and needs to reach the same flag a
-// currently-running resolve is reading via its shouldAbort callback.
-let resolveAbortRequested = false;
-const targetAccountThresholdInput = document.getElementById("target-account-threshold-input");
-const prioritizationRulesTbodyEl = document.getElementById("prioritization-rules-tbody");
-const locationFilterModeSelect = document.getElementById("location-filter-mode-select");
-const locationFilterContinentsWrap = document.getElementById("location-filter-continents-wrap");
-const locationFilterCountriesWrap = document.getElementById("location-filter-countries-wrap");
-const locationFilterCountriesSearch = document.getElementById("location-filter-countries-search");
-const locationFilterCountriesAvailable = document.getElementById("location-filter-countries-available");
-const locationFilterCountriesSelected = document.getElementById("location-filter-countries-selected");
-const locationFilterCountryAddBtn = document.getElementById("location-filter-country-add-btn");
-const locationFilterCountryRemoveBtn = document.getElementById("location-filter-country-remove-btn");
-const locationFilterCountriesCountEl = document.getElementById("location-filter-countries-count");
-const locationFilterCountriesSaveBtn = document.getElementById("location-filter-countries-save-btn");
-const locationFilterCountriesSaveStatusEl = document.getElementById("location-filter-countries-save-status");
-const applyLocationFilterBtn = document.getElementById("apply-location-filter-btn");
-const applyLocationFilterStatusEl = document.getElementById("apply-location-filter-status");
-
-let messageTemplates = [];
-let negativeTopics = [];
-// Reported directly: moving countries in/out of the filter shouldn't take
-// effect on every single click while the user is still building up their
-// list - so the picker's own selection is staged, in-memory, and only
-// actually saves (and logs one activity entry) when the dedicated Save
-// Countries button is clicked. locationPicker is assigned once mounted,
-// below.
-let locationPicker = null;
-let savedCountriesSnapshot = [];
-
-function renderMessageTemplates() {
-  messageTemplatesListEl.innerHTML = "";
-  for (const template of messageTemplates) {
-    const wrap = document.createElement("div");
-    wrap.className = "template-card";
-    const label = document.createElement("div");
-    label.className = "template-name";
-    label.textContent = template.name;
-    const textarea = document.createElement("textarea");
-    textarea.value = template.instructions;
-    textarea.addEventListener("input", () => {
-      template.instructions = textarea.value;
-      saveMessageTemplates(messageTemplates);
-      flashSaved();
-    });
-    logOnBlur(textarea, { action: "message_template_changed", labelFor: () => `Message Template "${template.name}" changed` });
-    wrap.append(label, textarea);
-    messageTemplatesListEl.appendChild(wrap);
-  }
-}
+const profileNameInput = document.getElementById("profile-name-input");
+const profileTitleInput = document.getElementById("profile-title-input");
+const profileEmailInput = document.getElementById("profile-email-input");
 
 outputLanguageSelect.addEventListener("change", () => {
   const prevValue = outputLanguageSelect.dataset.prevValue || null;
@@ -149,48 +108,50 @@ outputLanguageSelect.addEventListener("change", () => {
   outputLanguageSelect.dataset.prevValue = outputLanguageSelect.value;
 });
 
-companyContextInput.addEventListener("input", () => {
-  saveCompanyContext(companyContextInput.value);
-  flashSaved();
-});
-logOnBlur(companyContextInput, { action: "company_context_changed", labelFor: () => "Company Context (\"What We Offer\") changed" });
+// The API key is edited as a draft: nothing is stored until Save is pressed, and Cancel puts the stored key back
+// (reported 2026-09-21: it used to save silently on every keystroke, with no Save or Cancel).
+const apiKeySaveBtn = document.getElementById("api-key-save-btn");
+const apiKeyCancelBtn = document.getElementById("api-key-cancel-btn");
+const apiKeyStatusEl = document.getElementById("api-key-status");
+let storedApiKey = "";
 
-idealCustomerProfileInput.addEventListener("input", () => {
-  saveIdealCustomerProfile(idealCustomerProfileInput.value);
-  flashSaved();
+function refreshApiKeyButtons() {
+  const dirty = sanitizeApiKey(anthropicApiKeyInput.value) !== storedApiKey;
+  apiKeySaveBtn.disabled = !dirty;
+  apiKeyCancelBtn.disabled = !dirty;
+  if (dirty) apiKeyStatusEl.textContent = "Unsaved changes";
+  else if (apiKeyStatusEl.textContent === "Unsaved changes") apiKeyStatusEl.textContent = "";
+}
+anthropicApiKeyInput.addEventListener("input", refreshApiKeyButtons);
+apiKeySaveBtn.addEventListener("click", async () => {
+  const value = sanitizeApiKey(anthropicApiKeyInput.value);
+  await saveAnthropicApiKey(value);
+  storedApiKey = value;
+  // Deliberately never logs the actual key value - only that it changed.
+  appendActivityLog({ actor: "user", action: "api_key_changed", label: value ? "Anthropic API key changed" : "Anthropic API key removed" });
+  refreshApiKeyButtons();
+  apiKeyStatusEl.textContent = "Saved ✓";
+  setTimeout(() => { if (apiKeyStatusEl.textContent === "Saved ✓") apiKeyStatusEl.textContent = ""; }, 2500);
 });
-logOnBlur(idealCustomerProfileInput, { action: "ideal_customer_profile_changed", labelFor: () => "Ideal Customer Profile changed" });
+apiKeyCancelBtn.addEventListener("click", () => {
+  anthropicApiKeyInput.value = storedApiKey;
+  refreshApiKeyButtons();
+});
 
-valueAddOffersInput.addEventListener("input", () => {
-  const offers = valueAddOffersInput.value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  saveValueAddOffers(offers);
+// User Profile (2026-09-18, user's own request) - name/title/email saved
+// together as one object rather than 3 separate storage keys, same shape
+// storage.js's getUserProfile/saveUserProfile already use.
+function saveProfileField(field, value) {
+  currentUserProfile = { ...currentUserProfile, [field]: value };
+  saveUserProfile(currentUserProfile);
   flashSaved();
-});
-logOnBlur(valueAddOffersInput, {
-  action: "value_add_offers_changed",
-  labelFor: (oldVal, newVal) => {
-    const oldCount = oldVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
-    const newCount = newVal.split("\n").map((l) => l.trim()).filter(Boolean).length;
-    return `Value-Add Offers changed (${oldCount} → ${newCount} offers)`;
-  },
-});
-
-anthropicApiKeyInput.addEventListener("input", () => {
-  saveAnthropicApiKey(sanitizeApiKey(anthropicApiKeyInput.value));
-  flashSaved();
-});
-anthropicApiKeyInput.addEventListener("blur", () => {
-  // Deliberately never logs the actual key value, before or after - only
-  // that it was touched.
-  if (anthropicApiKeyInput.dataset.touched) {
-    appendActivityLog({ actor: "user", action: "api_key_changed", label: "Anthropic API key changed" });
-  }
-});
-anthropicApiKeyInput.addEventListener("focus", () => { anthropicApiKeyInput.dataset.touched = ""; });
-anthropicApiKeyInput.addEventListener("input", () => { anthropicApiKeyInput.dataset.touched = "1"; });
+}
+profileNameInput.addEventListener("input", () => saveProfileField("name", profileNameInput.value));
+profileTitleInput.addEventListener("input", () => saveProfileField("title", profileTitleInput.value));
+profileEmailInput.addEventListener("input", () => saveProfileField("email", profileEmailInput.value));
+logOnBlur(profileNameInput, { action: "user_profile_changed", labelFor: () => "User Profile name changed" });
+logOnBlur(profileTitleInput, { action: "user_profile_changed", labelFor: () => "User Profile title changed" });
+logOnBlur(profileEmailInput, { action: "user_profile_changed", labelFor: () => "User Profile email changed" });
 
 // v0.29.38: reported directly - date-only made two same-day imports (e.g.
 // re-importing a refreshed workbook to pick up a Zefix cross-check) show an
@@ -198,523 +159,480 @@ anthropicApiKeyInput.addEventListener("input", () => { anthropicApiKeyInput.data
 // stale one hours earlier, or confirm it actually ran at all. Time added;
 // still date-first since that's the more useful glance for anything not
 // imported today.
-function formatImportedAt(ms) {
-  return new Date(ms).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-async function renderTargetAccountsStatus() {
-  const { count, importedAt, importedFileName } = await getTargetAccountsMeta();
-  targetAccountsStatusEl.textContent = count > 0
-    ? `${count} companies imported${importedFileName ? ` from file ${importedFileName}` : ""} at ${formatImportedAt(importedAt)}`
-    : "No target accounts imported yet.";
-}
-
-importTargetAccountsBtn.addEventListener("click", () => {
-  importTargetAccountsFileInput.click();
-});
-
-importTargetAccountsFileInput.addEventListener("change", async () => {
-  const file = importTargetAccountsFileInput.files[0];
-  importTargetAccountsFileInput.value = "";
-  if (!file) return;
-  // v0.29.38: reported directly, alongside the date-only ambiguity fix
-  // above - parsing a large multi-sheet workbook isn't instant, and with
-  // no feedback between the click and the final status line, a click that
-  // hadn't actually registered yet looked identical to one still running.
-  // Replaced below either way - by the real success status, or by a
-  // specific failure message (not just a dismissable alert).
-  targetAccountsStatusEl.textContent = `Importing ${file.name}…`;
-
-  let list;
-  let fullWorkbook = null;
-  try {
-    if (file.name.toLowerCase().endsWith(".json")) {
-      const parsed = JSON.parse(await file.text());
-      // A backup from this page's own Export Target Accounts button (an
-      // object keyed by targetAccounts/targetAccountsWorkbook) restores
-      // exactly as exported - distinct from the legacy convert_target_
-      // accounts.py output below, which is a plain array with no workbook.
-      if (parsed && !Array.isArray(parsed) && (parsed.targetAccounts || parsed.targetAccountsWorkbook)) {
-        const prevMeta = await getTargetAccountsMeta();
-        const { count, workbookCount } = await importTargetAccountsBackup(parsed);
-        await renderTargetAccountsStatus();
-        flashSaved();
-        appendActivityLog({
-          actor: "user",
-          action: "target_accounts_imported",
-          label: `Restored Target Accounts backup (${count} companies${workbookCount ? `, ${workbookCount} in Explorer workbook` : ""})`,
-          prevValue: prevMeta.count,
-          newValue: count,
-        });
-        return;
-      }
-      // Legacy path (convert_target_accounts.py output) - no Contacts/AI
-      // Initiatives/etc. to derive, so the Explorer (PRD 6.12) only gets
-      // populated by a direct .xlsx import.
-      list = parsed;
-    } else {
-      // One parse of the whole relational workbook covers both storage keys:
-      // the lightweight score/label projection prioritization needs (6.11)
-      // is just a re-shape of fullWorkbook.companies, so there's no need to
-      // separately re-parse the Companies sheet a second time.
-      fullWorkbook = await parseFullTargetAccountsWorkbook(await file.arrayBuffer());
-      // Reported directly: a company with no AI Priority score (e.g. marked
-      // "Out of Scope" - a competitor or AI vendor, deliberately excluded
-      // from ever qualifying for the priority boost below) used to be
-      // dropped from this map entirely, which also meant it could never be
-      // resolved to a LinkedIn company ID or included in the Target
-      // Account-scoped Post search (6.16/6.17) - losing real search
-      // coverage for a reason that had nothing to do with search scoping.
-      // Safe to include unconditionally: evaluateTargetAccountMatch already
-      // nulls out any match whose score is null, so a score-less company
-      // here still never qualifies for the P1 boost or the AI's signal-
-      // weighting - this only affects things that key off "is this company
-      // in the map at all," which is exactly what 6.16/6.17 need.
-      list = fullWorkbook.companies
-        .filter((c) => c.company && c.company.trim())
-        .map((c) => ({
-          company: c.company,
-          industry: c.industry,
-          score: c.aiPriorityScore,
-          priorityLabel: c.aiPriority,
-          researchStatus: c.researchStatus,
-          topInitiatives: c.topAiInitiatives,
-          // v0.29.37, see PRD 6.16: a Zefix (Swiss commercial registry)
-          // cross-check, done outside the extension against a workbook
-          // column that doesn't exist in every import - a company's own
-          // researched name is used whenever this is blank.
-          officialName: c.zefixOfficialName || null,
-          // v0.29.42: same external cross-check, two more columns - a
-          // commonly-used short/acronym name and a human/AI-verified
-          // LinkedIn company-page URL (see company-resolve-extraction.js).
-          alternativeName: c.alternativeCompanyName || null,
-          linkedinLink: c.linkedinLink || null,
-        }));
-    }
-  } catch (err) {
-    // Reported directly, alongside the "Importing…" feedback above: reverting
-    // straight to the last-successful status on failure (silently, as this
-    // used to) left no visible trace that anything had gone wrong once the
-    // alert was dismissed - the persistent status line now states the
-    // failure and the actual reason, not just a transient popup.
-    targetAccountsStatusEl.textContent = `Import failed - "${file.name}" doesn't look like a valid, uncorrupted .xlsx or .json export (${err.message}).`;
-    alert(`Couldn't import that file: ${err.message}`);
-    return;
-  }
-  if (!Array.isArray(list)) {
-    targetAccountsStatusEl.textContent = `Import failed - "${file.name}" doesn't look like a Target Accounts export or backup (expected a list of companies).`;
-    alert("That file doesn't look like a target-accounts export (expected a list of companies).");
-    return;
-  }
-
-  const prevMeta = await getTargetAccountsMeta();
-  const { count } = await importTargetAccounts(list, file.name);
-  if (fullWorkbook) await importTargetAccountsWorkbook(fullWorkbook);
-  await renderTargetAccountsStatus();
-  flashSaved();
-  appendActivityLog({
-    actor: "user",
-    action: "target_accounts_imported",
-    label: `Imported Target Accounts list (${count} companies)${fullWorkbook ? " plus full Explorer data (Contacts, AI Initiatives, etc.)" : ""}`,
-    prevValue: prevMeta.count,
-    newValue: count,
-  });
-});
-
-// Same download-a-json-file pattern as the side panel's Export Settings/
-// Export Leads buttons, kept local here since this is the only file-download
-// this page needs - not worth importing across files for one function.
-exportTargetAccountsBtn.addEventListener("click", async () => {
-  const data = await exportTargetAccountsBackup();
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `target-accounts-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  appendActivityLog({
-    actor: "user",
-    action: "target_accounts_exported",
-    label: `Exported Target Accounts backup (${Object.keys(data.targetAccounts || {}).length} companies, ${(data.targetAccountsWorkbook?.companies || []).length} in Explorer workbook)`,
-  });
-});
-
-// EXPERIMENTAL (v0.29.25, see PRD 6.16): resolves each Target Account
-// company's LinkedIn numeric company ID, needed for a future feature that
-// scopes Post search to only these companies' employees (authorCompany).
-const resolveCompanyIdsLimitInput = document.getElementById("resolve-company-ids-limit-input");
-
-resolveCompanyIdsBtn.addEventListener("click", async () => {
-  let toResolve = await getTargetAccountsMissingLinkedinId();
-  const limit = parseInt(resolveCompanyIdsLimitInput.value, 10);
-  if (Number.isFinite(limit) && limit > 0 && limit < toResolve.length) {
-    toResolve = toResolve.slice(0, limit);
-  }
-  if (toResolve.length === 0) {
-    resolveCompanyIdsStatusEl.textContent = "Nothing to do - every Target Account company already has a resolved LinkedIn company ID.";
-    return;
-  }
-  if (!confirm(resolveConfirmText(toResolve.length))) return;
-
-  resolveCompanyIdsBtn.disabled = true;
-  stopResolveCompanyIdsBtn.hidden = false;
-  stopResolveCompanyIdsBtn.disabled = false;
-  stopResolveCompanyIdsBtn.textContent = "Stop";
-  resolveAbortRequested = false;
-  try {
-    const { results: resolved, debugSamples, hardTimeoutCount, notConfidentCount, attemptedKeys, stoppedByTouchBudget } = await runCompanyIdResolution(toResolve, {
-      onProgress: (i, total) => { resolveCompanyIdsStatusEl.textContent = `Resolving company ${i} of ${total}…`; },
-      shouldAbort: () => resolveAbortRequested,
-    });
-    const updated = await applyResolvedCompanyIds(resolved);
-    // v0.29.39, see PRD 6.16: marks every company this run actually
-    // attempted - not just the successes applyResolvedCompanyIds already
-    // knows about - as no longer "never tried," so a future run's queue
-    // (getTargetAccountsMissingLinkedinId) prioritizes fresh companies over
-    // retrying this same stubborn handful again immediately. attemptedKeys
-    // (v0.29.45), not toResolve.map(key) - since a stopped-early run means
-    // most of toResolve was never actually reached, and marking those as
-    // "attempted" would wrongly deprioritize them the next time this same
-    // list is built.
-    await markLinkedinResolveAttempted(attemptedKeys);
-    // Reported directly: the old message only ever accounted for resolved +
-    // hard-timed-out, silently leaving a gap for a real third outcome (no
-    // confident match found, but no error either) with no explanation -
-    // every company in the run is now accounted for in this one line.
-    // "Will retry" wording softened (v0.29.39): a failed company is no
-    // longer guaranteed to be retried on the very next run - it's now
-    // deprioritized behind every still-never-attempted company instead.
-    // "stopped by you" wording added (v0.29.45) when the run ended early via
-    // the Stop button - attemptedKeys.length is how many companies were
-    // actually reached, distinct from toResolve.length (the full requested
-    // batch) once a run can end before finishing it.
-    // v0.30.0: a run can also stop itself when the shared 75/99 LinkedIn
-    // touch budget is hit (touch-budget-guard.js) - distinguished from the
-    // user's own Stop button so the wording says which one actually happened.
-    const stoppedSuffix = stoppedByTouchBudget
-      ? ` - stopped automatically, daily LinkedIn activity limit reached (${toResolve.length - attemptedKeys.length} of ${toResolve.length} never attempted this run; resume tomorrow).`
-      : resolveAbortRequested
-        ? ` - stopped by you (${toResolve.length - attemptedKeys.length} of ${toResolve.length} never attempted this run).`
-        : ".";
-    resolveCompanyIdsStatusEl.textContent = `Done - ${updated} of ${attemptedKeys.length} compan${attemptedKeys.length === 1 ? "y" : "ies"} resolved` +
-      (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error (will retry once every other company's been attempted)` : "") +
-      (notConfidentCount > 0 ? `, ${notConfidentCount} found no confident match (will retry once every other company's been attempted)` : "") +
-      stoppedSuffix;
-    appendActivityLog({
-      actor: stoppedByTouchBudget ? "extension" : "user",
-      action: "company_ids_resolved",
-      label: `Resolve LinkedIn Company IDs: ${updated} of ${attemptedKeys.length} resolved` +
-        (hardTimeoutCount > 0 ? `, ${hardTimeoutCount} failed due to an error` : "") +
-        (notConfidentCount > 0 ? `, ${notConfidentCount} found no confident match` : "") +
-        (stoppedByTouchBudget ? ", stopped automatically (daily LinkedIn activity limit reached)" : resolveAbortRequested ? ", stopped early by you" : "") +
-        (debugSamples.length > 0 ? ` - ${debugSamples.length} unresolved sample(s) attached for diagnosis` : ""),
-      newValue: { updated, total: attemptedKeys.length, requested: toResolve.length, hardTimeoutCount, notConfidentCount, debugSamples, stoppedByUser: resolveAbortRequested, stoppedByTouchBudget },
-    });
-  } catch (err) {
-    resolveCompanyIdsStatusEl.textContent = `Something went wrong: ${err.message}`;
-    appendActivityLog({ actor: "user", action: "company_ids_resolved", label: "Resolve LinkedIn Company IDs failed", error: true, errorMessage: err.message });
-  } finally {
-    resolveCompanyIdsBtn.disabled = false;
-    stopResolveCompanyIdsBtn.hidden = true;
-    await renderLinkedinTouchStat();
-  }
-});
-
-// v0.29.45: checked before starting a new company (see runCompanyIdResolution's
-// own shouldAbort check), not mid-attempt - one company's own resolution is a
-// few seconds, a fine granularity to wait out rather than interrupt. Disabled
-// immediately so a slow in-flight company can't look like the click didn't
-// register.
-stopResolveCompanyIdsBtn.addEventListener("click", () => {
-  resolveAbortRequested = true;
-  stopResolveCompanyIdsBtn.disabled = true;
-  stopResolveCompanyIdsBtn.textContent = "Stopping…";
-});
-
-targetAccountThresholdInput.addEventListener("input", () => {
-  const value = Number(targetAccountThresholdInput.value);
-  if (Number.isFinite(value)) {
-    saveTargetAccountScoreThreshold(value);
-    flashSaved();
-  }
-});
 editSetupBtn.addEventListener("click", () => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
+  location.hash = "#wizard"; // the wizard opens inside this page (see openWizardInline), menu still on the left
+});
+document.getElementById("nav-change-settings").addEventListener("click", () => {
+  if (location.hash === "#change-settings") setTimeout(routeSettings, 0); // re-click on the open item still re-shows it
 });
 
-logOnBlur(targetAccountThresholdInput, {
-  action: "target_account_threshold_changed",
-  labelFor: (oldVal, newVal) => `Target Account score threshold changed (${oldVal} → ${newVal})`,
-});
+// PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round of direct feedback -
+// see target-accounts.js's own copy of this comment for the full
+// reasoning: every cross-page item now embeds in place, none open a new
+// tab any more, and this page's own #app-nav hides itself when embedded
+// elsewhere (the ?embedded=1 check below).
+const pageNativeContentEl = document.getElementById("page-native-content");
+const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
+const embeddedPageBarEl = document.getElementById("embedded-page-bar");
+const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
+const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
-function countriesAreDirty() {
-  const current = locationPicker.getValue().countries;
-  if (current.length !== savedCountriesSnapshot.length) return true;
-  const saved = new Set(savedCountriesSnapshot);
-  return current.some((c) => !saved.has(c));
-}
-
-function renderCountriesSaveState() {
-  const dirty = countriesAreDirty();
-  locationFilterCountriesSaveBtn.disabled = !dirty;
-  locationFilterCountriesSaveStatusEl.textContent = dirty ? "Unsaved changes." : "";
-}
-
-async function saveLocationFilterFromForm({ action, label, prevValue }) {
-  const config = locationPicker.getValue();
-  await saveLocationFilterConfig(config);
-  flashSaved();
-  if (action) appendActivityLog({ actor: "user", action, label, prevValue, newValue: config });
-  // The Prioritization Rules table's own "Location Filter" row shows
-  // whether mode !== "off" - keep it in sync even when the mode changes via
-  // this form rather than that row's own checkbox.
-  await renderPrioritizationRules();
-  return config;
-}
-
-// Dual-listbox mechanics (search/add/remove/dblclick, mode-visibility
-// toggling) live in the shared location-picker.js (extracted so the
-// onboarding wizard's Location step, Phase 2, can mount the identical
-// widget without duplicating ~350 lines) - only the persistence timing
-// below (mode/continents save immediately; countries stage behind the
-// explicit Save Countries button) is specific to this page.
-locationPicker = mountLocationPicker(
-  {
-    modeSelect: locationFilterModeSelect,
-    continentsWrap: locationFilterContinentsWrap,
-    countriesWrap: locationFilterCountriesWrap,
-    search: locationFilterCountriesSearch,
-    available: locationFilterCountriesAvailable,
-    selected: locationFilterCountriesSelected,
-    addBtn: locationFilterCountryAddBtn,
-    removeBtn: locationFilterCountryRemoveBtn,
-    countEl: locationFilterCountriesCountEl,
-  },
-  ALL_COUNTRIES,
-  { onCountriesChange: renderCountriesSaveState },
-);
-
-locationFilterModeSelect.addEventListener("change", async () => {
-  const prevValue = locationFilterModeSelect.dataset.prevValue || "off";
-  await saveLocationFilterFromForm({
-    action: "location_filter_mode_changed",
-    label: `Location Filter mode changed to "${locationFilterModeSelect.value}"`,
-    prevValue,
-  });
-  locationFilterModeSelect.dataset.prevValue = locationFilterModeSelect.value;
-});
-
-for (const checkbox of document.querySelectorAll(".location-continent-checkbox")) {
-  checkbox.addEventListener("change", async () => {
-    const config = await saveLocationFilterFromForm({});
-    appendActivityLog({
-      actor: "user",
-      action: "location_filter_continents_changed",
-      label: `Location Filter continents changed (${config.continents.map((c) => CONTINENT_LABELS[c]).join(", ") || "none"})`,
-      newValue: config.continents,
-    });
-  });
-}
-
-locationFilterCountriesSaveBtn.addEventListener("click", async () => {
-  const before = savedCountriesSnapshot.length;
-  const config = await saveLocationFilterFromForm({
-    action: "location_filter_countries_changed",
-    label: `Location Filter countries changed (${before} → ${locationPicker.getValue().countries.length} countries)`,
-    prevValue: savedCountriesSnapshot,
-  });
-  savedCountriesSnapshot = [...config.countries];
-  renderCountriesSaveState();
-  locationFilterCountriesSaveStatusEl.textContent = "Saved.";
-});
-
-applyLocationFilterBtn.addEventListener("click", async () => {
-  applyLocationFilterBtn.disabled = true;
+// 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
+// copy of this comment for the full reasoning: the host's own #app-nav
+// stays visible the whole time an embedded page is showing and already
+// works to switch away, so the bar/button is hidden unconditionally now.
+function showEmbeddedPage(page, title) {
+  const [base, hash] = page.split("#");
+  const sep = base.includes("?") ? "&" : "?";
+  const url = hash ? `${base}${sep}embedded=1#${hash}` : `${base}${sep}embedded=1`;
+  const resolvedUrl = chrome.runtime.getURL(url);
+  pageNativeContentEl.hidden = true;
+  embeddedPageTitleEl.textContent = title;
+  embeddedPageBarEl.hidden = true;
+  // 26th round of direct feedback (2026-09-19) - see target-accounts.js's
+  // own copy of this comment for the full reasoning: bounced through
+  // about:blank first when re-requesting the exact same URL already
+  // loaded, since an identical src assignment is a browser no-op
+  // (re-clicking the same action item twice in a row would otherwise never
+  // re-fire it).
+  // Re-requesting the page that is already loaded: navigate the frame in place. (The old "bounce through about:blank
+  // then set src again" could be dropped by the browser, leaving the frame blank - reported 2026-09-21: pressing
+  // Change Settings a second time showed an empty screen.) A URL that differs only by its #hash is a same-page
+  // navigation, so the page's own hashchange routing runs; an identical URL reloads it, re-running its action.
+  let sameDocument = false;
+  let willLoad = true;
   try {
-    const { blockedCount, restoredCount } = await reapplyLocationFilter();
-    if (blockedCount === 0 && restoredCount === 0) {
-      applyLocationFilterStatusEl.textContent = "Done - no leads needed to change.";
+    sameDocument = Boolean(embeddedPageFrameEl.contentWindow) &&
+      embeddedPageFrameEl.contentWindow.location.href.split("#")[0] === resolvedUrl.split("#")[0];
+  } catch (err) { /* cross-origin or not loaded yet: fall through to a plain src assignment */ }
+  if (sameDocument) {
+    // Identical URL (same action pressed again, e.g. after Cancel): a fragment-only "navigation" to it would do
+    // nothing, so reload; a URL that differs only by #hash is routed by the page's own hashchange handler.
+    const frameWindow = embeddedPageFrameEl.contentWindow;
+    if (frameWindow.location.href === resolvedUrl) {
+      frameWindow.location.reload();
     } else {
-      const parts = [];
-      if (blockedCount > 0) parts.push(`${blockedCount} lead${blockedCount === 1 ? "" : "s"} newly marked Irrelevant`);
-      if (restoredCount > 0) parts.push(`${restoredCount} lead${restoredCount === 1 ? "" : "s"} restored to New`);
-      applyLocationFilterStatusEl.textContent = `Done - ${parts.join(", ")}.`;
+      frameWindow.location.replace(resolvedUrl);
+      willLoad = false; // same-page navigation: no load event will follow
     }
-    appendActivityLog({
-      actor: "user", action: "location_filter_applied",
-      label: `Applied Location Filter: ${blockedCount} marked Irrelevant, ${restoredCount} restored to New`,
-      newValue: { blockedCount, restoredCount },
-    });
-  } finally {
-    applyLocationFilterBtn.disabled = false;
+  } else {
+    embeddedPageFrameEl.src = resolvedUrl;
+  }
+  // Say so while the page loads - an opening page used to look like a blank screen.
+  if (willLoad) {
+    embeddedPageWrapEl.classList.add("embedded-loading");
+    embeddedPageFrameEl.onload = () => {
+      if (!embeddedPageFrameEl.src.startsWith("about:")) embeddedPageWrapEl.classList.remove("embedded-loading");
+    };
+  } else {
+    embeddedPageWrapEl.classList.remove("embedded-loading");
+  }
+  embeddedPageWrapEl.hidden = false;
+}
+
+function hideEmbeddedPage() {
+  embeddedPageWrapEl.hidden = true;
+  embeddedPageFrameEl.src = "about:blank";
+  pageNativeContentEl.hidden = false;
+}
+
+// Messages from the frame this page hosts (the wizard / Change Settings).
+window.addEventListener("message", (event) => {
+  if (event.origin !== location.origin || !event.data) return;
+  if (event.data.type === "salesteam-leave-settings") {
+    // Change Settings' "Back to menu": when this page is itself shown inside another page (Posts, Accounts, Scanner),
+    // close it and land back on that page - not on a Settings card the user never chose.
+    if (window.parent !== window) window.parent.postMessage({ type: "salesteam-close-embedded" }, location.origin);
+    else location.hash = "#profile-section";
   }
 });
 
-// Short display names for storage.js's PRIORITIZATION_RULE_CATALOG ids -
-// the catalog's own `id` is a stable key, not meant as UI text.
-const PRIORITIZATION_RULE_LABELS = {
-  job_company_cap: "Job company cap",
-  post_title_match: "Post title match",
-  post_topic_match: "Post topic match",
-  post_company_floor: "Post company floor",
-  job_signal_ceiling: "Job signal ceiling",
-};
+document.getElementById("embedded-page-close-btn").addEventListener("click", hideEmbeddedPage);
+document.getElementById("app-nav-brand-name").addEventListener("click", hideEmbeddedPage);
 
-function ruleValueCell(rule) {
-  const td = document.createElement("td");
-  const input = document.createElement("input");
-  input.type = "number";
-  input.min = "1";
-  input.max = "5";
-  input.value = rule.value;
-  input.title = `${rule.type === "decisive" ? "Decisive" : rule.type === "floor" ? "Floor" : "Ceiling"} value for this rule`;
-  input.addEventListener("change", async () => {
-    const value = Number(input.value);
-    if (!Number.isInteger(value) || value < 1 || value > 5) {
-      input.value = rule.value;
-      return;
-    }
-    const prevValue = rule.value;
-    rule.value = value;
-    await savePrioritizationRuleOverride(rule.id, { value });
-    flashSaved();
-    appendActivityLog({
-      actor: "user",
-      action: "prioritization_rule_value_changed",
-      label: `Prioritization rule "${PRIORITIZATION_RULE_LABELS[rule.id] || rule.id}" value changed`,
-      prevValue,
-      newValue: value,
-    });
+if (new URLSearchParams(location.search).has("embedded")) {
+  document.getElementById("app-shell").classList.add("embedded-mode");
+}
+
+document.getElementById("open-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html", "Target Accounts Dashboard"));
+document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
+document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
+document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
+document.getElementById("nav-resolve-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=resolve", "Target Accounts Dashboard"));
+document.getElementById("nav-fetch-size-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=fetch-size", "Target Accounts Dashboard"));
+document.getElementById("nav-prioritize-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=prioritize", "Target Accounts Dashboard"));
+document.getElementById("open-target-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#contacts", "Target Contacts Dashboard"));
+document.getElementById("nav-discover-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=discover-contacts", "Target Contacts Dashboard"));
+document.getElementById("open-dashboard-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html", "Posts Dashboard"));
+document.getElementById("nav-prioritize-unscored-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=prioritize-unscored", "Posts Dashboard"));
+document.getElementById("nav-rescore-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=rescore-all", "Posts Dashboard"));
+document.getElementById("nav-extract-companies-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies", "Posts Dashboard"));
+document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Posts Dashboard"));
+document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Posts Dashboard"));
+document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Posts Dashboard"));
+document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Posts Dashboard"));
+document.getElementById("open-scanner-page-btn").addEventListener("click", () => showEmbeddedPage("scanner.html", "Scanner"));
+document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
+document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
+document.getElementById("open-help-btn").addEventListener("click", () => showEmbeddedPage("help.html", "Help"));
+
+// PRD 6.20 Phase 10 follow-up (2026-09-19) - collapsible nav, see
+// target-accounts.js's own copy of this comment for the full reasoning.
+const NAV_COLLAPSED_KEY = "salesteam-nav-collapsed";
+const navCollapseBtn = document.getElementById("nav-collapse-btn");
+function applyNavCollapsed(collapsed) {
+  document.getElementById("app-shell").classList.toggle("nav-collapsed", collapsed);
+  navCollapseBtn.textContent = collapsed ? "»" : "«";
+  navCollapseBtn.title = collapsed ? "Expand the menu" : "Collapse the menu";
+}
+applyNavCollapsed(localStorage.getItem(NAV_COLLAPSED_KEY) === "1");
+navCollapseBtn.addEventListener("click", () => {
+  const collapsed = !document.getElementById("app-shell").classList.contains("nav-collapsed");
+  applyNavCollapsed(collapsed);
+  localStorage.setItem(NAV_COLLAPSED_KEY, collapsed ? "1" : "0");
+});
+
+// Discovery Queue debug panel (PRD 6.20 Phase 4) - Phase 5/6 don't exist
+// yet to drive this queue for real, so each button below simulates one
+// loop iteration of what those phases will eventually do, exercising the
+// exact same discovery-queue.js functions they'll call. Temporary -
+// remove or fold into real Discovery progress UI once Phase 5/6 ship.
+async function renderDiscoveryQueueState() {
+  const state = await getDiscoveryQueueState();
+  document.getElementById("discovery-queue-state-display").textContent = JSON.stringify(state, null, 2);
+}
+
+document.getElementById("discovery-queue-start-btn").addEventListener("click", async () => {
+  const configSnapshot = {
+    ...(await getTargetUniverseConfig()),
+    ...(await getTargetContactProfile()),
+  };
+  await startDiscoveryQueue(configSnapshot);
+});
+
+document.getElementById("discovery-queue-checkpoint-company-btn").addEventListener("click", async () => {
+  const state = await getDiscoveryQueueState();
+  const n = state.companyPhase.discoveredCompanyKeys.length + 1;
+  await checkpointCompanyPhase({
+    nextSearchCursor: n,
+    discoveredCompanyKeys: [...state.companyPhase.discoveredCompanyKeys, `test-company-${n}`],
   });
-  td.appendChild(input);
-  return td;
-}
+});
 
-function emptyValueCell() {
-  const td = document.createElement("td");
-  td.className = "rule-value-empty";
-  td.textContent = "—";
-  return td;
-}
+document.getElementById("discovery-queue-advance-contacts-btn").addEventListener("click", async () => {
+  await advanceToContactPhase();
+});
 
-// Builds a row for a rule that isn't part of PRIORITIZATION_RULE_CATALOG -
-// it doesn't set a P-level, it excludes a lead to Irrelevant outright - but
-// the user explicitly asked these show up here too, for the same
-// transparency/toggle-in-one-place reason, since they equally override
-// whatever the Sales Mentor would have said.
-function exclusionRuleRow({ name, description, enabled, onToggle }) {
-  const tr = document.createElement("tr");
+document.getElementById("discovery-queue-checkpoint-contact-btn").addEventListener("click", async () => {
+  const state = await getDiscoveryQueueState();
+  await checkpointContactPhase({ nextCompanyIndex: state.contactPhase.nextCompanyIndex + 1 });
+});
 
-  const nameTd = document.createElement("td");
-  nameTd.textContent = name;
+document.getElementById("discovery-queue-complete-btn").addEventListener("click", async () => {
+  await completeDiscoveryQueue();
+});
 
-  const descTd = document.createElement("td");
-  descTd.className = "rule-description";
-  descTd.textContent = description;
+// Reuses the exact same scanAbortRequested flag every other scan's Stop
+// button already sets (sidepanel.js) - not a separate mechanism.
+document.getElementById("discovery-queue-stop-btn").addEventListener("click", () => {
+  chrome.storage.local.set({ scanAbortRequested: true });
+});
 
-  const enabledTd = document.createElement("td");
-  const enabledCheckbox = document.createElement("input");
-  enabledCheckbox.type = "checkbox";
-  enabledCheckbox.checked = enabled;
-  enabledCheckbox.title = "Disable to let the Sales Mentor decide these leads entirely on its own";
-  enabledCheckbox.addEventListener("change", () => onToggle(enabledCheckbox.checked));
-  enabledTd.appendChild(enabledCheckbox);
+document.getElementById("discovery-queue-reset-btn").addEventListener("click", async () => {
+  await resetDiscoveryQueue();
+  await chrome.storage.local.remove("scanAbortRequested");
+});
 
-  tr.append(nameTd, descTd, emptyValueCell(), emptyValueCell(), emptyValueCell(), enabledTd);
-  return tr;
-}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.discoveryQueueState) renderDiscoveryQueueState();
+});
 
-async function renderPrioritizationRules() {
-  const rules = await getPrioritizationRules();
-  prioritizationRulesTbodyEl.innerHTML = "";
-  for (const rule of rules) {
-    const tr = document.createElement("tr");
+// Phase 5 live test harness - drives the real company-discovery-extraction.js
+// orchestrator against the saved onboarding criteria, checkpointing into the
+// same Discovery Queue state the debug panel above shows. Temporary, same
+// reasoning as that panel - remove once Phase 5 is wired into real progress UI.
+const companyDiscoveryStatusEl = document.getElementById("company-discovery-status");
+const companyDiscoveryResultsEl = document.getElementById("company-discovery-results-display");
+let companyDiscoveryRunning = false;
 
-    const nameTd = document.createElement("td");
-    nameTd.textContent = PRIORITIZATION_RULE_LABELS[rule.id] || rule.id;
-
-    const descTd = document.createElement("td");
-    descTd.className = "rule-description";
-    descTd.textContent = rule.description;
-
-    const ceilingTd = rule.type === "ceiling" ? ruleValueCell(rule) : emptyValueCell();
-    const floorTd = rule.type === "floor" ? ruleValueCell(rule) : emptyValueCell();
-    const decisiveTd = rule.type === "decisive" ? ruleValueCell(rule) : emptyValueCell();
-
-    const enabledTd = document.createElement("td");
-    const enabledCheckbox = document.createElement("input");
-    enabledCheckbox.type = "checkbox";
-    enabledCheckbox.checked = rule.enabled;
-    enabledCheckbox.title = "Disable to let the Sales Mentor decide these leads entirely on its own";
-    enabledCheckbox.addEventListener("change", async () => {
-      const wasEnabled = rule.enabled;
-      rule.enabled = enabledCheckbox.checked;
-      await savePrioritizationRuleOverride(rule.id, { enabled: enabledCheckbox.checked });
-      flashSaved();
-      appendActivityLog({
-        actor: "user",
-        action: "prioritization_rule_toggled",
-        label: `Prioritization rule "${PRIORITIZATION_RULE_LABELS[rule.id] || rule.id}" ${enabledCheckbox.checked ? "enabled" : "disabled"}`,
-        prevValue: wasEnabled,
-        newValue: enabledCheckbox.checked,
-      });
-    });
-    enabledTd.appendChild(enabledCheckbox);
-
-    tr.append(nameTd, descTd, ceilingTd, floorTd, decisiveTd, enabledTd);
-    prioritizationRulesTbodyEl.appendChild(tr);
-  }
-
-  const competitorTopic = negativeTopics.find((t) => t.id === "builtin-competitors");
-  if (competitorTopic) {
-    prioritizationRulesTbodyEl.appendChild(exclusionRuleRow({
-      name: "Competitor Blocklist",
-      description: `A lead whose company or content matches the Competitor Blocklist (in the side panel's Negative Topics) is marked Irrelevant outright - it's not a buyer. Currently: ${competitorTopic.keywords.join(", ")}.`,
-      enabled: competitorTopic.enabled,
-      onToggle: async (checked) => {
-        const wasEnabled = competitorTopic.enabled;
-        competitorTopic.enabled = checked;
-        await saveNegativeTopics(negativeTopics);
-        flashSaved();
-        appendActivityLog({
-          actor: "user",
-          action: "prioritization_rule_toggled",
-          label: `Prioritization rule "Competitor Blocklist" ${checked ? "enabled" : "disabled"}`,
-          prevValue: wasEnabled,
-          newValue: checked,
-        });
+async function runCompanyDiscoveryDebug() {
+  if (companyDiscoveryRunning) return;
+  companyDiscoveryRunning = true;
+  await chrome.storage.local.remove("scanAbortRequested");
+  companyDiscoveryStatusEl.textContent = "Running...";
+  companyDiscoveryResultsEl.textContent = "";
+  const companiesBefore = (await getDiscoveredCompanies()).length;
+  try {
+    const summary = await runCompanyDiscoveryPhase({
+      onProgress: ({ country, language, page, foundSoFar, cap }) => {
+        const countryText = language && language !== "English" ? `${country} (${language})` : country;
+        companyDiscoveryStatusEl.textContent = `Running - ${countryText}, page ${page}, ${foundSoFar}/${cap} companies found...`;
       },
-    }));
-  }
-
-  const locationConfig = await getLocationFilterConfig();
-  prioritizationRulesTbodyEl.appendChild(exclusionRuleRow({
-    name: "Location Filter",
-    description: "A lead whose location is confidently classified outside your configured target geography (above) is marked Irrelevant outright. A lead with no location data, or unclassifiable text, is never touched.",
-    enabled: locationConfig.mode !== "off",
-    onToggle: async (checked) => {
-      const wasOn = locationConfig.mode !== "off";
-      if (!checked) {
-        locationConfig.mode = "off";
-      } else {
-        locationConfig.mode = locationFilterModeSelect.value !== "off" ? locationFilterModeSelect.value : "continent";
-      }
-      await saveLocationFilterConfig(locationConfig);
-      flashSaved();
-      locationPicker.setValue({ ...locationPicker.getValue(), mode: locationConfig.mode });
+      shouldAbort: () => {
+        // Read synchronously off the last-known storage snapshot instead of
+        // an async get() here - same pattern this codebase's other scan
+        // loops use for their own shouldAbort, via a listener-maintained
+        // local flag below.
+        return scanAbortRequestedFlag;
+      },
+    });
+    // pageDebugSamples every entry with receivedMessage: false is the
+    // signature of "the content script never actually ran/responded" (most
+    // likely the extension needs a reload in chrome://extensions after a
+    // content-script/manifest change) rather than "genuinely zero real
+    // matches" - worth calling out plainly in the status line since it's
+    // the difference between "reload the extension and retry" and "your
+    // criteria are just too narrow."
+    const noContentScriptResponse =
+      summary.pageDebugSamples?.length > 0 && summary.pageDebugSamples.every((s) => !s.receivedMessage);
+    companyDiscoveryStatusEl.textContent = summary.ranAnything
+      ? `Done. ${JSON.stringify({ stoppedByAbort: summary.stoppedByAbort, stoppedByTouchBudget: summary.stoppedByTouchBudget, reachedCap: summary.reachedCap })}` +
+        (noContentScriptResponse
+          ? " WARNING: no page ever reported back - reload the extension in chrome://extensions and try again."
+          : "")
+      : `Did not run: ${summary.reason}`;
+    companyDiscoveryResultsEl.textContent = JSON.stringify(summary, null, 2);
+    // Discovery run history (PRD 6.20, added 2026-09-16) - a run's stats
+    // used to only ever exist as this transient JSON blob above, gone the
+    // moment the next run overwrites it. Logged here (the UI-driving
+    // handler), not inside runCompanyDiscoveryPhase itself, matching this
+    // codebase's own convention (background.js/dashboard.js log around
+    // their scan calls, not inside them) - keeps the orchestration module
+    // free of UI/activity-log concerns. addedThisRun is a before/after
+    // getDiscoveredCompanies() diff, not summary.totalDiscovered (that's
+    // the running total across every call so far, not this call's own
+    // contribution - see runCompanyDiscoveryPhase's own comment on
+    // acceptedCount). Only logged when the phase actually ran (not a
+    // same-state no-op like "queue status is X, not discovering_companies").
+    if (summary.ranAnything) {
+      const configSnapshot = (await getDiscoveryQueueState()).configSnapshot || {};
+      const addedThisRun = (await getDiscoveredCompanies()).length - companiesBefore;
+      const locationsText = configSnapshot.locationMode === "continent"
+        ? (configSnapshot.continents || []).join(", ") || "(none selected)"
+        : (configSnapshot.countries || []).join(", ") || "(none selected)";
+      const industriesText = (configSnapshot.industries || []).length ? configSnapshot.industries.join(", ") : "any";
+      const sizeText = configSnapshot.sizeMode === "topN"
+        ? `top ${configSnapshot.topN}`
+        : `${configSnapshot.minEmployees ?? "any"}-${configSnapshot.maxEmployees ?? "any"} employees`;
+      const languagesText = ["English", ...(summary.keywordSearchLanguages || [])].join(", ");
       appendActivityLog({
         actor: "user",
-        action: "prioritization_rule_toggled",
-        label: `Prioritization rule "Location Filter" ${checked ? "enabled" : "disabled"}`,
-        prevValue: wasOn,
-        newValue: checked,
+        action: "company_discovery_run",
+        label: `Company discovery: ${addedThisRun} added (Priority 1), ${summary.pagesFetched} page(s) fetched. ` +
+          `Locations: ${locationsText}. Industries: ${industriesText}. Size: ${sizeText}. Languages: ${languagesText}.` +
+          (summary.stoppedByTouchBudget ? " Stopped - daily LinkedIn activity limit reached." : "") +
+          (summary.stoppedByAbort ? " Stopped by user." : ""),
+        newValue: { addedThisRun, totalDiscovered: summary.totalDiscovered, ...summary },
       });
-    },
-  }));
+    }
+  } catch (err) {
+    companyDiscoveryStatusEl.textContent = `Error: ${err?.message || err}`;
+    appendActivityLog({ actor: "user", action: "company_discovery_run", label: "Company discovery run failed", error: true, errorMessage: err?.message || String(err) });
+  } finally {
+    companyDiscoveryRunning = false;
+  }
 }
+
+let scanAbortRequestedFlag = false;
+chrome.storage.local.get("scanAbortRequested").then((data) => {
+  scanAbortRequestedFlag = Boolean(data.scanAbortRequested);
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.scanAbortRequested) {
+    scanAbortRequestedFlag = Boolean(changes.scanAbortRequested.newValue);
+  }
+});
+
+document.getElementById("company-discovery-start-btn").addEventListener("click", async () => {
+  const configSnapshot = {
+    ...(await getTargetUniverseConfig()),
+    ...(await getTargetContactProfile()),
+  };
+  await startDiscoveryQueue(configSnapshot);
+  await runCompanyDiscoveryDebug();
+});
+
+document.getElementById("company-discovery-resume-btn").addEventListener("click", async () => {
+  await resumeDiscoveryQueue();
+  await runCompanyDiscoveryDebug();
+});
+
+document.getElementById("company-discovery-stop-btn").addEventListener("click", () => {
+  chrome.storage.local.set({ scanAbortRequested: true });
+});
+
+document.getElementById("company-discovery-clear-cache-btn").addEventListener("click", async () => {
+  await clearCompanyLocationSizeCache();
+  companyDiscoveryStatusEl.textContent = "Location cache cleared.";
+});
+
+const companyDiscoveryCompaniesEl = document.getElementById("company-discovery-companies-display");
+document.getElementById("company-discovery-show-companies-btn").addEventListener("click", async () => {
+  const companies = await getDiscoveredCompanies();
+  companyDiscoveryCompaniesEl.textContent = companies.length
+    ? `${companies.length} discovered so far:\n\n` +
+      companies
+        .map((c) => {
+          const reviewFlag = c.organizationTypeReviewLabel ? `  [REVIEW: ${c.organizationTypeReviewLabel}]` : "";
+          const aliasFlag = c.canonicalSlug ? `  [ALIAS OF: linkedin.com/company/${c.canonicalSlug}]` : "";
+          return `${c.name}  —  ${c.country}  (${c.resolvedVia})  —  linkedin.com/company/${c.slug}${reviewFlag}${aliasFlag}`;
+        })
+        .join("\n")
+    : "No companies discovered yet.";
+});
+
+// Cross-checks Phase 5's discovered companies against the existing Dashboard
+// (targetAccountsWorkbook - the ChatGPT-imported data target-accounts.js
+// actually renders) - a sanity check on whether Discovery is finding
+// genuinely new accounts or just re-finding ones already known. Two match
+// signals, same discipline as target-accounts.js's own comparisons
+// elsewhere: an exact LinkedIn company id match (via the legacy
+// targetAccounts map, the only place linkedinCompanyId actually lives -
+// see target-accounts.js's renderLinkedinResolveStatus comment) is the most
+// reliable; normalizeCompanyName (storage.js, the same helper
+// target-accounts.js itself uses for this exact kind of comparison) is the
+// fallback for companies 6.16's resolver hasn't reached yet.
+document.getElementById("company-discovery-compare-dashboard-btn").addEventListener("click", async () => {
+  const [discovered, workbook, targetAccounts] = await Promise.all([
+    getDiscoveredCompanies(),
+    getTargetAccountsWorkbook(),
+    getTargetAccounts(),
+  ]);
+  const dashboardIdSet = new Set(
+    Object.values(targetAccounts)
+      .map((a) => a.linkedinCompanyId)
+      .filter(Boolean)
+  );
+  const dashboardNameSet = new Set((workbook.companies || []).map((c) => normalizeCompanyName(c.company)));
+
+  const matched = [];
+  const newOnes = [];
+  const aliasFlagged = [];
+  for (const c of discovered) {
+    // An alias-resolved record's own name (e.g. "Audi Schweiz") isn't the
+    // canonical company's real name (e.g. "AMAG") - storage.js's
+    // companyAliases deliberately stores no display name for the canonical
+    // company (see its own header comment for why), so there's nothing
+    // reliable to run normalizeCompanyName against here. Rather than
+    // silently reporting a possible false "new" (the canonical company may
+    // well already be in the Dashboard under its real name), these are
+    // called out separately for a manual look instead of auto-matched.
+    if (c.canonicalSlug) {
+      aliasFlagged.push(`${c.name}  →  alias of linkedin.com/company/${c.canonicalSlug}  (check manually - not auto-matched)`);
+      continue;
+    }
+    const byId = dashboardIdSet.has(c.linkedinCompanyId);
+    const byName = dashboardNameSet.has(normalizeCompanyName(c.name));
+    if (byId || byName) {
+      matched.push(`${c.name}  (matched by ${byId ? "LinkedIn id" : "name"})`);
+    } else {
+      newOnes.push(c.name);
+    }
+  }
+
+  companyDiscoveryCompaniesEl.textContent =
+    `${discovered.length} discovered total - ${matched.length} already in the Dashboard, ${newOnes.length} new, ${aliasFlagged.length} alias-flagged.\n\n` +
+    `Already in Dashboard (${matched.length}):\n` + (matched.join("\n") || "(none)") +
+    `\n\nNew, not yet in Dashboard (${newOnes.length}):\n` + (newOnes.join("\n") || "(none)") +
+    `\n\nAlias-resolved, needs manual check (${aliasFlagged.length}):\n` + (aliasFlagged.join("\n") || "(none)");
+});
+
+// Phase 6 live test harness - same reasoning/pattern as the Phase 5 harness
+// above. Unlike Phase 5, there's no separate "start" call - the queue is
+// already positioned at status "discovering_contacts" once a Phase 5 run
+// completes (advanceToContactPhase, inside company-discovery-extraction.js),
+// so this just runs (or resumes) it directly.
+const contactDiscoveryStatusEl = document.getElementById("contact-discovery-status");
+const contactDiscoveryResultsEl = document.getElementById("contact-discovery-results-display");
+const contactDiscoveryContactsEl = document.getElementById("contact-discovery-contacts-display");
+let contactDiscoveryRunning = false;
+
+document.getElementById("contact-discovery-run-btn").addEventListener("click", async () => {
+  if (contactDiscoveryRunning) return;
+  contactDiscoveryRunning = true;
+  await chrome.storage.local.remove("scanAbortRequested");
+  contactDiscoveryStatusEl.textContent = "Running...";
+  contactDiscoveryResultsEl.textContent = "";
+  try {
+    const summary = await runContactDiscoveryPhase({
+      onProgress: ({ company, index, total }) => {
+        contactDiscoveryStatusEl.textContent = `Running - company ${index + 1}/${total}: ${company}...`;
+      },
+      shouldAbort: () => scanAbortRequestedFlag,
+    });
+    // droppedTerms - confirmed live 2026-09-15: LinkedIn's People-tab
+    // insights backend reliably fails past ~6 boolean OR-clauses in the
+    // keywords= expression, so a Target Contacts profile with more titles/
+    // keywords than that gets trimmed (exactTitles prioritized first) -
+    // surfaced plainly here since a silently-trimmed search would otherwise
+    // look identical to "these titles just don't exist at this company."
+    const droppedNote = summary.droppedTerms?.length
+      ? ` WARNING: ${summary.droppedTerms.length} title/keyword(s) dropped from the search (LinkedIn's own query-complexity limit, ~6 terms) - not searched for at all: ${summary.droppedTerms.join(", ")}.`
+      : "";
+    contactDiscoveryStatusEl.textContent = summary.ranAnything
+      ? `Done. ${JSON.stringify({ stoppedByAbort: summary.stoppedByAbort, stoppedByTouchBudget: summary.stoppedByTouchBudget, reachedEnd: summary.reachedEnd })}${droppedNote}`
+      : `Did not run: ${summary.reason}`;
+    contactDiscoveryResultsEl.textContent = JSON.stringify(summary, null, 2);
+    // Discovery run history - see runCompanyDiscoveryDebug's own comment on
+    // why this is logged here (the UI handler) rather than inside
+    // runContactDiscoveryPhase. Unlike Phase 5's totalDiscovered,
+    // totalNewContacts here is already this call's own contribution, not a
+    // running total (runContactDiscoveryPhase resets it to 0 every call).
+    if (summary.ranAnything) {
+      appendActivityLog({
+        actor: "user",
+        action: "contact_discovery_run",
+        label: `Contact discovery: ${summary.totalNewContacts} contacts found across ${summary.companiesProcessed}/${summary.totalCompanies} companies ` +
+          `(${summary.companiesWithNoMatch} with no match). Searched: ${summary.includedTerms.join(", ")}.` +
+          (summary.droppedTerms?.length ? ` Dropped (query too complex): ${summary.droppedTerms.join(", ")}.` : "") +
+          (summary.stoppedByTouchBudget ? " Stopped - daily LinkedIn activity limit reached." : "") +
+          (summary.stoppedByAbort ? " Stopped by user." : ""),
+        newValue: summary,
+      });
+    }
+  } catch (err) {
+    contactDiscoveryStatusEl.textContent = `Error: ${err?.message || err}`;
+    appendActivityLog({ actor: "user", action: "contact_discovery_run", label: "Contact discovery run failed", error: true, errorMessage: err?.message || String(err) });
+  } finally {
+    contactDiscoveryRunning = false;
+  }
+});
+
+document.getElementById("contact-discovery-stop-btn").addEventListener("click", () => {
+  chrome.storage.local.set({ scanAbortRequested: true });
+});
+
+document.getElementById("contact-discovery-show-btn").addEventListener("click", async () => {
+  const contacts = await getDiscoveredContacts();
+  contactDiscoveryContactsEl.textContent = contacts.length
+    ? `${contacts.length} discovered so far:\n\n` +
+      contacts
+        .map((c) => `${c.name}  —  ${c.headlineText}  (${c.tier})  —  ${c.companyName}  —  linkedin.com/in/${c.slug}`)
+        .join("\n")
+    : "No contacts discovered yet.";
+});
+
+document.getElementById("contact-discovery-clear-btn").addEventListener("click", async () => {
+  await clearDiscoveredContacts();
+  contactDiscoveryStatusEl.textContent = "Discovered contacts cleared.";
+  contactDiscoveryContactsEl.textContent = "";
+});
+
+// checkpointContactPhase advances nextCompanyIndex after every company
+// regardless of outcome (so a real stop never loses more than one
+// company's worth of progress) - which also means a company that was
+// wrongly recorded as "no candidates" (e.g. the insights-load-error bug
+// found live 2026-09-15) stays skipped on a normal Resume, since it's
+// already past that index. This resets just the contact-phase cursor
+// (not the whole queue - a full Reset would also make Phase 5 re-walk its
+// search pages) so a full contact-discovery re-run can pick up companies a
+// bug caused to be missed the first time, without re-doing Phase 5.
+document.getElementById("contact-discovery-restart-btn").addEventListener("click", async () => {
+  await checkpointContactPhase({ nextCompanyIndex: 0 });
+  contactDiscoveryStatusEl.textContent = "Contact-phase cursor reset to company 1 - existing discovered contacts were NOT cleared.";
+});
 
 // See sidepanel.js's own copy of this function for the full reasoning
 // (LinkedIn's "unusual activity" warning after a day of concentrated
@@ -724,14 +642,112 @@ async function renderPrioritizationRules() {
 // side panel ever being open.
 async function renderLinkedinTouchStat() {
   const el = document.getElementById("linkedin-touch-stat");
-  const { last24h, last7d, level } = await getLinkedinTouchStats();
-  el.textContent = `LinkedIn touches (automated): ${last24h} in the last 24h · ${last7d} in the last 7 days`;
+  const touchStats = await getLinkedinTouchStats();
+  const { today, last24h, last7d, level } = touchStats;
+  el.textContent = `LinkedIn touches (automated): ${today} today · ${last24h} in the last 24h · ${last7d} in the last 7 days` +
+    (level === "ok" ? "" : ` — ${formatTouchRelease(touchStats)}`);
   el.classList.toggle("linkedin-touch-stat-warn", level === "warn");
   el.classList.toggle("linkedin-touch-stat-danger", level === "danger");
 }
 
+// PRD 6.20 Phase 10 follow-up (2026-09-18), user's own direct feedback:
+// this page used to be one long scroll with anchor-jump nav items (every
+// section always rendered, just scrolled to) - now exactly one
+// .settings-card shows at a time, chosen by the nav, so the Setup Wizard's
+// own explanation and the 3 debug test panels don't clutter the page by
+// default any more. Same hash-based routing shape as target-accounts.js/
+// dashboard.js's own #key=value views, just keyed by a bare section id
+// instead. Defaults to the Setup section (the most useful first stop) when
+// the hash is empty or doesn't match any known section.
+const SETTINGS_SECTION_IDS = [
+  "setup-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
+  "discovery-queue-section", "company-discovery-section", "contact-discovery-section",
+];
+
+let onboardingIsComplete = false;
+
+function currentSectionId() {
+  const hash = location.hash.slice(1);
+  if (SETTINGS_SECTION_IDS.includes(hash)) return hash;
+  // The Onboarding card is only the landing page while the setup is unfinished.
+  return onboardingIsComplete ? "profile-section" : "setup-section";
+}
+
+// "Change Settings": the same topics as the setup wizard, but as a plain list of settings - no steps, no Next/Back.
+function openChangeSettingsInline() {
+  if (embeddedPageWrapEl.hidden || !embeddedPageFrameEl.src.includes("mode=settings")) {
+    showEmbeddedPage("onboarding.html?mode=settings", "Change Settings");
+  }
+  document.querySelectorAll("#app-nav .nav-item.active").forEach((e) => e.classList.remove("active"));
+  document.getElementById("nav-change-settings")?.classList.add("active");
+}
+
+// The Setup wizard, shown in this page's content area (as an embedded page) so the app menu stays on the left the
+// whole time - it used to open as a bare full-page tab whose only way back to the menu was the "Exit" button.
+function openWizardInline() {
+  if (embeddedPageWrapEl.hidden || !embeddedPageFrameEl.src.startsWith(chrome.runtime.getURL("onboarding.html"))) {
+    showEmbeddedPage("onboarding.html", "Setup");
+  }
+  document.querySelectorAll("#app-nav .nav-item.active").forEach((e) => e.classList.remove("active"));
+  document.getElementById("nav-setup-section")?.classList.add("active");
+}
+
+function routeSettings() {
+  if (location.hash === "#wizard") {
+    openWizardInline();
+    return;
+  }
+  if (location.hash === "#change-settings") {
+    openChangeSettingsInline();
+    return;
+  }
+  // A Settings card can only be seen when no other page is displayed over this page's content area. Clicking a
+  // Settings menu item while (say) the Accounts Dashboard is shown used to change the hash and select the card
+  // behind that page - so "nothing happened" until a browser refresh cleared the embedded page.
+  if (!embeddedPageWrapEl.hidden) hideEmbeddedPage();
+  const activeId = currentSectionId();
+  for (const id of SETTINGS_SECTION_IDS) {
+    const sectionEl = document.getElementById(id);
+    if (sectionEl) sectionEl.hidden = id !== activeId;
+    const navEl = document.getElementById(`nav-${id}`);
+    if (navEl) navEl.classList.toggle("active", id === activeId);
+  }
+}
+
+window.addEventListener("hashchange", routeSettings);
+// Re-clicking the item that is already selected does not change the hash (so no hashchange fires) - route on the
+// click itself as well, so it still brings the card back to the front.
+document.querySelectorAll('#app-nav a.nav-item[href^="#"]').forEach((link) => {
+  link.addEventListener("click", () => setTimeout(routeSettings, 0));
+});
+
+// STEP_ORDER (onboarding.js) has 11 real steps + a final "finish" entry -
+// kept as a plain constant here rather than importing onboarding.js itself
+// (a self-wiring page script, not a data module - same reasoning every
+// other cross-page reference in this codebase avoids importing one page's
+// script from another). Re-sync this number if a step is ever added there.
+const ONBOARDING_TOTAL_STEPS = 11;
+
+async function renderOnboardingProgress() {
+  const [completedAt, stepIndex] = await Promise.all([getOnboardingCompletedAt(), getOnboardingProgressStepIndex()]);
+  const completedCount = completedAt ? ONBOARDING_TOTAL_STEPS : Math.min(stepIndex, ONBOARDING_TOTAL_STEPS);
+  const pct = Math.round((completedCount / ONBOARDING_TOTAL_STEPS) * 100);
+  const label = completedAt ? "Completed" : `${completedCount} of ${ONBOARDING_TOTAL_STEPS} completed`;
+
+  onboardingIsComplete = Boolean(completedAt);
+  document.getElementById("nav-setup-section").hidden = onboardingIsComplete;
+  document.getElementById("nav-onboarding-progress").textContent =
+    completedCount === 0 ? "(not started)" : `(${completedCount} of ${ONBOARDING_TOTAL_STEPS} done)`;
+  document.getElementById("onboarding-progress-label").textContent = label;
+  document.getElementById("onboarding-progress-fill").style.width = `${pct}%`;
+  document.getElementById("onboarding-progress-fill").classList.toggle("onboarding-progress-fill-done", Boolean(completedAt));
+}
+
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+
+  onboardingIsComplete = Boolean(await getOnboardingCompletedAt());
+  routeSettings();
 
   await renderLinkedinTouchStat();
   setInterval(renderLinkedinTouchStat, 30000);
@@ -740,30 +756,361 @@ async function init() {
   editSetupStatusEl.textContent = onboardingCompletedAt
     ? `Last completed ${new Date(onboardingCompletedAt).toLocaleDateString()}.`
     : "Not completed yet.";
+  await renderOnboardingProgress();
+
+  await renderDiscoveryQueueState();
 
   outputLanguageSelect.value = await getOutputLanguage();
   outputLanguageSelect.dataset.prevValue = outputLanguageSelect.value;
-  companyContextInput.value = await getCompanyContext();
-  idealCustomerProfileInput.value = await getIdealCustomerProfile();
-  anthropicApiKeyInput.value = await getAnthropicApiKey();
+  storedApiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+  anthropicApiKeyInput.value = storedApiKey;
+  refreshApiKeyButtons();
 
-  messageTemplates = await getMessageTemplates();
-  renderMessageTemplates();
-
-  valueAddOffersInput.value = (await getValueAddOffers()).join("\n");
-
-  targetAccountThresholdInput.value = await getTargetAccountScoreThreshold();
-  await renderTargetAccountsStatus();
-
-  negativeTopics = await getNegativeTopics();
-
-  const locationConfig = await getLocationFilterConfig();
-  locationFilterModeSelect.dataset.prevValue = locationConfig.mode;
-  locationPicker.setValue(locationConfig);
-  savedCountriesSnapshot = [...locationConfig.countries];
-  renderCountriesSaveState();
-
-  await renderPrioritizationRules();
+  currentUserProfile = await getUserProfile();
+  profileNameInput.value = currentUserProfile.name;
+  profileTitleInput.value = currentUserProfile.title;
+  profileEmailInput.value = currentUserProfile.email;
 }
 
 init();
+
+// Automatic daily backup (once per 24h across all open pages) - see backup-restore.js.
+startAutoBackup();
+
+
+// ---- Billing page: usage and estimated cost of the AI calls made on the user's own API key ----
+function fmtUsd(n) {
+  if (!n) return "$0.00";
+  return n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`;
+}
+function fmtNum(n) { return Math.round(n || 0).toLocaleString(); }
+
+function billingRow(label, s, bold) {
+  const tr = document.createElement("tr");
+  if (bold) tr.className = "billing-total-row";
+  const cells = [label, fmtNum(s.total.calls), fmtNum(s.total.inputTokens + s.total.cacheTokens), fmtNum(s.total.outputTokens), fmtNum(s.total.searches),
+    fmtUsd(s.webResearch.usd), fmtUsd(s.other.usd), fmtUsd(s.total.usd)];
+  for (const c of cells) {
+    const td = document.createElement("td");
+    td.textContent = c;
+    tr.appendChild(td);
+  }
+  return tr;
+}
+
+function billingHeader(table, first) {
+  table.innerHTML = "";
+  const tr = document.createElement("tr");
+  for (const h of [first, "Calls", "Tokens in", "Tokens out", "Web searches", "Web research US$", "Other AI US$", "Total US$"]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    tr.appendChild(th);
+  }
+  table.appendChild(tr);
+}
+
+async function renderBilling() {
+  if (!document.getElementById("billing-section")) return;
+  const days = await getApiUsage();
+  const today = localDayKey();
+  const month = today.slice(0, 7);
+  const allKeys = Object.keys(days).sort();
+
+  const totals = document.getElementById("billing-totals");
+  billingHeader(totals, "Period");
+  totals.appendChild(billingRow("Today", sumDays(days, allKeys.filter((k) => k === today))));
+  totals.appendChild(billingRow("This month so far", sumDays(days, allKeys.filter((k) => k.startsWith(month)))));
+  totals.appendChild(billingRow("All time", sumDays(days, allKeys), true));
+
+  const all = sumDays(days, allKeys);
+  document.getElementById("billing-average").textContent = all.webResearch.calls > 0
+    ? `Web research so far: ${all.webResearch.calls} research${all.webResearch.calls === 1 ? "" : "es"}, ${fmtNum(all.webResearch.searches)} web searches, about ${fmtUsd(all.webResearch.usd / all.webResearch.calls)} per research, of which about $0.01 per web search is the search fee.`
+    : "No web research has been run yet.";
+
+  const daysTable = document.getElementById("billing-days");
+  billingHeader(daysTable, "Day");
+  const lastDays = allKeys.slice(-31).reverse();
+  if (lastDays.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 8;
+    td.textContent = "Nothing counted yet.";
+    tr.appendChild(td);
+    daysTable.appendChild(tr);
+  }
+  for (const k of lastDays) daysTable.appendChild(billingRow(k, sumDays(days, [k])));
+
+  // Cost per feature: all time with tokens, plus today and this month so far.
+  const features = {};
+  const bump = (name, f, bucket) => {
+    features[name] = features[name] || { calls: 0, inputTokens: 0, outputTokens: 0, searches: 0, all: 0, month: 0, today: 0 };
+    const row = features[name];
+    if (bucket === "all") {
+      row.calls += f.calls || 0;
+      row.inputTokens += f.inputTokens || 0;
+      row.outputTokens += f.outputTokens || 0;
+      row.searches += f.searches || 0;
+    }
+    row[bucket] += f.usd || 0;
+  };
+  for (const k of allKeys) for (const [name, f] of Object.entries(days[k].byFeature || {})) {
+    bump(name, f, "all");
+    if (k.startsWith(month)) bump(name, f, "month");
+    if (k === today) bump(name, f, "today");
+  }
+  const ft = document.getElementById("billing-features");
+  ft.innerHTML = "";
+  const head = document.createElement("tr");
+  for (const h of ["Feature", "Calls", "Tokens in", "Tokens out", "Web searches", "Today US$", "This month US$", "All time US$"]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    head.appendChild(th);
+  }
+  ft.appendChild(head);
+  for (const [name, f] of Object.entries(features).sort((a, b) => b[1].all - a[1].all)) {
+    const tr = document.createElement("tr");
+    for (const c of [name, fmtNum(f.calls), fmtNum(f.inputTokens), fmtNum(f.outputTokens), fmtNum(f.searches), fmtUsd(f.today), fmtUsd(f.month), fmtUsd(f.all)]) {
+      const td = document.createElement("td");
+      td.textContent = c;
+      tr.appendChild(td);
+    }
+    ft.appendChild(tr);
+  }
+}
+
+document.getElementById("billing-reset-btn").addEventListener("click", async () => {
+  if (!(await askConfirm("Reset the usage and cost counters to zero?\n\nThis only clears SalesTeam's own count. Nothing changes on your Anthropic account.", { okLabel: "Reset", cancelLabel: "Cancel", danger: true }))) return;
+  await clearApiUsage();
+  await renderBilling();
+});
+chrome.storage.onChanged.addListener((changes) => { if (changes.apiUsage) renderBilling(); });
+renderBilling();
+
+// Warning limit setting
+const billingWarningInput = document.getElementById("billing-warning-input");
+const billingWarningSaveBtn = document.getElementById("billing-warning-save-btn");
+const billingWarningStatus = document.getElementById("billing-warning-status");
+let storedWarningUsd = 2;
+async function loadWarningLimit() {
+  storedWarningUsd = await getCostWarningUsd();
+  billingWarningInput.value = String(storedWarningUsd);
+  billingWarningSaveBtn.disabled = true;
+}
+billingWarningInput.addEventListener("input", () => {
+  billingWarningSaveBtn.disabled = Number(billingWarningInput.value) === storedWarningUsd || billingWarningInput.value === "";
+  billingWarningStatus.textContent = billingWarningSaveBtn.disabled ? "" : "Unsaved changes";
+});
+billingWarningSaveBtn.addEventListener("click", async () => {
+  await saveCostWarningUsd(Number(billingWarningInput.value));
+  await loadWarningLimit();
+  billingWarningStatus.textContent = "Saved ✓";
+  setTimeout(() => { if (billingWarningStatus.textContent === "Saved ✓") billingWarningStatus.textContent = ""; }, 2500);
+});
+loadWarningLimit();
+initBatchStatus();
+
+// ---- Web Findings - Automatic Arbitration ----
+// The seven rule rows are generated from ARBITRATION_RULES rather than written into settings.html,
+// so a rule added to the mechanism cannot quietly go missing from the page that is supposed to
+// control it. Everything here saves on change - there is no Save button - matching the rest of this
+// page; the stored object is a flat patch over DEFAULT_ARBITRATION_SETTINGS.
+const webFindingsNumberFields = [
+  { id: "web-findings-tolerance", path: ["tolerancePct"], min: 0, max: 100 },
+  { id: "web-findings-max-employees", path: ["illogical", "maxEmployees"], min: 1 },
+  { id: "web-findings-rev-floor", path: ["illogical", "revenueUnitsFloor"], min: 0 },
+  { id: "web-findings-rev-ceil", path: ["illogical", "revenueUnitsCeil"], min: 0 },
+  { id: "web-findings-rpe-min", path: ["illogical", "revPerEmployeeMin"], min: 0 },
+  { id: "web-findings-rpe-max", path: ["illogical", "revPerEmployeeMax"], min: 0 },
+];
+
+function webFindingsEl(id) {
+  return document.getElementById(id);
+}
+
+function buildWebFindingsRuleRows() {
+  const wrap = webFindingsEl("web-findings-rules");
+  wrap.innerHTML = "";
+  for (const rule of ARBITRATION_RULES) {
+    const label = document.createElement("label");
+    label.className = "checkbox-label web-findings-rule";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = `web-findings-rule-${rule.id}`;
+    box.dataset.setting = rule.setting;
+    label.appendChild(box);
+    // Named, not numbered - see ruleLabel() in target-accounts.js for why.
+    label.appendChild(document.createTextNode(` ${rule.label}`));
+    const detail = document.createElement("p");
+    detail.className = "field-hint web-findings-rule-detail";
+    detail.textContent = rule.detail;
+    wrap.appendChild(label);
+    wrap.appendChild(detail);
+    box.addEventListener("change", async () => {
+      await saveWebFindingsArbitration({ [rule.setting]: box.checked });
+      flashSaved();
+      appendActivityLog({
+        actor: "user",
+        action: "web_findings_arbitration_changed",
+        label: `Web findings arbitration: "${rule.label}" turned ${box.checked ? "on" : "off"}`,
+        prevValue: String(!box.checked),
+        newValue: String(box.checked),
+      });
+    });
+  }
+}
+
+function fillWebFindingsForm(settings) {
+  for (const rule of ARBITRATION_RULES) {
+    const box = webFindingsEl(`web-findings-rule-${rule.id}`);
+    if (box) box.checked = Boolean(settings[rule.setting]);
+  }
+  for (const f of webFindingsNumberFields) {
+    const el = webFindingsEl(f.id);
+    if (!el) continue;
+    const value = f.path.length === 2 ? settings[f.path[0]]?.[f.path[1]] : settings[f.path[0]];
+    el.value = value ?? "";
+  }
+  webFindingsEl("web-findings-preference").value = settings.sourcePreference || "existing";
+  webFindingsEl("web-findings-linkedin-authoritative").checked = Boolean(settings.linkedinAuthoritative);
+}
+
+async function initWebFindingsArbitration() {
+  if (!webFindingsEl("web-findings-rules")) return;
+  buildWebFindingsRuleRows();
+  fillWebFindingsForm(await getWebFindingsArbitration());
+
+  for (const f of webFindingsNumberFields) {
+    const el = webFindingsEl(f.id);
+    if (!el) continue;
+    // "change", not "input": half-typed numbers should not be saved, and an empty box should put
+    // the default back rather than store a NaN that every later comparison would silently fail.
+    el.addEventListener("change", async () => {
+      const raw = Number(el.value);
+      const fallback = f.path.length === 2
+        ? DEFAULT_ARBITRATION_SETTINGS[f.path[0]][f.path[1]]
+        : DEFAULT_ARBITRATION_SETTINGS[f.path[0]];
+      let value = Number.isFinite(raw) && el.value !== "" ? raw : fallback;
+      if (f.min !== undefined) value = Math.max(f.min, value);
+      if (f.max !== undefined) value = Math.min(f.max, value);
+      el.value = value;
+      const patch = f.path.length === 2 ? { [f.path[0]]: { [f.path[1]]: value } } : { [f.path[0]]: value };
+      await saveWebFindingsArbitration(patch);
+      flashSaved();
+    });
+  }
+
+  webFindingsEl("web-findings-preference").addEventListener("change", async (e) => {
+    await saveWebFindingsArbitration({ sourcePreference: e.target.value });
+    flashSaved();
+    appendActivityLog({
+      actor: "user",
+      action: "web_findings_arbitration_changed",
+      label: `Web findings arbitration: on a tie, prefer "${e.target.value === "web" ? "new web research" : "existing/imported data"}"`,
+      newValue: e.target.value,
+    });
+  });
+
+  webFindingsEl("web-findings-linkedin-authoritative").addEventListener("change", async (e) => {
+    await saveWebFindingsArbitration({ linkedinAuthoritative: e.target.checked });
+    flashSaved();
+  });
+
+  webFindingsEl("web-findings-reset-btn").addEventListener("click", async () => {
+    if (!(await askConfirm(
+      "Put every rule, tolerance and threshold here back to the way SalesTeam ships them?\n\nThis only changes the settings - nothing already decided on your accounts is touched.",
+      { okLabel: "Put back the defaults", cancelLabel: "Cancel" }
+    ))) return;
+    const next = await saveWebFindingsArbitration(DEFAULT_ARBITRATION_SETTINGS);
+    fillWebFindingsForm(next);
+    webFindingsEl("web-findings-status").textContent = "Back to the defaults.";
+    flashSaved();
+    appendActivityLog({ actor: "user", action: "web_findings_arbitration_reset", label: "Web findings arbitration settings put back to the defaults" });
+  });
+}
+
+initWebFindingsArbitration();
+
+// ---- Revenue & Currency ----
+// The rates grid is generated from SUPPORTED_CURRENCIES for the same reason the rule rows are
+// generated from ARBITRATION_RULES: a currency added to the module should not need a second edit
+// here to become visible.
+async function initRevenueCurrency() {
+  const select = document.getElementById("revenue-currency-select");
+  if (!select) return;
+  const grid = document.getElementById("revenue-rates-grid");
+  const asOfInput = document.getElementById("revenue-rates-asof-input");
+  const statusEl = document.getElementById("revenue-currency-status");
+
+  select.innerHTML = "";
+  for (const code of SUPPORTED_CURRENCIES) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = code;
+    select.appendChild(option);
+  }
+
+  const fill = (settings) => {
+    select.value = settings.targetCurrency;
+    asOfInput.value = settings.asOf || "";
+    document.getElementById("revenue-rates-asof").textContent =
+      `Rates as last checked on ${settings.asOf || "an unknown date"}.`;
+    grid.innerHTML = "";
+    for (const code of SUPPORTED_CURRENCIES) {
+      const label = document.createElement("label");
+      label.textContent = `1 ${code} = ? USD`;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.step = "0.0001";
+      input.min = "0";
+      input.style.width = "140px";
+      input.value = settings.rates[code] ?? "";
+      input.disabled = code === DEFAULT_EXCHANGE_RATES.base;
+      input.addEventListener("change", async () => {
+        const value = Number(input.value);
+        if (!Number.isFinite(value) || value <= 0) {
+          input.value = settings.rates[code] ?? "";
+          statusEl.textContent = "A rate has to be a number greater than zero.";
+          return;
+        }
+        await saveRevenueNormalization({ rates: { [code]: value } });
+        statusEl.textContent = `Saved - 1 ${code} = ${value} USD.`;
+        flashSaved();
+      });
+      grid.appendChild(label);
+      grid.appendChild(input);
+    }
+  };
+
+  fill(await getRevenueNormalization());
+
+  select.addEventListener("change", async () => {
+    const next = await saveRevenueNormalization({ targetCurrency: select.value });
+    fill(next);
+    flashSaved();
+    appendActivityLog({
+      actor: "user",
+      action: "revenue_currency_changed",
+      label: `Revenue is now shown and compared in ${select.value}`,
+      newValue: select.value,
+    });
+  });
+
+  asOfInput.addEventListener("change", async () => {
+    const next = await saveRevenueNormalization({ asOf: asOfInput.value });
+    fill(next);
+    flashSaved();
+  });
+
+  document.getElementById("revenue-rates-reset-btn").addEventListener("click", async () => {
+    if (!(await askConfirm(
+      "Put every exchange rate back to the values SalesTeam ships with?\n\nThe currency you display revenue in is not changed.",
+      { okLabel: "Put back the defaults", cancelLabel: "Cancel" }
+    ))) return;
+    const next = await saveRevenueNormalization({ rates: DEFAULT_EXCHANGE_RATES.rates, asOf: DEFAULT_EXCHANGE_RATES.asOf });
+    fill(next);
+    statusEl.textContent = "Rates back to the defaults.";
+    flashSaved();
+  });
+}
+
+initRevenueCurrency();

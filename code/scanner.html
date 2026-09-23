@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>SalesTeam Scanner</title>
+<link rel="icon" href="icons/icon16.png" />
+<link rel="stylesheet" href="scanner.css" />
+</head>
+<body>
+  <!-- PRD 6.20 Phase 10 (2026-09-18) - the Scanner's own full tab, split out
+       of the side panel (see scanner.js's own header comment for the full
+       reasoning). Every id below is UNCHANGED from the old sidepanel.html -
+       only the surrounding layout (left-nav shell, same shape as the other
+       full-tab pages) and the grouping into sections is new. Nav items are
+       either a cross-page link (Pages group, same chrome.tabs.create
+       wiring already in scanner.js) or a plain anchor jump to a section on
+       this same page (Topics/Job Search/Filters/Quality/Backup/Run/Results -
+       same pattern as settings.html's own anchor nav).
+
+       Same-day follow-up: #scanner-columns splits #app-main into two
+       independently-scrolling verticals - #scanner-settings-col (Topics
+       through Backup/Restore) on the left, #scanner-run-col (Run + Results)
+       on the right, with #run-section pinned above the scrollable
+       #results-section so scan progress/status is always visible without
+       scrolling past it. -->
+
+  <div id="app-shell">
+    <nav id="app-nav">
+      <div id="app-nav-brand">
+        <div id="app-nav-brand-name" title="Return to this page's own content">SalesTeam</div>
+        <span id="version-text"></span>
+        <button type="button" id="nav-collapse-btn" title="Collapse the menu">«</button>
+      </div>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19) - see target-accounts.html's
+           own #app-nav comment for the full reasoning (this nav IS the full
+           cross-app menu now, on every page; no separate "Home"
+           destination; Target Accounts/Target Contacts split into two
+           groups; every item embeds in place, nothing opens a new tab any
+           more, "Pipeline Overview" removed). -->
+      <!-- 14th round of direct feedback (2026-09-19): "the main menu
+           changes its order and puts [the current page] first. It should
+           not do that. The menus should always keep its order of sub-
+           menus" - every page's own group used to be moved to the front of
+           its own markup (open/current), which meant the REST of the list
+           reshuffled depending on which page you were on. Reordered to a
+           single fixed order, identical across all 4 pages (Target
+           Accounts, Target Contacts, Posts Dashboard, Scanner, Settings,
+           Debug last) - only which group carries `open`/is the current
+           page changes now, never their relative order. -->
+      <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
+           own copy of this comment for the full reasoning (every group now
+           duplicates target-accounts.html's own real items, each
+           auto-triggered on arrival via "#action=X"; Import/Export Target
+           Accounts left out - file picker/hidden-by-default constraints). -->
+      <details class="nav-group">
+        <summary class="nav-group-label">Target Accounts Dashboard</summary>
+        <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
+        <button id="nav-import-target-accounts-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
+        <button id="nav-restore-accounts-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="nav-hubspot-export-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
+        <button id="nav-hubspot-import-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Target Contacts Dashboard</summary>
+        <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
+        <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Posts Dashboard</summary>
+        <!-- 23rd round of direct feedback (2026-09-19) - see
+             target-accounts.html's own copy of this comment for the full
+             reasoning. -->
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
+        <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 7th round of direct
+           feedback: the anchor-jump list here (Topics/Job Search/.../Run
+           Scan/Results) mostly scrolled to the wrong place, and Run Scan/
+           Results didn't visibly do anything at all (both sit in the
+           always-pinned-visible RIGHT column of #scanner-columns' own
+           2-vertical layout, so jumping to them is a no-op). Reported
+           directly, with a concrete alternative: "instead of trying to
+           point to a specific section, focus on functionality" - this
+           group now offers the Backup/Restore actions directly (moved
+           here verbatim from the old #backup-section, same ids, same
+           scanner.js wiring, zero JS changes needed) instead of trying to
+           scroll to them.
+           17th round of direct feedback (2026-09-19): "why are the menu
+           items under the scanner... look like buttons and not like all
+           other submenus?" - the old #backup-section's own boxed-button
+           look (.backup-buttons-row button, scanner.css) came along for
+           the ride during the round-7 relocation and was never stripped -
+           unwrapped from .backup-buttons-row entirely so these are plain
+           .nav-item entries like every other menu item. "The checkbox for
+           'include API key in setting export' does not belong in the
+           menu... should be in a pop up window as with all other items
+           that require input from the user" - moved into a real <dialog>
+           (#export-settings-dialog, same action-dialog pattern
+           target-accounts.html already uses for its own nav-triggered
+           dialogs) instead of sitting inline in the nav; Export Settings
+           now opens that dialog rather than exporting immediately. -->
+      <details class="nav-group" open>
+        <summary class="nav-group-label">Scanner</summary>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Settings</summary>
+        <button id="open-settings-setup-btn" type="button" class="nav-item" title="Open Settings - Onboarding Setup">Onboarding Setup</button>
+        <button id="open-settings-change-btn" type="button" class="nav-item" title="Change one of your settings (location, size, industry, what you sell...) without going through the setup steps">Change Settings</button>
+        <button id="open-settings-profile-btn" type="button" class="nav-item" title="Open Settings - User Profile">User Profile</button>
+        <button id="open-settings-language-btn" type="button" class="nav-item" title="Open Settings - Message / Response Language">Message / Response Language</button>
+        <button id="open-settings-apikey-btn" type="button" class="nav-item" title="Open Settings - Anthropic API Key">Anthropic API Key</button>
+        <button id="open-settings-backup-btn" type="button" class="nav-item" title="Open Settings - Backup">Backup</button>
+        <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
+        <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Billing</button>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
+           target-accounts.html's own copy of this comment for the full
+           reasoning (nothing in this nav opens a new tab any more;
+           "Pipeline Overview" removed entirely). -->
+      <!-- 8th round of direct feedback (2026-09-19): "MORE is also in
+           grey. What is this? ... You can remove it" - these 3 sit at the
+           same level as a group header, styled to match (.nav-item-top),
+           no label needed above them. -->
+      <div class="nav-group">
+        <button id="open-advisors-btn" type="button" class="nav-item nav-item-top" title="Sales Mentor and Customer Voice chats">Advisors</button>
+        <button id="open-activity-log-btn" type="button" class="nav-item nav-item-top" title="Every user and extension action, with old/new values and errors">Activity Log</button>
+        <button id="open-help-btn" type="button" class="nav-item nav-item-top" title="Common questions and how-tos">Help</button>
+      </div>
+
+      <details class="nav-group nav-group-debug">
+        <summary class="nav-group-label">Advanced tools</summary>
+        <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
+        <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
+        <button id="nav-resolve-target-accounts-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
+        <button id="nav-fetch-size-target-accounts-btn" type="button" class="nav-item" title="Visit each company currently missing a real employee count on its own LinkedIn page and read it off there">Fetch Company Size…</button>
+        <button id="nav-prioritize-unscored-btn" type="button" class="nav-item" title="Score every unscored 'New' lead with the Sales Mentor">Prioritize Unscored Leads</button>
+        <button id="nav-rescore-all-btn" type="button" class="nav-item" title="Re-run AI prioritization on every already-scored 'New' lead (manual overrides are skipped)">Re-score All Priorities</button>
+        <button id="nav-extract-companies-btn" type="button" class="nav-item" title="Auto-extract a company name for every Post lead that doesn't have one yet">Extract Companies</button>
+        <button id="nav-extract-companies-profiles-btn" type="button" class="nav-item" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
+        <button id="nav-prioritize-target-accounts-btn" type="button" class="nav-item" title="Score every eligible company's Priority (P1-P5)">Prioritize Companies…</button>
+        <button id="open-debug-queue-btn" type="button" class="nav-item" title="Support use only">Discovery Queue (support)</button>
+        <button id="open-debug-company-btn" type="button" class="nav-item" title="Support use only">Company Discovery (support)</button>
+        <button id="open-debug-contact-btn" type="button" class="nav-item" title="Support use only">Contact Discovery (support)</button>
+      </details>
+    </nav>
+
+    <main id="app-main">
+      <div id="page-native-content">
+      <div id="page-header-bar">
+        <h1>SalesTeam Scanner</h1>
+        <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
+      </div>
+
+      <div id="onboarding-required-banner" class="warning-banner" hidden>
+        <strong>Setup isn't finished yet.</strong> Target Account &amp; Contact Discovery's targeting profile
+        (who/where/what size to search for) needs a few questions answered first. Finish it on the
+        <a href="#" id="open-onboarding-link">Setup</a> page.
+      </div>
+
+      <div id="empty-state-banner" class="warning-banner" hidden>
+        <strong>No Topics and no leads found.</strong> If you just reinstalled or moved the extension and expected
+        your data to be here, it isn't lost - Chrome ties storage to the extension's install location, so a moved
+        or reinstalled extension starts with a blank slate even though your old data still exists in a backup
+        file. Restore it below with <strong>Import Settings</strong> (Topics, filters) and
+        <strong>Import Leads</strong> (your lead history) - look in <code>/backup</code> for your most recent
+        files. If this really is a fresh start, ignore this and add a Topic below.
+      </div>
+
+      <div id="missing-api-key-banner" class="warning-banner" hidden>
+        <strong>No Anthropic API key configured.</strong> Company extraction, lead prioritization, Draft Message,
+        and the Sales Mentor/Customer Voice chats all need one to work - a Settings restore doesn't bring it back
+        on its own, since it's deliberately left out of automatic backups and excluded from a manual export unless
+        you tick the "include API key" box (a plain-text secret shouldn't be included by default). Add it on the
+        <strong>Settings</strong> page.
+      </div>
+
+      <div id="scanner-columns">
+      <div id="scanner-settings-col" class="scanner-col">
+      <section id="scan-section">
+        <h2 class="section-heading">Posts Search Configuration</h2>
+
+        <h3>Topics</h3>
+        <div id="topics-list"></div>
+        <button id="add-topic-btn" type="button" title="Add a new keyword-based search topic">+ Add Topic</button>
+
+        <p class="field-hint" id="suggest-topics-hint">
+          Want more Posts like your best ones? "Suggest Lookalike Topics" looks at your highest-priority (P1-P3)
+          Post leads and suggests new keywords based on what made them strong matches — nothing is added until you
+          review and accept each one. Job listings aren't used here (no post text to learn from).
+        </p>
+        <button id="suggest-topics-btn" type="button" title="Ask the Sales Mentor to suggest new keywords based on your best existing leads">Suggest Lookalike Topics</button>
+        <p id="suggest-topics-status" class="field-hint"></p>
+        <div id="suggest-topics-results" hidden></div>
+
+        <label for="timeframe-select">Posted within</label>
+        <select id="timeframe-select">
+          <option value="any">Any time</option>
+          <option value="past-24h">Past 24 hours</option>
+          <option value="past-week">Past week</option>
+          <option value="past-month" selected>Past month</option>
+        </select>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="author-title-enabled-checkbox" checked />
+          Author title contains titles from the Setup wizard's Target Contacts list — checked against each author's visible headline, not sent to LinkedIn
+        </label>
+        <p id="author-title-list-hint" class="field-hint"></p>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="include-job-ads-checkbox" checked />
+          Include posts with an in-post job ad (a company advertising AI roles this way is itself a signal, even if it's not a personal lead)
+        </label>
+      </section>
+
+      <section id="job-search-section">
+        <h2 class="section-heading">Job Listing Search</h2>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="job-search-enabled-checkbox" />
+          Enable Job Listing Search — searches LinkedIn job listings, in addition to Posts
+        </label>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="job-search-use-post-topics-checkbox" checked />
+          Also use my Post topics' keywords for Job Listing Search
+        </label>
+
+        <label for="job-topics-list">Job-specific topics (optional, in addition to Post topics above)</label>
+        <div id="job-topics-list"></div>
+        <button id="add-job-topic-btn" type="button" title="Add a keyword topic used only for the Jobs vertical">+ Add Job Topic</button>
+
+        <label class="checkbox-label">
+          <input type="checkbox" id="job-use-main-location-checkbox" />
+          Use the same location as in the main settings
+        </label>
+        <p id="job-main-location-hint" class="field-hint"></p>
+
+        <div id="job-manual-location">
+        <label for="job-search-location-select">Location</label>
+        <select id="job-search-location-select"></select>
+        <div id="add-job-location-row">
+          <input type="text" id="new-job-location-name" placeholder="Name (e.g. Geneva)" />
+          <input type="text" id="new-job-location-geoid" placeholder="geoId (e.g. 90009888)" />
+          <button id="add-job-location-btn" type="button" title="Save this name/geoId pair as a reusable location preset">+ Add</button>
+        </div>
+        <p class="field-hint">
+          A geoId is a LinkedIn-internal location code, not free text. To find one: on linkedin.com/jobs, pick that
+          location from the Location filter, then copy the <code>geoId=</code> value from the address bar.
+        </p>
+        </div>
+
+        <label for="job-search-timeframe-select">Date posted (job listings — independent from Posts, since job ads go stale much faster)</label>
+        <select id="job-search-timeframe-select">
+          <option value="any">Any time</option>
+          <option value="past-24h">Past 24 hours</option>
+          <option value="past-week">Past week</option>
+          <option value="past-month" selected>Past month</option>
+        </select>
+      </section>
+
+      <section id="negative-topics-section">
+        <h2 class="section-heading">Negative Topics (Lead Filters)</h2>
+        <p class="field-hint">
+          Same idea as a Topic above, just inverted: any lead matching a negative topic is noise, not a prospect.
+          Negative topics are checked after the search results come back and are never sent to LinkedIn. The company
+          filters at the top (competitors, recruiting companies, existing customers and partners) are one checkbox
+          each, because their company lists are kept in the Setup wizard. Add your own custom filter for any other
+          kind of noise you keep seeing.
+        </p>
+
+        <label class="checkbox-label" id="reapply-existing-label">
+          <input type="checkbox" id="reapply-existing-checkbox" />
+          Also apply these filters to existing leads (may remove existing leads with status New, if they meet any of the negative topics)
+        </label>
+
+        <div id="negative-topics-list"></div>
+        <button id="add-negative-topic-btn" type="button" title="Add a custom filter for leads you do not want to see">+ Add Negative Topic</button>
+
+        <p class="field-hint" id="apply-negative-filters-hint">
+          To apply the negative filters above to your existing leads right now, without running a new scan, click
+          "Apply Negative Filters" below. Existing leads with status New that match a filter are removed from your
+          lists (nothing is deleted); leads that no longer match any filter come back.
+        </p>
+        <button id="apply-negative-filters-btn" type="button" title="Re-check every existing lead against the current negative topics, right now, without a new scan">Apply Negative Filters</button>
+        <p id="apply-negative-filters-status" class="field-hint"></p>
+      </section>
+
+      <section id="search-quality-section">
+        <h2 class="section-heading">Search Quality</h2>
+        <p class="field-hint" id="search-quality-hint">
+          Not finding enough good Post leads? "Analyze Post Search Quality" has the Sales Mentor look at your
+          current Topics, Negative Topics, and your unactioned Post leads - including ones marked Irrelevant, so
+          it can catch an over-aggressive Negative Topic keyword killing good leads, not just suggest narrowing
+          further. Diagnoses what's likely limiting quality and suggests specific keyword changes to try - nothing
+          is changed until you review and accept each one.
+        </p>
+        <button id="analyze-search-quality-btn" type="button" title="Ask the Sales Mentor to diagnose what's limiting your Post lead quality and suggest keyword changes">Analyze Post Search Quality</button>
+        <p id="search-quality-status" class="field-hint"></p>
+        <div id="search-quality-results" hidden></div>
+      </section>
+
+      </div>
+
+      <div id="scanner-run-col" class="scanner-col">
+      <section id="run-section">
+        <h2 class="section-heading">Run</h2>
+        <label for="scan-company-scope-select">Target Account companies to scan</label>
+        <select id="scan-company-scope-select" title="Which of your Target Account companies the company-scoped search covers, by SalesTeam Priority. Fewer companies means fewer LinkedIn searches. All covers every company whose LinkedIn page SalesTeam has identified - a company it could not find on LinkedIn cannot be searched.">
+          <option value="P1">P1 only</option>
+          <option value="P2">P1 – P2</option>
+          <option value="P3">P1 – P3</option>
+          <option value="all">All</option>
+        </select>
+        <p id="total-searches-hint" class="field-hint"></p>
+        <p id="run-capacity-hint" class="field-hint"></p>
+        <button id="scan-btn" type="button" title="Run every enabled Topic and Job Topic against LinkedIn now">Scan All Topics</button>
+        <button id="stop-scan-btn" type="button" hidden title="Stop the running scan - leads found so far are already saved">Stop Scan</button>
+        <p id="progress-text"></p>
+      </section>
+
+      <section id="results-section">
+        <h2>Results</h2>
+        <p id="results-stats" class="results-stats"></p>
+        <div id="results-actions">
+          <button id="export-csv-btn" type="button" title="Download the leads currently shown below as a CSV file">Export Leads (CSV)</button>
+          <button id="clear-results-btn" type="button" title="Clear this list from view only - never deletes any saved lead">Clear Results</button>
+        </div>
+        <div id="results-list"></div>
+      </section>
+      </div>
+      </div>
+
+      <div id="embedded-page-wrap" hidden>
+        <div id="embedded-page-bar">
+          <button type="button" id="embedded-page-close-btn" title="Close and return to this page">← Back</button>
+          <span id="embedded-page-title"></span>
+        </div>
+        <iframe id="embedded-page-frame" title="Embedded page"></iframe>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="scanner.js"></script>
+</body>
+</html>

@@ -7,44 +7,240 @@
   <link rel="stylesheet" href="target-accounts.css" />
 </head>
 <body>
-  <header id="page-header">
-    <h1><span id="page-title-text">SalesTeam Target Accounts Dashboard</span> <span id="version-text"></span></h1>
-    <p class="page-subtitle">
-      The full externally-researched company and contact workbook - every account, plus its known contacts and
-      AI initiatives, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
-      unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
-      automatic lead prioritization (see the Posts Dashboard's Priority column).
+  <!-- Reported directly, 2026-09-16: a native confirm()'s generic OK/Cancel
+       read as unclear here too, same complaint already fixed once this
+       session for onboarding.html's stale-discovery dialog - same real
+       <dialog>/showModal() pattern, explicitly-labeled buttons instead. -->
+  <dialog id="merge-discovered-dialog">
+    <h3>Add Discovery results to your Target Accounts?</h3>
+    <p>
+      This adds the companies/contacts below to your Target Accounts list - click a company to check it on
+      LinkedIn first if you want. A company already on your list won't be duplicated; it's just left as is.
     </p>
-    <div id="page-header-actions">
-      <button id="import-target-accounts-page-btn" type="button" title="Import the .xlsx research workbook directly, or restore a previously exported backup .json - same as Settings' Import Target Accounts">Import Target Accounts…</button>
-      <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
-      <button id="export-target-accounts-page-btn" type="button" title="Download a full backup (the target-accounts map plus this Explorer's workbook) as a .json file - same as Settings' Export Target Accounts" hidden>Export Target Accounts…</button>
-      <span id="target-accounts-page-io-status" class="status-text"></span>
+    <div id="merge-discovered-dialog-preview"></div>
+    <p class="page-subtitle">Anything added can be removed again afterward from its own Account/Contact page.</p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="merge-discovered-confirm-btn">Add Them</button>
+      <button type="button" id="merge-discovered-cancel-btn">Cancel</button>
     </div>
-    <p id="linkedin-resolve-status" class="page-subtitle" hidden></p>
-  </header>
+  </dialog>
 
-  <div id="onboarding-required-banner" class="warning-banner" hidden>
-    <strong>Setup isn't finished yet.</strong> Target Account &amp; Contact Discovery's targeting profile
-    (who/where/what size to search for) needs a few questions answered first. Finish it on the
-    <a href="#" id="open-onboarding-link">Setup</a> page.
-  </div>
+  <dialog id="find-duplicates-dialog">
+    <h3>Find &amp; Merge Duplicates</h3>
+    <p id="find-duplicates-intro">
+      The same company sometimes appears twice - for example once from your research file and once from LinkedIn
+      Discovery. Each proposal below lists accounts that look like the same company (same name or same LinkedIn
+      page). Pick the one to keep and press Merge - its contacts, initiatives, sources and Post leads move over. If
+      they are really different companies, press Keep separate and they will not be proposed again.
+    </p>
+    <div id="find-duplicates-list"></div>
+    <p id="find-duplicates-status" class="page-subtitle" role="status"></p>
+    <p><button type="button" id="find-duplicates-reset-btn" class="text-link-btn" hidden></button></p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="find-duplicates-merge-all-btn">Merge all</button>
+      <button type="button" id="find-duplicates-close-btn">Close</button>
+    </div>
+  </dialog>
 
-  <nav id="list-tab-bar" hidden>
-    <a href="#" id="tab-accounts" class="list-tab active">Target Accounts</a>
-    <a href="#contacts" id="tab-contacts" class="list-tab">Target Contacts</a>
-  </nav>
+  <dialog id="merge-accounts-dialog">
+    <h3>Merge duplicate accounts</h3>
+    <p>
+      Combine two entries for the same company into one. The other account's contacts, initiatives, sources and
+      Post leads move to the account you keep, and its name is kept as an alternative name.
+    </p>
+    <label class="merge-accounts-field">
+      <span>Merge <strong id="merge-accounts-this-name"></strong> with:</span>
+      <select id="merge-accounts-other-select"></select>
+    </label>
+    <fieldset class="merge-accounts-keep" id="merge-accounts-keep-fieldset">
+      <legend>Keep the name and details of:</legend>
+      <label><input type="radio" name="merge-accounts-keep" value="this" checked /> <span id="merge-accounts-keep-this"></span></label>
+      <label><input type="radio" name="merge-accounts-keep" value="other" /> <span id="merge-accounts-keep-other"></span></label>
+    </fieldset>
+    <p id="merge-accounts-preview" class="page-subtitle"></p>
+    <p class="page-subtitle">This can't be undone from the app, so take a Backup first if you are unsure (Settings &rarr; Backup).</p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="merge-accounts-confirm-btn">Merge</button>
+      <button type="button" id="merge-accounts-cancel-btn">Cancel</button>
+    </div>
+  </dialog>
 
-  <main id="explorer-main">
-    <div id="list-view">
+  <!-- PRD 6.20 Phase 10 (2026-09-17/18) - left-nav shell, replacing the old
+       flat stack of always-visible button rows (Import/Export, Resolve,
+       Discover Contacts, Fetch Size, Prioritize, Merge) that used to sit in
+       <header id="page-header">. Every element below keeps its EXACT same
+       id as before - only WHERE it lives changed (most moved into a
+       <dialog>, reusing the existing showModal()/close() pattern
+       merge-discovered-dialog above already established), so none of
+       target-accounts.js's existing click-handler wiring needed to change. -->
+  <div id="app-shell">
+    <nav id="app-nav">
+      <div id="app-nav-brand">
+        <div id="app-nav-brand-name" title="Return to this page's own content">SalesTeam</div>
+        <span id="version-text"></span>
+        <button type="button" id="nav-collapse-btn" title="Collapse the menu">«</button>
+      </div>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 5th round of direct
+           feedback the same week. Two real fixes from what shipped last
+           round: (1) Target Accounts and Target Contacts are now two
+           SEPARATE groups, not one "Target Accounts" umbrella that stayed
+           bold/open even while looking at Contacts - reported directly,
+           a real bug ("I am in the Target Contacts Dashboard page, but...
+           I see that I am actually inside the Target Accounts sub menu").
+           Which one is open/bold now tracks the real current view
+           (showView(), below) instead of being hardcoded. Contacts' own
+           Enrichment action (Discover Contacts) moved into ITS group, not
+           left under Accounts. No Import/Export/Prioritization duplicated
+           under Contacts - those operate on the one shared workbook file
+           or are Account-only (Prioritize Companies has no Contacts
+           equivalent), so duplicating the same button under a second
+           label would just be confusing, not genuinely separate features.
+           (2) The Views/Data/Enrichment/Prioritization sub-division
+           removed from these two groups specifically (each is small
+           enough now not to need it) - kept on Posts Dashboard/Settings
+           below, which still have enough items to benefit from it. -->
+      <details class="nav-group" id="nav-group-accounts" open>
+        <summary class="nav-group-label">Target Accounts Dashboard</summary>
+        <a href="#" id="tab-accounts" class="nav-item active">Target Accounts</a>
+        <button id="import-target-accounts-page-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
+        <button id="restore-target-accounts-page-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
+        <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
+        <button id="hubspot-export-page-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
+        <button id="hubspot-import-page-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
+        <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
+        <div id="page-header-merge-row" hidden>
+          <button id="merge-discovered-btn" type="button" class="nav-item" title="Add the companies and contacts found by Discovery (Setup wizard) to your Target Accounts list">Review &amp; Merge Discovery Results…</button>
+          <span id="merge-discovered-status" class="status-text"></span>
+        </div>
+      </details>
+
+      <details class="nav-group" id="nav-group-contacts">
+        <summary class="nav-group-label">Target Contacts Dashboard</summary>
+        <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
+        <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Posts Dashboard</summary>
+        <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
+             own copy of this comment (Target Accounts group) for the full
+             reasoning. Each of these duplicates dashboard.html's own real
+             action, auto-triggered on arrival via "#action=X"
+             (dashboard.js's own runActionFromHash()) - a real .click() on
+             the matching button there, so any of these buttons' own
+             existing confirm() gates (Re-score All Priorities) still run
+             normally. -->
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
+        <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 7th round - see
+           scanner.html's own copy of this comment for the full reasoning
+           (anchor-jumping to a Scanner section mostly landed in the wrong
+           place, and Run Scan/Results didn't visibly do anything since
+           both sit in the always-visible right column there - replaced
+           with real functionality instead of navigation: Export/Import
+           Settings and Leads work directly from here, no need to open
+           Scanner at all). -->
+      <details class="nav-group">
+        <summary class="nav-group-label">Scanner</summary>
+        <button id="open-scanner-page-btn" type="button" class="nav-item" title="Configure Topics and run a new LinkedIn scan">Open Scanner</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Settings</summary>
+        <button id="open-settings-setup-btn" type="button" class="nav-item" title="Open Settings - Onboarding Setup">Onboarding Setup</button>
+        <button id="open-settings-change-btn" type="button" class="nav-item" title="Change one of your settings (location, size, industry, what you sell...) without going through the setup steps">Change Settings</button>
+        <button id="open-settings-profile-btn" type="button" class="nav-item" title="Open Settings - User Profile">User Profile</button>
+        <button id="open-settings-language-btn" type="button" class="nav-item" title="Open Settings - Message / Response Language">Message / Response Language</button>
+        <button id="open-settings-apikey-btn" type="button" class="nav-item" title="Open Settings - Anthropic API Key">Anthropic API Key</button>
+        <button id="open-settings-backup-btn" type="button" class="nav-item" title="Open Settings - Backup">Backup</button>
+        <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
+        <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Billing</button>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round of direct
+           feedback: NOTHING in this nav opens a new browser tab any more -
+           "I do not see any reason for a new tab... once you open it in a
+           new tab, there is no more any way to come back to the main
+           menu." Every ↗ removed (there was never a real reason beyond
+           matching this codebase's older, pre-mega-menu convention - now
+           that the whole point of this nav is to stay on one page and
+           swap content in place, a new tab actively works against that).
+           "Pipeline Overview" removed entirely, same feedback: "it simply
+           brings me to Scan for Leads - I think that Pipeline Overview can
+           be removed" - sidepanel.html's own stats view wasn't earning
+           its own nav entry. -->
+      <!-- 8th round of direct feedback (2026-09-19): "MORE is also in
+           grey. What is this? ... You can remove it" - these 3 sit at the
+           same level as a group header, styled to match (.nav-item-top),
+           no label needed above them. -->
+      <div class="nav-group">
+        <button id="open-advisors-btn" type="button" class="nav-item nav-item-top" title="Sales Mentor and Customer Voice chats">Advisors</button>
+        <button id="open-activity-log-btn" type="button" class="nav-item nav-item-top" title="Every user and extension action, with old/new values and errors">Activity Log</button>
+        <button id="open-help-btn" type="button" class="nav-item nav-item-top" title="Common questions and how-tos">Help</button>
+      </div>
+
+      <details class="nav-group nav-group-debug">
+        <summary class="nav-group-label">Advanced tools</summary>
+        <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
+        <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
+        <button id="nav-resolve-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
+        <button id="nav-fetch-size-btn" type="button" class="nav-item" title="Visit each company currently missing a real employee count on its own LinkedIn page and read it off there">Fetch Company Size…</button>
+        <button id="nav-prioritize-unscored-btn" type="button" class="nav-item" title="Score every unscored 'New' lead with the Sales Mentor">Prioritize Unscored Leads</button>
+        <button id="nav-rescore-all-btn" type="button" class="nav-item" title="Re-run AI prioritization on every already-scored 'New' lead (manual overrides are skipped)">Re-score All Priorities</button>
+        <button id="nav-extract-companies-btn" type="button" class="nav-item" title="Auto-extract a company name for every Post lead that doesn't have one yet">Extract Companies</button>
+        <button id="nav-extract-companies-profiles-btn" type="button" class="nav-item" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
+        <button id="nav-prioritize-btn" type="button" class="nav-item" title="Score every eligible company's Priority (P1-P5)">Prioritize Companies…</button>
+        <button id="open-debug-queue-btn" type="button" class="nav-item" title="Support use only">Discovery Queue (support)</button>
+        <button id="open-debug-company-btn" type="button" class="nav-item" title="Support use only">Company Discovery (support)</button>
+        <button id="open-debug-contact-btn" type="button" class="nav-item" title="Support use only">Contact Discovery (support)</button>
+      </details>
+    </nav>
+
+    <main id="app-main">
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), reported directly:
+           Advisors/Activity Log/Help/Pipeline Overview opened a whole new
+           browser tab, losing the nav - "they should behave as all other
+           items. Show their content on the main page and keep the left
+           menu showing on the left." Those 4 pages have no nav shell of
+           their own (confirmed: plain <header>+<main>, no #app-shell), so
+           embedding via iframe shows ONLY their real content, no nested/
+           duplicate sidebar. #page-native-content wraps this page's own
+           real content (never destroyed, just hidden) so switching to an
+           embedded page and back never loses table/form state. -->
+      <div id="page-native-content">
+      <div id="page-header-bar">
+        <h1><span id="page-title-text">SalesTeam Target Accounts Dashboard</span></h1>
+        <p class="page-subtitle">
+          The full externally-researched company and contact workbook - every account, plus its known contacts and
+          initiatives, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
+          unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
+          automatic lead prioritization (see the Posts Dashboard's Priority column).
+        </p>
+        <span id="target-accounts-page-io-status" class="status-text"></span>
+        <p id="linkedin-resolve-status" class="page-subtitle" hidden></p>
+      </div>
+
+      <div id="onboarding-required-banner" class="warning-banner" hidden>
+        <strong>Setup isn't finished yet.</strong> Target Account &amp; Contact Discovery's targeting profile
+        (who/where/what size to search for) needs a few questions answered first. Finish it on the
+        <a href="#" id="open-onboarding-link">Setup</a> page.
+      </div>
+
+      <div id="list-view">
       <p id="empty-state" class="empty-state" hidden>
-        No Target Accounts data imported yet. Use <strong>Import Target Accounts</strong> above (or on the
-        Settings page) to load the workbook.
+        No Target Accounts data imported yet.
+        <button id="empty-import-btn" type="button">Import Research Workbook…</button>
+        Choose your research workbook (.xlsx), or a Target Accounts backup you exported earlier.
       </p>
 
       <section id="accounts-stats-section" hidden>
         <div class="pie-card">
-          <h2>AI Priority range</h2>
+          <h2>Priority</h2>
           <div class="pie-wrap" id="pie-ai-priority"></div>
         </div>
         <div class="pie-card">
@@ -67,6 +263,13 @@
         <span id="result-count"></span>
       </div>
 
+      <div id="accounts-bulk-bar" class="bulk-bar" hidden>
+        <span id="accounts-bulk-count" class="bulk-bar-count"></span>
+        <button id="accounts-bulk-edit-btn" type="button">Bulk edit…</button>
+        <button id="accounts-bulk-extend" type="button" class="text-link-btn" hidden></button>
+        <button id="accounts-bulk-clear-btn" type="button" class="text-link-btn">Clear selection</button>
+      </div>
+
       <div id="pagination-top" class="pagination-bar" hidden></div>
 
       <div id="table-scroll-top" hidden><div id="table-scroll-top-filler"></div></div>
@@ -84,7 +287,7 @@
 
     <div id="contacts-list-view" hidden>
       <p id="contacts-empty-state" class="empty-state" hidden>
-        No Target Contacts imported yet - the Contacts sheet of the same workbook (Import Target Accounts
+        No Target Contacts imported yet - the Contacts sheet of the same workbook (Import Research Workbook
         above) is currently empty.
       </p>
 
@@ -99,6 +302,13 @@
         <input id="contacts-search-input" type="text" placeholder="Search name, company, or title…" />
         <button id="contacts-columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="contacts-result-count"></span>
+      </div>
+
+      <div id="contacts-bulk-bar" class="bulk-bar" hidden>
+        <span id="contacts-bulk-count" class="bulk-bar-count"></span>
+        <button id="contacts-bulk-edit-btn" type="button">Bulk edit…</button>
+        <button id="contacts-bulk-extend" type="button" class="text-link-btn" hidden></button>
+        <button id="contacts-bulk-clear-btn" type="button" class="text-link-btn">Clear selection</button>
       </div>
 
       <div id="contacts-pagination-top" class="pagination-bar" hidden></div>
@@ -118,12 +328,37 @@
 
     <div id="account-view" hidden>
       <a href="#" id="account-back-link">&larr; Back to Target Accounts</a>
-      <h2 id="account-title"></h2>
+      <div id="account-title-row">
+        <h2 id="account-title"></h2>
+        <button id="account-actions-btn" class="kebab-btn" type="button" title="Actions">&#8942;</button>
+      </div>
       <div id="account-overview" class="entity-overview"></div>
       <input type="date" id="account-due-date-input" hidden />
       <button id="account-due-date-clear-btn" class="text-link-btn" type="button" title="Clear the follow-up due date" hidden>Clear</button>
 
       <div id="account-detail-lists"></div>
+
+      <section id="account-web-research" class="web-research-card">
+        <div class="section-title-row">
+          <h3>Web research</h3>
+          <span class="web-research-buttons">
+            <button id="account-web-research-stop-btn" type="button" hidden title="Stop now and keep what has been found so far">Stop</button>
+            <button id="account-web-research-btn" type="button" title="Search the public web (company website, registers, news) for facts about this account, with sources">Research this account on the web…</button>
+          </span>
+        </div>
+        <p class="field-hint" id="account-web-research-hint">Not done yet for this account.</p>
+        <div id="account-web-research-text" class="web-research-text" hidden></div>
+        <button id="account-web-research-more-btn" type="button" class="text-link-btn" hidden>Show the full briefing</button>
+        <div id="account-web-research-apply-row" class="web-research-apply-row" hidden>
+          <button id="account-web-research-apply-btn" type="button">Review findings…</button>
+          <span id="account-web-research-apply-hint" class="field-hint"></span>
+        </div>
+        <details id="account-web-research-sources-details" class="web-research-sources-details" hidden>
+          <summary id="account-web-research-sources-summary">Sources</summary>
+          <ul id="account-web-research-sources" class="web-research-sources"></ul>
+        </details>
+        <span id="account-web-research-status" class="status-text" hidden></span>
+      </section>
 
       <section class="entity-activity-section">
         <h3 id="account-activity-toggle">Recent Activity</h3>
@@ -160,8 +395,11 @@
     </div>
 
     <div id="contact-view" hidden>
-      <a href="#" id="contact-back-link">&larr; Back to Target Accounts</a>
-      <h2 id="contact-title"></h2>
+      <a href="#" id="contact-back-link">&larr; Back to Target Contacts</a>
+      <div id="contact-title-row">
+        <h2 id="contact-title"></h2>
+        <button id="contact-actions-btn" class="kebab-btn" type="button" title="Actions">&#8942;</button>
+      </div>
       <div id="contact-overview" class="entity-overview"></div>
       <input type="date" id="contact-due-date-input" hidden />
       <button id="contact-due-date-clear-btn" class="text-link-btn" type="button" title="Clear the follow-up due date" hidden>Clear</button>
@@ -209,7 +447,329 @@
         </section>
       </div>
     </div>
-  </main>
+    </div>
+
+      <div id="embedded-page-wrap" hidden>
+        <div id="embedded-page-bar">
+          <button type="button" id="embedded-page-close-btn" title="Close and return to this page">← Back</button>
+          <span id="embedded-page-title"></span>
+        </div>
+        <iframe id="embedded-page-frame" title="Embedded page"></iframe>
+      </div>
+    </main>
+  </div>
+
+  <!-- Action dialogs (PRD 6.20 Phase 10) - opened by the left nav's own
+       trigger buttons above; each still uses the exact same "Run"/limit-
+       input/checkbox/status/Stop-button ids target-accounts.js already
+       wires, just relocated here instead of an always-visible header row. -->
+  <!-- Opened from any page's menu (Import Research Workbook…) via #action=import-accounts. The file picker only opens from
+       a real click, so the dialog has its own button rather than trying to open the picker on arrival. -->
+  <!-- Bulk edit (2026-09-22). One dialog for both tables - the Priority row is hidden for contacts,
+       where priority is a company-level field. Every field defaults to "leave unchanged", so an
+       accidental Apply changes nothing. -->
+  <dialog id="bulk-edit-dialog" class="action-dialog">
+    <h3 id="bulk-edit-title">Bulk edit</h3>
+    <p id="bulk-edit-intro" class="page-subtitle"></p>
+    <div class="bulk-edit-grid">
+      <label for="bulk-edit-status">Status</label>
+      <select id="bulk-edit-status">
+        <option value="">Leave unchanged</option>
+        <option value="__auto__">Auto from leads (clears a manual status)</option>
+        <option value="Contacted">Contacted</option>
+        <option value="Responded">Responded</option>
+      </select>
+
+      <label for="bulk-edit-priority" id="bulk-edit-priority-label">Priority</label>
+      <select id="bulk-edit-priority">
+        <option value="">Leave unchanged</option>
+        <option value="__clear__">Clear (back to the calculated priority)</option>
+        <option value="P1">P1</option>
+        <option value="P2">P2</option>
+        <option value="P3">P3</option>
+        <option value="P4">P4</option>
+        <option value="P5">P5</option>
+      </select>
+
+      <label for="bulk-edit-due-mode">Next action due</label>
+      <span class="bulk-edit-due">
+        <select id="bulk-edit-due-mode">
+          <option value="">Leave unchanged</option>
+          <option value="set">Set to…</option>
+          <option value="clear">Clear</option>
+        </select>
+        <input type="date" id="bulk-edit-due-date" disabled />
+      </span>
+    </div>
+    <label class="bulk-edit-remove">
+      <input type="checkbox" id="bulk-edit-remove" />
+      <span id="bulk-edit-remove-label">Remove the selected rows from the list</span>
+    </label>
+    <p id="bulk-edit-status-text" class="status-text" role="status"></p>
+    <div class="action-dialog-actions">
+      <button id="bulk-edit-apply-btn" type="button">Apply</button>
+      <button type="button" class="action-dialog-close-btn">Cancel</button>
+    </div>
+    <button id="bulk-edit-undo-btn" type="button" class="text-link-btn" hidden></button>
+  </dialog>
+
+  <dialog id="web-research-apply-dialog" class="action-dialog">
+    <h3>Findings from the web research</h3>
+    <p class="page-subtitle">
+      <strong>Use it</strong> - save the value found on the web onto this account.<br />
+      <strong>Keep mine</strong> - keep your own value, and stop this finding being counted.
+    </p>
+    <p class="page-subtitle">
+      Tick one or the other on each row, then Save. Empty fields are ticked for you; where your value differs,
+      nothing is ticked - your data is only replaced if you tick it. Web findings are not verified, so check the
+      sources if a value looks wrong.
+    </p>
+    <table id="web-research-apply-table" class="web-research-apply-table"></table>
+    <p id="web-research-apply-status" class="page-subtitle" role="status"></p>
+    <div class="action-dialog-actions">
+      <button id="web-research-apply-confirm-btn" type="button">Save these choices</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Nothing here is written until "Resolve them" is pressed: the dialog opens on a dry run, so the
+       counts and the examples below describe exactly what the button would do. -->
+  <dialog id="auto-findings-dialog" class="action-dialog">
+    <h3>Resolve web findings automatically</h3>
+    <p class="page-subtitle">
+      Most findings that "differ" are not mistakes - they are two correct figures counted differently, or they sit in a
+      field that is never used to score a company. This settles those by rule and leaves you only the ones that can
+      actually change something. Which rules apply is up to you: <strong>Settings &rarr; Web findings - automatic
+      arbitration</strong>.
+    </p>
+    <p class="page-subtitle">
+      <strong>This is not a review screen.</strong> The table below is a preview of what the button would write, all at
+      once. The findings it leaves for you are reviewed one account at a time - filter the
+      <strong>Web Findings</strong> column on &ldquo;review&rdquo;. Nothing is written until you press the button, and it
+      can be undone immediately afterwards.
+    </p>
+    <p id="auto-findings-summary" class="page-subtitle" role="status"></p>
+    <table id="auto-findings-breakdown" class="web-research-apply-table"></table>
+    <details id="auto-findings-examples-wrap" hidden>
+      <summary>Show some of what would change</summary>
+      <table id="auto-findings-examples" class="web-research-apply-table"></table>
+    </details>
+    <p id="auto-findings-status" class="status-text" role="status"></p>
+    <p id="auto-findings-button-note" class="field-hint"></p>
+    <div class="action-dialog-actions">
+      <button id="auto-findings-run-btn" type="button" title="Writes every decision in the table above at once. This is not a review screen - the findings left for you are reached from the Web Findings column.">Write all these decisions now</button>
+      <button id="auto-findings-undo-btn" type="button" class="text-link-btn" hidden></button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="bulk-research-dialog" class="action-dialog">
+    <h3>Research accounts on the web</h3>
+    <p class="page-subtitle">
+      Searches the public web for each chosen account (website, registers, reports, news) with your own Anthropic API key and
+      saves a briefing with sources on the account, adds the initiatives it finds to the Initiatives list, and fills in empty fields.
+      It runs in the background: you can keep using this page while it works. No LinkedIn activity is used.
+    </p>
+    <fieldset class="bulk-research-group">
+      <legend>Which accounts?</legend>
+      <label><input type="checkbox" class="bulk-priority" value="P1" checked /> P1</label>
+      <label><input type="checkbox" class="bulk-priority" value="P2" checked /> P2</label>
+      <label><input type="checkbox" class="bulk-priority" value="P3" /> P3</label>
+      <label><input type="checkbox" class="bulk-priority" value="P4" /> P4</label>
+      <label><input type="checkbox" class="bulk-priority" value="P5" /> P5</label>
+      <label><input type="checkbox" class="bulk-priority" value="none" /> Not scored yet</label>
+      <label class="bulk-research-wide"><input type="checkbox" id="bulk-skip-done" checked /> Skip accounts already researched on the web</label>
+    </fieldset>
+    <fieldset class="bulk-research-group">
+      <legend>What to look for?</legend>
+      <label class="bulk-research-wide"><input type="radio" name="bulk-mode" id="bulk-mode-missing" value="missing" checked /> Only what is missing on each account (cheaper)</label>
+      <label class="bulk-research-wide"><input type="radio" name="bulk-mode" id="bulk-mode-all" value="all" /> Everything, even if the account already has it</label>
+      <label><input type="checkbox" class="bulk-topic" value="employees" checked /> Employees</label>
+      <label><input type="checkbox" class="bulk-topic" value="revenue" checked /> Revenue</label>
+      <label><input type="checkbox" class="bulk-topic" value="headquarters" checked /> Headquarters</label>
+      <label><input type="checkbox" class="bulk-topic" value="registry" /> Registry data</label>
+      <label><input type="checkbox" class="bulk-topic" value="initiatives" checked /> Initiatives</label>
+      <label class="bulk-research-wide"><input type="checkbox" id="bulk-autofill" checked /> Fill in empty fields automatically (existing values are never replaced; different values are left for you to review)</label>
+    </fieldset>
+    <label class="hubspot-field">Stop automatically when the cost reaches (US$)
+      <input type="number" id="bulk-budget-input" min="0.1" step="0.5" style="width: 110px" />
+    </label>
+    <label class="hubspot-field">Research at most this many accounts (leave empty for all)
+      <input type="number" id="bulk-max-accounts" min="1" step="1" placeholder="all" style="width: 110px" />
+    </label>
+    <p id="bulk-research-summary" class="page-subtitle" role="status"></p>
+    <div class="action-dialog-actions">
+      <button id="bulk-research-start-btn" type="button">Start researching…</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="hubspot-export-dialog" class="action-dialog">
+    <h3>Export to HubSpot</h3>
+    <p class="page-subtitle">
+      Saves two files you can import into HubSpot (Contacts &rarr; Import): one for <strong>companies</strong> and one for
+      <strong>contacts</strong>. Import the companies file first, then the contacts file - HubSpot links each contact to its
+      company by name. The columns use HubSpot's own names, so HubSpot maps most of them for you; the "SalesTeam ..."
+      columns (priority, score, status) can be created as new HubSpot properties in the import's mapping step.
+    </p>
+    <label class="hubspot-field">Which accounts?
+      <select id="hubspot-export-scope">
+        <option value="all">All accounts</option>
+        <option value="P1">Priority P1 only</option>
+        <option value="P2">Priority P1 - P2</option>
+        <option value="P3">Priority P1 - P3</option>
+      </select>
+    </label>
+    <label class="hubspot-field">Export at most this many companies (leave empty for all)
+      <input type="number" id="hubspot-export-max" min="1" step="1" placeholder="all" style="width: 110px" />
+    </label>
+    <p id="hubspot-export-summary" class="page-subtitle" role="status"></p>
+    <p class="page-subtitle">Note: HubSpot's Industry field only accepts its own list of values; if your industry text is not recognized, skip that column in the mapping step.</p>
+    <div class="action-dialog-actions">
+      <button id="hubspot-export-btn" type="button">Save the two files</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="hubspot-import-dialog" class="action-dialog">
+    <h3>Import from HubSpot</h3>
+    <p class="page-subtitle">
+      In HubSpot, export your <strong>companies</strong> and/or your <strong>contacts</strong> as a CSV file (Contacts or
+      Companies &rarr; Export), then choose the file here - one file at a time; do the companies first. SalesTeam
+      <strong>only adds</strong> what it does not have yet: companies are matched by name, contacts by name and company.
+      Nothing you already have is changed or removed.
+    </p>
+    <div class="action-dialog-actions">
+      <button id="hubspot-import-choose-btn" type="button">Choose HubSpot CSV file…</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+    <input type="file" id="hubspot-import-file-input" accept=".csv,text/csv" hidden />
+    <p id="hubspot-import-status" class="page-subtitle" role="status" hidden></p>
+  </dialog>
+
+  <dialog id="import-accounts-dialog" class="action-dialog">
+    <h3>Import Research Workbook</h3>
+    <p class="page-subtitle">
+      Load the Excel workbook (.xlsx) that the SalesTeam research prompt produces - in ChatGPT or any other AI
+      assistant - or one you filled in yourself from the template. <strong>Importing replaces</strong> the accounts,
+      contacts and initiatives currently loaded. (To bring back a SalesTeam backup, use "Restore Accounts &amp; Contacts
+      from Backup…" instead.)
+    </p>
+    <div class="action-dialog-actions">
+      <button id="import-accounts-choose-btn" type="button">Choose workbook…</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+    <h4 class="import-help-heading">Don't have a workbook yet?</h4>
+    <div class="import-help-buttons">
+      <button id="import-copy-prompt-btn" type="button" title="Copy the research prompt to the clipboard, ready to paste into ChatGPT or another AI assistant">Copy research prompt</button>
+      <button id="import-download-prompt-btn" type="button" title="Save the research prompt as a text file">Download research prompt (.txt)</button>
+      <button id="import-download-template-btn" type="button" title="An empty workbook with the right sheets and columns, mandatory ones marked">Download empty Excel template</button>
+    </div>
+    <p id="import-help-status" class="page-subtitle" role="status"></p>
+    <details class="import-columns-details">
+      <summary>Which columns are mandatory?</summary>
+      <div id="import-columns-list"></div>
+    </details>
+  </dialog>
+
+  <dialog id="restore-accounts-dialog" class="action-dialog">
+    <h3>Restore Accounts &amp; Contacts from Backup</h3>
+    <p class="page-subtitle">
+      Bring back accounts, contacts and initiatives from a SalesTeam backup - the backup zip made by Backup &amp;
+      Restore, or an older .json file. You choose what to restore; the parts you tick <strong>replace</strong> what
+      is loaded now, and a safety copy of your current data is saved first. (To load a research workbook, use
+      "Import Research Workbook…" instead.)
+    </p>
+    <div class="action-dialog-actions">
+      <button id="restore-accounts-choose-btn" type="button">Choose backup file…</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="resolve-dialog" class="action-dialog">
+    <h3>Resolve LinkedIn Company IDs</h3>
+    <p class="page-subtitle">
+      Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID -
+      needed for a future feature that scopes Post search to only these companies' employees.
+    </p>
+    <label for="resolve-company-ids-limit-input" id="resolve-company-ids-limit-label">
+      Limit to
+      <input type="number" id="resolve-company-ids-limit-input" min="1" title="Only resolve this many companies this run - leave blank to resolve everything still missing an ID. Useful for a quick test before committing to a full run." />
+      (blank = all)
+    </label>
+    <div class="action-dialog-actions">
+      <button id="resolve-company-ids-btn" type="button">Run</button>
+      <button id="stop-resolve-company-ids-btn" type="button" class="danger-btn" hidden title="Stop the running resolve - companies resolved so far are already saved">Stop</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+    <span id="resolve-company-ids-status" class="status-text"></span>
+  </dialog>
+
+  <dialog id="discover-contacts-dialog" class="action-dialog">
+    <h3>Discover Contacts for Existing Companies</h3>
+    <p class="page-subtitle">
+      Look up contacts at each existing Target Account company via its own LinkedIn People tab, using the Setup
+      wizard's target-contact profile - only visits a company currently below the contact-count threshold.
+    </p>
+    <label for="discover-contacts-existing-limit-input" id="discover-contacts-existing-limit-label">
+      Limit to
+      <input type="number" id="discover-contacts-existing-limit-input" min="1" title="Only visit this many companies this run - leave blank to work through every company currently below the contact threshold. Useful for a quick test before committing to a full run." />
+      (blank = all)
+    </label>
+    <div class="action-dialog-actions">
+      <button id="discover-contacts-existing-btn" type="button">Run</button>
+      <button id="stop-discover-contacts-existing-btn" type="button" class="danger-btn" hidden title="Stop the running discovery - contacts found so far are already saved">Stop</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+    <span id="discover-contacts-existing-status" class="status-text"></span>
+  </dialog>
+
+  <dialog id="fetch-size-dialog" class="action-dialog">
+    <h3>Fetch Company Size</h3>
+    <p class="page-subtitle">
+      Visit each company (imported or discovered) currently missing a real employee count on its own LinkedIn
+      page and read it off there - LinkedIn's company-search result cards never show size, only a company's own
+      page does.
+    </p>
+    <label for="fetch-company-size-limit-input" id="fetch-company-size-limit-label">
+      Limit to
+      <input type="number" id="fetch-company-size-limit-input" min="1" title="Only visit this many companies this run - leave blank to work through every company currently missing a size. Useful for a quick test before committing to a full run." />
+      (blank = all)
+    </label>
+    <div class="action-dialog-actions">
+      <button id="fetch-company-size-btn" type="button">Run</button>
+      <button id="stop-fetch-company-size-btn" type="button" class="danger-btn" hidden title="Stop the running fetch - sizes found so far are already saved">Stop</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+    <span id="fetch-company-size-status" class="status-text"></span>
+  </dialog>
+
+  <dialog id="prioritize-companies-dialog" class="action-dialog">
+    <h3>Prioritize Companies</h3>
+    <p class="page-subtitle">
+      Score every eligible company's Priority (P1-P5): imported research is trusted directly when confident,
+      otherwise a free deterministic pre-score (Location/Size/Industry/matched Contacts) runs, optionally
+      refined by an AI Strategic Fit judgment.
+    </p>
+    <label for="prioritize-companies-rescore-checkbox" id="prioritize-companies-rescore-label">
+      <input type="checkbox" id="prioritize-companies-rescore-checkbox" />
+      Rescore already-scored companies too
+    </label>
+    <label for="prioritize-companies-ai-checkbox" id="prioritize-companies-ai-label">
+      <input type="checkbox" id="prioritize-companies-ai-checkbox" />
+      Also run AI Strategic Fit (calls Claude - costs API usage)
+    </label>
+    <label for="prioritize-companies-limit-input" id="prioritize-companies-limit-label">
+      Limit to
+      <input type="number" id="prioritize-companies-limit-input" min="1" title="Only score this many companies this run - leave blank to score every eligible company. Useful for a quick test before committing to a full run." />
+      (blank = all)
+    </label>
+    <div class="action-dialog-actions">
+      <button id="prioritize-companies-btn" type="button">Run</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+    <span id="prioritize-companies-status" class="status-text"></span>
+  </dialog>
 
   <script type="module" src="target-accounts.js"></script>
 </body>

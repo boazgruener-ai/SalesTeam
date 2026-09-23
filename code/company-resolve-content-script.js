@@ -57,6 +57,23 @@
 // company results, and its result card is the exact same DOM shape as the
 // "hero card" the extraction below was built against, so nothing here
 // needed to change once the right page is being searched.
+//
+// Wrapped in an IIFE (2026-09-19, real bug confirmed live via a console
+// error - "Identifier 'POLL_INTERVAL_MS' has already been declared" on a
+// plain https://www.linkedin.com/company/... page visit): Chrome runs
+// every content script belonging to one extension in a single shared
+// per-page execution scope, not one scope per file. This script and
+// company-size-content-script.js are both registered on
+// https://www.linkedin.com/company/* (manifest.json), and both had their
+// own top-level POLL_INTERVAL_MS/POLL_MAX_ATTEMPTS/sleep/normalizeText/run
+// - landing in that same shared scope and colliding, which crashed
+// whichever of the two loaded second. Same fix already applied to
+// company-discovery-content-script.js for the identical collision found
+// 2026-09-15 against THIS file - see its own header comment - that fix
+// only wrapped the discovery script, leaving this one (the older of the
+// two) still exposed to collide with whatever else got added later, which
+// is exactly what happened once company-size-content-script.js shipped.
+(function () {
 
 function normalizeText(text) {
   return (text || "").replace(/\s+/g, " ").trim();
@@ -199,6 +216,9 @@ async function runCompanyPageFallback(expectedName) {
     companyName: expectedName,
     resolved,
     linkedinCompanyId: resolved ? companyId : null,
+    // This path already runs ON the company's own page, so its own url is the link (2026-09-22) -
+    // the same thing applyResolvedCompanyIds needs to fill a missing linkedinLink.
+    companyPageUrl: resolved ? location.href : null,
     debug: resolved ? null : { ...collectDiagnostics({ fallbackPage: true, currentCompanyIdFound: companyId }), caughtError },
   });
 }
@@ -319,7 +339,12 @@ async function run() {
   // The "Acino" gap: a confident name with no id anywhere on THIS page -
   // hand the orchestrator the hero's own company-page href so it can retry
   // there instead of giving up.
-  const companyPageUrl = !resolved && nameConfirmed && heroLink?.href ? heroLink.href : null;
+  // Sent on a SUCCESSFUL resolve too, as of 2026-09-22. It used to be gated on !resolved, since a
+  // retry url is pointless once the id is in hand - but on a confident match this href IS the
+  // company's own LinkedIn page, and accounts imported without a linkedinLink have no other way to
+  // get one (applyResolvedCompanyIds fills a MISSING link from it; it never overwrites). The retry
+  // branch in company-resolve-extraction.js tests `!resolved && companyPageUrl`, so it is unaffected.
+  const companyPageUrl = nameConfirmed && heroLink?.href ? heroLink.href : null;
   console.log(`[SalesTeam] company resolve for "${companyResolveTarget}": hero="${heroName}" id=${companyId} resolved=${resolved}`, caughtError ? `error=${caughtError}` : "");
 
   chrome.runtime.sendMessage({
@@ -354,3 +379,5 @@ run().catch((err) => {
     debug: { caughtError: err?.message || String(err), url: location.href.split("?")[0] },
   }).catch(() => {});
 });
+
+})();

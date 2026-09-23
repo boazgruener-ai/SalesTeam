@@ -7,27 +7,158 @@
   <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
-  <header id="page-header">
-    <h1>SalesTeam Posts Dashboard <span id="version-text"></span></h1>
-    <div id="header-actions">
-      <button id="prioritize-unscored-btn" type="button" title="Score every unscored 'New' lead with the Sales Mentor">Prioritize Unscored Leads</button>
-      <button id="rescore-all-btn" type="button" title="Re-run AI prioritization on every already-scored 'New' lead (manual overrides are skipped)">Re-score All Priorities</button>
-      <button id="extract-companies-btn" type="button" title="Auto-extract a company name for every Post lead that doesn't have one yet">Extract Companies</button>
-      <button id="extract-companies-profiles-btn" type="button" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
-      <button id="apply-location-filter-btn" type="button" title="Re-check every existing lead against the Location Filter configured in Settings, right now, without a new scan">Apply Location Filter</button>
-      <button id="people-search-compare-btn" type="button" title="Experimental: for Post leads with a known author, look them up by name in LinkedIn People Search (filtered to Switzerland) and compare the result against their existing company/location - does not overwrite existing data, for evaluating this method's accuracy">Compare via People Search…</button>
-      <button id="export-csv-all-btn" type="button" title="Download every lead as a CSV file">Export All (CSV)</button>
-      <button id="export-csv-filtered-btn" type="button" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
-      <span id="prioritize-status" class="status-text"></span>
-      <span id="rescore-all-status" class="status-text"></span>
-      <span id="extract-companies-status" class="status-text"></span>
-      <span id="extract-companies-profiles-status" class="status-text"></span>
-      <span id="apply-location-filter-status" class="status-text"></span>
-      <span id="people-search-compare-status" class="status-text"></span>
-    </div>
-  </header>
+  <!-- PRD 6.20 Phase 10 (2026-09-18) - left-nav shell, same shape as
+       target-accounts.html's own (id="app-shell"/"app-nav"/"app-main"). None
+       of these 8 actions need a parameter dialog (no checkbox/limit-input
+       ever sat next to any of them) - each just becomes a plain nav item,
+       same ids, same click-handler wiring in dashboard.js untouched. -->
+  <div id="app-shell">
+    <nav id="app-nav">
+      <div id="app-nav-brand">
+        <div id="app-nav-brand-name" title="Return to this page's own content">SalesTeam</div>
+        <span id="version-text"></span>
+        <button type="button" id="nav-collapse-btn" title="Collapse the menu">«</button>
+      </div>
 
-  <main id="list-view">
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19) - see target-accounts.html's
+           own copy of this comment for the full reasoning (this nav IS the
+           full cross-app menu now, on every page; no separate "Home"
+           destination; Target Accounts/Target Contacts split into two
+           groups, matching the exact split/labels on target-accounts.html
+           itself; every item embeds in place, nothing opens a new tab any
+           more, and "Pipeline Overview" was removed entirely). -->
+      <!-- 14th round of direct feedback (2026-09-19): "the main menu
+           changes its order and puts [the current page] first. It should
+           not do that. The menus should always keep its order of sub-
+           menus" - every page's own group used to be moved to the front of
+           its own markup (open/current), which meant the REST of the list
+           reshuffled depending on which page you were on. Reordered to a
+           single fixed order, identical across all 4 pages (Target
+           Accounts, Target Contacts, Posts Dashboard, Scanner, Settings,
+           Debug last) - only which group carries `open`/is the current
+           page changes now, never their relative order. -->
+      <!-- 23rd round of direct feedback (2026-09-19): "If I have a sub-menu
+           open, it must show all entries, not only 1... it should do what I
+           meant it to do, even if my main central tab is pointing to a
+           completely different sub-menu." Every group now duplicates the
+           SAME real items target-accounts.html's own copy has (not just a
+           single "open this page" button) - each links to
+           target-accounts.html with "#action=X", auto-triggered on load
+           (target-accounts.js's own openActionFromHash()). "Import/Export
+           Target Accounts…" deliberately left out here: Import opens a
+           native OS file picker, which browsers only allow inside a real,
+           synchronous user click - it can't be auto-triggered after an
+           async embed loads; Export is hidden by default on the real page
+           too (shown only once relevant), so duplicating it here would
+           always be visually dead anyway. -->
+      <details class="nav-group">
+        <summary class="nav-group-label">Target Accounts Dashboard</summary>
+        <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
+        <button id="nav-import-target-accounts-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
+        <button id="nav-restore-accounts-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="nav-hubspot-export-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
+        <button id="nav-hubspot-import-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Target Contacts Dashboard</summary>
+        <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
+        <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
+      </details>
+
+      <!-- 11th round of direct feedback (2026-09-19): the Scoring/
+           Enrichment/Export sub-division below was a deliberate, explicit
+           choice back in round 5 (kept here specifically because Posts
+           Dashboard had "enough items to benefit from it," while Target
+           Accounts/Target Contacts lost theirs for being small groups) -
+           reported directly now, that choice reads as "these older version
+           of sections... we no longer have in the menu of Target Accounts
+           and Target Contacts." Flattened to match, same 8 items, no
+           sub-labels. -->
+      <details class="nav-group" open>
+        <summary class="nav-group-label">Posts Dashboard</summary>
+        <!-- 20th round of direct feedback (2026-09-19): "the Posts sub-
+             menu is missing the 1st entry... 'Posts Dashboard', so there
+             is no way to reach it from the menu" - target-accounts.html's
+             own "Target Accounts Dashboard" group has its own self item
+             first (id="tab-accounts", "Target Accounts") - this group
+             never got the equivalent, so there was no findable way back
+             to Posts Dashboard's own real content once something else got
+             embedded over it (only the brand-name click, not obvious). -->
+        <button id="open-posts-dashboard-self-btn" type="button" class="nav-item active" title="Return to Posts Dashboard">Posts Dashboard</button>
+        <button id="export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
+        <button id="export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 7th round - see
+           scanner.html's own copy of this comment for the full reasoning
+           (anchor-jumping to a Scanner section mostly landed in the wrong
+           place, and Run Scan/Results didn't visibly do anything since
+           both sit in the always-visible right column there - replaced
+           with real functionality instead of navigation: Export/Import
+           Settings and Leads work directly from here, no need to open
+           Scanner at all). -->
+      <details class="nav-group">
+        <summary class="nav-group-label">Scanner</summary>
+        <button id="open-scanner-page-btn" type="button" class="nav-item" title="Configure Topics and run a new LinkedIn scan">Open Scanner</button>
+      </details>
+
+      <details class="nav-group">
+        <summary class="nav-group-label">Settings</summary>
+        <button id="open-settings-setup-btn" type="button" class="nav-item" title="Open Settings - Onboarding Setup">Onboarding Setup</button>
+        <button id="open-settings-change-btn" type="button" class="nav-item" title="Change one of your settings (location, size, industry, what you sell...) without going through the setup steps">Change Settings</button>
+        <button id="open-settings-profile-btn" type="button" class="nav-item" title="Open Settings - User Profile">User Profile</button>
+        <button id="open-settings-language-btn" type="button" class="nav-item" title="Open Settings - Message / Response Language">Message / Response Language</button>
+        <button id="open-settings-apikey-btn" type="button" class="nav-item" title="Open Settings - Anthropic API Key">Anthropic API Key</button>
+        <button id="open-settings-backup-btn" type="button" class="nav-item" title="Open Settings - Backup">Backup</button>
+        <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
+        <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Billing</button>
+      </details>
+
+      <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
+           target-accounts.html's own copy of this comment for the full
+           reasoning (nothing in this nav opens a new tab any more;
+           "Pipeline Overview" removed entirely). -->
+      <!-- 8th round of direct feedback (2026-09-19): "MORE is also in
+           grey. What is this? ... You can remove it" - these 3 sit at the
+           same level as a group header, styled to match (.nav-item-top),
+           no label needed above them. -->
+      <div class="nav-group">
+        <button id="open-advisors-btn" type="button" class="nav-item nav-item-top" title="Sales Mentor and Customer Voice chats">Advisors</button>
+        <button id="open-activity-log-btn" type="button" class="nav-item nav-item-top" title="Every user and extension action, with old/new values and errors">Activity Log</button>
+        <button id="open-help-btn" type="button" class="nav-item nav-item-top" title="Common questions and how-tos">Help</button>
+      </div>
+
+      <details class="nav-group nav-group-debug">
+        <summary class="nav-group-label">Advanced tools</summary>
+        <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
+        <button id="apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
+        <button id="nav-resolve-target-accounts-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
+        <button id="nav-fetch-size-target-accounts-btn" type="button" class="nav-item" title="Visit each company currently missing a real employee count on its own LinkedIn page and read it off there">Fetch Company Size…</button>
+        <button id="prioritize-unscored-btn" type="button" class="nav-item" title="Score every unscored 'New' lead with the Sales Mentor">Prioritize Unscored Leads</button>
+        <button id="rescore-all-btn" type="button" class="nav-item" title="Re-run AI prioritization on every already-scored 'New' lead (manual overrides are skipped)">Re-score All Priorities</button>
+        <button id="extract-companies-btn" type="button" class="nav-item" title="Auto-extract a company name for every Post lead that doesn't have one yet">Extract Companies</button>
+        <button id="extract-companies-profiles-btn" type="button" class="nav-item" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
+        <button id="nav-prioritize-target-accounts-btn" type="button" class="nav-item" title="Score every eligible company's Priority (P1-P5)">Prioritize Companies…</button>
+        <button id="open-debug-queue-btn" type="button" class="nav-item" title="Support use only">Discovery Queue (support)</button>
+        <button id="open-debug-company-btn" type="button" class="nav-item" title="Support use only">Company Discovery (support)</button>
+        <button id="open-debug-contact-btn" type="button" class="nav-item" title="Support use only">Contact Discovery (support)</button>
+      </details>
+    </nav>
+
+    <main id="app-main">
+      <div id="page-native-content">
+      <div id="page-header-bar">
+        <h1>SalesTeam Posts Dashboard</h1>
+        <span id="prioritize-status" class="status-text"></span>
+        <span id="rescore-all-status" class="status-text"></span>
+        <span id="extract-companies-status" class="status-text"></span>
+        <span id="extract-companies-profiles-status" class="status-text"></span>
+        <span id="apply-location-filter-status" class="status-text"></span>
+        <span id="export-status" class="status-text"></span>
+      </div>
+
+  <div id="list-view">
     <section id="stats-section">
       <div class="pie-card">
         <h2>Last 7 days</h2>
@@ -40,6 +171,18 @@
       <div class="pie-card">
         <h2>All time</h2>
         <div class="pie-wrap" id="pie-all"></div>
+      </div>
+      <div class="pie-card">
+        <h2>Priority</h2>
+        <div class="pie-wrap" id="pie-priority"></div>
+      </div>
+      <div class="pie-card">
+        <h2>Status</h2>
+        <div class="pie-wrap" id="pie-status-all"></div>
+      </div>
+      <div class="pie-card">
+        <h2>Source</h2>
+        <div class="pie-wrap" id="pie-source"></div>
       </div>
     </section>
 
@@ -62,6 +205,23 @@
       </label>
       <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
     </section>
+
+    <!-- 15th round of direct feedback (2026-09-19), reverted same day per
+         direct follow-up feedback: a genuinely separate, non-scrolling
+         Actions table was built to guarantee no overlap with real data
+         (see PRD/plan history for that attempt), but it introduced a
+         visible seam/border that "doesn't look good" compared to Target
+         Accounts/Contacts' single-table sticky-column look - reverted back
+         to the sticky last-column approach (same as those 2 tables) plus
+         narrower default column widths (below) so any overlap while
+         actively scrolling covers much less area.
+         18th round of direct feedback (2026-09-19): "only in Posts, there
+         is no Scroll slide at the top of the table (only at the bottom)" -
+         target-accounts.html's own #table-scroll-top/#table-scroll-top-
+         filler (a thin mirrored scrollbar above the table, synced to
+         #table-wrap's real one via scroll listeners in JS) was never added
+         here. Added, same mechanism, same ids' shape (results- prefix). -->
+    <div id="table-scroll-top"><div id="table-scroll-top-filler"></div></div>
 
     <section id="table-section">
       <table id="results-table">
@@ -91,7 +251,7 @@
       </div>
       <button id="open-bulk-change-btn" type="button" title="Change the status of every currently-filtered lead at once">Bulk Change…</button>
     </section>
-  </main>
+  </div>
 
   <dialog id="bulk-change-dialog">
     <button id="bulk-close-x-btn" type="button" aria-label="Close" title="Close">✕</button>
@@ -140,7 +300,7 @@
     </div>
   </dialog>
 
-  <main id="detail-view" hidden>
+  <div id="detail-view" hidden>
     <a href="#" id="back-to-list-link">&larr; Back to all leads</a>
 
     <section id="detail-header-section">
@@ -161,6 +321,8 @@
           <option value="5">P5</option>
         </select>
       </label>
+      <button id="detail-save-btn" type="button" class="edit-save-btn" disabled>Save changes</button>
+      <span id="detail-save-status" class="status-text"></span>
     </section>
 
     <section id="detail-content-section">
@@ -174,6 +336,15 @@
       <div class="draft-controls">
         <select id="detail-template-select"></select>
         <button id="detail-draft-btn" type="button" title="Generate an AI draft message for this lead">Draft Message</button>
+        <button id="detail-edit-templates-btn" type="button" class="text-link-btn-neutral" title="Edit the drafting instructions behind each template - shared across every lead, not just this one">Edit templates</button>
+      </div>
+      <div id="detail-templates-editor" hidden>
+        <p class="field-hint">
+          Auto-picked per lead based on connection status, or choose manually above. These instructions are
+          shared across every lead - editing one here changes it everywhere it's used, including the Sales
+          Mentor's own drafting tool.
+        </p>
+        <div id="detail-templates-list"></div>
       </div>
       <textarea id="detail-draft-textarea" placeholder="Click “Draft Message” to generate a suggested opening message."></textarea>
       <div class="draft-actions">
@@ -198,7 +369,18 @@
         <button id="detail-mentor-send-btn" class="agent-send-btn" type="button" title="Send your message to the Sales Mentor">Send</button>
       </div>
     </section>
-  </main>
+  </div>
+      </div>
+
+      <div id="embedded-page-wrap" hidden>
+        <div id="embedded-page-bar">
+          <button type="button" id="embedded-page-close-btn" title="Close and return to this page">← Back</button>
+          <span id="embedded-page-title"></span>
+        </div>
+        <iframe id="embedded-page-frame" title="Embedded page"></iframe>
+      </div>
+    </main>
+  </div>
 
   <script type="module" src="dashboard.js"></script>
 </body>
