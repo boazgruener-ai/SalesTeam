@@ -1023,3 +1023,15 @@ section {
 }
 
 .results-stats { margin: 4px 0 10px; font-size: 12px; color: #444; }
+
+/* Same fix as target-accounts.css: .action-dialog-actions button:first-child paints the primary
+   button blue unconditionally, so a DISABLED one still looks fully pressable and invites a second
+   press that does nothing. */
+.action-dialog-actions button:first-child:disabled,
+.action-dialog-actions button:first-child:disabled:hover {
+  background: #c7d0d8;
+  border-color: #c7d0d8;
+  color: #6b7785;
+  font-weight: 500;
+  cursor: not-allowed;
+}

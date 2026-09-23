@@ -1863,3 +1863,139 @@ thead .actions-col {
 .bulk-research-group legend { font-weight: 600; padding: 0 4px; }
 .bulk-research-group label { display: inline-flex; gap: 4px; align-items: center; }
 .bulk-research-group .bulk-research-wide { flex-basis: 100%; }
+
+/* Finishing an automatic resolve, reported directly: "I pressed the blue button again, as I thought
+   it did not work."  Three separate things were wrong, and all three were about the dialog not
+   looking like it had done anything.
+
+   1. A DISABLED primary button still looked fully pressable: .action-dialog-actions
+      button:first-child paints it blue unconditionally, with no :disabled override. */
+.action-dialog-actions button:first-child:disabled,
+.action-dialog-actions button:first-child:disabled:hover {
+  background: #c7d0d8;
+  border-color: #c7d0d8;
+  color: #6b7785;
+  font-weight: 500;
+  cursor: not-allowed;
+}
+
+/* 2. After the write, the status line is the only thing that says what happened - as muted body
+      text it was missed entirely. */
+.action-dialog .status-text.status-text-done {
+  color: #1e6b2e;
+  font-weight: 600;
+  background: #eaf4ec;
+  border: 1px solid #bcdcc4;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* 3. "Close" is a borderless grey word, which reads as "do not press me" - so once the work is
+      done it becomes a real, obviously-pressable "Done". */
+.action-dialog-actions .action-dialog-close-btn.action-dialog-done-btn {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+  font-weight: 600;
+}
+
+.action-dialog-actions .action-dialog-close-btn.action-dialog-done-btn:hover {
+  background: #084d94;
+}
+
+/* The "N to review" pill is the way into the review dialog, so it has to look like something you
+   press - otherwise it reads as a status badge and the user goes hunting for a button instead. */
+.priority-pill.findings-review-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.priority-pill.findings-review-link:hover {
+  filter: brightness(0.94);
+}
+
+/* Read-only context in the Review findings dialog: the rest of what the same research run said, so
+   a single disputed number is not decided in a vacuum. Muted, because it is not actionable. */
+.web-research-context-table td {
+  color: var(--gray);
+}
+
+/* "Use all the web values" / "Keep all current values" - the two answers that keep a record
+   internally consistent, offered above the per-row ticks rather than instead of them. */
+#web-research-apply-bulk {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+#web-research-apply-bulk button {
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+#web-research-apply-bulk button:hover {
+  background: #f2f5f8;
+}
+
+#web-research-apply-scale-hint {
+  background: #fff8e6;
+  border: 1px solid #f0dcae;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* "Your own data looks wrong here, which is why this is being asked" - the one sentence that makes
+   an otherwise undecidable review decidable, so it is not muted. */
+#web-research-apply-problem {
+  background: #fdeeee;
+  border: 1px solid #f0c4c4;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #8a2b2b;
+}
+
+/* The research's own briefing and sources, inside the review dialog. Long, so it is collapsed and
+   scrolls rather than pushing the buttons off screen. */
+#web-research-apply-briefing {
+  margin: 10px 0;
+}
+
+#web-research-apply-briefing-summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--blue);
+}
+
+#web-research-apply-briefing-text {
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.web-research-apply-sources {
+  max-height: 140px;
+  overflow-y: auto;
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+/* A finding that has already been settled, shown so the decision can be taken back. Muted, because
+   it is not asking anything - a pre-ticked box was being read as a recommendation. */
+.web-research-apply-table tr.finding-row-settled td:first-child {
+  color: var(--gray);
+  font-style: italic;
+}
+
+/* What the stored figure claims for itself, under it in the Current column. Small, because it is
+   evidence rather than a value. */
+.finding-provenance {
+  font-size: 11px;
+  color: var(--gray);
+  margin-top: 2px;
+}

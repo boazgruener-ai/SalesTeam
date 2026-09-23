@@ -514,17 +514,38 @@
   </dialog>
 
   <dialog id="web-research-apply-dialog" class="action-dialog">
-    <h3>Findings from the web research</h3>
+    <h3 id="web-research-apply-title">Findings from the web research</h3>
     <p class="page-subtitle">
-      <strong>Use it</strong> - save the value found on the web onto this account.<br />
-      <strong>Keep mine</strong> - keep your own value, and stop this finding being counted.
+      <strong>Use Web Findings</strong> - save the value found on the web onto this account.<br />
+      <strong>Keep Current</strong> - keep the value the account already has, and stop this finding being counted.
     </p>
     <p class="page-subtitle">
-      Tick one or the other on each row, then Save. Empty fields are ticked for you; where your value differs,
-      nothing is ticked - your data is only replaced if you tick it. Web findings are not verified, so check the
-      sources if a value looks wrong.
+      Tick one or the other on each row, then Save. Empty fields are ticked for you; where the current value
+      differs, nothing is ticked - current data is only replaced if you tick it. Web findings are not verified,
+      so check the sources if a value looks wrong.
     </p>
+    <p id="web-research-apply-problem" class="field-hint" hidden></p>
+    <p id="web-research-apply-scale-hint" class="field-hint" hidden></p>
+    <!-- Deciding field by field is what lets a record end up describing no real company: the parent
+         group's employee count next to the subsidiary's revenue. These two take the whole set one
+         way or the other, which is almost always the right shape of answer. -->
+    <div id="web-research-apply-bulk">
+      <button type="button" id="web-research-apply-all-web">Use all the web findings</button>
+      <button type="button" id="web-research-apply-all-mine">Keep all current values</button>
+    </div>
     <table id="web-research-apply-table" class="web-research-apply-table"></table>
+    <p id="web-research-apply-stored-source" class="field-hint" hidden></p>
+    <div id="web-research-apply-context"></div>
+    <!-- The research's own words and its own sources. Without them the user was comparing a number
+         against a number: the briefing very often explains the discrepancy outright (full-time
+         against total headcount, group against subsidiary), and the source list is the only way to
+         judge how much the finding is worth. -->
+    <details id="web-research-apply-briefing" hidden>
+      <summary id="web-research-apply-briefing-summary"></summary>
+      <p id="web-research-apply-briefing-text" class="field-hint"></p>
+      <p id="web-research-apply-sources-label" class="field-hint"></p>
+      <ul id="web-research-apply-sources" class="web-research-apply-sources"></ul>
+    </details>
     <p id="web-research-apply-status" class="page-subtitle" role="status"></p>
     <div class="action-dialog-actions">
       <button id="web-research-apply-confirm-btn" type="button">Save these choices</button>
@@ -559,7 +580,7 @@
     <div class="action-dialog-actions">
       <button id="auto-findings-run-btn" type="button" title="Writes every decision in the table above at once. This is not a review screen - the findings left for you are reached from the Web Findings column.">Write all these decisions now</button>
       <button id="auto-findings-undo-btn" type="button" class="text-link-btn" hidden></button>
-      <button type="button" class="action-dialog-close-btn">Close</button>
+      <button id="auto-findings-close-btn" type="button" class="action-dialog-close-btn">Close</button>
     </div>
   </dialog>
 

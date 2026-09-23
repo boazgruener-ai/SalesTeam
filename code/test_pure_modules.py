@@ -200,13 +200,15 @@ def test_arbitration(ctx):
     check("empty field takes the web value", ctx.eval("empty.action"), "apply")
     check("empty field is rule 1", ctx.eval("empty.rule"), 1)
 
-    # Rule 2: 0 employees at a company that has revenue.
+    # Rule 2: 0 employees at a company that has revenue. The found value is the implausible one and
+    # the account holds a sound 4,000, so this is discarded rather than put to the user - asking
+    # about a value that is plainly junk wastes the attention the whole mechanism exists to save.
     ctx.eval("""
       var zero = arbitrateFinding(
         { key: "globalEmployees", label: "Employees (global)", found: 0, current: 4000, state: "different" },
         ctxFor({ hasRevenue: true }), {});
     """)
-    check("zero employees with revenue is asked", ctx.eval("zero.action"), "review")
+    check("an implausible found value is discarded, not escalated", ctx.eval("zero.action"), "dismiss")
     check("zero employees is rule 2", ctx.eval("zero.rule"), 2)
 
     # THE ONE INVARIANT THAT MUST HOLD WHATEVER THE SETTINGS SAY: a found value that fails the
@@ -372,6 +374,422 @@ def test_currency_follows_global_only(ctx):
     )
 
 
+def test_implausible_briefing_is_discarded(ctx):
+    """CSL Vifor, from the real data: a briefing reporting 2,600 employees AND 2,234 of revenue.
+
+    Under 1 of revenue per employee per year - incoherent on its own terms. Neither field should
+    reach the user: there is nothing to decide when the incoming value is junk and the stored one
+    is sound.
+    """
+    ctx.eval("""
+      var vifor = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 2600, current: 29904, state: "different" },
+          { key: "globalRevenue", label: "Revenue (global)", found: 2234, current: 2234000000, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 29904, globalRevenue: 2234000000 } }),
+        settings: {},
+      });
+      var emp = vifor.decisions.find((d) => d.proposal.key === "globalEmployees");
+      var rev = vifor.decisions.find((d) => d.proposal.key === "globalRevenue");
+    """)
+    check("the implausible revenue is discarded, not escalated", ctx.eval("rev.action"), "dismiss")
+    check("...by rule 2", ctx.eval("rev.rule"), 2)
+    check("the employee count in the same briefing goes too", ctx.eval("emp.action"), "dismiss")
+    check("...also by rule 2", ctx.eval("emp.rule"), 2)
+    check(
+        "nothing from this briefing reaches the user",
+        ctx.eval("vifor.decisions.filter((d) => d.action === 'review').length"),
+        0,
+    )
+
+    # Rule 8: the rest of the same briefing goes too, including a finding that would otherwise have
+    # been put to the user on its own merits (the HQ country moves the location priority).
+    ctx.eval("""
+      var whole = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 2600, current: 29904, state: "different" },
+          { key: "globalRevenue", label: "Revenue (global)", found: 2234, current: 2234000000, state: "different" },
+          { key: "globalHqCountry", label: "Headquarters country", found: "Germany", current: "Switzerland", state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 29904, globalRevenue: 2234000000 } }),
+        settings: {},
+      });
+      var hq = whole.decisions.find((d) => d.proposal.key === "globalHqCountry");
+    """)
+    check("the rest of the briefing is discarded too", ctx.eval("hq.action"), "dismiss")
+    check("...attributed to rule 8", ctx.eval("hq.rule"), 8)
+    check(
+        "so the whole account needs no attention at all",
+        ctx.eval("whole.decisions.filter((d) => d.action === 'review').length"),
+        0,
+    )
+
+    # With rule 8 off, that same finding is judged on its own merits again.
+    ctx.eval("""
+      var perField = arbitrateAccount({
+        proposals: [
+          { key: "globalRevenue", label: "Revenue (global)", found: 2234, current: 2234000000, state: "different" },
+          { key: "globalHqCountry", label: "Headquarters country", found: "Germany", current: "Switzerland", state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 29904, globalRevenue: 2234000000 } }),
+        settings: { rule8DiscardWholeBriefing: false },
+      });
+      var hq2 = perField.decisions.find((d) => d.proposal.key === "globalHqCountry");
+    """)
+    check("switching rule 8 off restores per-field judgement", ctx.eval("hq2.action"), "review")
+
+    # But when the STORED value is the questionable one, a human is still needed - that is the case
+    # where keeping what you have is not obviously right.
+    ctx.eval("""
+      var storedBad = arbitrateFinding(
+        { key: "globalEmployees", label: "E", found: 4000, current: 0, state: "different" },
+        ctxFor({ hasRevenue: true, effective: { globalEmployees: 0, globalRevenue: 5000000 } }),
+        {});
+    """)
+    check("an implausible STORED value still asks", ctx.eval("storedBad.action"), "review")
+    check("...by rule 2", ctx.eval("storedBad.rule"), 2)
+
+
+def test_employee_contradiction_does_not_taint_other_fields(ctx):
+    """An account whose stored local headcount exceeds its global one had EVERY finding escalated.
+
+    The cross-field check sat outside the employee guard, so a contradiction about headcount marked
+    a city, a registry field or a currency as "your current value looks wrong" and rule 2 sent them
+    all to the user.
+    """
+    ctx.eval("""
+      var contradicted = ctxFor({ effective: { globalEmployees: 500, swissEmployees: 900 } });
+      var city = arbitrateFinding(
+        { key: "globalHqCity", label: "Headquarters city", found: "Zug", current: "Zurich", state: "different" },
+        contradicted, {});
+      var emp = arbitrateFinding(
+        { key: "globalEmployees", label: "Employees (global)", found: 520, current: 500, state: "different" },
+        contradicted, {});
+    """)
+    check("an unrelated field is decided, not escalated", ctx.eval("city.action"), "dismiss")
+    check("...by the non-scoring rule, not the illogical one", ctx.eval("city.rule"), 3)
+    check("the employee field itself still sees the contradiction", ctx.eval("emp.action"), "review")
+    check("...via rule 2", ctx.eval("emp.rule"), 2)
+
+
+def test_currency_is_never_put_to_the_user(ctx):
+    """Asking someone to choose a currency code in isolation is a question with no meaning."""
+    ctx.eval("""
+      // A stored revenue of 115 against 29,904 employees is implausible, so the AMOUNT is escalated.
+      var res = arbitrateAccount({
+        proposals: [
+          { key: "globalRevenue", label: "Revenue (global)", found: 400000000, current: 115, state: "different" },
+          { key: "revenueCurrency", label: "Revenue currency", found: "CHF", current: "USD", state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 29904, globalRevenue: 115 } }),
+        settings: {},
+      });
+      var amount = res.decisions.find((d) => d.proposal.key === "globalRevenue");
+      var currency = res.decisions.find((d) => d.proposal.key === "revenueCurrency");
+    """)
+    check("the implausible stored amount is still escalated", ctx.eval("amount.action"), "review")
+    check("but the currency never is", ctx.eval("currency.action"), "dismiss")
+
+
+def test_converted_comparison_is_judged_more_loosely(ctx):
+    """MCH Group: 435,700,000 CHF stored as 480,000,000 USD - the same money at a rate of 1.102.
+
+    At the default table's 1.25 they are 11.9% apart, which under the same-currency threshold made
+    a finding out of an exchange-rate estimate. The implied rate across this dataset spans 1.10 to
+    1.35, so the rate's own error exceeds the tight threshold and has to be allowed for.
+    """
+    ctx.eval("""
+      var money = { targetCurrency: "USD", rates: DEFAULT_EXCHANGE_RATES };
+      var mch = { globalRevenue: 480000000, revenueCurrency: "USD" };
+      var mchFound = { revenueGlobal: 435700000, revenueCurrency: "CHF" };
+      var mchProps = computeFindingProposals(mch, {}, mchFound, money).filter((p) => p.key === "globalRevenue");
+    """)
+    check("an exchange-rate artefact is not a finding", ctx.eval("mchProps.length"), 0)
+
+    # A genuine cross-currency difference still surfaces: 200m CHF is 250m USD, less than half of
+    # 600m USD, and no plausible rate closes that.
+    ctx.eval("""
+      var real = computeFindingProposals(
+        { globalRevenue: 600000000, revenueCurrency: "USD" }, {},
+        { revenueGlobal: 200000000, revenueCurrency: "CHF" }, money
+      ).filter((p) => p.key === "globalRevenue");
+    """)
+    check("a real cross-currency difference still surfaces", ctx.eval("real.length"), 1)
+
+    # And within one currency the tight threshold still applies - 15% apart is still a finding.
+    ctx.eval("""
+      var sameCcy = computeFindingProposals(
+        { globalRevenue: 1000000, revenueCurrency: "USD" }, {},
+        { revenueGlobal: 1176000, revenueCurrency: "USD" }, money
+      ).filter((p) => p.key === "globalRevenue");
+    """)
+    check("same-currency comparisons keep the tight threshold", ctx.eval("sameCcy.length"), 1)
+
+
+def test_rule9_global_is_a_copy_of_local(ctx):
+    """Rhenus Alpina, from the real data.
+
+    Stored worldwide employees 1,550 and stored LOCAL employees 1,550; stored worldwide revenue
+    454,000,000 and stored local revenue 454,000,000 - both worldwide fields are just copies. The
+    research matched BOTH local figures exactly, which proves it is describing the same company, and
+    reported genuinely larger worldwide ones. So the worldwide figures are taken.
+    """
+    ctx.eval("""
+      var rhenusStored = { globalEmployees: 1550, swissEmployees: 1550, globalRevenue: 454000000, swissRevenue: 454000000 };
+      var rhenusData = { employeesGlobal: 39000, employeesLocal: 1550, revenueGlobal: 8200000000, revenueLocal: 454000000 };
+      var rhenus = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 39000, current: 1550, state: "different" },
+          { key: "globalRevenue", label: "Revenue (global)", found: 8200000000, current: 454000000, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: rhenusStored }),
+        settings: {},
+        data: rhenusData,
+      });
+      var rEmp = rhenus.decisions.find((d) => d.proposal.key === "globalEmployees");
+      var rRev = rhenus.decisions.find((d) => d.proposal.key === "globalRevenue");
+    """)
+    check("the worldwide employee count is taken", ctx.eval("rEmp.action"), "apply")
+    check("...by rule 9", ctx.eval("rEmp.rule"), 9)
+    check("the worldwide revenue is taken too", ctx.eval("rRev.action"), "apply")
+    check("...also by rule 9", ctx.eval("rRev.rule"), 9)
+    check("and it is written into the patch", ctx.eval("rhenus.patch.overrides.globalEmployees"), 39000)
+
+    # GUARD 1 - a purely domestic company. Its worldwide figure legitimately equals its local one,
+    # and the research says so too, so there is nothing to take. This is what keeps a cantonal bank
+    # safe from a rule designed for multinationals.
+    ctx.eval("""
+      var domestic = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 950, current: 900, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ effective: { globalEmployees: 900, swissEmployees: 900 } }),
+        settings: {},
+        data: { employeesGlobal: 950, employeesLocal: 900 },
+      });
+      var dEmp = domestic.decisions[0];
+    """)
+    check("a domestic company is left alone", ctx.eval("dEmp.action != 'apply'"), True)
+
+    # GUARD 2 - the research does NOT match the stored local figure, so it is not corroborated as
+    # the same company and nothing is taken on its word.
+    ctx.eval("""
+      var uncorroborated = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 39000, current: 1550, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ effective: { globalEmployees: 1550, swissEmployees: 1550 } }),
+        settings: {},
+        data: { employeesGlobal: 39000, employeesLocal: 2400 },
+      });
+      var uEmp = uncorroborated.decisions[0];
+    """)
+    check("an uncorroborated briefing is not applied", ctx.eval("uEmp.action != 'apply'"), True)
+
+    # GUARD 3 - the stored worldwide figure is genuinely its own value, not a copy of the local one.
+    ctx.eval("""
+      var populated = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 39000, current: 20000, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ effective: { globalEmployees: 20000, swissEmployees: 1550 } }),
+        settings: {},
+        data: { employeesGlobal: 39000, employeesLocal: 1550 },
+      });
+      var pEmp = populated.decisions[0];
+    """)
+    check("a real stored worldwide figure is not overwritten", ctx.eval("pEmp.action != 'apply'"), True)
+
+    # GUARD 4 - rule 8 outranks rule 9: one impossible number in the briefing and nothing is taken
+    # from any of it, however well the rest corroborates.
+    ctx.eval("""
+      var poisoned = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 39000, current: 1550, state: "different" },
+          { key: "globalRevenue", label: "Revenue (global)", found: 12, current: 454000000, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 1550, swissEmployees: 1550, globalRevenue: 454000000, swissRevenue: 454000000 } }),
+        settings: {},
+        data: { employeesGlobal: 39000, employeesLocal: 1550, revenueGlobal: 12, revenueLocal: 454000000 },
+      });
+    """)
+    check(
+        "an implausible briefing overrides rule 9 entirely",
+        ctx.eval("poisoned.decisions.every((d) => d.action !== 'apply')"),
+        True,
+    )
+
+    # And with rule 9 switched off, the Rhenus case goes back to being the user's problem.
+    ctx.eval("""
+      var off = arbitrateAccount({
+        proposals: [
+          { key: "globalEmployees", label: "Employees (global)", found: 39000, current: 1550, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ effective: { globalEmployees: 1550, swissEmployees: 1550 } }),
+        settings: { rule9TakeGlobalOverCopiedLocal: false },
+        data: { employeesGlobal: 39000, employeesLocal: 1550 },
+      });
+    """)
+    check("switching rule 9 off restores the old behaviour", ctx.eval("off.decisions[0].action != 'apply'"), True)
+
+    # THE INVARIANT AT THE ACCOUNT LEVEL. The 512-combination sweep earlier covers arbitrateFinding,
+    # one finding at a time - but rules 8 and 9 act on the whole account AFTER those decisions, and
+    # that is precisely where rule 9 was found overruling rule 2 and writing a rejected value. Sweep
+    # the account-level rules too.
+    ctx.eval("""
+      var leaked = [];
+      var accountCombos = 0;
+      for (const r2 of [true, false]) for (const r8 of [true, false])
+      for (const r9 of [true, false]) for (const r10 of [true, false]) for (const r11 of [true, false])
+      for (const pref of ["existing", "web"]) {
+        accountCombos++;
+        const out = arbitrateAccount({
+          proposals: [
+            { key: "globalEmployees", label: "E", found: 39000, current: 1550, state: "different" },
+            { key: "globalRevenue", label: "R", found: 12, current: 454000000, state: "different" },
+          ],
+          extra: { overrides: {} },
+          ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 1550, swissEmployees: 1550, globalRevenue: 454000000, swissRevenue: 454000000 } }),
+          settings: { rule2IllogicalReview: r2, rule8DiscardWholeBriefing: r8, rule9TakeGlobalOverCopiedLocal: r9, rule10PreferWebOverWeakEvidence: r10, rule11KeepGroupHqOverLocalEntity: r11, sourcePreference: pref },
+          data: { employeesGlobal: 39000, employeesLocal: 1550, revenueGlobal: 12, revenueLocal: 454000000 },
+        });
+        const bad = out.decisions.find((d) => d.proposal.key === "globalRevenue" && d.action === "apply");
+        if (bad) leaked.push(JSON.stringify({ r2: r2, r8: r8, r9: r9, r10: r10, r11: r11, pref: pref }));
+      }
+    """)
+    check(
+        "the impossible revenue is never written, under any account-level combination",
+        ctx.eval("leaked.length"),
+        0,
+    )
+    check("the account-level sweep really ran", ctx.eval("accountCombos"), 64)
+
+
+def test_rule10_weakly_sourced_current_value(ctx):
+    """Medartis Holding: a stored 747 recorded as "External source" against a web finding of 1,200
+    taken from the company's own website. 148 of 277 stored employee counts in this workbook carry
+    that same confidence, so this is a dataset-wide pattern rather than one account.
+    """
+    ctx.eval("""
+      var weak = { globalEmployees: 747, globalEmployeesConfidence: "External source" };
+      var medartis = arbitrateFinding(
+        { key: "globalEmployees", label: "Employees (global)", found: 1200, current: 747, state: "different" },
+        ctxFor({ effective: weak }), {});
+      var viaAccount = arbitrateAccount({
+        proposals: [{ key: "globalEmployees", label: "E", found: 1200, current: 747, state: "different" }],
+        extra: { overrides: {} }, ctx: ctxFor({ effective: weak }), settings: {},
+        data: { employeesGlobal: 1200 },
+      }).decisions[0];
+    """)
+    check("on its own the band change is still a question", ctx.eval("medartis.action"), "review")
+    check("but the account-level rule answers it", ctx.eval("viaAccount.action"), "apply")
+    check("...by rule 10", ctx.eval("viaAccount.rule"), 10)
+
+    # A properly evidenced current value still goes to the user.
+    for confidence in ["Reported / official company source",
+                       "External database / S&P Global or company annual report",
+                       "Validated global parent figure; official reporting or S&P Global-backed database"]:
+        ctx.eval("""
+          var strong = arbitrateAccount({
+            proposals: [{ key: "globalEmployees", label: "E", found: 1200, current: 747, state: "different" }],
+            extra: { overrides: {} },
+            ctx: ctxFor({ effective: { globalEmployees: 747, globalEmployeesConfidence: %r } }),
+            settings: {}, data: { employeesGlobal: 1200 },
+          }).decisions[0];
+        """ % confidence)
+        check("a well-evidenced current value still asks (%s)" % confidence[:28], ctx.eval("strong.action"), "review")
+
+    # No confidence recorded at all is not evidence of weakness.
+    ctx.eval("""
+      var unknown = arbitrateAccount({
+        proposals: [{ key: "globalEmployees", label: "E", found: 1200, current: 747, state: "different" }],
+        extra: { overrides: {} }, ctx: ctxFor({ effective: { globalEmployees: 747 } }),
+        settings: {}, data: { employeesGlobal: 1200 },
+      }).decisions[0];
+    """)
+    check("an unrecorded provenance still asks", ctx.eval("unknown.action"), "review")
+
+    # And an implausible web finding is never taken, however weak the current value's evidence.
+    ctx.eval("""
+      var junk = arbitrateAccount({
+        proposals: [{ key: "globalEmployees", label: "E", found: 0, current: 747, state: "different" }],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 747, globalRevenue: 90000000, globalEmployeesConfidence: "External source" } }),
+        settings: {}, data: { employeesGlobal: 0 },
+      }).decisions[0];
+    """)
+    check("an implausible web finding is never taken by rule 10", ctx.eval("junk.action != 'apply'"), True)
+
+    # Switched off, the question comes back.
+    ctx.eval("""
+      var off = arbitrateAccount({
+        proposals: [{ key: "globalEmployees", label: "E", found: 1200, current: 747, state: "different" }],
+        extra: { overrides: {} },
+        ctx: ctxFor({ effective: { globalEmployees: 747, globalEmployeesConfidence: "External source" } }),
+        settings: { rule10PreferWebOverWeakEvidence: false }, data: { employeesGlobal: 1200 },
+      }).decisions[0];
+    """)
+    check("switching rule 10 off restores the question", ctx.eval("off.action"), "review")
+
+
+def test_rule11_group_hq_over_local_entity(ctx):
+    """Bayer (Schweiz) AG, Moderna Switzerland, Lidl Schweiz: the research reports the Swiss
+    subsidiary's seat as "HQ country", while the account holds the group's. Location tiers in ctxFor
+    put Switzerland at 3 and Germany at 2, so on its own rule 7 asks.
+    """
+    ctx.eval("""
+      var hq = (current, found, settings) => arbitrateAccount({
+        proposals: [{ key: "globalHqCountry", label: "HQ", found: found, current: current, state: "different" }],
+        extra: { overrides: {} }, ctx: ctxFor(), settings: settings || {}, data: { hqCountry: found },
+      }).decisions[0];
+      var bayer = hq("Germany", "Switzerland");
+      var alone = arbitrateFinding({ key: "globalHqCountry", label: "HQ", found: "Switzerland", current: "Germany", state: "different" }, ctxFor(), {});
+      var reverse = hq("Switzerland", "Germany");
+      var webFirst = hq("United States", "Switzerland", { sourcePreference: "web", rule7LocationTierReview: false });
+      var off = hq("Germany", "Switzerland", { rule11KeepGroupHqOverLocalEntity: false });
+      var german = hq("Germany", "Schweiz");
+    """)
+    check("on its own rule 7 would ask", ctx.eval("alone.action"), "review")
+    check("the group's country is kept", ctx.eval("bayer.action"), "dismiss")
+    check("...by rule 11", ctx.eval("bayer.rule"), 11)
+    check("Switzerland stored, abroad found - still asks", ctx.eval("reverse.action"), "review")
+    check("a web-first preference cannot write the subsidiary's country", ctx.eval("webFirst.action"), "dismiss")
+    check("the German spelling is recognised", ctx.eval("german.rule"), 11)
+    check("switching rule 11 off restores the question", ctx.eval("off.action"), "review")
+
+    # The account's own Local / Global classification decides first, in both directions.
+    ctx.eval("""
+      var typed = (type, current, found, field) => arbitrateAccount({
+        proposals: [{ key: "globalHqCountry", label: "HQ", found: found, current: current, state: "different" }],
+        extra: { overrides: {} }, ctx: ctxFor({ effective: { [field || "companyType"]: type } }), settings: {},
+        data: { hqCountry: found },
+      }).decisions[0];
+      var gKeep = typed("International company", "Germany", "Switzerland");
+      var gTake = typed("International company – Swiss subsidiary", "Switzerland", "Germany");
+      var lKeep = typed("Swiss company", "Switzerland", "Germany");
+      var lTake = typed("Local company", "Germany", "Switzerland", "targetCountryRelationship");
+      var bothAbroad = typed("International company", "Germany", "United States");
+      var unknownType = typed("National tourism organization / public-law corporation", "Switzerland", "Germany");
+    """)
+    check("Global: the foreign current country is kept", ctx.eval("gKeep.action + gKeep.rule"), "dismiss11")
+    check("Global: a Swiss current country is replaced by the foreign finding", ctx.eval("gTake.action + gTake.rule"), "apply11")
+    check("Local: Switzerland is kept", ctx.eval("lKeep.action + lKeep.rule"), "dismiss11")
+    check("Local (schema 1.1 field): Switzerland is taken", ctx.eval("lTake.action + lTake.rule"), "apply11")
+    check("Global with two foreign countries proves nothing - still asks", ctx.eval("bothAbroad.action"), "review")
+    check("an unrecognised classification falls back to the country pair", ctx.eval("unknownType.action"), "review")
+
+
 def test_patch_shape(ctx):
     """Clearing an override must OMIT the key - a present-but-null override hides the row's data."""
     ctx.eval("""
@@ -408,6 +826,13 @@ def main():
     test_currency_pair(ctx)
     test_local_revenue_currency(ctx)
     test_currency_follows_global_only(ctx)
+    test_implausible_briefing_is_discarded(ctx)
+    test_employee_contradiction_does_not_taint_other_fields(ctx)
+    test_currency_is_never_put_to_the_user(ctx)
+    test_converted_comparison_is_judged_more_loosely(ctx)
+    test_rule9_global_is_a_copy_of_local(ctx)
+    test_rule10_weakly_sourced_current_value(ctx)
+    test_rule11_group_hq_over_local_entity(ctx)
     test_patch_shape(ctx)
 
     print()

@@ -91,7 +91,7 @@ import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
 import { DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
-import { arbitrateAccount, summarize as summarizeArbitration, RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
+import { arbitrateAccount, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
 import { parseCsv, detectHubspotFile, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
@@ -1002,8 +1002,18 @@ function renderCellContent(td, company, column) {
     pill.className = `priority-pill ${toReview ? "priority-pill-findings-open" : "priority-pill-findings-done"}`;
     pill.textContent = value;
     pill.title = toReview
-      ? "The web research found facts this account's data does not already say. Open the account and use “Review findings…”."
+      ? "Review these findings now."
       : "Researched on the web - nothing left that differs from what this account already has.";
+    // Arriving here by filtering the column on "review" and then having to open the account and
+    // scroll to find a "Review findings…" button was the wrong end of the telescope: the user came
+    // to review findings, not to read the account. The pill IS the button.
+    if (toReview) {
+      pill.classList.add("findings-review-link");
+      pill.addEventListener("click", (event) => {
+        event.stopPropagation();  // the row's own click opens the account
+        reviewFindingsFromTable(normalizeCompanyName(company.company));
+      });
+    }
     td.appendChild(pill);
     return;
   }
@@ -1830,15 +1840,21 @@ function renderTable() {
       tr.appendChild(td);
     }
 
+    // Offered only when the row actually has open findings - a permanently visible entry that does
+    // nothing on most rows teaches the user to ignore the menu.
+    const openFindingCount = annotatedProposals(company, accountExtras[companyKey] || {}).filter((p) => !p.dismissed).length;
     appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `account-${companyKey}`, [
       { label: "Open", onClick: () => openAccount(companyKey) },
+      ...(openFindingCount > 0
+        ? [{ label: `Review web findings (${openFindingCount})…`, onClick: () => reviewFindingsFromTable(companyKey) }]
+        : []),
       { label: "Edit", onClick: () => { pendingAccountEditKey = companyKey; openAccount(companyKey); } },
       { label: "Merge…", onClick: () => openMergeAccountsDialog(companyKey) },
       { label: "Remove", danger: true, onClick: () => removeAccount(companyKey, company.company) },
     ]));
 
     tr.addEventListener("click", (event) => {
-      if (event.target.closest("a") || event.target.closest(".long-text-cell") || event.target.closest(".kebab-btn") || event.target.closest(".select-cell")) return;
+      if (event.target.closest("a") || event.target.closest(".long-text-cell") || event.target.closest(".kebab-btn") || event.target.closest(".select-cell") || event.target.closest(".findings-review-link")) return;
       openAccount(companyKey);
     });
     tbodyEl.appendChild(tr);
@@ -3745,6 +3761,11 @@ const ACCOUNT_EDIT_FIELDS = [
   { key: "targetCountryRelationship", label: "Local / Global", type: "select",
     options: () => [...new Set(["Local company", "Global company", ...distinctColumnValues(workbook.companies, "targetCountryRelationship")])] },
   { key: "companyType", label: "Company Type", type: "select", options: () => distinctColumnValues(workbook.companies, "companyType") },
+  // Added 2026-09-23: a classification like Local / Global rather than a measured figure, and the one a web finding
+  // could get wrong in a way he can correct from his own knowledge - the Swiss subsidiary's seat saved over the
+  // group's. Dropdown of countries already in the workbook, so no free-typed near-duplicates; picking the imported
+  // country clears the override (diffEditFormValues), which is the revert.
+  { key: "globalHqCountry", label: "Global HQ Country", type: "select", options: () => distinctColumnValues(workbook.companies, "globalHqCountry") },
   { key: "alternativeCompanyName", label: "Alt. name(s)", type: "list" },
   { key: "topAiInitiatives", label: "Top initiatives", type: "textarea" },
 ];
@@ -4424,6 +4445,31 @@ function openFindings(proposals) {
 // one place that knows what each rule means); this page supplies the account context and the preview,
 // and writes the result through bulkPatchExtras.
 
+// Mirrors NEVER_REVIEW_FIELDS in web-findings-arbitration.js: fields the user is never asked
+// about, so they are shown among the read-only facts rather than as rows to tick.
+const NEVER_ASK_KEYS = new Set(["revenueCurrency", "swissRevenueCurrency"]);
+
+// The imported workbook records, per field, how good it thinks its own figure is and when it was
+// checked - and none of it was ever shown. So the review dialog presented the research's 17 sources
+// against a bare number, which reads as "well-evidenced claim against established fact" when it may
+// be nothing of the sort. Swiss Prime Site is the case that made it plain: its stored employee
+// count carries "Current ranking (verified 2026-09-05) / External source", and its Primary_Source_URL
+// is a page ranking Swiss companies BY REVENUE - which is why he clicked through looking for an
+// employee figure and found none. Reported as "a lot of work for nothing".
+const STORED_PROVENANCE = {
+  globalEmployees: { period: "globalEmployeesPeriod", confidence: "globalEmployeesConfidence" },
+  swissEmployees: { period: "swissEmployeesPeriod", confidence: "swissEmployeesConfidence" },
+  globalRevenue: { period: "revenuePeriod", confidence: "globalRevenueConfidence" },
+  swissRevenue: { period: "swissRevenuePeriod", confidence: "swissRevenueConfidence" },
+};
+
+function storedProvenanceText(effective, key) {
+  const map = STORED_PROVENANCE[key];
+  if (!map) return "";
+  const parts = [effective[map.confidence], effective[map.period]].filter((v) => v !== null && v !== undefined && v !== "");
+  return parts.join(" - ");
+}
+
 const autoFindingsEl = (id) => document.getElementById(id);
 let lastArbitration = null;
 
@@ -4491,7 +4537,7 @@ async function computeAutoArbitration() {
     const proposals = annotatedProposals(company, extra);
     if (proposals.length === 0) continue;
     const ctx = arbitrationCtxFor(company, extra, { buckets: SIZE_PRIORITY_BUCKETS, locationTier, contactCounts });
-    const { decisions, patch } = arbitrateAccount({ proposals, extra, ctx, settings });
+    const { decisions, patch } = arbitrateAccount({ proposals, extra, ctx, settings, data });
     if (decisions.length === 0) continue;
     perAccount.push({ key, name: company.company, decisions });
     if (patch) patchByKey[key] = patch;
@@ -4599,7 +4645,18 @@ function renderAutoFindingsPreview(result) {
     : `Settles ${settleNow} finding${settleNow === 1 ? "" : "s"} in one go and leaves ${counts.review} for you to review by hand. You are asked to confirm first, and it has its own one-click undo afterwards.`;
 }
 
+// Everything the dialog shows after a run has to be undone when it is opened again, or a second
+// visit inherits a stale "Done" and a Done button that closes on work never carried out.
+function resetAutoFindingsFinishedState() {
+  const status = autoFindingsEl("auto-findings-status");
+  status.classList.remove("status-text-done");
+  const closeBtn = autoFindingsEl("auto-findings-close-btn");
+  closeBtn.classList.remove("action-dialog-done-btn");
+  closeBtn.textContent = "Close";
+}
+
 async function openAutoFindingsDialog() {
+  resetAutoFindingsFinishedState();
   autoFindingsEl("auto-findings-status").textContent = "Working out what can be settled automatically…";
   autoFindingsEl("auto-findings-summary").textContent = "";
   autoFindingsEl("auto-findings-breakdown").innerHTML = "";
@@ -4624,6 +4681,12 @@ async function runAutoArbitration() {
   const { patchByKey, perAccount, counts } = lastArbitration;
   const keys = Object.keys(patchByKey);
   if (keys.length === 0) return;
+  // Disabled up front, not at the end: the write, the reload and the fresh dry run take a moment,
+  // and the button stayed live throughout. A second press in that window would have re-run the same
+  // patch and overwritten the undo record with one whose "previous" was the already-written state,
+  // quietly turning Undo into a no-op.
+  const runBtn = autoFindingsEl("auto-findings-run-btn");
+  runBtn.disabled = true;
   // An explicit confirm even though the whole dialog is a preview: "Resolve them" was read as
   // "let me review them one by one" and pressed, which wrote 327 decisions in one click. The
   // preview is not a confirmation if the button next to it does not say what it is about to do.
@@ -4641,7 +4704,7 @@ async function runAutoArbitration() {
     "Activity Log, with the account, the field, the value that won and the rule that decided it.\n\n" +
     "Proceed?",
     { okLabel: "Proceed", cancelLabel: "Cancel" }
-  ))) return;
+  ))) { runBtn.disabled = false; return; }
   autoFindingsEl("auto-findings-status").textContent = "Saving…";
   const changed = await bulkPatchExtras("accounts", patchByKey, "webFindings");
 
@@ -4684,17 +4747,28 @@ async function runAutoArbitration() {
   const undoBtn = autoFindingsEl("auto-findings-undo-btn");
   undoBtn.hidden = false;
   undoBtn.textContent = `Undo this - put back all ${changed} account${changed === 1 ? "" : "s"}`;
-  autoFindingsEl("auto-findings-run-btn").disabled = true;
-  autoFindingsEl("auto-findings-status").textContent =
+  runBtn.disabled = true;
+  // The note above the button described what pressing it WOULD do; once it has been pressed that
+  // sentence is stale and competes with the result.
+  autoFindingsEl("auto-findings-button-note").textContent = "";
+  const status = autoFindingsEl("auto-findings-status");
+  status.classList.add("status-text-done");
+  status.textContent =
     `Done - ${settled} finding${settled === 1 ? "" : "s"} settled across ${changed} account${changed === 1 ? "" : "s"}. ` +
     `${counts.review} left for you to decide: filter the Web Findings column on "review". ` +
-    "Every decision is in the Activity Log. Changed your mind? Undo is right here, and stays here until the next automatic resolve.";
+    "Every decision is in the Activity Log. Changed your mind? Undo is right here, and stays here " +
+    "until the next automatic resolve. Happy with this? Press Done to close.";
+  const closeBtn = autoFindingsEl("auto-findings-close-btn");
+  closeBtn.textContent = "Done";
+  closeBtn.classList.add("action-dialog-done-btn");
 }
 
 document.getElementById("auto-findings-page-btn").addEventListener("click", openAutoFindingsDialog);
 document.getElementById("auto-findings-run-btn").addEventListener("click", runAutoArbitration);
 document.getElementById("auto-findings-undo-btn").addEventListener("click", async () => {
   const restored = await undoLastBulkExtrasChange("webFindings");
+  // Undo puts the findings back, so the dialog goes back to offering to write them.
+  resetAutoFindingsFinishedState();
   autoFindingsEl("auto-findings-undo-btn").hidden = true;
   autoFindingsEl("auto-findings-status").textContent = `Undone - ${restored} account${restored === 1 ? "" : "s"} put back.`;
   appendActivityLog({ actor: "user", action: "web_findings_auto_resolve_undone", label: `Undid the last automatic resolve of web findings (${restored} accounts)` });
@@ -4772,7 +4846,7 @@ function renderWebResearchCard(companyKey) {
     applyRow.hidden = false;
     $("account-web-research-apply-hint").textContent = open.length > 0
       ? `${open.length} finding${open.length === 1 ? "" : "s"} could update this account${fresh ? ` (${fresh} fill empty fields)` : ""}.`
-      : `Nothing left to review - you chose to keep your own value for ${proposals.length === 1 ? "the one finding" : `all ${proposals.length} findings`}.`;
+      : `Nothing left to review - the current value was kept for ${proposals.length === 1 ? "the one finding" : `all ${proposals.length} findings`}.`;
   }
 }
 
@@ -5029,14 +5103,27 @@ async function onBulkStateChange(state) {
 // "Use it", values that differ are not - existing data is only replaced when the user ticks it. Saved values are kept as
 // the account's own edits, so they survive a later re-import of the research workbook. "Keep mine" is the other half:
 // it records the turned-down value so the Web Findings column stops counting the finding (see isDismissedFinding).
-document.getElementById("account-web-research-apply-btn").addEventListener("click", () => {
-  const companyKey = currentAccountKey;
+// Takes the account key and a callback, rather than reading currentAccountKey and re-rendering the
+// account view itself, so it can be opened from anywhere: the account page's own button, the Web
+// Findings column, the row menu - and, in 1.2.0, a review QUEUE that walks the outstanding accounts
+// one at a time (requirement R6.3.3, "a queue with next / skip / keep, not a table the user must
+// know how to filter"). THIS FUNCTION IS THAT QUEUE'S PER-ACCOUNT SCREEN - keep it free of any
+// dependency on which page happens to be open.
+function openWebFindingsReview(companyKey, { onSaved } = {}) {
+  const companyName = workbook.companies.find((c) => normalizeCompanyName(c.company) === companyKey)?.company || companyKey;
+  // Reached from a table row or a queue, the dialog gave no clue which account it was about.
+  document.getElementById("web-research-apply-title").textContent = `Findings from the web research - ${companyName}`;
   const saved = accountExtras[companyKey]?.webResearch;
-  const proposals = computeFindingProposals(companyKey, saved?.data);
+  const allProposals = computeFindingProposals(companyKey, saved?.data);
+  // The revenue currency is never a question for the user (see NEVER_REVIEW_FIELDS): it is shown
+  // among the read-only facts below instead of as a row to tick.
+  const proposals = allProposals.filter((p) => !NEVER_ASK_KEYS.has(p.key));
+  const companyRow = workbook.companies.find((c) => normalizeCompanyName(c.company) === companyKey) || {};
+  const effective = { ...companyRow, ...(accountExtras[companyKey]?.overrides || {}) };
   const table = document.getElementById("web-research-apply-table");
   table.innerHTML = "";
   const head = document.createElement("tr");
-  for (const h of ["Use it", "Keep mine", "Field", "Found on the web", "You have now"]) {
+  for (const h of ["Use Web Findings", "Keep Current", "Field", "Found on the web", "Current"]) {
     const th = document.createElement("th");
     th.textContent = h;
     head.appendChild(th);
@@ -5065,13 +5152,193 @@ document.getElementById("account-web-research-apply-btn").addEventListener("clic
       td.appendChild(cb);
       tr.appendChild(td);
     }
-    for (const text of [p.label, show(p.found), p.state === "new" ? "(empty)" : show(p.current)]) {
+    // "Keep Current" arriving already ticked is a RECORD of a decision already taken - by the
+    // automatic resolve, or by the user on an earlier visit - not the dialog recommending it.
+    // Asked directly: "Why is 'Keep mine' already clicked? It is actually the wrong choice." Saying
+    // so on the row is the difference between a stored fact and an unwanted default.
+    const fieldLabel = p.dismissed ? `${p.label} - already settled; untick to reopen` : p.label;
+    if (p.dismissed) tr.className = "finding-row-settled";
+    for (const text of [fieldLabel, show(p.found), p.state === "new" ? "(empty)" : show(p.current)]) {
       const td = document.createElement("td");
       td.textContent = text;
       tr.appendChild(td);
     }
+    // What the account's own figure claims for itself, right under it - the other half of the
+    // comparison. Without it the research's sources are the only evidence on screen, which makes the
+    // stored value look either unimpeachable or worthless depending on the reader's mood.
+    const provenance = storedProvenanceText(effective, p.key);
+    if (provenance && p.state !== "new") {
+      const note = document.createElement("div");
+      note.className = "finding-provenance";
+      note.textContent = provenance;
+      tr.lastChild.appendChild(note);
+    }
     table.appendChild(tr);
   });
+  // The single most useful thing this dialog can say, and it was saying nothing: WHY the account
+  // is being asked at all. The case that showed it - Thurgauer Kantonalbank storing 534 global
+  // employees against 900 local, which is impossible - was undecidable from the dialog even though
+  // the arbitration had already worked out exactly what was wrong with it.
+  const problemEl = document.getElementById("web-research-apply-problem");
+  const reasonCtx = {
+    effective,
+    found: Object.fromEntries(allProposals.map((p) => [p.key, p.found])),
+    hasRevenue: Number(effective.globalRevenue) > 0,
+    contactCount: workbook.contacts.filter((c) => c.companyId && c.companyId === companyRow.companyId).length,
+  };
+  const storedProblems = [...new Set(
+    proposals.flatMap((p) => illogicalReasons(p, reasonCtx).filter((r) => r.side === "current").map((r) => r.text))
+  )];
+  problemEl.hidden = storedProblems.length === 0;
+  if (storedProblems.length > 0) {
+    problemEl.textContent = `The current data looks wrong here, which is why this is being asked: ${storedProblems.join("; ")}. `
+      + "Check the figures below before choosing - the web finding may simply be right.";
+  }
+
+  // Take the whole set one way or the other. Field-by-field ticking is what produces a record
+  // that describes no real company - reported directly: "What is probably the wrong choice is to
+  // mix the decision between these 2 fields... so I do not mix web and current set of data."
+  const setAll = (useIt) => {
+    for (const cb of table.querySelectorAll("input.finding-use")) cb.checked = useIt;
+    for (const cb of table.querySelectorAll("input.finding-keep")) cb.checked = !useIt;
+  };
+  document.getElementById("web-research-apply-all-web").onclick = () => setAll(true);
+  document.getElementById("web-research-apply-all-mine").onclick = () => setAll(false);
+
+  // When every number the research found is larger than the stored one BY A SIMILAR LARGE FACTOR,
+  // the two sides are usually describing different entities - the parent group against the local
+  // company - rather than disagreeing about one. Both sides can be perfectly plausible on their own,
+  // so none of the implausibility checks fire and the rules have nothing to say. The user's own
+  // reading of it: the fields are labelled "global", so the larger figures are the right ones FOR
+  // THOSE FIELDS. Said as a hint rather than done automatically: it is a heuristic, and acting on it
+  // silently would overwrite curated data on the strength of a ratio.
+  const scaleHint = document.getElementById("web-research-apply-scale-hint");
+  const ratios = proposals
+    .filter((p) => p.state === "different" && !p.dismissed)
+    .map((p) => ({ found: Number(p.found), current: Number(p.current) }))
+    .filter((r) => Number.isFinite(r.found) && Number.isFinite(r.current) && r.found > 0 && r.current > 0)
+    .map((r) => r.found / r.current);
+  const fmtRatio = (r) => `${r < 10 ? r.toFixed(1) : Math.round(r)}\u00d7`;
+  scaleHint.hidden = true;
+  if (ratios.length >= 2 && ratios.every((r) => r >= 3)) {
+    scaleHint.hidden = false;
+    scaleHint.textContent =
+      `Every web finding is larger than the current figure - ${ratios.map(fmtRatio).join(" and ")} - and consistently so. ` +
+      "That usually means the current data describes the local company while the research found the parent group. " +
+      "These fields are the GLOBAL ones, so the research figures are probably the right ones for them - and whichever " +
+      "you choose, choose the same way for all of them.";
+  } else if (ratios.length >= 2 && ratios.every((r) => r <= 1 / 3)) {
+    scaleHint.hidden = false;
+    scaleHint.textContent =
+      `Every web finding is smaller than the current figure - ${ratios.map((r) => fmtRatio(1 / r)).join(" and ")} smaller - and consistently so. ` +
+      "That usually means the research found the local company while the current data describes the parent group. " +
+      "These fields are the GLOBAL ones, so the current figures are probably the right ones - and whichever you choose, " +
+      "choose the same way for all of them.";
+  }
+
+  // Everything else the SAME research run reported, read-only. Deciding a lone employee count with
+  // nothing else on screen is a coin flip - reported directly: "without anything else to go by, I
+  // cannot decide. Maybe if I could see the Revenue (global), if the one found was not logical, I
+  // can infer that the whole findings is not reliable." Seeing the rest of the briefing is what
+  // turns a guess into a judgement.
+  // BOTH sides of every related field, including the ones with nothing to decide. Showing only the
+  // disputed rows made the Thurgauer case impossible: the fact that gave the answer away - a stored
+  // LOCAL headcount of 900 against a stored GLOBAL one of 534 - was on a field with no finding at
+  // all, so it never appeared. Reported directly: "This example would have been impossible to review
+  // without looking at all the data."
+  const context = document.getElementById("web-research-apply-context");
+  context.innerHTML = "";
+  const shownKeys = new Set(proposals.map((p) => p.key));
+  const related = WEB_FINDING_FIELDS
+    .filter((f) => !shownKeys.has(f.key))
+    .map((f) => ({
+      label: f.label,
+      found: saved?.data ? f.from(saved.data) : null,
+      current: effective[f.key],
+    }))
+    .filter((row) => !isBlankFinding(row.found) || !isBlankFinding(row.current));
+  if (related.length > 0) {
+    const caption = document.createElement("p");
+    caption.className = "page-subtitle";
+    caption.textContent = "Everything else on this account and in the same research, for context - nothing here is being asked:";
+    context.appendChild(caption);
+    const ctxTable = document.createElement("table");
+    ctxTable.className = "web-research-apply-table web-research-context-table";
+    const ctxHead = document.createElement("tr");
+    for (const h of ["Field", "Found on the web", "Current"]) {
+      const th = document.createElement("th");
+      th.textContent = h;
+      ctxHead.appendChild(th);
+    }
+    ctxTable.appendChild(ctxHead);
+    for (const row of related) {
+      const tr = document.createElement("tr");
+      for (const text of [row.label, show(row.found), show(row.current)]) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      }
+      ctxTable.appendChild(tr);
+    }
+    context.appendChild(ctxTable);
+  }
+
+  // What the research actually SAID, and what it read. The Galenica case is why: its briefing
+  // stated in plain words that the company "had 7,971 total employees, including 4,511 full-time
+  // and 3,460 part-time" - i.e. the two numbers were never in conflict at all, one was full-time and
+  // the other total headcount. The answer was sitting in the text the whole time, three clicks away
+  // on another screen. The source list matters for the same reason: without it the sources visible
+  // on the account are easily read as belonging to the STORED values, when in fact they are the
+  // research's own.
+  // The workbook's own source for the whole row, named once. It is frequently NOT a source for the
+  // field in dispute - see the Swiss Prime Site comment on STORED_PROVENANCE - so saying what it
+  // actually is saves a pointless click.
+  const storedSource = document.getElementById("web-research-apply-stored-source");
+  const sourceUrl = effective.primarySourceUrl;
+  storedSource.hidden = !sourceUrl;
+  if (sourceUrl) {
+    storedSource.textContent = "";
+    storedSource.appendChild(document.createTextNode(
+      `The current figures come from the imported workbook${effective.lastVerified ? `, last verified ${formatExcelDate(effective.lastVerified)}` : ""}. Its stated source: `
+    ));
+    const a = document.createElement("a");
+    a.href = sourceUrl;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = sourceUrl;
+    storedSource.appendChild(a);
+    storedSource.appendChild(document.createTextNode(
+      " - which may not cover the field in question, so check before going there."
+    ));
+  }
+
+  const briefing = document.getElementById("web-research-apply-briefing");
+  const briefingText = (saved?.text || "").trim();
+  const sources = saved?.sources || [];
+  briefing.hidden = !briefingText && sources.length === 0;
+  briefing.open = false;
+  if (!briefing.hidden) {
+    document.getElementById("web-research-apply-briefing-summary").textContent =
+      `What the web research said, and the ${sources.length} source${sources.length === 1 ? "" : "s"} it read`;
+    document.getElementById("web-research-apply-briefing-text").textContent = briefingText;
+    const sourcesLabel = document.getElementById("web-research-apply-sources-label");
+    sourcesLabel.textContent = sources.length > 0
+      ? "These are the sources behind the WEB FINDINGS, not behind the current values:"
+      : "";
+    const list = document.getElementById("web-research-apply-sources");
+    list.innerHTML = "";
+    for (const src of sources) {
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = src.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = src.title || src.url;
+      li.appendChild(a);
+      list.appendChild(li);
+    }
+  }
+
   document.getElementById("web-research-apply-status").textContent = "";
   document.getElementById("web-research-apply-confirm-btn").onclick = async () => {
     const picked = (sel) => [...table.querySelectorAll(sel)].filter((c) => c.checked).map((c) => proposals[Number(c.dataset.index)]);
@@ -5087,6 +5354,16 @@ document.getElementById("account-web-research-apply-btn").addEventListener("clic
     const overrides = { ...(accountExtras[companyKey]?.overrides || {}) };
     for (const p of chosen) overrides[p.key] = p.found;
     const dismissed = { ...(accountExtras[companyKey]?.webFindingsDismissed || {}) };
+    // A revenue amount and its currency are one fact in two fields, and the currency is never shown
+    // here for the user to tick - so taking the found amount has to bring the found currency with
+    // it, or the account ends up holding the new number under the old currency.
+    if (chosen.some((p) => p.key === "globalRevenue")) {
+      const currencyProposal = allProposals.find((p) => p.key === "revenueCurrency");
+      if (currencyProposal && !chosen.includes(currencyProposal)) {
+        overrides.revenueCurrency = currencyProposal.found;
+        delete dismissed.revenueCurrency;
+      }
+    }
     for (const p of chosen) delete dismissed[p.key];
     for (const p of revived) delete dismissed[p.key];
     for (const p of kept) dismissed[p.key] = p.found;
@@ -5095,13 +5372,23 @@ document.getElementById("account-web-research-apply-btn").addEventListener("clic
     if (chosen.length) parts.push(`saved ${chosen.map((p) => p.label).join(", ")}`);
     if (kept.length) parts.push(`kept own value for ${kept.map((p) => p.label).join(", ")}`);
     if (revived.length) parts.push(`re-opened ${revived.map((p) => p.label).join(", ")}`);
-    appendActivityLog({ actor: "user", action: "account_web_findings_applied", label: `Web research findings on "${currentAccountCompanyRow().company}": ${parts.join("; ")}`, relatedCompanyKey: companyKey });
+    appendActivityLog({ actor: "user", action: "account_web_findings_applied", label: `Web research findings on "${companyName}": ${parts.join("; ")}`, relatedCompanyKey: companyKey });
     document.getElementById("web-research-apply-dialog").close();
     await loadWorkbook();
-    await renderAccountView(companyKey);
+    if (onSaved) await onSaved(companyKey);
   };
   document.getElementById("web-research-apply-dialog").showModal();
+}
+
+// Opened from the account page: the account view is what needs refreshing afterwards.
+document.getElementById("account-web-research-apply-btn").addEventListener("click", () => {
+  openWebFindingsReview(currentAccountKey, { onSaved: (key) => renderAccountView(key) });
 });
+
+// Opened from the Accounts table: the table is.
+function reviewFindingsFromTable(companyKey) {
+  openWebFindingsReview(companyKey, { onSaved: () => rerenderForScope("accounts") });
+}
 
 async function renderAccountView(companyKey, { startInEdit = false } = {}) {
   if (companyKey !== currentAccountKey) accountEditMode = false;

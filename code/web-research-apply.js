@@ -15,14 +15,25 @@ import { parseLooseNumber, normalizeMoney } from "./value-normalize.js";
 // The web research reports only ONE currency (`revenueCurrency` in the agent's JSON), so the found
 // side, and any row with no local currency of its own, fall back to it.
 const MONEY_FIELDS = { globalRevenue: "revenueCurrency", swissRevenue: "swissRevenueCurrency" };
+
+// Two figures in the SAME currency within 10% of each other are one fact reported slightly
+// differently. Once a CONVERSION is involved the exchange rate is itself an estimate, and the
+// comparison inherits that error. Measured across this dataset, the implied CHF->USD rate runs from
+// 1.10 (MCH Group) to 1.35 (Luzerner Kantonalbank) depending on which year and which source each
+// side used - an 11% spread that on its own exceeds the same-currency threshold. Judging a converted
+// comparison as tightly as a same-currency one therefore manufactures disagreements that do not
+// exist: MCH Group's 435,700,000 CHF against a stored 480,000,000 USD is the SAME MONEY at 1.102,
+// and 11.9% apart at the table's 1.25.
+const SAME_CURRENCY_TOLERANCE = 0.1;
+const CROSS_CURRENCY_TOLERANCE = 0.25;
 export const WEB_FINDING_FIELDS = [
   { key: "globalEmployees", label: "Employees (global)", from: (d) => d.employeesGlobal, numeric: true },
   { key: "swissEmployees", label: "Employees (local)", from: (d) => d.employeesLocal, numeric: true },
   { key: "globalRevenue", label: "Revenue (global)", from: (d) => d.revenueGlobal, numeric: true },
   { key: "swissRevenue", label: "Revenue (local)", from: (d) => d.revenueLocal, numeric: true },
   { key: "revenueCurrency", label: "Revenue currency", from: (d) => d.revenueCurrency },
-  { key: "globalHqCity", label: "Headquarters city", from: (d) => d.hqCity },
-  { key: "globalHqCountry", label: "Headquarters country", from: (d) => d.hqCountry },
+  { key: "globalHqCity", label: "Global HQ city", from: (d) => d.hqCity },
+  { key: "globalHqCountry", label: "Global HQ country", from: (d) => d.hqCountry },
   { key: "zefixOfficialName", label: "Registry official name", from: (d) => d.registryName },
   { key: "zefixUid", label: "Registry ID", from: (d) => d.registryId },
   { key: "zefixAddress", label: "Registry address", from: (d) => d.registryAddress },
@@ -51,13 +62,19 @@ export function computeFindingProposals(company, overrides, data, money = null) 
     if (f.numeric) {
       let a = parseLooseNumber(current);
       let b = found;
+      let converted = false;
       const currencyKey = MONEY_FIELDS[f.key];
       if (currencyKey && money?.targetCurrency) {
         const mine = normalizeMoney(current, effective[currencyKey] || effective.revenueCurrency, money.targetCurrency, money.rates);
         const theirs = normalizeMoney(found, data[currencyKey] || data.revenueCurrency, money.targetCurrency, money.rates);
-        if (mine.amount !== null && theirs.amount !== null) { a = mine.amount; b = theirs.amount; }
+        if (mine.amount !== null && theirs.amount !== null) {
+          a = mine.amount;
+          b = theirs.amount;
+          converted = mine.converted || theirs.converted;
+        }
       }
-      if (a !== null && Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1) <= 0.1) continue;
+      const tolerance = converted ? CROSS_CURRENCY_TOLERANCE : SAME_CURRENCY_TOLERANCE;
+      if (a !== null && Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1) <= tolerance) continue;
     } else if (String(current).trim().toLowerCase() === String(found).toLowerCase()) continue;
     out.push({ key: f.key, label: f.label, found, current, state: "different" });
   }
