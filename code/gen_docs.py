@@ -1798,6 +1798,47 @@ doc.add_paragraph(
     "is now also built (2026-09-17) but not yet live-tested."
 )
 
+doc.add_heading('6.21 Web research, findings and automatic arbitration (v1.1.3)', level=3)
+doc.add_paragraph('The imported workbook is a snapshot, researched outside the extension. v1.1.3 lets SalesTeam check and complete it itself: each account can be researched on the public web through Anthropic\'s web search, on the user\'s own API key, and what the research finds is compared field by field against what the account already holds. Two sides are named throughout, in the UI and in this spec: the current value (imported or edited) and the web finding. Never "yours" - the data is shared across a team.')
+p = doc.add_paragraph()
+p.add_run('Research').bold = True
+add_bullets(doc, [
+    "Research this account on the web - a button on every Account page. Searches the company website, official registers and news, saves a short briefing with its sources, adds initiatives found to the account's Initiatives list, and has a Stop button that keeps what was found. Up to 3 accounts at once. No new permission.",
+    'Research Accounts on the Web… - the same for many accounts in one background run: pick priorities (P1-P5, not scored), only what is missing or everything, and whether empty fields are filled in automatically. Shows the estimated cost first, runs two accounts at a time, stops at a cost limit, and persists each account as it finishes. Measured: about US$0.08 and 18 s per account; all 454 researched accounts done 2026-09-22.',
+    'One batch process at a time - a scan, discovery, bulk research, AI prioritization or look-up run each block the others; starting a second one names the running one and offers to stop it or wait.',
+    "Billing page and cost warning - Settings → Billing shows tokens, web searches and an estimated US$ cost of every AI call on the user's key (today, month, all time, per feature). Any AI action estimated above a set limit (default US$2.00, 0 = off) asks for confirmation first.",
+])
+p = doc.add_paragraph()
+p.add_run('Findings').bold = True
+add_bullets(doc, [
+    "Review findings… - per account, one row per field that differs, each with two mutually exclusive ticks: Use Web Findings and Keep Current. Empty current fields are pre-ticked for the web finding. Keep Current records the turned-down VALUE (accountExtras.webFindingsDismissed), so a later research finding something different comes back. The rows read Global HQ country / Global HQ city, because the stored field means the group's headquarters.",
+    'Web Findings column - on the Accounts table: "N to review" / "Researched" / empty, sorted by the count, filterable like any column. Card, toast and column all derive from the same openFindings(), so they cannot disagree.',
+    'Edits and research write to overrides - never onto the imported row. Every reader of company figures must go through the overrides - scoring (getCompaniesForPrioritization) and the missing-size count (getCompaniesNeedingSize) were fixed in 1.1.3 to do so.',
+    'Global HQ Country editable - added to the account Edit form as a dropdown of countries already in the workbook (a classification, like Local / Global, not a measured figure). Choosing the imported value clears the override.',
+])
+p = doc.add_paragraph()
+p.add_run('Cleaner numbers').bold = True
+add_bullets(doc, [
+    'value-normalize.js - a pure module that reads "6,500+", ">5,000", "102\'000", "1,5m" and "CHF 102m" as the numbers they mean before anything compares or scores them. It never guesses at scale: 115 stays 115.',
+    'Revenue & Currency - Settings → Advanced tools: target currency and an editable, dated exchange-rate table (no live feed, no network call). Revenue is compared after conversion. Global revenue uses Revenue_Currency, local revenue its own Swiss_Revenue_Currency. Normalisation happens on read; stored data is untouched.',
+])
+p = doc.add_paragraph()
+p.add_run('Automatic arbitration').bold = True
+add_bullets(doc, [
+    'Resolve Web Findings Automatically… - Target Accounts Dashboard. A dry run over every researched account, shown as a per-rule table with totals and examples, confirmed before anything is written. One Activity Log line per finding (written in one batch), and one-click undo of the whole run.',
+    'Why most findings need no person - only two fields affect a score: the global employee count (through its size band) and the global HQ country (through the location priority set in the wizard, +-8). Everything else - revenue, currency, HQ city, local employees, registry fields - is decided automatically.',
+    "The rules - fill empty fields; throw away web findings that cannot be right and ask only when the current value is the doubtful one; decide non-scoring fields; decide employee counts in the same size band or within a tolerance (default 15%); ask when a count changes the size band; ask when an HQ country changes the location priority; take a real worldwide figure when the stored one is a copy of the local one; take the web finding when the workbook records only weak evidence behind the current value; decide the HQ country from the account's Local / Global classification (Global keeps the non-Swiss country, Local keeps Switzerland; with no classification, Switzerland found against a foreign current country is treated as the Swiss subsidiary's seat); throw away a whole research result when any part of it is impossible.",
+    'Fail-safe by design - every rule is a setting (Settings → Advanced tools → Web Findings – Automatic Arbitration), shown by name, never by number. Switching a rule off sends its cases to human review, never to a silent write. A value that fails the plausibility checks is never written, whatever the settings. Revenue currency is never put to the user.',
+    'Result on the real data - 257 of 541 accounts had findings; after the rules, 5 needed a person (2026-09-23).',
+    'Separate undo slots - bulk edit and automatic resolve each keep their own undo record (EXTRAS_UNDO_SLOTS), so a routine bulk edit cannot destroy the undo of a resolve that touched hundreds of accounts.',
+])
+p = doc.add_paragraph()
+p.add_run('Tables and exchange').bold = True
+add_bullets(doc, [
+    "Bulk edit - tick rows on the Accounts and Contacts tables; the header box ticks the current page only, and a second explicit click reaches every filtered row (Gmail's rule). Status, Priority (accounts only), Next action due, or Remove, with one-click undo. One storage read and write per batch.",
+    'HubSpot import and export by file - Export to HubSpot… writes a companies file and a contacts file that HubSpot maps automatically, with SalesTeam priority and status as extra columns. Import from HubSpot… adds companies and contacts SalesTeam does not have yet, without changing existing ones.',
+])
+
 doc.add_heading("7. Non-functional requirements", level=2)
 add_bullets(doc, [
     "Manual-trigger only — no alarms, no background scanning, ever.",

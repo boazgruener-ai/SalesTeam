@@ -32,6 +32,22 @@
 - **Backup and Restore split** - the Settings menu now has **Backup** (folder, daily schedule, retention, Back up now) and
   **Restore** (one page with its own explanation and a single Restore from backup button).
 
+## Web findings: a review column, automatic resolving, cleaner numbers, and bulk edit
+
+- **Web Findings column** on the Accounts table - shows "N to review" or "Researched" for every account, sorts by the number still to review, and filters like any other column (filter on "review" to list the accounts that need you).
+- **Keep Current** in Review findings - each row now has **Use Web Findings** and **Keep Current**. Keeping the current value stops that finding being counted; if a later research finds a different value, it comes back.
+- **Resolve Web Findings Automatically…** (Target Accounts Dashboard) - settles the findings that do not need a person: fills empty fields, throws away web findings that cannot be right (0 employees at a company with revenue, revenue in the wrong units), decides fields that never affect scoring, and decides employee counts that stay in the same size band. It shows a preview with a per-rule count before writing anything, logs one Activity Log line per finding, and the whole run can be undone in one click. Only real questions are left for you.
+- **Headquarters decided from Local / Global** - the research often reports the Swiss subsidiary's seat (Bayer (Schweiz) AG, Lidl Schweiz) as the headquarters. A Global account keeps the group's country, a Local one keeps Switzerland, so these no longer come to you for review.
+- **Weakly sourced figures give way** - where the imported workbook records no real evidence behind a figure (no official reporting, no annual report), the web finding is taken instead of asking.
+- **Web Findings – Automatic Arbitration** (Settings → Advanced tools) - every rule can be switched on or off, with the tolerance for close employee counts, the limits for values that cannot be right, and whether current data or web findings win when a rule decides.
+- **Cleaner numbers before comparing** - "6,500+", ">5,000", "102'000", "1,5m" and "CHF 102m" are read as the numbers they mean, so they no longer show up as disagreements or miss their size band in scoring.
+- **Revenue & Currency** (Settings → Advanced tools) - revenue in different currencies is converted before it is compared or shown, using an editable rate table with an "as of" date. Local revenue uses its own currency.
+- **Bulk edit on the Accounts and Contacts tables** - tick rows (the header box ticks the current page, a second click reaches every filtered row) and change Status, Priority or Next action due for all of them at once, or remove them. One-click undo.
+- **Separate undo for bulk edits and automatic resolves** - a bulk edit no longer replaces the undo of an automatic resolve.
+- **Global HQ Country is editable** - the account's Edit form now offers it as a dropdown of countries already in the workbook; choosing the imported country puts the original back.
+- **Scores use web-research data** - priority scoring and the "no employee count" banner now read the values the web research filled in, not only the imported ones.
+- **Clearer finished state** in the automatic-resolve dialog - a greyed-out button once done, a highlighted result line and a real Done button.
+
 ---
 
 # SalesTeam — v1.1.2

@@ -52,7 +52,16 @@ with open(SALESTEAM_DIR + "/RELEASE_NOTES.md", encoding="utf-8") as f:
 
 doc = docx.Document()
 
+# An indented line continues the bullet above it (the .md wraps long bullets); join it back so Word
+# gets one bullet rather than a bullet followed by a loose paragraph.
+joined = []
 for raw_line in lines:
+    if raw_line.startswith("  ") and raw_line.strip() and joined and joined[-1].startswith("- "):
+        joined[-1] = joined[-1].rstrip() + " " + raw_line.strip()
+    else:
+        joined.append(raw_line)
+
+for raw_line in joined:
     line = raw_line.rstrip()
     if not line or line == "---":
         continue
