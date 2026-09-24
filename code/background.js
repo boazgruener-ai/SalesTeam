@@ -41,6 +41,8 @@ import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease } from "
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
 import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
+// THROWAWAY - build step 0 of the 1.2.0 pipeline (worker-window test). Remove with window-test*.
+import "./window-test.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
 // Used only for the two independent AND-group searches below (concept-only,

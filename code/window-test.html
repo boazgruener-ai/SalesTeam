@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam - worker-window test</title>
+  <style>
+    body { font: 14px Arial, sans-serif; margin: 24px; color: #222; max-width: 1100px; }
+    h1 { color: #0000ff; font-size: 20px; margin: 0 0 4px; }
+    h2 { color: #1155cc; font-size: 16px; margin: 24px 0 8px; }
+    .note { color: #555; margin: 0 0 16px; }
+    fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 12px 16px; margin-bottom: 12px; }
+    label { margin-right: 16px; }
+    .how { background: #f4f7ff; border-left: 3px solid #1155cc; padding: 8px 12px; margin: 8px 0 0; }
+    button { font: inherit; padding: 6px 14px; margin-right: 8px; cursor: pointer; }
+    #status { font-weight: bold; margin: 12px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; vertical-align: top; }
+    th { background: #f2f2f2; }
+    .bad { color: #b00020; font-weight: bold; }
+    .good { color: #0a7a2f; font-weight: bold; }
+    details { margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Worker-window test (build step 0, throwaway)</h1>
+  <p class="note">Answers design decision D1: can the pipeline visit LinkedIn from its own unfocused window
+    without taking over the browser? Each round opens a small separate window, runs lookups there without ever
+    bringing it to the front, then closes it. It only reads data. Nothing in your accounts changes.</p>
+
+  <fieldset>
+    <legend>Condition</legend>
+    <label><input type="radio" name="condition" value="visible" checked /> (a) visible</label>
+    <label><input type="radio" name="condition" value="covered" /> (b) covered</label>
+    <label><input type="radio" name="condition" value="minimised" /> (c) minimised</label>
+    <label><input type="radio" name="condition" value="locked" /> (d) screen locked</label>
+    <div class="how" id="how"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Round</legend>
+    <label>LinkedIn lookups <input type="number" id="lookups" min="0" max="20" value="0" style="width:60px" /></label>
+    <label>Countdown (seconds) <input type="number" id="countdown" min="0" max="60" value="15" style="width:60px" /></label>
+    <span class="note">0 lookups = probe only, no LinkedIn visits. Each round with lookups costs lookups + 1 touches.</span>
+    <div style="margin-top:10px">
+      <button id="start">Start round</button>
+      <button id="stop">Stop</button>
+      <button id="copy">Copy results (JSON)</button>
+      <button id="clear">Clear results</button>
+    </div>
+  </fieldset>
+
+  <div id="status"></div>
+  <div id="touches" class="note"></div>
+
+  <h2>Rounds</h2>
+  <table>
+    <thead><tr>
+      <th>Condition</th><th>Status</th><th>Probe start</th><th>Probe end</th>
+      <th>Lookups</th><th>Timeouts</th><th>Avg / max result</th><th>Focus taken?</th><th>Details</th>
+    </tr></thead>
+    <tbody id="rounds"></tbody>
+  </table>
+
+  <script type="module" src="window-test-page.js"></script>
+</body>
+</html>
