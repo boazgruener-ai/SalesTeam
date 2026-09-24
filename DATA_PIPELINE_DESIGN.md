@@ -462,6 +462,33 @@ and the screen lock. The pipeline requests nothing, so:
   while the screen is locked, the pipeline pauses when `chrome.idle` reports `"locked"` and resumes
   on unlock. That uses the same `idle` permission as fallback B.
 
+
+### Step 0 result (tested 2026-09-24/25): option A works, no fallback needed
+
+A throwaway harness ran real company-page lookups (the direct-link path, the heaviest page and the
+one that caused the old timeouts) from a window created with `focused: false`, never made active,
+with no keep-awake. A zero-touch probe page in the same tab recorded how Chrome treated the window.
+
+| Condition | Chrome's view of the window | Lookups | Timeouts | Avg / max result |
+|---|---|---|---|---|
+| (a) visible | visible, 60 frames/s | 10/10 | 0 | 2.3 s / 3.6 s |
+| (b) covered | hidden, 0.1 frames/s, timers held to ~1 s | 10/10 | 0 | 2.0 s / 2.6 s |
+| (c) minimised | hidden, same as covered (probe only) | — | — | — |
+| (d) screen locked, machine awake | hidden, same as covered | 10/10 | 0 | 2.2 s / 3.1 s |
+
+- **Hidden does not mean broken.** Chrome stops drawing a covered, minimised or locked window and
+  slows its timers, but the page still loads and the content script still reads it and reports back
+  as fast as when visible. The old background-tab timeouts are not reproduced by a hidden window.
+- **The window never took focus** in any round, and does not need to be activated once to work.
+- **Consequences for the design:** the fallback (B, run only while the user is away) is not needed,
+  and neither is the pause on `chrome.idle` "locked" described above. The `idle` permission is not
+  required. The window will usually open behind the user's work, which is expected and harmless.
+- **Found in passing, not a window issue:** 6 of the 30 lookups read a different company id from the
+  one stored for that account (Octapharma, Comet Holding, Lalique Group, Komax Holding, FMV, BNP
+  Paribas Switzerland). Since the Scanner selects accounts by that id, this is a readiness question
+  for step 1: a stored id should be re-checked against its own LinkedIn page before it counts as
+  verified. Which side is wrong has not been established yet.
+
 ---
 
 ## 9. Cost: touches per account, measured on real data
@@ -594,7 +621,7 @@ Boaz agreed to every recommendation below. D4 was clarified: see section 8, *Wha
 
 | # | Question | Decision |
 |---|---|---|
-| **D1** | How does the pipeline visit LinkedIn without taking over the browser? | A dedicated unfocused SalesTeam window, proven by the step 0 test; "only while the user is away" as the fallback (section 8) |
+| **D1** | How does the pipeline visit LinkedIn without taking over the browser? | A dedicated unfocused SalesTeam window, proven by the step 0 test; "only while the user is away" as the fallback (section 8). **Step 0 passed on 2026-09-25**: 30/30 lookups, 0 timeouts, visible, covered and locked; no fallback needed |
 | **D2** | Does a value the user typed in count as verified? | **Yes**, dated when it was typed, and it expires like any other. The user is an authoritative source about their own market, and re-fetching a value they just corrected by hand would overwrite their judgement with LinkedIn's |
 | **D3** | Web research before Fetch Company Size, when the web budget allows? | **Yes**, because LinkedIn touches are the bottleneck and dollars are not (section 6) |
 | **D4** | May the automatic pipeline keep the computer awake? | **No**, only user-started jobs do (section 8) |
