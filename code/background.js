@@ -41,6 +41,7 @@ import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease } from "
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
 import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
+import { startPipelineRun, stopPipelineRun } from "./pipeline-runner.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
 // Used only for the two independent AND-group searches below (concept-only,
@@ -954,5 +955,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   } else if (message?.type === "BULK_WEB_RESEARCH_STOP") {
     sendResponse(stopBulkResearch());
+  } else if (message?.type === "PIPELINE_RUN") {
+    // 1.2 data pipeline, build step 2: started by hand from Advanced tools (pipeline-runner.js).
+    startPipelineRun({ limit: message.limit }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  } else if (message?.type === "PIPELINE_STOP") {
+    sendResponse(stopPipelineRun());
   }
 });

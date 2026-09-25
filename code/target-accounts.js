@@ -101,6 +101,7 @@ import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
 import { runContactDiscoveryForExistingCompanies } from "./contact-discovery-extraction.js";
 import { sizeFetchConfirmText, runCompanySizeFetch } from "./company-size-extraction.js";
+import { rescoreDerivedPriorities } from "./auto-score.js";
 import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
 import {
   sanitizeApiKey,
@@ -169,6 +170,28 @@ document.getElementById("nav-discover-contacts-btn").addEventListener("click", (
 document.getElementById("nav-fetch-size-btn").addEventListener("click", () => {
   document.getElementById("fetch-size-dialog").showModal();
 });
+// ---- Run pipeline now (Advanced tools, 1.2 build step 2) ----
+// Starts the background pipeline (pipeline-runner.js) for a set number of accounts. Its progress is the
+// quiet pill in the corner (pipeline-status.js), and its summary pops up when it ends.
+document.getElementById("nav-run-pipeline-btn").addEventListener("click", () => {
+  document.getElementById("pipeline-run-status").textContent = "";
+  document.getElementById("pipeline-run-start-btn").disabled = false;
+  document.getElementById("pipeline-run-dialog").showModal();
+});
+document.getElementById("pipeline-run-close-btn").addEventListener("click", () => document.getElementById("pipeline-run-dialog").close());
+document.getElementById("pipeline-run-start-btn").addEventListener("click", async () => {
+  const startBtn = document.getElementById("pipeline-run-start-btn");
+  const statusEl = document.getElementById("pipeline-run-status");
+  const limit = parseInt(document.getElementById("pipeline-run-limit").value, 10);
+  if (!Number.isFinite(limit) || limit < 1) { statusEl.textContent = "Enter a number of accounts, 1 or more."; return; }
+  startBtn.disabled = true;
+  statusEl.textContent = "Starting…";
+  const res = await chrome.runtime.sendMessage({ type: "PIPELINE_RUN", limit }).catch((err) => ({ ok: false, error: err.message }));
+  if (res && res.ok) { document.getElementById("pipeline-run-dialog").close(); return; }
+  startBtn.disabled = false;
+  statusEl.textContent = (res && res.error) || "The pipeline could not start.";
+});
+
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", async () => {
   await renderFindDuplicates();
   document.getElementById("find-duplicates-dialog").showModal();
@@ -3412,25 +3435,8 @@ stopDiscoverContactsExistingBtn.addEventListener("click", () => {
 // score must follow the data (design 2.5.3). Only companies whose priority or score actually moved
 // are written and counted, so a run where nothing changed stays silent.
 async function autoPrioritizeNewCompanies() {
-  const eligible = await getCompaniesForPrioritization({ rescoreAll: false, rescoreDerived: true });
-  if (eligible.length === 0) return { applied: 0, summary: "" };
-  const previousById = new Map(eligible.map((e) => [e.company.companyId, e.company]));
-  const [targetUniverseConfig, mentorPersona, companyContext, idealCustomerProfile, outputLanguage] = await Promise.all([
-    getTargetUniverseConfig(), getMentorPersona(), getCompanyContext(), getIdealCustomerProfile(), getOutputLanguage(),
-  ]);
-  const results = await prioritizeCompanies(
-    eligible, targetUniverseConfig,
-    { apiKey: null, mentorPersona, companyContext, idealCustomerProfile, outputLanguage },
-    { useAI: false }
-  ).then((all) => all.filter((r) => {
-    const prev = previousById.get(r.companyId);
-    return !prev || prev.salesTeamPriority !== r.priority || (prev.salesTeamPriorityScore ?? null) !== (r.priorityScore ?? null);
-  }));
-  if (results.length === 0) return { applied: 0, summary: "" };
-  const applied = await applyCompanyPrioritizationResults(results);
-  const counts = { P1: 0, P2: 0, P3: 0, P4: 0, P5: 0 };
-  for (const r of results) if (counts[r.priority] != null) counts[r.priority]++;
-  const summary = ["P1", "P2", "P3", "P4", "P5"].filter((p) => counts[p] > 0).map((p) => `${counts[p]} ${p}`).join(", ");
+  const { applied, counts, summary } = await rescoreDerivedPriorities();
+  if (applied === 0) return { applied: 0, summary: "" };
   appendActivityLog({
     actor: "extension",
     action: "companies_prioritized",

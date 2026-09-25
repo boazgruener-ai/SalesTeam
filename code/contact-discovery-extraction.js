@@ -165,7 +165,7 @@ function buildKeywordExpressionChunks(profile) {
 
 // Same listener-race reasoning as company-discovery-extraction.js's
 // navigateAndWait - registered before navigation starts.
-function navigateAndWait(tabId, url) {
+function navigateAndWait(tabId, url, { activate = true } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const timeout = setTimeout(() => {
@@ -184,7 +184,7 @@ function navigateAndWait(tabId, url) {
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tabId, { url, active: true }).catch(() => {});
+    chrome.tabs.update(tabId, activate ? { url, active: true } : { url }).catch(() => {});
     recordLinkedinTouch().catch(() => {});
   });
 }
@@ -211,10 +211,10 @@ function waitForMessage(type, timeoutMs) {
   });
 }
 
-async function fetchContactCandidates(tab, url) {
+async function fetchContactCandidates(tab, url, nav = {}) {
   await chrome.storage.local.set({ contactDiscoveryActive: true });
   const resultPromise = waitForMessage("CONTACT_DISCOVERY_RESULT", PAGE_RESULT_TIMEOUT_MS);
-  const { navCompleted } = await navigateAndWait(tab.id, url);
+  const { navCompleted } = await navigateAndWait(tab.id, url, nav);
   const message = await resultPromise;
   return {
     navCompleted,
@@ -380,17 +380,17 @@ function classifyCandidateSeniority(candidate, companyName, seniorityLevels) {
 // stoppedByTouchBudget: true (with whatever candidates were already
 // gathered from completed chunks) rather than discarding a company's
 // partial progress just because a later chunk couldn't run.
-async function fetchContactCandidatesForCompany(tab, slug, companyLabel, keywordChunks, pageDebugSamples, maxPageDebugSamples) {
+async function fetchContactCandidatesForCompany(tab, slug, companyLabel, keywordChunks, pageDebugSamples, maxPageDebugSamples, nav = {}) {
   const bySlug = new Map();
   let stoppedByTouchBudget = false;
   for (let i = 0; i < keywordChunks.length; i++) {
     if (await checkTouchBudget()) { stoppedByTouchBudget = true; break; }
     const url = buildPeopleSearchUrl(slug, keywordChunks[i].expression);
-    let { navCompleted, receivedMessage, results, insightsLoadError, caughtError } = await fetchContactCandidates(tab, url);
+    let { navCompleted, receivedMessage, results, insightsLoadError, caughtError } = await fetchContactCandidates(tab, url, nav);
     // Same zero-result retry as elsewhere in this file - see runContactDiscoveryPhase's own comment.
     for (let retryCount = 0; retryCount < 2 && results.length === 0 && receivedMessage && !caughtError; retryCount++) {
       await sleep(randomDelay());
-      const retry = await fetchContactCandidates(tab, url);
+      const retry = await fetchContactCandidates(tab, url, nav);
       ({ navCompleted, receivedMessage, results, insightsLoadError, caughtError } = retry);
     }
     if (pageDebugSamples.length < maxPageDebugSamples) {
@@ -627,4 +627,69 @@ export function runContactDiscoveryPhase(...args) {
 
 export function runContactDiscoveryForExistingCompanies(...args) {
   return withBatch("Discovery of contacts for existing companies", () => runContactDiscoveryForExistingCompaniesImpl(...args));
+}
+
+// ---------------------------------------------------------------------------------------------------
+// One account at a time, on a tab the caller owns - the 1.2 pipeline's entry points
+// (DATA_PIPELINE_DESIGN.md 5.1 and step 2 touch-up T1). No tab of their own, no warm-up, no keep-awake.
+// ---------------------------------------------------------------------------------------------------
+
+// True when the headline ties the person to companies, and every one of them is a different company
+// from the target - someone who has left, or a namesake elsewhere. A headline naming no company at all
+// is not a conflict (same no-evidence-no-guess rule as segmentConflictsWithCompany).
+function headlineNamesOnlyOtherCompanies(headlineText, companyName) {
+  if (!headlineText) return false;
+  const marked = headlineText.split(HEADLINE_SEGMENT_SPLIT_RE).filter((seg) => extractSegmentCompany(seg));
+  return marked.length > 0 && marked.every((seg) => segmentConflictsWithCompany(seg, companyName));
+}
+
+// T1: the company's People tab, searched for one known person's name - 1 touch. Returns every result,
+// each flagged `conflict` when its headline names only other companies; pipeline-plan.js's
+// pickProfileMatch decides. `received` is false when the page never answered (not a real "not found").
+export async function searchCompanyPeopleByName(tab, slug, companyName, keywords, { activate = false } = {}) {
+  try {
+    const { receivedMessage, results, caughtError } = await fetchContactCandidates(tab, buildPeopleSearchUrl(slug, keywords), { activate });
+    return {
+      received: receivedMessage && !caughtError,
+      candidates: (results || []).map((r) => ({ ...r, conflict: headlineNamesOnlyOtherCompanies(r.headlineText, companyName) })),
+      touches: 1,
+    };
+  } finally {
+    await chrome.storage.local.remove(["contactDiscoveryActive"]).catch(() => {});
+  }
+}
+
+// Title-based discovery for one account - the loop body of runContactDiscoveryForExistingCompanies.
+// company: { key, company, companyId, slug, contactCount }. Returns { ranAnything, received, added, touches }.
+export async function discoverContactsForAccount(tab, company, { activate = false } = {}) {
+  const profile = withSeniorityKeywords(await getTargetContactProfile());
+  const maxContactsPerAccount = profile.maxContactsPerAccount || DEFAULT_MAX_CONTACTS_PER_ACCOUNT;
+  const { chunks: keywordChunks } = buildKeywordExpressionChunks(profile);
+  if (keywordChunks.length === 0) return { ranAnything: false, reason: "no target-contact titles/keywords configured (Contacts step)", added: 0, touches: 0 };
+  const pageDebugSamples = [];
+  try {
+    const { candidates: results, stoppedByTouchBudget } =
+      await fetchContactCandidatesForCompany(tab, company.slug, company.company, keywordChunks, pageDebugSamples, keywordChunks.length * 3, { activate });
+    const touches = pageDebugSamples.length;
+    const received = pageDebugSamples.some((p) => p.receivedMessage && !p.caughtError);
+    const classified = [];
+    for (const candidate of results) {
+      const tier = classifyCandidate(candidate, company.company, profile);
+      if (!tier) continue;
+      const seniority = classifyCandidateSeniority(candidate, company.company, profile.seniorityLevels);
+      classified.push({ ...candidate, tier, seniorityLevel: seniority?.id ?? null, seniorityPriority: seniority?.priority ?? null });
+    }
+    classified.sort((a, b) => (a.tier === "exact" ? -1 : 0) - (b.tier === "exact" ? -1 : 0));
+    const kept = classified.slice(0, Math.max(0, maxContactsPerAccount - (company.contactCount || 0)));
+    const added = kept.length === 0 ? 0 : await appendContactsToWorkbook(kept.map((c) =>
+      buildDiscoveredContactRow(
+        { slug: c.slug, name: c.name, headlineText: c.headlineText, tier: c.tier, seniorityLevel: c.seniorityLevel, seniorityPriority: c.seniorityPriority },
+        { companyId: company.companyId, company: company.company }
+      )
+    ));
+    if (received) await markContactDiscoveryAttempted([company.key]);
+    return { ranAnything: true, received, added, touches, stoppedByTouchBudget };
+  } finally {
+    await chrome.storage.local.remove(["contactDiscoveryActive"]).catch(() => {});
+  }
 }
