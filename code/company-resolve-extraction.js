@@ -503,8 +503,11 @@ async function runCompanyIdResolutionImpl(companies, { onProgress, shouldAbort, 
       // an id but had no linkedinLink in the imported workbook with no link at all - and, because
       // getCompaniesNeedingSize() requires linkedinLink, permanently ineligible for Fetch Company
       // Size too (2026-09-22). Passed through so applyResolvedCompanyIds can fill a MISSING link.
-      if (resolved && linkedinCompanyId) results.push({ key: company.key, linkedinCompanyId, companyPageUrl: companyPageUrl || null });
-      if (onCompanyDone) await onCompanyDone(company.key, resolved && linkedinCompanyId ? linkedinCompanyId : null, companyPageUrl || null);
+      // checkedLink: the page the id was read from - the account's own link when it has one (the
+      // direct-link path), else the page the name search landed on. applyResolvedCompanyIds records it
+      // so readiness can tell an id checked against the account's current link from one that was not.
+      if (resolved && linkedinCompanyId) results.push({ key: company.key, linkedinCompanyId, companyPageUrl: companyPageUrl || null, checkedLink: company.linkedinLink || companyPageUrl || null });
+      if (onCompanyDone) await onCompanyDone(company.key, resolved && linkedinCompanyId ? linkedinCompanyId : null, companyPageUrl || null, company.linkedinLink || companyPageUrl || null);
       if (!resolved && debug && debugSamples.length < MAX_DEBUG_SAMPLES) {
         // finalUrl/fallbackFinalUrl - see navigateAndWaitResolve's own
         // comment: lets a hard timeout distinguish "the tab genuinely

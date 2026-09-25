@@ -40,6 +40,7 @@ import {
   buildDiscoveredContactRow,
   expandSeniorityLevelKeywords,
   SENIORITY_LEVEL_KEYWORDS,
+  CHIEF_OFFICER_RE,
 } from "./storage.js";
 import { getDiscoveryQueueState, checkpointContactPhase, completeDiscoveryQueue } from "./discovery-queue.js";
 import { recordLinkedinTouch } from "./linkedin-touch-log.js";
@@ -331,6 +332,12 @@ function headlineMatchesAnyTerm(headlineText, companyName, terms) {
   return false;
 }
 
+function headlineChiefOfficerSegment(headlineText, companyName) {
+  const rawSegments = headlineText.split(HEADLINE_SEGMENT_SPLIT_RE).map((s) => s.trim()).filter(Boolean);
+  const segments = rawSegments.length > 0 ? rawSegments : [headlineText];
+  return segments.some((segment) => CHIEF_OFFICER_RE.test(segment) && !segmentConflictsWithCompany(segment, companyName));
+}
+
 function classifyCandidate(candidate, companyName, profile) {
   const headlineText = candidate.headlineText || "";
   if (!headlineText) return null;
@@ -354,6 +361,9 @@ function classifyCandidateSeniority(candidate, companyName, seniorityLevels) {
   if (!headlineText || !seniorityLevels || seniorityLevels.length === 0) return null;
   const sorted = [...seniorityLevels].sort((a, b) => (b.priority || 0) - (a.priority || 0));
   for (const level of sorted) {
+    // Same "Chief … Officer" rule as classifyJobTitleSeniority, applied per headline segment so a
+    // segment naming another company ("ex-Chief Risk Officer @ OtherCo") still does not count.
+    if (level.id === "cLevel" && headlineChiefOfficerSegment(headlineText, companyName)) return level;
     if (headlineMatchesAnyTerm(headlineText, companyName, SENIORITY_LEVEL_KEYWORDS[level.id])) return level;
   }
   return null;
