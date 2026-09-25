@@ -13,9 +13,10 @@
 
 import { companyLinkSlug, FRESHNESS_DAYS, toEpochMs } from "./readiness.js";
 
-// The pipeline stops at the warning line of the shared LinkedIn budget, leaving the remaining room
-// (up to the hard stop at 99) to the user's own scans (design 5.2).
-export const PIPELINE_TOUCH_CEILING = 75;
+// The pipeline stops well below the hard stop of the shared LinkedIn budget (99), leaving the rest to
+// the user's own scans (design 5.2). Designed as 75; lowered to 60 on 2026-09-25 (Boaz), after a single
+// scan used 70 of the 99 on the first day of automatic runs.
+export const PIPELINE_TOUCH_CEILING = 60;
 // A job for a field that has failed on this many different days stops being offered (design 5.5).
 export const MAX_FAILED_DAYS = 2;
 
@@ -218,4 +219,27 @@ export function rankCandidates(entries, now, contactChunks) {
       a.touches - b.touches ||
       String((a.pipeline && a.pipeline.lastRunDay) || "").localeCompare(String((b.pipeline && b.pipeline.lastRunDay) || ""))
     );
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Build step 3: may an automatic run start now? (design 5.4 and the step 3 touch-ups U1-U5)
+// ---------------------------------------------------------------------------------------------------
+
+// U1: an automatic run starts only with a full backup from the last 24 hours. Only a page can save one,
+// so without it the run waits for the next SalesTeam page to open, which makes the backup and kicks.
+export const AUTO_BACKUP_MAX_AGE_MS = 24 * 3600 * 1000;
+// U2: after the pipeline made way for a user's job, it stays out of the way this long, so the job can
+// take the batch lock before the next kick starts the pipeline again.
+export const USER_JOB_HOLD_MS = 3 * 60 * 1000;
+
+// The reason an automatic run may not start, or null when it may. In the order the user would care:
+// switched off, paused by the user for today, making way for a user's job, the LinkedIn budget, the backup.
+export function autoRunBlocker({ enabled, pausedDay, today, holdUntil, runningBatch, touches24h, lastBackupAt, now }) {
+  if (!enabled) return "off";
+  if (pausedDay && pausedDay === today) return "paused_today";
+  if (holdUntil && now < holdUntil) return "hold";
+  if (runningBatch) return "busy";
+  if (touches24h >= PIPELINE_TOUCH_CEILING) return "budget";
+  if (!lastBackupAt || now - lastBackupAt > AUTO_BACKUP_MAX_AGE_MS) return "no_backup";
+  return null;
 }

@@ -13,6 +13,11 @@
 import { getApiUsage, sumDays, clearApiUsage, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
 import { askConfirm } from "./confirm-dialog.js";
 import { initBatchStatus } from "./batch-status.js";
+import { watchPipelineStatusLine, kickPipelineFromPage, kickAndExplain } from "./pipeline-status.js";
+import {
+  getPipelineAutomation, setPipelineAutomationEnabled, setPipelinePausedDay, CONSENT_TITLE, CONSENT_TEXT, PIPELINE_AUTOMATION_KEY,
+} from "./pipeline-automation.js";
+import { localDay } from "./pipeline-plan.js";
 import {
   getAnthropicApiKey,
   saveAnthropicApiKey,
@@ -660,7 +665,7 @@ async function renderLinkedinTouchStat() {
 // instead. Defaults to the Setup section (the most useful first stop) when
 // the hash is empty or doesn't match any known section.
 const SETTINGS_SECTION_IDS = [
-  "setup-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
+  "setup-section", "automation-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
   "discovery-queue-section", "company-discovery-section", "contact-discovery-section",
 ];
 
@@ -908,6 +913,29 @@ billingWarningSaveBtn.addEventListener("click", async () => {
 });
 loadWarningLimit();
 initBatchStatus();
+
+// ---- Automation (1.2 data pipeline, build step 3) ----
+const automationCheckbox = document.getElementById("automation-enabled-checkbox");
+const automationResumeBtn = document.getElementById("automation-resume-btn");
+document.getElementById("automation-enabled-label").textContent = CONSENT_TITLE;
+document.getElementById("automation-consent-text").textContent = CONSENT_TEXT;
+async function renderAutomationCard() {
+  const a = await getPipelineAutomation();
+  automationCheckbox.checked = a.enabled;
+  automationResumeBtn.hidden = !(a.enabled && a.pausedDay === localDay());
+}
+automationCheckbox.addEventListener("change", async () => {
+  await setPipelineAutomationEnabled(automationCheckbox.checked, "Settings");
+  if (automationCheckbox.checked) kickAndExplain("settings");
+  else chrome.runtime.sendMessage({ type: "PIPELINE_STOP" }).catch(() => {});
+});
+automationResumeBtn.addEventListener("click", async () => {
+  await setPipelinePausedDay(null);
+  kickPipelineFromPage("resume");
+});
+chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[PIPELINE_AUTOMATION_KEY]) renderAutomationCard(); });
+renderAutomationCard();
+watchPipelineStatusLine(document.getElementById("automation-status-line"));
 
 // ---- Web Findings - Automatic Arbitration ----
 // The seven rule rows are generated from ARBITRATION_RULES rather than written into settings.html,

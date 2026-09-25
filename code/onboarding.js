@@ -7,6 +7,8 @@
 // day, valueAddOffers too (also moved out of settings.html, as a new
 // optional step here). Phase 5/6 (company/contact discovery scanning)
 // consume everything captured here.
+import { rescoreDerivedPriorities } from "./auto-score.js";
+import { getPipelineAutomation, setPipelineAutomationEnabled, CONSENT_TITLE, CONSENT_TEXT } from "./pipeline-automation.js";
 import {
   getTargetUniverseConfig, saveTargetUniverseConfig,
   getTargetContactProfile, saveTargetContactProfile,
@@ -160,7 +162,19 @@ function el(id) { return document.getElementById(id); }
 // of each button, not one per section.
 // The wizard normally runs INSIDE the Settings page (settings.html#wizard), so the app menu stays visible on the left;
 // leaving it just returns that page to its Setup card. Opened on its own (an old link), it goes to settings.html instead.
+// Setup was saved (design 5.4, build step 3): targeting may have changed, so the derived priorities are
+// re-scored at once (local, free), and the automatic pipeline is kicked. The kick does nothing unless
+// automation is on.
+async function afterSetupSaved() {
+  try { await rescoreDerivedPriorities(); } catch { /* the next Target Accounts open re-scores anyway */ }
+  chrome.runtime.sendMessage({ type: "PIPELINE_KICK", source: "setup_saved" }).catch(() => {});
+}
+
 function leaveWizard() {
+  afterSetupSaved().finally(leaveWizardNow);
+}
+
+function leaveWizardNow() {
   if (window.top !== window) {
     // Same page, just closes the embedded wizard (works whatever the page's query string). The PARENT is the Settings
     // page that hosts this frame - when Settings itself is embedded in another page (opened from the Posts or
@@ -1602,6 +1616,7 @@ el("change-back-to-menu-link").addEventListener("click", async (event) => {
 });
 
 el("finish-btn").addEventListener("click", async () => {
+  await setPipelineAutomationEnabled(el("finish-automation-checkbox").checked, "Setup wizard");
   await markOnboardingCompleted();
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
@@ -1612,6 +1627,9 @@ el("finish-btn").addEventListener("click", async () => {
 
 async function init() {
   el("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+  el("finish-automation-title").textContent = CONSENT_TITLE;
+  el("finish-automation-text").textContent = CONSENT_TEXT;
+  el("finish-automation-checkbox").checked = (await getPipelineAutomation()).enabled;
   renderWizardStepList();
 
   targetUniverseConfig = await getTargetUniverseConfig();

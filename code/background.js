@@ -41,7 +41,9 @@ import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease } from "
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
 import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
-import { startPipelineRun, stopPipelineRun } from "./pipeline-runner.js";
+import { startPipelineRun, stopPipelineRun, kickPipeline, pausePipelineForUser, clearUserJobHold } from "./pipeline-runner.js";
+import { setPipelinePausedDay } from "./pipeline-automation.js";
+import { localDay } from "./pipeline-plan.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
 // Used only for the two independent AND-group searches below (concept-only,
@@ -96,6 +98,19 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("settings.html#wizard") });
   }
+});
+
+// 1.2 data pipeline, build step 3 (DATA_PIPELINE_DESIGN.md 5.4): the automatic triggers that live here.
+// kickPipeline does nothing unless the user has turned automation on, and nothing while a run is going.
+// Chrome starts. 20 s later, so the network is up (a lookup that times out counts as a failed day), and
+// still inside the 30 s a background worker lives without an event.
+chrome.runtime.onStartup.addListener(() => { setTimeout(() => { kickPipeline("startup").catch(() => {}); }, 20000); });
+// A batch job ended (its record is removed on release, wherever it ran): a user's job ending frees the
+// pipeline to resume (U2). The pipeline's own per-account releases are ignored.
+chrome.storage.onChanged.addListener((changes, area) => {
+  const change = area === "local" && changes.activeBatchJob;
+  if (!change || change.newValue || !change.oldValue || change.oldValue.pipeline) return;
+  clearUserJobHold().then(() => kickPipeline("batch_end")).catch(() => {});
 });
 
 function chunk(array, size) {
@@ -961,5 +976,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   } else if (message?.type === "PIPELINE_STOP") {
     sendResponse(stopPipelineRun());
+  } else if (message?.type === "PIPELINE_KICK") {
+    // Build step 3: a page opened (or is open, every 10 minutes), an import finished, Setup was saved.
+    kickPipeline(message.source || "page").then(sendResponse).catch((err) => sendResponse({ started: false, reason: err.message }));
+    return true;
+  } else if (message?.type === "PIPELINE_PAUSE") {
+    // U2: the user is starting a job of their own - make way.
+    pausePipelineForUser(message.forLabel).then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  } else if (message?.type === "PIPELINE_PAUSE_TODAY") {
+    // The pill's Pause: stop now and stay off for the rest of the day (Resume in Settings > Automation).
+    setPipelinePausedDay(localDay()).then(() => sendResponse(stopPipelineRun())).catch(() => sendResponse({ ok: false }));
+    return true;
   }
 });

@@ -96,3 +96,13 @@ export async function countTouchesSince(sinceMs) {
   const { [TOUCH_LOG_KEY]: log = [] } = await chrome.storage.local.get(TOUCH_LOG_KEY);
   return log.filter((ts) => ts >= sinceMs).length;
 }
+
+// When the rolling 24h count next drops below `ceiling` (ms timestamp), or null when it already is. The
+// automatic pipeline stops at its own ceiling (75); its status line says when it can carry on.
+export async function timeBelowCeiling(ceiling) {
+  const { [TOUCH_LOG_KEY]: log = [] } = await chrome.storage.local.get(TOUCH_LOG_KEY);
+  const now = Date.now();
+  const active = log.filter((ts) => now - ts < 24 * 60 * 60 * 1000).sort((a, b) => a - b);
+  if (active.length < ceiling) return null;
+  return active[active.length - ceiling] + 24 * 60 * 60 * 1000;
+}
