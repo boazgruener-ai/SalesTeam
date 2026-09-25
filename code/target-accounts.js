@@ -84,7 +84,9 @@ import {
   exportLeads,
   importSettings,
   importLeads,
+  getAccountReadiness,
 } from "./storage.js";
+import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBeforeRestore } from "./backup-restore.js";
 import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
@@ -525,6 +527,9 @@ const COMPANY_COLUMNS = [
   // Not a stored field - computed live from every lead matched to this company by
   // name (see accountStatusPillClass/renderCellContent), same rollup the pie uses.
   { id: "accountStatus", label: "Status", visible: true, pill: true },
+  // 1.2 build step 1: readiness.js's verdict on this account (Ready / Usable / In progress...), the same
+  // one the Pipeline status pie counts and the Scanner selects by. Hover shows what is still missing.
+  { id: "readiness", label: "Readiness", visible: true, pill: true },
   // Also computed, not stored: what the last web research of this account found that its data
   // does not already say, minus whatever the user chose to keep their own value for. Without it
   // the findings are only reachable through each account's own "Review findings…" button, which
@@ -621,7 +626,10 @@ const CONTACT_COLUMNS = [
   { label: "City", field: "city" },
   { label: "Country", field: "country" },
   { label: "Business Email", field: "publicBusinessEmail" },
-  { label: "LinkedIn Profile", field: "lastVerified2", link: true, linkLabel: "LinkedIn ↗" },
+  // "Contact Link", not "LinkedIn Profile" (2026-09-25): the research workbook fills this column with
+  // whatever page evidences the person - often a news article, not LinkedIn - so the label says what
+  // the link really is (contactLinkLabel) rather than calling every link "LinkedIn".
+  { label: "Contact Link", field: "lastVerified2", link: true, linkLabel: "auto" },
   { label: "LinkedIn Status", field: "evidenceQuality2" },
   { label: "Bio Page", field: "profileUrl", link: true },
   { label: "Source", field: "sourceUrl", link: true },
@@ -818,7 +826,19 @@ function annotatedProposals(company, extra) {
     .map((p) => ({ ...p, dismissed: isDismissedFinding(extra.webFindingsDismissed, p) }));
 }
 
+// "LinkedIn ↗" only for a real LinkedIn profile; any other page shows its site name ("pme.ch ↗"), so a
+// news article is never passed off as a LinkedIn profile. Readiness applies the same test (R3.6).
+function contactLinkLabel(url) {
+  if (/linkedin\.com\/in\//i.test(url || "")) return "LinkedIn ↗";
+  try { return `${new URL(url).hostname.replace(/^www\./, "")} ↗`; } catch { return "Open ↗"; }
+}
+
 function rawValue(company, column) {
+  if (column.id === "readiness") {
+    if (company.fullName != null) return null;
+    const a = readinessByCompanyId.get(company.companyId);
+    return a ? READINESS_LABELS[a.state] : null;
+  }
   if (column.id === "webFindings") {
     if (company.fullName != null) return null;
     const extra = accountExtras[normalizeCompanyName(company.company)];
@@ -988,6 +1008,18 @@ function renderCellContent(td, company, column) {
     if (value != null && value !== "" && effectiveEmployees(company).fromImport) appendImportedDot(td);
     return;
   }
+  if (column.id === "readiness") {
+    const a = readinessByCompanyId.get(company.companyId);
+    if (!a) { td.textContent = "—"; return; }
+    const pill = document.createElement("span");
+    pill.className = `priority-pill priority-pill-readiness-${a.state}`;
+    pill.textContent = READINESS_LABELS[a.state];
+    pill.title = a.state === "ready"
+      ? "Ready: every field your targeting needs is present and verified."
+      : (a.scannable ? "Usable - the Scanner can search it. Still to do: " : "Not yet scannable. Still to do: ") + describeMissing(a.missing);
+    td.appendChild(pill);
+    return;
+  }
   if (column.id === "accountStatus" || column.id === "contactStatus") {
     const pill = document.createElement("span");
     pill.className = `priority-pill ${statusPillClass(value)}`;
@@ -1035,7 +1067,7 @@ function renderCellContent(td, company, column) {
     a.href = value;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
-    a.textContent = "Open ↗";
+    a.textContent = column.linkLabel === "auto" ? contactLinkLabel(value) : "Open ↗";
     td.appendChild(a);
     return;
   }
@@ -1128,7 +1160,7 @@ function buildSubtable(title, rows, columns, { rowClick } = {}) {
         a.href = row[col.field];
         a.target = "_blank";
         a.rel = "noopener noreferrer";
-        a.textContent = col.linkLabel || "Open ↗";
+        a.textContent = col.linkLabel === "auto" ? contactLinkLabel(row[col.field]) : (col.linkLabel || "Open ↗");
         td.appendChild(a);
       } else {
         td.textContent = col.date ? formatExcelDate(row[col.field]) : formatValue(row[col.field]);
@@ -1888,7 +1920,7 @@ const CONTACT_LIST_COLUMNS = [
   // One combined value (see effectiveContactSeniority): the level found in the job title /
   // headline, else the imported workbook's own text. A green dot marks an imported-sourced value.
   { id: "seniority", label: "Seniority", visible: true },
-  { id: "lastVerified2", label: "LinkedIn Profile", visible: true, link: true, linkLabel: "LinkedIn ↗" },
+  { id: "lastVerified2", label: "Contact Link", visible: true, link: true, linkLabel: "auto" },
   { id: "publicBusinessEmail", label: "Business Email", visible: true },
   // publicBusinessPhone has no imported counterpart at all - the source workbook never carried
   // a phone field - so it is ALWAYS just an override with nothing to diff against.
@@ -2490,6 +2522,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if ("targetAccountExtras" in changes) {
     getTargetAccountExtras().then((extras) => { accountExtras = extras; if (!listViewEl.hidden) renderTable(); });
   }
+  // Readiness reads all of these (design 3.5). A workbook change already reloads everything above;
+  // the rest only need the assessment redone.
+  if ("targetAccounts" in changes || "targetAccountExtras" in changes || "targetContactExtras" in changes ||
+      "targetContactProfile" in changes || "targetUniverseConfig" in changes) {
+    scheduleReadinessRefresh();
+  }
 });
 
 // Target Accounts Dashboard stats (PRD 6.19) - computed over the FULL
@@ -2657,7 +2695,69 @@ function computeContactCoverageCounts(companies) {
   return CONTACT_COVERAGE_ORDER.map((label) => ({ label, count: counts[label], color: CONTACT_COVERAGE_COLORS[label] }));
 }
 
+// 1.2 build step 1 (design 10.2): Pipeline status - how many accounts readiness.js calls Ready, Usable,
+// In progress... It is the same assessment the Readiness column shows and the Scanner selects by, so
+// the three can never disagree. Recomputed whenever any of the account stores changes (design 3.5),
+// debounced because an import writes many times in a row.
+const READINESS_COLORS = {
+  ready: "#2e7d32", usable: "#66bb6a", in_progress: "#f9a825", needs_decision: "#c62828", lacking_evidence: "#9e9e9e",
+};
+let readinessByCompanyId = new Map();
+let readinessRefreshTimer = null;
+
+async function refreshReadiness() {
+  const rows = await getAccountReadiness();
+  readinessByCompanyId = new Map(rows.map(({ view, assessment }) => [view.companyId, assessment]));
+}
+
+function scheduleReadinessRefresh() {
+  clearTimeout(readinessRefreshTimer);
+  readinessRefreshTimer = setTimeout(async () => {
+    await refreshReadiness();
+    if (!hasWorkbookData) return;
+    renderReadinessPie();
+    if (!listViewEl.hidden) renderTable();
+  }, 500);
+}
+
+function renderReadinessPie() {
+  const counts = countReadiness([...readinessByCompanyId.values()]);
+  const slices = READINESS_STATES
+    .filter((s) => counts[s] > 0 || s === "ready")
+    .map((s) => ({ label: READINESS_LABELS[s], count: counts[s], color: READINESS_COLORS[s] }));
+  renderGenericPieChart(document.getElementById("pie-readiness"), slices, {
+    unitLabel: "companies",
+    // A slice is a filter on the Readiness column, set the same way the column's own menu sets it.
+    onSliceClick: (label) => {
+      columnFilters.readiness = { text: label, exclude: false };
+      currentPage = 1;
+      saveFilterSortState();
+      renderTable();
+      tableWrapEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+  });
+  const ready = counts.ready;
+  document.getElementById("pie-readiness-line").textContent =
+    `${ready} ready · ${counts.usable} usable · ${counts.in_progress} not yet scannable`;
+  // What holds the rest back, per field - so it is visible at a glance which gap is the big one (the
+  // pending LinkedIn re-check, a missing contact, an old headcount), not only per row on hover.
+  const gaps = {};
+  for (const a of readinessByCompanyId.values()) {
+    for (const m of a.missing) {
+      // A missing relevant contact is two different gaps: no contacts at all (a research gap) and
+      // contacts that are all below the Setup seniority levels (a targeting question). Counted apart.
+      const label = m.field === "linkedinCompanyId" && m.reason === "unverified" ? "LinkedIn re-check"
+        : m.field === "contact" && m.reason === "absent" ? (m.detail === "no contacts" ? "No contacts at all" : "Contacts, none at your seniority levels")
+        : `${FIELD_LABELS[m.field] || m.field} ${m.reason === "absent" ? "missing" : m.reason === "expired" ? "out of date" : "not verified"}`;
+      gaps[label] = (gaps[label] || 0) + 1;
+    }
+  }
+  const gapText = Object.entries(gaps).sort((a, b) => b[1] - a[1]).map(([label, n]) => `${label}: ${n}`).join(" · ");
+  document.getElementById("pie-readiness-gaps").textContent = gapText ? `Still to do - ${gapText}` : "";
+}
+
 function renderAccountsStats() {
+  renderReadinessPie();
   renderGenericPieChart(document.getElementById("pie-ai-priority"), computeAiPriorityRangeCounts(workbook.companies), { unitLabel: "companies" });
   renderGenericPieChart(document.getElementById("pie-evidence-level"), computeEvidenceLevelCounts(workbook.companies), { unitLabel: "companies" });
   renderGenericPieChart(document.getElementById("pie-account-status"), computeAccountStatusCounts(workbook.companies), { unitLabel: "companies" });
@@ -2742,6 +2842,7 @@ async function loadWorkbook() {
   contactsTableScrollTopEl.hidden = !hasContacts;
   contactsStatsSectionEl.hidden = !hasContacts;
   if (hasData) {
+    await refreshReadiness();
     renderTable();
     renderAccountsStats();
   }
@@ -3176,8 +3277,8 @@ resolveCompanyIdsBtn.addEventListener("click", async () => {
       // run too, on a normal/graceful finish - redundant but harmless
       // (re-applying already-persisted data), kept so the completion
       // summary's own counts stay exactly as accurate as before.
-      onCompanyDone: async (key, linkedinCompanyId, companyPageUrl) => {
-        if (linkedinCompanyId) await applyResolvedCompanyIds([{ key, linkedinCompanyId, companyPageUrl }]);
+      onCompanyDone: async (key, linkedinCompanyId, companyPageUrl, checkedLink) => {
+        if (linkedinCompanyId) await applyResolvedCompanyIds([{ key, linkedinCompanyId, companyPageUrl, checkedLink }]);
         await markLinkedinResolveAttempted([key]);
       },
     });
@@ -3277,6 +3378,8 @@ discoverContactsExistingBtn.addEventListener("click", async () => {
         (droppedTerms && droppedTerms.length > 0 ? ` - ${droppedTerms.length} title/keyword term(s) dropped by the search-complexity cap` : "") +
         stoppedSuffix;
       await loadWorkbook();
+      // New contacts move a locally-computed score (design 2.5.3) - re-score now, not at the next import.
+      await autoPrioritizeNewCompanies().catch(() => {});
       appendActivityLog({
         actor: stoppedByTouchBudget ? "extension" : "user",
         action: "existing_company_contacts_discovered",
@@ -3305,9 +3408,13 @@ stopDiscoverContactsExistingBtn.addEventListener("click", () => {
 // straight away instead of staying empty until the button is clicked (imported research that is already confident
 // becomes P1/P2 with its own score; everything else is scored from the Setup wizard's rules and its contacts).
 // Free: local computation only - no AI call, no LinkedIn visit. Returns { applied, summary } (applied 0 = nothing new).
+// Since 1.2 build step 1 it also re-scores every locally-scored company (rescoreDerived), because a
+// score must follow the data (design 2.5.3). Only companies whose priority or score actually moved
+// are written and counted, so a run where nothing changed stays silent.
 async function autoPrioritizeNewCompanies() {
-  const eligible = await getCompaniesForPrioritization({ rescoreAll: false });
+  const eligible = await getCompaniesForPrioritization({ rescoreAll: false, rescoreDerived: true });
   if (eligible.length === 0) return { applied: 0, summary: "" };
+  const previousById = new Map(eligible.map((e) => [e.company.companyId, e.company]));
   const [targetUniverseConfig, mentorPersona, companyContext, idealCustomerProfile, outputLanguage] = await Promise.all([
     getTargetUniverseConfig(), getMentorPersona(), getCompanyContext(), getIdealCustomerProfile(), getOutputLanguage(),
   ]);
@@ -3315,7 +3422,11 @@ async function autoPrioritizeNewCompanies() {
     eligible, targetUniverseConfig,
     { apiKey: null, mentorPersona, companyContext, idealCustomerProfile, outputLanguage },
     { useAI: false }
-  );
+  ).then((all) => all.filter((r) => {
+    const prev = previousById.get(r.companyId);
+    return !prev || prev.salesTeamPriority !== r.priority || (prev.salesTeamPriorityScore ?? null) !== (r.priorityScore ?? null);
+  }));
+  if (results.length === 0) return { applied: 0, summary: "" };
   const applied = await applyCompanyPrioritizationResults(results);
   const counts = { P1: 0, P2: 0, P3: 0, P4: 0, P5: 0 };
   for (const r of results) if (counts[r.priority] != null) counts[r.priority]++;
@@ -3323,7 +3434,7 @@ async function autoPrioritizeNewCompanies() {
   appendActivityLog({
     actor: "extension",
     action: "companies_prioritized",
-    label: `Priorities calculated automatically for ${applied} new compan${applied === 1 ? "y" : "ies"} (${summary})`,
+    label: `Priorities calculated automatically for ${applied} compan${applied === 1 ? "y" : "ies"} (${summary})`,
     newValue: { applied, counts, useAI: false, automatic: true },
   });
   await loadWorkbook();
@@ -3438,6 +3549,8 @@ fetchCompanySizeBtn.addEventListener("click", async () => {
     fetchCompanySizeStatusEl.textContent =
       `Done - ${applied} of ${attemptedKeys.length} compan${attemptedKeys.length === 1 ? "y" : "ies"} checked got a real size` + stoppedSuffix;
     await loadWorkbook();
+    // A new size moves a locally-computed score (design 2.5.3) - re-score now.
+    await autoPrioritizeNewCompanies().catch(() => {});
     appendActivityLog({
       actor: stoppedByTouchBudget ? "extension" : "user",
       action: "company_size_fetched",
@@ -5367,7 +5480,7 @@ function openWebFindingsReview(companyKey, { onSaved } = {}) {
     for (const p of chosen) delete dismissed[p.key];
     for (const p of revived) delete dismissed[p.key];
     for (const p of kept) dismissed[p.key] = p.found;
-    await saveTargetAccountExtra(companyKey, { overrides, webFindingsDismissed: dismissed });
+    await saveTargetAccountExtra(companyKey, { overrides, webFindingsDismissed: dismissed }, { src: "web" });
     const parts = [];
     if (chosen.length) parts.push(`saved ${chosen.map((p) => p.label).join(", ")}`);
     if (kept.length) parts.push(`kept own value for ${kept.map((p) => p.label).join(", ")}`);
@@ -6314,6 +6427,9 @@ async function init() {
   await route();
   openActionFromHash();
   initBatchStatus(onBulkStateChange);
+  // Catches every other way data arrives (web research, edits, a run on another page): scores follow
+  // the data on the next page open. Local and free; silent when nothing moved.
+  autoPrioritizeNewCompanies().catch(() => {});
 }
 
 init();

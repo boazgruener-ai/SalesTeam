@@ -42,7 +42,7 @@ const HEADER_OVERRIDES = {
   targetCountryRelationship: "Local / Global",
   companyType: "Company Type",
   linkedinLink: "LinkedIn Link",
-  lastVerified2: "LinkedIn Profile",
+  lastVerified2: "Contact Link",
   evidenceQuality2: "LinkedIn Status",
 };
 

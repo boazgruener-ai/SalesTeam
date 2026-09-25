@@ -1,7 +1,7 @@
 # SalesTeam — Data Pipeline & Readiness: Design
 
 Target release: **1.2.0**
-Status: **Design — decisions D1–D6 agreed 2026-09-24** (section 12). Implementation starts with build step 0.
+Status: **Design — decisions D1–D6 agreed 2026-09-24** (section 12). Step 0 done 2026-09-25; step 1 built 2026-09-25, awaiting a live check (section 11, *Step 1 as built*).
 Date: 2026-09-24
 Builds on: `DATA_PIPELINE_REQUIREMENTS.md` (agreed 2026-09-24). Requirement numbers (R3.3, R12.2.5…)
 refer to that document.
@@ -216,9 +216,9 @@ extras[key].provenance = {
 ```
 
 `src` is one of `linkedin | web | workbook | user | discovery`. `discovery` is LinkedIn Discovery,
-which counts as LinkedIn. Contacts keep their existing `lastVerified` / `lastVerified2` pair, so no
-new contact schema is needed. A contact counts as verified when it has a LinkedIn profile URL and
-either date is within 6 months.
+which counts as LinkedIn. Contacts need no new schema: a contact counts as verified when it has a
+LinkedIn profile URL (`lastVerified2`, which holds the URL, not a date) and its `lastVerified` date
+is within 6 months (corrected in step 1, see section 11).
 
 ### 4.2 Who writes it
 
@@ -612,6 +612,67 @@ the store on its own.
 
 Per the versioning policy, bumping to 1.2.0 is Boaz's call. This plan assumes the steps are
 internal builds, and that 1.2.0 is whichever build he decides to submit.
+
+### Step 1 as built (2026-09-25)
+
+Branch `feature/pipeline-step1`. Still read-only: nothing visits LinkedIn that did not before.
+
+- **`code/readiness.js`** (pure): `assessAccount`, `isScannable`, `requiredFields`, `deriveProvenance`,
+  `MIN_READY_TO_SCAN`. `test_pure_modules.py` covers it, including the 3.4 check that every Ready or
+  Usable account is one `isScannable` accepts.
+- **`getAccountViews()`** in `storage.js` is the one join. `getAccountReadiness()` pairs each live
+  account with its assessment. `getScanTargetCompanyIds` is rebuilt on `isScannable` (defect 2.5.2).
+- **Provenance** is stored in `extras[key].provenance`. Each entry holds `v`, the value it vouches for.
+  An entry whose `v` no longer matches the stored value is ignored, and the field's provenance is
+  derived again. So a re-import, a merge or an undo can never leave provenance vouching for a value
+  that has gone. The writers stamp provenance in the same write as the value: the resolver, the
+  Discovery id backfill, Fetch Company Size, accepted web findings (single and bulk) and manual edits.
+- **The stored-id re-check rule** (from the step 0 mismatch finding): `linkedinCompanyId` counts as
+  verified only when its provenance records the page the id was read from (`link`), and that page is
+  the account's current LinkedIn link. Ids stored before 1.2 carry no such record, so they show as
+  *not yet re-checked* and the account is **Usable, not Ready**, until step 2's pipeline re-reads
+  them. A re-import that changes an account's link invalidates its id the same way. Discovered rows
+  are the exception: their id and link come off the same search card.
+- **Defect 2.5.1:** `getCompaniesNeedingSize` uses `parseLooseNumber`.
+- **Defect 2.5.3, as far as step 1 can go without the scheduler:** the automatic scoring now also
+  re-scores locally computed priorities. It runs after an import or merge, after contact discovery,
+  after Fetch Company Size, and on opening Target Accounts. It never touches a manual override or an
+  AI-judged score (its reason contains "Strategic Fit:"). Only companies whose score moved are
+  written.
+- **UI:** a first pie, **Pipeline status**, on the Target Accounts dashboard, with a one-line count
+  under it. Clicking a slice filters the table by the new **Readiness** column, and hovering a
+  Readiness pill lists what the account still lacks. Both are redrawn, debounced, when any account
+  store or the targeting settings change.
+
+**Differences from the design text, found in the code:**
+
+1. Contacts: `lastVerified2` is the LinkedIn **profile URL**, not a second date (section 4.1 assumed
+   two dates). The contact's date is `lastVerified`. Discovered contacts had no date at all: they now
+   get the day they were found, and older ones fall back to the account's
+   `contactDiscoveryAttemptedAt`, then the import date.
+2. Discovered companies keep their LinkedIn id on the workbook row, not in the `targetAccounts` map,
+   so the old scan selection never scanned them. `getAccountViews` reads both, so **Discovered
+   companies with a P1–P3 priority are now scanned.**
+3. Scope "all" now needs a P1–P5 priority, per `isScannable`. Before, it also took unscored
+   companies. The automatic scoring leaves almost none unscored.
+4. With no seniority levels set in the wizard, any contact counts as relevant, rather than none.
+5. Excluded accounts are left out of the pie, the same as deleted ones. The table already hides both.
+
+**Added during the live test (2026-09-25, build 1.1.4):**
+
+6. **Contact relevance reads the research's own Seniority column first** ("C-level / Group",
+   "Specialist"…). The job-title guess is used only for contacts without it. Any "Chief … Officer"
+   title now counts as C-level, both here and in LinkedIn Discovery's headline check. Before, a title such
+   as "Chief Digital & Information Officer" matched no level.
+7. **The contact column "LinkedIn Profile" is now "Contact Link".** The research fills it with any
+   page that evidences the person, often a news article. The link says "LinkedIn ↗" only for a real
+   profile; any other page shows its site name. Readiness applies the same test.
+8. **A "Still to do" line under the pie** counts the gaps per field. The first live reading was:
+   LinkedIn re-check 533, relevant contact not verified (no LinkedIn profile) 289, employees not
+   verified 88, relevant contact missing 78, LinkedIn company missing 1.
+9. **For step 2:** the 289 accounts already know the senior person's name. Finding that one person's
+   LinkedIn profile is a narrower, likely cheaper job than a People-tab discovery, and should be
+   designed as its own job.
 
 ---
 
