@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js"]
+PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -943,6 +943,65 @@ def test_readiness(ctx):
           "web|true")
 
 
+def test_pipeline_plan(ctx):
+    """pipeline-plan.js - which job an account needs, and whether a LinkedIn answer is accepted (design 5, T1-T4).
+    Reuses test_readiness's readyView/CFG/NOW."""
+    # Names (T1)
+    check("name match ignores accents, umlaut spelling, titles and middle names",
+          ctx.eval("namesMatch('Dr. Hans-Peter Mueller, PhD', 'Hans Müller')"), True)
+    check("name match needs the last name too", ctx.eval("namesMatch('Hans Meier', 'Hans Müller')"), False)
+    check("a one-word known name never matches", ctx.eval("namesMatch('Anna Muster', 'Anna')"), False)
+    check("exactly one matching person is accepted",
+          ctx.eval("pickProfileMatch([{slug:'a', name:'Anna Muster'}, {slug:'b', name:'Beat Keller'}], 'Anna Muster').status"), "found")
+    check("the same person twice (same slug) is still one",
+          ctx.eval("pickProfileMatch([{slug:'a', name:'Anna Muster'}, {slug:'a', name:'Anna Muster'}], 'Anna Muster').status"), "found")
+    check("two different people with the name are never guessed",
+          ctx.eval("pickProfileMatch([{slug:'a', name:'Anna Muster'}, {slug:'b', name:'Anna M. Muster'}], 'Anna Muster').status"), "ambiguous")
+    check("a match whose headline names only another company is dropped",
+          ctx.eval("pickProfileMatch([{slug:'a', name:'Anna Muster', conflict:true}], 'Anna Muster').status"), "none")
+
+    # Size bands (T3 touch-up)
+    check("band parsed", ctx.eval("JSON.stringify(parseSizeBand('1,001-5,000'))"), '{"lo":1001,"hi":5000}')
+    check("open band parsed", ctx.eval("parseSizeBand('10,001+ employees').hi === Infinity"), True)
+    check("a count inside the band is confirmed, not overwritten", ctx.eval("sizeVerdict('6,500+', parseSizeBand('5,001-10,000'))"), "confirm")
+    check("a count outside the band is replaced", ctx.eval("sizeVerdict(300, parseSizeBand('1,001-5,000'))"), "replace")
+    check("no count is filled", ctx.eval("sizeVerdict(null, parseSizeBand('11-50'))"), "fill")
+
+    # Jobs (5.1, T1, T2)
+    ctx.eval(r"""
+    function jobsOf(v, pipeline) { return jobsNeeded(v, assessAccount(v, CFG, NOW), pipeline || {}, NOW).join(','); }
+    var OLD_ID = withProv('linkedinCompanyId', { src: 'linkedin', at: NOW - 10 * DAY, v: '1234' });   // no link recorded
+    """)
+    check("a Ready account needs nothing", ctx.eval("jobsOf(readyView())"), "")
+    check("an id not re-checked needs resolve (T2)", ctx.eval("jobsOf(OLD_ID)"), "resolve")
+    check("a known contact with no profile needs the profile job, not discovery (T1)",
+          ctx.eval("jobsOf(readyView({ contacts: [{ fullName: 'Anna Muster', relevant: true, linkedinUrl: 'https://news.ch/x', verifiedAt: NOW }] }))"), "profile")
+    check("once every known contact was searched, discovery takes over",
+          ctx.eval("jobsOf(readyView({ contacts: [{ fullName: 'Anna Muster', relevant: true, linkedinUrl: null }] }), { profileTried: ['Anna Müster'] })"), "contacts")
+    check("no relevant contact at all needs discovery",
+          ctx.eval("jobsOf(readyView({ contacts: [] }))"), "contacts")
+    check("discovery that failed on 2 different days stops",
+          ctx.eval("jobsOf(readyView({ contacts: [] }), { attempts: { contacts: ['2026-09-23', '2026-09-24'] } })"), "")
+    check("two failures on the same day do not count as two days",
+          ctx.eval("jobsOf(readyView({ contacts: [] }), { attempts: { contacts: withFailedAttempt({ attempts: { contacts: ['2026-09-24'] } }, 'contacts', '2026-09-24').contacts } })"), "contacts")
+    check("unverified employees needs size",
+          ctx.eval("jobsOf(withProv('globalEmployees', { src: 'workbook', at: NOW, evidence: 'Weak', v: 270000 }))"), "size")
+    check("re-check and size together are one visit (T3)",
+          ctx.eval("var v = withProv('globalEmployees', { src: 'workbook', at: NOW, evidence: 'Weak', v: 270000 }); v.provenance.linkedinCompanyId = OLD_ID.provenance.linkedinCompanyId; "
+                   "var j = jobsNeeded(v, assessAccount(v, CFG, NOW), {}, NOW); j.join(',') + '|' + estimateTouches(j, v, 2)"), "resolve,size|1")
+
+    # Order (5.3)
+    check("P1 before P2, then fewest touches, and an account handled today is skipped",
+          ctx.eval(r"""
+          var a = readyView({ key: 'a', salesTeamPriority: 'P2', contacts: [] });
+          var b = readyView({ key: 'b', salesTeamPriority: 'P1', contacts: [] });
+          var c = OLD_ID; c.key = 'c'; c.salesTeamPriority = 'P2';
+          var d = readyView({ key: 'd', salesTeamPriority: 'P1', contacts: [] });
+          rankCandidates([a, b, c, d].map(function (v) {
+            return { view: v, assessment: assessAccount(v, CFG, NOW), pipeline: v.key === 'd' ? { lastRunDay: localDay(NOW) } : {} };
+          }), NOW, 2).map(function (e) { return e.view.key; }).join(',')"""), "b,c,a")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -961,6 +1020,7 @@ def main():
     test_rule11_group_hq_over_local_entity(ctx)
     test_patch_shape(ctx)
     test_readiness(ctx)
+    test_pipeline_plan(ctx)
 
     print()
     for f in _failures:

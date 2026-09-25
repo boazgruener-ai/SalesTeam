@@ -49,7 +49,7 @@ export function sizeFetchConfirmText(count) {
 // navigating, not after) - a document_idle content script on a JS-heavy
 // SPA page can run and message back before the tab's own "complete" event
 // fires, so the result listener has to already be live.
-function navigateAndWait(tabId, url) {
+function navigateAndWait(tabId, url, { activate = true } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const timeout = setTimeout(() => {
@@ -64,7 +64,7 @@ function navigateAndWait(tabId, url) {
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tabId, { url, active: true }).catch(() => {});
+    chrome.tabs.update(tabId, activate ? { url, active: true } : { url }).catch(() => {});
     recordLinkedinTouch().catch(() => {});
   });
 }
@@ -153,4 +153,30 @@ async function runCompanySizeFetchImpl(companies, { onProgress, shouldAbort } = 
 
 export function runCompanySizeFetch(...args) {
   return withBatch("Looking up company sizes on LinkedIn", () => runCompanySizeFetchImpl(...args));
+}
+
+// 1.2 pipeline (DATA_PIPELINE_DESIGN.md, step 2 touch-up T3). The size reader is its own content
+// script on every /company/ page, switched on by these two flags - so arming it before the resolver's
+// visit to the same page reads the size on that visit, at no extra touch. Resolves once armed, with
+// { result } - the result's promise is wrapped so awaiting the arming does not also await the answer.
+// The caller disarms afterwards.
+export async function armSizeRead(companyKey) {
+  const result = waitForSizeResult(companyKey);
+  await chrome.storage.local.set({ companySizeFetchActive: true, companySizeFetchTarget: companyKey });
+  return { result };
+}
+
+export async function disarmSizeRead() {
+  await chrome.storage.local.remove(["companySizeFetchActive", "companySizeFetchTarget"]).catch(() => {});
+}
+
+// One account's own visit, on the pipeline's tab: { key, linkedinLink } -> the size result + touches.
+export async function readSizeOnTab(tab, company, { activate = false } = {}) {
+  try {
+    const { result } = await armSizeRead(company.key);
+    await navigateAndWait(tab.id, company.linkedinLink, { activate });
+    return { ...(await result), touches: 1 };
+  } finally {
+    await disarmSizeRead();
+  }
 }

@@ -175,7 +175,7 @@ export function resolveConfirmText(count) {
 // listener callback's own `tab` argument, no extra API call needed) lets a
 // future debugSamples entry confirm or rule this out before changing any
 // behavior based on it.
-function navigateAndWaitResolve(tabId, url) {
+function navigateAndWaitResolve(tabId, url, { activate = true } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const timeout = setTimeout(() => {
@@ -200,7 +200,9 @@ function navigateAndWaitResolve(tabId, url) {
     // switches to a different tab mid-run, since Chrome's background-tab
     // throttling cares about a tab's current focus state, not just how it
     // started out.
-    chrome.tabs.update(tabId, { url, active: true }).catch(() => {});
+    // The 1.2 pipeline passes activate: false - its tab is the only tab of its own unfocused window,
+    // which step 0 showed loads fine without ever being brought to the front (DATA_PIPELINE_DESIGN.md s8).
+    chrome.tabs.update(tabId, activate ? { url, active: true } : { url }).catch(() => {});
     recordLinkedinTouch().catch(() => {});
   });
 }
@@ -259,7 +261,7 @@ const MAX_DEBUG_SAMPLES = 8;
 // term gets a confident name with no ID anywhere. Pulled out of the main
 // loop (v0.29.37) so it can be tried against more than one candidate name
 // per company - see the officialName comment below.
-async function resolveOneName(tab, searchName) {
+async function resolveOneName(tab, searchName, nav = {}) {
   // companyResolveDirectLink explicitly cleared, not just omitted -
   // chrome.storage.local.set merges rather than replaces, so a prior
   // company's direct-link attempt (see resolveViaDirectLink) would
@@ -274,7 +276,7 @@ async function resolveOneName(tab, searchName) {
   // waitForResolveResult's own comment for why (a real listener race,
   // confirmed via finalUrl evidence, not a guess).
   const resultPromise = waitForResolveResult(searchName);
-  const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, buildCompanyResolveUrl(searchName));
+  const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, buildCompanyResolveUrl(searchName), nav);
   let { resolved, linkedinCompanyId, debug, companyPageUrl } = await resultPromise;
   let usedFallback = false;
   let fallbackFinalUrl = null;
@@ -286,7 +288,7 @@ async function resolveOneName(tab, searchName) {
     usedFallback = true;
     await sleep(randomDelay());
     const fallbackResultPromise = waitForResolveResult(searchName);
-    const fallbackNav = await navigateAndWaitResolve(tab.id, companyPageUrl);
+    const fallbackNav = await navigateAndWaitResolve(tab.id, companyPageUrl, nav);
     fallbackFinalUrl = fallbackNav.finalUrl;
     const fallbackResult = await fallbackResultPromise;
     resolved = fallbackResult.resolved;
@@ -323,7 +325,7 @@ async function resolveOneName(tab, searchName) {
 // its own sanity check (the page's own title against every name known for
 // this company) before trusting the id, since this URL has never been
 // confirmed against a hero card the way the search-based path's has.
-async function resolveViaDirectLink(tab, company) {
+async function resolveViaDirectLink(tab, company, nav = {}) {
   const expectedName = company.company;
   const candidateNames = [company.company, company.officialName, company.alternativeName].filter(Boolean);
   await chrome.storage.local.set({
@@ -333,7 +335,7 @@ async function resolveViaDirectLink(tab, company) {
     companyResolveTargetCandidates: candidateNames,
   });
   const resultPromise = waitForResolveResult(expectedName);
-  const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, company.linkedinLink);
+  const { navCompleted, finalUrl } = await navigateAndWaitResolve(tab.id, company.linkedinLink, nav);
   const { resolved, linkedinCompanyId, debug } = await resultPromise;
   return {
     searchName: `[direct link] ${company.linkedinLink}`,
@@ -541,4 +543,29 @@ async function runCompanyIdResolutionImpl(companies, { onProgress, shouldAbort, 
 
 export function runCompanyIdResolution(...args) {
   return withBatch("Looking up LinkedIn company IDs", () => runCompanyIdResolutionImpl(...args));
+}
+
+// One account, on a tab the caller owns (the 1.2 pipeline's worker window, DATA_PIPELINE_DESIGN.md 5.1):
+// the same direct-link-else-name-search logic as the batch above, with no tab of its own, no warm-up,
+// no keep-awake and no touch-budget check - the pipeline does those once per run. company:
+// { key, company, officialName?, alternativeName?, linkedinLink? }. Returns the attempt plus
+// `touches` (page visits made) and `checkedLink` (the page the id was read from).
+export async function resolveAccountOnTab(tab, company, { activate = false } = {}) {
+  const nav = { activate };
+  try {
+    const attempt = company.linkedinLink
+      ? await resolveViaDirectLink(tab, company, nav)
+      : await resolveOneName(tab, stripTrailingCorporateNoise(company.officialName || company.company), nav);
+    return {
+      ...attempt,
+      linkedinCompanyId: attempt.resolved ? attempt.linkedinCompanyId || null : null,
+      touches: 1 + (attempt.usedFallback ? 1 : 0),
+      checkedLink: company.linkedinLink || attempt.companyPageUrl || null,
+      timedOut: Boolean(attempt.debug?.timedOut),
+    };
+  } finally {
+    await chrome.storage.local
+      .remove(["companyResolveActive", "companyResolveTarget", "companyResolveDirectLink", "companyResolveTargetCandidates"])
+      .catch(() => {});
+  }
 }

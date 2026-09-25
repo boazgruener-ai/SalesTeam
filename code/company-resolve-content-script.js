@@ -157,10 +157,12 @@ function foldDiacritics(text) {
 // "(" sits where a space needs to be. storage.js's own
 // normalizeCompanyForMatch already treats () as separator punctuation for
 // the same reason elsewhere in this codebase.
+// "+" and "/" are separators too, and the German umlaut spellings fold the same way as the umlaut
+// itself (1.2 build step 2, first pipeline run): "Kühne + Nagel" never matched LinkedIn's "Kuehne+Nagel".
 function normalizeForNameMatch(text) {
-  return foldDiacritics(text || "")
-    .toLowerCase()
-    .replace(/[|&,.()\-]/g, " ")
+  return foldDiacritics((text || "").toLowerCase().replace(/ä/g, "a").replace(/ö/g, "o").replace(/ü/g, "u"))
+    .replace(/[|&,.()\-+/]/g, " ")
+    .replace(/ae/g, "a").replace(/oe/g, "o").replace(/ue/g, "u")
     .replace(/\s+/g, " ")
     .trim();
 }
