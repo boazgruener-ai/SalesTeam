@@ -240,6 +240,9 @@ function extractCompanyPageTitleName() {
   title = title.replace(/^\(\d+\)\s*/, "");
   title = title.replace(/\s*[:|]?\s*About\s*\|\s*LinkedIn\s*$/i, "");
   title = title.replace(/\s*\|\s*LinkedIn\s*$/i, "");
+  // 2026-09: LinkedIn now titles the page "Stadler: Overview | LinkedIn". Left in, the tab name made the
+  // name check fail for ten accounts whose names matched. Same rule as decision-rules.js cleanPageName.
+  title = title.replace(/\s*[:|]\s*(Overview|About|Posts|Jobs|People|Life|Home|Events|Products|Insights|Videos)\s*$/i, "");
   return title || null;
 }
 

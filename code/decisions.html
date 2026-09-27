@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SalesTeam Decisions</title>
+  <link rel="icon" href="icons/icon16.png" />
+  <link rel="stylesheet" href="decisions.css" />
+</head>
+<body>
+  <!-- 1.2 build step 4 (DATA_PIPELINE_DESIGN.md section 7, touch-ups V1-V8): the decision queue. Shown
+       embedded in the four pages' main area, like the Activity Log. One card at a time. -->
+  <header id="page-header">
+    <h1>Decisions <span id="version-text"></span></h1>
+    <p class="page-subtitle">
+      SalesTeam prepares the accounts by itself. These are the few questions only you can answer: whether two
+      entries are the same company, whether a changed LinkedIn page is still the right one, what to do with an
+      account nothing can be found for, and web findings that could change a decision. Pick one of the two
+      answers, or Skip to come back to it later.
+    </p>
+  </header>
+
+  <main id="decisions-main">
+    <p id="decisions-summary" class="summary" role="status">Loading…</p>
+
+    <p id="decisions-empty" class="empty" hidden>
+      Nothing to decide right now. When something needs you, a red dot appears next to Decisions in the menu.
+    </p>
+
+    <section id="decision-card" class="card" hidden>
+      <div class="card-top">
+        <span id="decision-kind" class="kind-chip"></span>
+        <span id="decision-position" class="position"></span>
+      </div>
+      <h2 id="decision-company"></h2>
+      <div id="decision-body" class="body"></div>
+      <label id="decision-similar" class="similar" hidden>
+        <input type="checkbox" id="decision-similar-checkbox" />
+        <span id="decision-similar-text"></span>
+      </label>
+      <div class="actions">
+        <button type="button" id="decision-choice-a" class="primary"></button>
+        <button type="button" id="decision-choice-b" class="secondary"></button>
+        <button type="button" id="decision-skip" class="link">Skip</button>
+      </div>
+      <p id="decision-status" class="status" role="status"></p>
+    </section>
+
+    <p id="decisions-last" class="last" role="status"></p>
+  </main>
+
+  <script type="module" src="decisions.js"></script>
+</body>
+</html>

@@ -63,6 +63,7 @@ import {
 import { runCompanyDiscoveryPhase } from "./company-discovery-extraction.js";
 import { runContactDiscoveryPhase } from "./contact-discovery-extraction.js";
 import { getLinkedinTouchStats, formatTouchRelease } from "./linkedin-touch-log.js";
+import { initDecisionsDot } from "./decisions-dot.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -281,6 +282,9 @@ document.getElementById("nav-export-csv-filtered-btn").addEventListener("click",
 document.getElementById("open-scanner-page-btn").addEventListener("click", () => showEmbeddedPage("scanner.html", "Scanner"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
+// 1.2 build step 4: the decision queue, with its red dot (R12.4.1).
+document.getElementById("open-decisions-btn").addEventListener("click", () => showEmbeddedPage("decisions.html", "Decisions"));
+initDecisionsDot();
 document.getElementById("open-help-btn").addEventListener("click", () => showEmbeddedPage("help.html", "Help"));
 
 // PRD 6.20 Phase 10 follow-up (2026-09-19) - collapsible nav, see

@@ -155,7 +155,7 @@ export function estimateResolveMinutes(count) {
 
 export function resolveConfirmText(count) {
   const estMinutes = estimateResolveMinutes(count);
-  return `Experimental: this will look up ${count} Target Account company${count === 1 ? "" : "ies"} by name on LinkedIn ` +
+  return `Experimental: this will look up ${count} Target Account compan${count === 1 ? "y" : "ies"} by name on LinkedIn ` +
     `to resolve its numeric company ID (roughly ${estMinutes} minute${estMinutes === 1 ? "" : "s"} - paced to avoid ` +
     "rapid-fire requests). Each company is only ever looked up once - already-resolved ones are skipped on future runs. Continue?";
 }
@@ -327,7 +327,7 @@ async function resolveOneName(tab, searchName, nav = {}) {
 // confirmed against a hero card the way the search-based path's has.
 async function resolveViaDirectLink(tab, company, nav = {}) {
   const expectedName = company.company;
-  const candidateNames = [company.company, company.officialName, company.alternativeName].filter(Boolean);
+  const candidateNames = [company.company, company.officialName, company.alternativeName, ...(company.alternativeNames || [])].filter(Boolean);
   await chrome.storage.local.set({
     companyResolveActive: true,
     companyResolveDirectLink: true,
@@ -487,13 +487,9 @@ async function runCompanyIdResolutionImpl(companies, { onProgress, shouldAbort, 
         // name is used as a fallback now, and only when there's no
         // officialName at all - not as a second attempt after the official
         // name fails.
-        const candidateNames = [stripTrailingCorporateNoise(company.officialName || company.company)];
-        for (let c = 0; c < candidateNames.length; c++) {
-          if (c > 0) await sleep(randomDelay());
-          attempt = await resolveOneName(tab, candidateNames[c]);
-          triedNames.push(candidateNames[c]);
-          if (attempt.resolved) break;
-        }
+        attempt = await resolveOneName(tab, stripTrailingCorporateNoise(company.officialName || company.company));
+        triedNames.push(attempt.searchName);
+        attempt = await tryAlternativeNames(tab, company, attempt, triedNames);
       }
 
       const { resolved, linkedinCompanyId, debug, navCompleted, finalUrl, usedFallback, fallbackFinalUrl, companyPageUrl } = attempt;
@@ -547,19 +543,52 @@ export function runCompanyIdResolution(...args) {
 
 // One account, on a tab the caller owns (the 1.2 pipeline's worker window, DATA_PIPELINE_DESIGN.md 5.1):
 // the same direct-link-else-name-search logic as the batch above, with no tab of its own, no warm-up,
+// 1.2 step 4, option A (Boaz, 2026-09-27): when the main name found nothing on LinkedIn, search again
+// with the account's alternative names - the workbook's and the Alt. name(s) typed on the account.
+// "Swiss Air-Rescue Rega" finds nothing; its page is "Rega". Deliberately narrow, because a second search
+// per company was once linked to LinkedIn throttling (v0.29.38, above): only after a search that ANSWERED
+// with no confident match (never after a timeout), only names someone actually recorded, at most
+// MAX_ALTERNATIVE_SEARCHES of them, paced like every other visit. company.alternativeNames: string[].
+const MAX_ALTERNATIVE_SEARCHES = 2;
+
+async function tryAlternativeNames(tab, company, attempt, triedNames, nav = {}) {
+  if (!attempt || attempt.resolved || attempt.debug?.timedOut) return attempt;
+  const tried = new Set(triedNames.map((n) => String(n).toLowerCase()));
+  const names = (company.alternativeNames || [])
+    .map((n) => stripTrailingCorporateNoise(n))
+    .filter((n) => n && !tried.has(n.toLowerCase()))
+    .slice(0, MAX_ALTERNATIVE_SEARCHES);
+  let last = attempt;
+  for (const name of names) {
+    await sleep(randomDelay());
+    last = await resolveOneName(tab, name, nav);
+    triedNames.push(name);
+    if (last.resolved || last.debug?.timedOut) break;
+  }
+  return last;
+}
+
 // no keep-awake and no touch-budget check - the pipeline does those once per run. company:
 // { key, company, officialName?, alternativeName?, linkedinLink? }. Returns the attempt plus
 // `touches` (page visits made) and `checkedLink` (the page the id was read from).
 export async function resolveAccountOnTab(tab, company, { activate = false } = {}) {
   const nav = { activate };
   try {
-    const attempt = company.linkedinLink
-      ? await resolveViaDirectLink(tab, company, nav)
-      : await resolveOneName(tab, stripTrailingCorporateNoise(company.officialName || company.company), nav);
+    let attempt;
+    let extraSearches = 0;
+    if (company.linkedinLink) {
+      attempt = await resolveViaDirectLink(tab, company, nav);
+    } else {
+      const tried = [];
+      attempt = await resolveOneName(tab, stripTrailingCorporateNoise(company.officialName || company.company), nav);
+      tried.push(attempt.searchName);
+      attempt = await tryAlternativeNames(tab, company, attempt, tried, nav);
+      extraSearches = tried.length - 1;
+    }
     return {
       ...attempt,
       linkedinCompanyId: attempt.resolved ? attempt.linkedinCompanyId || null : null,
-      touches: 1 + (attempt.usedFallback ? 1 : 0),
+      touches: 1 + extraSearches + (attempt.usedFallback ? 1 : 0),
       checkedLink: company.linkedinLink || attempt.companyPageUrl || null,
       timedOut: Boolean(attempt.debug?.timedOut),
     };

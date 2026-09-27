@@ -816,6 +816,80 @@ Branch `feature/pipeline-step3`, stacked on step 2. Version 1.1.6.
   "about 25 more by the end of the day" estimate (10.2 and 10.4) is left out: there is no measured
   rate yet to base it on.
 
+### Step 4 touch-ups (agreed 2026-09-27)
+
+Boaz agreed to all eight as recommended.
+
+| # | Question | Decision |
+|---|---|---|
+| **V1** | Section 7 stores the queue as a `decisionQueue` list | The queue is **built from the data every time**; only the answers are stored, each where its own data lives. Nothing can go stale: a finding settled in the account's Review dialog, or new data reaching a Lacking account, simply stops producing an item. Every item puts its account in "Needs your decision"; scanning is not affected |
+| **V2** | Discovery merges by itself when a run finishes (R12.6) | Matches by LinkedIn id merge silently. **Name-only matches are not merged, get no id written onto the existing account, and their contacts wait**: **Same company** / **Different company**. (Before: a name match silently wrote the discovered id onto the account - the risky write, since nearly every account now has an id) |
+| **V3** | Which duplicates may merge without asking | Only when every member carries the **same LinkedIn id and at least one has had it re-checked** against its own page - a merge removes a row and cannot be undone. Everything else: **Merge** / **Keep both** (the existing "Keep separate" memory) |
+| **V4** | The account's own link opens a page with a different id (SIG, Sunrise, Stadler) | Accepted automatically when the page name and the account name agree at the start, word by word, legal words dropped ("SIG Group" / "SIG Combibloc"); a common first word ("Swiss", "Zurich") needs two words. The old id is kept in the trace. Otherwise: **Accept new page** / **Keep current** |
+| **V5** | Lacking evidence (R12.5) | No LinkedIn company and the lookup failed on 2 different days, or an empty page (LinkedIn's "0-1 employees" band), which counts at once. **Keep** stops retrying; **Remove** is the soft delete. Retried when the inputs change (R12.5.2) |
+| **V6** | Web findings | The findings the automatic resolve leaves for the user: **Use web finding** / **Keep current**. Running that resolve automatically stays in step 5 |
+| **V7** | Where and how | A **Decisions** page (menu item with a red dot, all four pages), one card at a time, **Skip** (saves nothing). Review & Merge Discovery Results and Discover Contacts for Existing Companies move to Advanced tools; the five support tools' dialogs say *"The automatic pipeline normally does this for you."* |
+| **V8** | Version | 1.1.6 -> **1.1.7** |
+
+**Added by Boaz while building: "do the same for the others like this".** A tick box under the card
+applies the answer to every other item in the *same situation*, after a confirmation listing them. It
+is offered only where the situation really is the same: web findings on the same field, and Lacking
+evidence with the same cause. Identity questions (a changed page, a name match, a duplicate) are each
+about two particular companies and are never grouped.
+
+### Step 4 as built (2026-09-27)
+
+Branch `feature/pipeline-step4`, stacked on step 3. Version 1.1.7.
+
+- **Root cause found on the way, in his Activity Log:** LinkedIn now titles a company page
+  *"Stadler: Overview | LinkedIn"*. The resolver stripped only the old "About | LinkedIn" ending, so the
+  name check compared "Stadler: Overview" with "Stadler Rail" and failed. Ten accounts gave up on this
+  (Stadler, Sunrise, SIG, Forbo, Medacta, Bystronic, Valiant, Cembra, Comet, SKAN). Fixed in
+  `company-resolve-content-script.js`; the same rule is `cleanPageName` in the pure module. The ten are
+  tested cases.
+- **`code/decision-rules.js`** (pure, 39 checks in `test_pure_modules.py`, 221 total): `cleanPageName`,
+  `pageNamesAgree` (V4), `isEmptyPageBand`, `lackingReason` (V5), `duplicateGroups` (V3, links rows by
+  name, LinkedIn page and LinkedIn id), `accountInputsKey` / `effectivePipeline` (R12.5.2),
+  `similarKey`, `sortDecisions` (identity questions first, then Lacking, then findings; P1 first).
+- **Retry when something new arrives:** each view carries `inputsKey` (import date, names, a typed link,
+  `PIPELINE_RULES_VERSION`). When it differs from the key stored with the attempts, the attempts, empty
+  page mark, Keep and pending page change are forgotten. Pre-step-4 states have no key, so **every
+  account with a history is retried once** - which is what brings the ten back. The pipeline never
+  writes any input, so it cannot reset itself.
+- **storage.js:** `getDecisionQueue`, `applyDecision(item, choice)`, `settleSafeDuplicates`,
+  `autoMergeDiscoveryResults`, `getDiscoveryNameDecisions` / `saveDiscoveryNameDecision` (key
+  `discoveryNameDecisions`, by the discovered company's LinkedIn id). `computeDiscoveredMergeDiff`
+  holds undecided name matches and their contacts; "Different company" adds the row as
+  *"Name (LinkedIn: slug)"*, since accounts are keyed by normalized name. `getAccountReadiness` passes
+  the queue to `assessAccount`, so the pie's "Needs your decision" and "Lacking evidence" slices fill.
+- **Pipeline:** `jobsNeeded` returns nothing for an empty page, a Keep, or a page change waiting for an
+  answer; "Keep current" stops the re-check. The runner accepts or queues a changed page (V4), marks an
+  empty page from the size read, saves the whole per-account state, and settles safe duplicates after
+  each run.
+- **background.js:** when `discoveryQueueState` turns `done`, the results are merged, safe duplicates
+  settled, new rows scored locally, and the pipeline kicked. A stopped run never reaches `done`.
+- **Pages:** `decisions.html/.js/.css` (embedded like the Activity Log), `decisions-dot.js` (the red
+  dot, recounted when the data it is built from changes, debounced). The manual Review & Merge now
+  reports name matches waiting in Decisions.
+- **Alternative names (option A, Boaz 2026-09-27):** the LinkedIn Link stays uneditable (his 2026-09-18
+  rule: SalesTeam verifies links, users do not type them). Instead, when the main name search answers with
+  no confident match, the resolver searches again with the account's alternative names - the workbook's
+  and the Alt. name(s) typed on the account - at most 2, never after a timeout (a second search per
+  company was once linked to throttling). Case: "Swiss Air-Rescue Rega" finds nothing; its page is
+  "Rega". Adding "Rega" as an Alt. name changes the account's inputs key, so it is retried at once.
+  Used by the pipeline and by Advanced tools > Resolve LinkedIn Company IDs; alt names also count for the
+  direct-link name check and for V4.
+- **Duplicates: evidence against wins (Boaz, live test 2026-09-27).** Basilea Pharmaceutica and ADC
+  Therapeutics were proposed as duplicates because both carried the same LinkedIn id - but their links
+  open two different pages, so one held the other's id (a wrong id, which the re-check corrects, not a
+  duplicate). `duplicateContradiction`: a shared id never pairs rows whose links open different pages,
+  and different registry ids (Zefix UID) never pair rows at all. The card now says why the rows were
+  paired and compares LinkedIn page, id, HQ city and country, registry id and contacts side by side.
+- **Also fixed:** "companyies" in the Resolve confirmation; the Resolve dialog no longer calls the ids
+  "needed for a future feature".
+- **Not built:** the design's `dedupe-safe` as a separate pipeline job (settling runs after each run and
+  each Discovery merge instead); a link from the pie's status line to Decisions.
+
 ---
 
 ## 12. Decisions — all agreed 2026-09-24

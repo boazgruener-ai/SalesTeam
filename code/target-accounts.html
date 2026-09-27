@@ -13,6 +13,7 @@
        <dialog>/showModal() pattern, explicitly-labeled buttons instead. -->
   <dialog id="merge-discovered-dialog">
     <h3>Add Discovery results to your Target Accounts?</h3>
+    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
     <p>
       This adds the companies/contacts below to your Target Accounts list - click a company to check it on
       LinkedIn first if you want. A company already on your list won't be duplicated; it's just left as is.
@@ -46,6 +47,7 @@
 
   <dialog id="find-duplicates-dialog">
     <h3>Find &amp; Merge Duplicates</h3>
+    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
     <p id="find-duplicates-intro">
       The same company sometimes appears twice - for example once from your research file and once from LinkedIn
       Discovery. Each proposal below lists accounts that look like the same company (same name or same LinkedIn
@@ -129,16 +131,11 @@
         <button id="hubspot-export-page-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
         <button id="hubspot-import-page-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
-        <div id="page-header-merge-row" hidden>
-          <button id="merge-discovered-btn" type="button" class="nav-item" title="Add the companies and contacts found by Discovery (Setup wizard) to your Target Accounts list">Review &amp; Merge Discovery Results…</button>
-          <span id="merge-discovered-status" class="status-text"></span>
-        </div>
       </details>
 
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
-        <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
       </details>
 
       <details class="nav-group">
@@ -199,6 +196,7 @@
            same level as a group header, styled to match (.nav-item-top),
            no label needed above them. -->
       <div class="nav-group">
+        <button id="open-decisions-btn" type="button" class="nav-item nav-item-top" title="Questions only you can answer: same company or not, a changed LinkedIn page, accounts nothing can be found for, web findings">Decisions</button>
         <button id="open-advisors-btn" type="button" class="nav-item nav-item-top" title="Sales Mentor and Customer Voice chats">Advisors</button>
         <button id="open-activity-log-btn" type="button" class="nav-item nav-item-top" title="Every user and extension action, with old/new values and errors">Activity Log</button>
         <button id="open-help-btn" type="button" class="nav-item nav-item-top" title="Common questions and how-tos">Help</button>
@@ -206,6 +204,11 @@
 
       <details class="nav-group nav-group-debug">
         <summary class="nav-group-label">Advanced tools</summary>
+        <div id="page-header-merge-row" hidden>
+          <button id="merge-discovered-btn" type="button" class="nav-item" title="Add the companies and contacts found by Discovery (Setup wizard) to your Target Accounts list">Review &amp; Merge Discovery Results…</button>
+          <span id="merge-discovered-status" class="status-text"></span>
+        </div>
+        <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
         <button id="nav-run-pipeline-btn" type="button" class="nav-item" title="Data pipeline (1.2, manual start): work through the accounts that most need it - re-check LinkedIn, read sizes, find known contacts' profiles, discover contacts">Run pipeline now…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
@@ -737,9 +740,10 @@
 
   <dialog id="resolve-dialog" class="action-dialog">
     <h3>Resolve LinkedIn Company IDs</h3>
+    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
     <p class="page-subtitle">
-      Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID -
-      needed for a future feature that scopes Post search to only these companies' employees.
+      Look up each Target Account company on LinkedIn to resolve its numeric company ID - the Scanner searches
+      only companies it has an id for.
     </p>
     <label for="resolve-company-ids-limit-input" id="resolve-company-ids-limit-label">
       Limit to
@@ -756,6 +760,7 @@
 
   <dialog id="discover-contacts-dialog" class="action-dialog">
     <h3>Discover Contacts for Existing Companies</h3>
+    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
     <p class="page-subtitle">
       Look up contacts at each existing Target Account company via its own LinkedIn People tab, using the Setup
       wizard's target-contact profile - only visits a company currently below the contact-count threshold.
@@ -775,6 +780,7 @@
 
   <dialog id="fetch-size-dialog" class="action-dialog">
     <h3>Fetch Company Size</h3>
+    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
     <p class="page-subtitle">
       Visit each company (imported or discovered) currently missing a real employee count on its own LinkedIn
       page and read it off there - LinkedIn's company-search result cards never show size, only a company's own

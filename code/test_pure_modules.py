@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js"]
+PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1025,6 +1025,101 @@ def test_auto_run_blocker(ctx):
     check("a backup older than 24 hours waits for a page (U1)", ctx.eval("blk({ lastBackupAt: NOW - 25 * H })"), "no_backup")
 
 
+def test_decision_rules(ctx):
+    """decision-rules.js - build step 4 (V1-V8): changed pages, empty pages, Lacking evidence, duplicates."""
+    # LinkedIn's page titles, as the resolver read them on 2026-09-26 (Activity Log)
+    check("cleanPageName Overview", ctx.eval('cleanPageName("Stadler: Overview")'), "Stadler")
+    check("cleanPageName full title", ctx.eval('cleanPageName("(3) SIG Group: Overview | LinkedIn")'), "SIG Group")
+    check("cleanPageName old About", ctx.eval('cleanPageName("Comet | About | LinkedIn")'), "Comet")
+    real = [
+        ("Stadler Rail", "Stadler: Overview"),
+        ("Sunrise Communications AG", "Sunrise: Overview"),
+        ("SIG Combibloc", "SIG Group: Overview"),
+        ("Forbo Holding", "Forbo Group: Overview"),
+        ("Medacta Group", "Medacta International: Overview"),
+        ("Bystronic AG", "Bystronic Group: Overview"),
+        ("Valiant Holding", "Valiant Bank AG: Overview"),
+        ("Cembra Money Bank", "Cembra: Overview"),
+        ("Comet Holding", "Comet: Overview"),
+        ("SKAN Group", "SKAN: Overview"),
+    ]
+    for name, page in real:
+        check("pageNamesAgree %s / %s" % (name, page), ctx.eval('pageNamesAgree(["%s"], "%s")' % (name, page)), True)
+    wrong = [
+        ("Zurich Insurance Group", "Zurich Airport: Overview"),
+        ("Swiss Life", "Swiss Re: Overview"),
+        ("Holcim Group", "Amrize: Overview"),
+        ("UBS Group", "UBS Switzerland AG: Overview"),
+        ("Nestle", ""),
+    ]
+    for name, page in wrong:
+        check("pageNamesAgree rejects %s / %s" % (name, page), ctx.eval('pageNamesAgree(["%s"], "%s")' % (name, page)), False)
+    check("pageNamesAgree two generic words", ctx.eval('pageNamesAgree(["Swiss Life Holding"], "Swiss Life: Overview")'), True)
+    check("pageNamesAgree any known name", ctx.eval('pageNamesAgree(["Amrize", "Holcim Group"], "Holcim: Overview")'), True)
+
+    check("isEmptyPageBand 0-1", ctx.eval('isEmptyPageBand("0-1 employees")'), True)
+    check("isEmptyPageBand 2-10", ctx.eval('isEmptyPageBand("2-10 employees")'), False)
+    check("isEmptyPageBand none", ctx.eval('isEmptyPageBand(null)'), False)
+
+    # retry when something new arrives (R12.5.2)
+    check("inputs key stable", ctx.eval('accountInputsKey(["a", 1, null]) === accountInputsKey(["a", 1, null])'), True)
+    check("inputs key changes", ctx.eval('accountInputsKey(["a", 1]) === accountInputsKey(["a", 2])'), False)
+    check("effectivePipeline same key keeps attempts",
+          ctx.eval('effectivePipeline({ attempts: { resolve: ["2026-09-25"] }, inputsKey: "k" }, "k").attempts.resolve.length'), 1)
+    check("effectivePipeline new key forgets attempts",
+          ctx.eval('Object.keys(effectivePipeline({ attempts: { resolve: ["2026-09-25"] }, keep: true, inputsKey: "old" }, "k").attempts).length'), 0)
+    check("effectivePipeline new key forgets keep",
+          ctx.eval('effectivePipeline({ attempts: {}, keep: true, inputsKey: "old" }, "k").keep'), False)
+    check("effectivePipeline pre-step-4 state is retried once",
+          ctx.eval('Object.keys(effectivePipeline({ attempts: { resolve: ["2026-09-25", "2026-09-26"] } }, "k").attempts).length'), 0)
+    check("effectivePipeline nothing to forget", ctx.eval('effectivePipeline({ lastRunDay: "2026-09-26" }, "k").lastRunDay'), "2026-09-26")
+
+    # Lacking evidence (R12.5)
+    check("lacking: empty page", ctx.eval('lackingReason({ linkedinCompanyId: "1" }, { emptyPage: "2026-09-27" }).reason'), "empty_page")
+    check("lacking: no id, gave up",
+          ctx.eval('lackingReason({ linkedinCompanyId: null }, { attempts: { resolve: ["2026-09-25", "2026-09-26"] } }).text'),
+          "No LinkedIn company found. Tried on 25 September and 26 September.")
+    check("lacking: no id, one day only", ctx.eval('lackingReason({ linkedinCompanyId: null }, { attempts: { resolve: ["2026-09-25"] } })'), None)
+    check("lacking: has id, resolve gave up = still Usable",
+          ctx.eval('lackingReason({ linkedinCompanyId: "9" }, { attempts: { resolve: ["2026-09-25", "2026-09-26"] } })'), None)
+    check("lacking: deleted never", ctx.eval('lackingReason({ deleted: true }, { emptyPage: "2026-09-27" })'), None)
+
+    # duplicates (V3)
+    js = """(() => {
+      const rows = [
+        { companyId: "C1", key: "acme", company: "Acme", source: "Imported", universeOrder: 5, linkedinCompanyId: "100", idVerified: true, slug: "acme" },
+        { companyId: "D-1", key: "acme", company: "Acme", source: "Discovered", universeOrder: null, linkedinCompanyId: "100", idVerified: false, slug: "acme" },
+        { companyId: "C2", key: "beta", company: "Beta", source: "Imported", linkedinCompanyId: "200", idVerified: true, slug: "beta" },
+        { companyId: "D-2", key: "beta", company: "Beta", source: "Discovered", linkedinCompanyId: "201", idVerified: true, slug: "beta-ch" },
+        { companyId: "C3", key: "gamma", company: "Gamma", source: "Imported", linkedinCompanyId: "300", idVerified: false, slug: "gamma" },
+        { companyId: "C4", key: "gamma ag", company: "Gamma AG", source: "Imported", linkedinCompanyId: "300", idVerified: false, slug: "gamma" },
+        { companyId: "C5", key: "delta", company: "Delta", source: "Imported", linkedinCompanyId: "400", idVerified: true, slug: "delta" },
+        { companyId: "C6", key: "delta", company: "Delta", source: "Imported", linkedinCompanyId: "401", idVerified: true, slug: "delta-x" },
+        // 2026-09-27, live: one holds the other's LinkedIn id, but their links open two different pages
+        { companyId: "C7", key: "basilea pharmaceutica", company: "Basilea Pharmaceutica", linkedinCompanyId: "700", slug: "basilea-pharmaceutica-ltd" },
+        { companyId: "C8", key: "adc therapeutics", company: "ADC Therapeutics", linkedinCompanyId: "700", slug: "adc-therapeutics" },
+        // same name, two legal entities in the registry
+        { companyId: "C9", key: "epsilon", company: "Epsilon", linkedinCompanyId: "900", slug: "epsilon", registryId: "CHE-1" },
+        { companyId: "C10", key: "epsilon", company: "Epsilon", linkedinCompanyId: "901", slug: "epsilon-sa", registryId: "CHE-2" },
+      ];
+      const g = duplicateGroups(rows, new Set(["C5|C6"]));
+      return JSON.stringify(g.map((x) => [x.members[0].companyId, x.members.length, x.auto]));
+    })()"""
+    check("duplicateGroups", ctx.eval(js), '[["C1",2,true],["C2",2,false],["C3",2,false]]')
+
+    check("similarKey finding", ctx.eval('similarKey({ kind: "finding", payload: { field: "industry" } })'), "finding:industry")
+    check("similarKey name match", ctx.eval('similarKey({ kind: "name_match", payload: {} })'), None)
+    order = ctx.eval(
+        'sortDecisions(['
+        '{ id: "a", kind: "finding", priority: "P1", company: "A" },'
+        '{ id: "b", kind: "name_match", priority: "P3", company: "B" },'
+        '{ id: "c", kind: "lacking_evidence", priority: "P1", company: "C" },'
+        '{ id: "d", kind: "name_match", priority: "P1", company: "D" }'
+        ']).map((i) => i.id).join("")'
+    )
+    check("sortDecisions", order, "dbca")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1045,6 +1140,7 @@ def main():
     test_readiness(ctx)
     test_pipeline_plan(ctx)
     test_auto_run_blocker(ctx)
+    test_decision_rules(ctx)
 
     print()
     for f in _failures:

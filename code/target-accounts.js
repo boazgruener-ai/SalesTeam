@@ -114,6 +114,7 @@ import {
   buildContactScopedCustomerVoicePrompt,
   prioritizeCompanies,
 } from "./agent-shared.js";
+import { initDecisionsDot } from "./decisions-dot.js";
 
 const emptyStateEl = document.getElementById("empty-state");
 const controlsEl = document.getElementById("explorer-controls");
@@ -347,6 +348,9 @@ document.getElementById("open-settings-restore-btn").addEventListener("click", (
 document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
+// 1.2 build step 4: the decision queue, with its red dot (R12.4.1).
+document.getElementById("open-decisions-btn").addEventListener("click", () => showEmbeddedPage("decisions.html", "Decisions"));
+initDecisionsDot();
 document.getElementById("open-help-btn").addEventListener("click", () => showEmbeddedPage("help.html", "Help"));
 document.getElementById("open-debug-queue-btn").addEventListener("click", () => showEmbeddedPage("settings.html#discovery-queue-section", "Settings"));
 document.getElementById("open-debug-company-btn").addEventListener("click", () => showEmbeddedPage("settings.html#company-discovery-section", "Settings"));
@@ -3113,7 +3117,7 @@ mergeDiscoveredBtn.addEventListener("click", async () => {
   try {
     const {
       companiesAdded, contactsAdded, companiesMatched, idsBackfilled, companiesReceivingContacts,
-      totalDiscoveredCompanies, totalDiscoveredContacts, duplicateContactsSkipped, orphanedContactsSkipped,
+      totalDiscoveredCompanies, totalDiscoveredContacts, duplicateContactsSkipped, orphanedContactsSkipped, nameMatchesWaiting,
     } = await mergeDiscoveredIntoWorkbook();
     appendActivityLog({
       actor: "user",
@@ -3143,6 +3147,8 @@ mergeDiscoveredBtn.addEventListener("click", async () => {
     let companiesLine = `Companies: ${totalDiscoveredCompanies} discovered, ${companiesAdded} added, ${companiesMatched} already on your list (not duplicated)`;
     if (idsBackfilled > 0) companiesLine += ` - ${idsBackfilled} of those just got a LinkedIn ID for free`;
     companiesLine += ".";
+    // 1.2 step 4 (V2): a name-only match is not merged; it waits in Decisions.
+    if (nameMatchesWaiting > 0) companiesLine += ` ${nameMatchesWaiting} match an account by name only and wait in Decisions (same company or not?).`;
 
     let statusText = `Done. ${companiesLine}`;
     if (totalDiscoveredContacts > 0) {
