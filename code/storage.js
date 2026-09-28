@@ -1,6 +1,7 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { DEFAULT_ARBITRATION_SETTINGS } from "./web-findings-arbitration.js";
+import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel } from "./readiness.js";
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
 // post/job URL, with status, priority, and negative-topic-match reason), scan
@@ -412,11 +413,17 @@ export function expandSeniorityLevelKeywords(seniorityLevels) {
 // workbook Job_Title is a clean single title, so no headline/company-segment handling is
 // needed, unlike contact-discovery-extraction.js's classifyCandidateSeniority). Returns the
 // { id, priority } level, or null when no levels are configured or none matches.
+// Any "Chief … Officer" title is C-level, whatever sits between the two words (2026-09-25): the fixed
+// keyword list only knew whole phrases, so "Chief Digital & Information Officer" (Sika) and "Group
+// Chief Transformation Officer" matched no level at all.
+export const CHIEF_OFFICER_RE = /\bchief\b[^|,;@]{0,60}?\bofficer\b/i;
+
 export function classifyJobTitleSeniority(jobTitle, seniorityLevels) {
   const title = (jobTitle || "").toLowerCase();
   if (!title || !seniorityLevels || seniorityLevels.length === 0) return null;
   const sorted = [...seniorityLevels].sort((a, b) => (b.priority || 0) - (a.priority || 0));
   for (const level of sorted) {
+    if (level.id === "cLevel" && CHIEF_OFFICER_RE.test(title)) return level;
     for (const term of SENIORITY_LEVEL_KEYWORDS[level.id] || []) {
       for (const variant of titleVariants(term)) {
         if (containsWholeWord(title, variant.toLowerCase())) return level;
@@ -1183,9 +1190,10 @@ export async function markLinkedinResolveAttempted(keys) {
 
 // Which Target Account companies the scan's company phase searches (Scanner > Run): only those
 // whose SalesTeam Priority is at or above the chosen level. "P2" = P1 and P2 (the default), "all" =
-// every company with a resolved LinkedIn ID (the original behaviour, ignores Priority entirely).
-// A company with no Priority yet (Prioritize Companies not run) counts as unscored and is only
-// scanned under "all". Read by BOTH background.js (the real scan) and scanner.js (the "Total: N
+// every scannable company, P1-P5. Since 1.2 build step 1 a company with no Priority at all is not
+// scanned under any scope (readiness.isScannable) - the automatic scoring after every import and
+// merge gives every live company one, so this only ever skips a company nothing has scored yet.
+// Read by BOTH background.js (the real scan) and scanner.js (the "Total: N
 // searches" hint), so the hint and the scan can never disagree.
 const SCAN_COMPANY_SCOPE_KEY = "scanCompanyPriorityScope";
 export const SCAN_COMPANY_SCOPES = ["P1", "P2", "P3", "all"];
@@ -1199,32 +1207,23 @@ export async function saveScanCompanyScope(scope) {
   await chrome.storage.local.set({ [SCAN_COMPANY_SCOPE_KEY]: SCAN_COMPANY_SCOPES.includes(scope) ? scope : "P2" });
 }
 
+// Rebuilt on the one account join and readiness.isScannable (1.2 build step 1, design 3.4), so the
+// scan selects exactly the accounts the Pipeline status pie calls Ready or Usable. Two old gaps close
+// with it: scope "all" used to skip the deleted/excluded filter, and a Discovered company - whose id
+// lives on its workbook row, not in the targetAccounts map - was never scanned at all.
 export async function getScanTargetCompanyIds(scope) {
-  const map = await getTargetAccounts();
-  const values = Object.values(map).filter((a) => a.linkedinCompanyId);
-  if (scope === "all") return [...new Set(values.map((a) => a.linkedinCompanyId))];
-
-  const maxLevel = { P1: 1, P2: 2, P3: 3 }[scope] || 2;
-  const [workbook, extras, exclusions] = await Promise.all([
-    getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(),
-  ]);
-  const exclusionSlugSet = new Set(exclusions.map((e) => e.slug));
-  const rowByKey = new Map((workbook.companies || []).map((c) => [normalizeCompanyName(c.company), c]));
-  const ids = new Set();
-  for (const a of values) {
-    const key = normalizeCompanyName(a.company);
-    const row = rowByKey.get(key);
-    if (!row || extras[key]?.deletedAt || isCompanyRowExcluded(row, exclusionSlugSet)) continue;
-    const priority = extras[key]?.overrides?.salesTeamPriority || row.salesTeamPriority;
-    const level = /^P([1-5])$/.exec(priority || "")?.[1];
-    if (level && Number(level) <= maxLevel) ids.add(a.linkedinCompanyId);
-  }
-  return [...ids];
+  const views = await getAccountViews({ persistDerived: false });
+  return [...new Set(views.filter((v) => isScannable(v, scope)).map((v) => v.linkedinCompanyId))];
 }
 
+// Each resolution may carry checkedLink - the LinkedIn page the id was actually read from - and src
+// ("linkedin" for the resolver, "discovery" for a Discovery card). Both go into the account's
+// provenance in the same write: an id only counts as verified once it was read off the very page the
+// account's link points to (1.2 build step 1; step 0 found 6 of 30 stored ids disagreeing with it).
 export async function applyResolvedCompanyIds(resolutions) {
-  const map = await getTargetAccounts();
+  const [map, extras] = await Promise.all([getTargetAccounts(), getTargetAccountExtras()]);
   let updated = 0;
+  const at = Date.now();
   for (const r of resolutions) {
     if (!r.linkedinCompanyId || !map[r.key]) continue;
     map[r.key].linkedinCompanyId = r.linkedinCompanyId;
@@ -1234,9 +1233,17 @@ export async function applyResolvedCompanyIds(resolutions) {
     // getTargetAccountsMissingLinkedinId() would never queue them again since they HAVE an id.
     // A missing link also made them permanently ineligible for Fetch Company Size, which requires one.
     if (r.companyPageUrl && !map[r.key].linkedinLink) map[r.key].linkedinLink = r.companyPageUrl;
+    const cur = extras[r.key] || emptyExtra();
+    extras[r.key] = {
+      ...cur,
+      provenance: {
+        ...(cur.provenance || {}),
+        linkedinCompanyId: { src: r.src || "linkedin", at, link: r.checkedLink || r.companyPageUrl || null, v: r.linkedinCompanyId },
+      },
+    };
     updated++;
   }
-  if (updated > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map });
+  if (updated > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map, [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
   // ...and again into the WORKBOOK, which is a genuinely separate store (see syncLinkedinLinksToWorkbook).
   await syncLinkedinLinksToWorkbook();
   return updated;
@@ -1484,6 +1491,10 @@ export function buildDiscoveredContactRow(dcontact, companyRow) {
     seniorityLevel: dcontact.seniorityLevel || null,
     seniorityPriority: dcontact.seniorityPriority || null,
     lastVerified2: dcontact.slug ? `https://www.linkedin.com/in/${dcontact.slug}/` : null,
+    // The day LinkedIn showed this person at this company - what readiness counts as the contact's
+    // verified date (R3.6). Rows merged before 1.2 have none and fall back to the account's
+    // contactDiscoveryAttemptedAt, else the import date (getAccountViews).
+    lastVerified: new Date().toISOString().slice(0, 10),
     source: "Discovered",
   };
 }
@@ -1636,7 +1647,12 @@ export async function mergeDiscoveredIntoWorkbook() {
   // "name" matches are missing one to backfill.
   const idBackfills = matchedCompanies
     .filter((m) => m.matchedBy === "name" && m.discovered.linkedinCompanyId)
-    .map((m) => ({ key: normalizeCompanyName(m.existing.company), linkedinCompanyId: m.discovered.linkedinCompanyId }));
+    .map((m) => ({
+      key: normalizeCompanyName(m.existing.company),
+      linkedinCompanyId: m.discovered.linkedinCompanyId,
+      src: "discovery",
+      checkedLink: m.discovered.slug ? `https://www.linkedin.com/company/${m.discovered.slug}/` : null,
+    }));
   const idsBackfilled = idBackfills.length > 0 ? await applyResolvedCompanyIds(idBackfills) : 0;
 
   // How many distinct companies the new contacts actually landed on -
@@ -1785,7 +1801,9 @@ export async function getCompaniesNeedingSize() {
       const ov = extras[normalizeCompanyName(c.company)]?.overrides || {};
       const global = ov.globalEmployees ?? c.globalEmployees;
       const local = ov.swissEmployees ?? c.swissEmployees;
-      return typeof global !== "number" && typeof local !== "number";
+      // parseLooseNumber, not typeof === "number" (1.2 build step 1, design 2.5.1): EPFL's count is the
+      // string "6,500+" and used to queue a LinkedIn visit it did not need, on every run.
+      return parseLooseNumber(global) === null && parseLooseNumber(local) === null;
     })
     .filter((c) => !extras[normalizeCompanyName(c.company)]?.deletedAt)
     .filter((c) => !isCompanyRowExcluded(c, exclusionSlugSet))
@@ -1828,16 +1846,21 @@ export async function markCompanySizeFetchAttempted(keys) {
 // never read by the deterministic scorer, which only ever wants the number.
 export async function applyCompanySizeResults(results) {
   if (!results || results.length === 0) return 0;
-  const workbook = await getTargetAccountsWorkbook();
+  const [workbook, extras] = await Promise.all([getTargetAccountsWorkbook(), getTargetAccountExtras()]);
   const byId = new Map(results.map((r) => [r.companyId, r]));
   let applied = 0;
+  const at = Date.now();
   const companies = (workbook.companies || []).map((c) => {
     const r = byId.get(c.companyId);
     if (!r) return c;
     applied++;
+    // Provenance in the same write as the value (1.2 build step 1, design 4.2).
+    const key = normalizeCompanyName(c.company);
+    const cur = extras[key] || emptyExtra();
+    extras[key] = { ...cur, provenance: { ...(cur.provenance || {}), globalEmployees: { src: "linkedin", at, v: r.employeeCount } } };
     return { ...c, globalEmployees: r.employeeCount, employeeCountText: r.sizeBandText ? `${r.sizeBandText} employees` : null };
   });
-  await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, companies } });
+  await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, companies }, [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
   return applied;
 }
 
@@ -3311,7 +3334,16 @@ export function classifyCompanyPrioritizationScenario(company, contactCount, thr
 // a company already scored (salesTeamPriority set) unless rescoreAll is
 // true, so a repeated run only costs anything for genuinely new companies
 // by default.
-export async function getCompaniesForPrioritization({ rescoreAll = false } = {}) {
+// rescoreDerived (1.2 build step 1, design 2.5.3): also returns companies whose stored priority was
+// computed locally, so it is re-scored as data arrives - an account scored P4 before its contacts were
+// found no longer stays P4 for good. Never a manual override, and never an AI-judged score (its reason
+// carries "Strategic Fit:"): AI re-prioritisation stays a user action.
+function isDerivedPriority(row, extra) {
+  if (extra?.overrides?.salesTeamPriority) return false;
+  return !/Strategic Fit:/.test(row.salesTeamPriorityReason || "");
+}
+
+export async function getCompaniesForPrioritization({ rescoreAll = false, rescoreDerived = false } = {}) {
   const [workbook, extras, exclusions, threshold] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(), getTargetAccountScoreThreshold(),
   ]);
@@ -3325,7 +3357,7 @@ export async function getCompaniesForPrioritization({ rescoreAll = false } = {})
     .filter((c) => c.company && c.companyId)
     .filter((c) => !extras[normalizeCompanyName(c.company)]?.deletedAt)
     .filter((c) => !isCompanyRowExcluded(c, exclusionSlugSet))
-    .filter((c) => rescoreAll || !c.salesTeamPriority)
+    .filter((c) => rescoreAll || !c.salesTeamPriority || (rescoreDerived && isDerivedPriority(c, extras[normalizeCompanyName(c.company)])))
     .map((c) => {
       const contactCount = contactCountByCompanyId.get(c.companyId) || 0;
       // Scored through the account's own overrides, not off the bare row (2026-09-22). Neither a web
@@ -4046,10 +4078,15 @@ export async function getTargetAccountExtra(companyKey) {
   return extras[companyKey] || emptyExtra();
 }
 
-export async function saveTargetAccountExtra(companyKey, patch) {
+// src says where a changed override came from: "user" (a manual edit, the default) or "web" (an
+// accepted web finding). It is recorded per field in the same write (1.2 build step 1, design 4.2).
+export async function saveTargetAccountExtra(companyKey, patch, { src = "user" } = {}) {
   if (!companyKey) return;
   const extras = await getTargetAccountExtras();
-  extras[companyKey] = { ...emptyExtra(), ...(extras[companyKey] || {}), ...patch };
+  const before = extras[companyKey] || {};
+  const next = { ...emptyExtra(), ...before, ...patch };
+  if (patch && patch.overrides) next.provenance = stampOverrideProvenance(before.overrides, patch.overrides, next, src);
+  extras[companyKey] = next;
   await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
 }
 
@@ -4357,6 +4394,11 @@ export async function bulkPatchExtras(scope, patchByKey, slot = "bulkEdit") {
       Object.keys(patch).map((f) => [f, before[f] === undefined ? null : before[f]])
     );
     extras[key] = { ...emptyExtra(), ...before, ...patch };
+    // Provenance is not snapshotted for undo: an undone value no longer matches the entry's `v`, so
+    // readiness ignores the stale entry and derives the field again (readiness.applicableProvenance).
+    if (isAccounts && patch.overrides) {
+      extras[key].provenance = stampOverrideProvenance(before.overrides, patch.overrides, extras[key], slot === "webFindings" ? "web" : "user");
+    }
     changed++;
   }
   if (changed === 0) return 0;
@@ -4475,6 +4517,167 @@ export function hasUnreviewedPost(companyKey, leads) {
 
 export function hasOverdueAction(extra) {
   return Boolean(extra?.nextActionDueAt && extra.nextActionDueAt < Date.now());
+}
+
+// --------------------------------------------------------------------------
+// Account views, readiness and provenance (1.2 data pipeline, build step 1)
+// --------------------------------------------------------------------------
+
+// DATA_PIPELINE_DESIGN.md 2.4: an account's data lives in three stores (targetAccounts map, workbook
+// row, extras) that every selector used to join for itself, and the joins had drifted apart. This is
+// the one join. It returns one flat view per live workbook company - overrides applied, contacts
+// attached, deleted/excluded flagged - in the shape readiness.js's assessAccount expects. Anything
+// that decides which accounts to work on reads accounts through here.
+
+// The fields whose origin is recorded per value (design 4.1). An override of one of these is stamped
+// with its source when it is written; see stampOverrideProvenance.
+const PROVENANCE_FIELDS = ["globalHqCountry", "globalEmployees", "swissEmployees", "industry"];
+
+// Records where each changed override came from, in the same write as the value (design 4.2).
+// src "web" is an accepted web finding (cited when the account's web research has sources); anything
+// else is a manual edit, which D2 counts as verified from the moment it was typed.
+function stampOverrideProvenance(prevOverrides, nextOverrides, extra, src) {
+  const provenance = { ...(extra.provenance || {}) };
+  const now = Date.now();
+  for (const field of PROVENANCE_FIELDS) {
+    const value = nextOverrides?.[field];
+    if (value === undefined || value === null || value === "") continue;
+    if (provenanceValueKey(value) === provenanceValueKey(prevOverrides?.[field])) continue;
+    if (src === "web") {
+      const research = extra.webResearch || {};
+      provenance[field] = { src: "web", at: research.at || now, cited: (research.sources || []).length > 0, v: value };
+    } else {
+      provenance[field] = { src: "user", at: now, v: value };
+    }
+  }
+  return provenance;
+}
+
+// Builds the views. With persistDerived (the default), provenance that had to be derived from
+// what is already stored (design 4.3) is written back once, so the next read finds it stored and the
+// guess is never made again for that value.
+export async function getAccountViews({ persistDerived = true } = {}) {
+  const data = await chrome.storage.local.get([TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY, TARGET_ACCOUNTS_IMPORTED_AT_KEY]);
+  const [map, workbook, extras, contactExtras, exclusions, contactProfile] = await Promise.all([
+    getTargetAccounts(), getTargetAccountsWorkbook(), getTargetAccountExtras(), getTargetContactExtras(),
+    getCompanyExclusions(), getTargetContactProfile(),
+  ]);
+  const importedAt = data[TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY] || data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null;
+  const exclusionSlugSet = new Set(exclusions.map((e) => e.slug));
+  const seniorityLevels = contactProfile.seniorityLevels || [];
+  const now = Date.now();
+
+  const contactsByCompanyId = new Map();
+  for (const ct of workbook.contacts || []) {
+    if (!ct.companyId) continue;
+    const ctKey = contactKeyFor(ct.company, ct.fullName);
+    if (contactExtras[ctKey]?.deletedAt) continue;
+    if (!contactsByCompanyId.has(ct.companyId)) contactsByCompanyId.set(ct.companyId, []);
+    contactsByCompanyId.get(ct.companyId).push(ct);
+  }
+
+  // Excluded by NAME, not per row - the same rule the Target Accounts table applies (loadWorkbook): when
+  // two rows share a name (a researched row and a Discovered one) and either is excluded, both are. Per
+  // row, the pie counted 541 accounts against the table's 540.
+  const excludedKeys = new Set(
+    (workbook.companies || []).filter((c) => c.company && isCompanyRowExcluded(c, exclusionSlugSet)).map((c) => normalizeCompanyName(c.company))
+  );
+  const views = [];
+  const derived = {};   // key -> { field: provenance } still to be written back
+  for (const row of workbook.companies || []) {
+    if (!row.company || !row.companyId) continue;
+    const key = normalizeCompanyName(row.company);
+    const extra = extras[key] || {};
+    const ov = extra.overrides || {};
+    const mapEntry = map[key];
+    const view = {
+      key,
+      companyId: row.companyId,
+      company: row.company,
+      source: row.source || "Imported",
+      linkedinCompanyId: mapEntry?.linkedinCompanyId || row.linkedinCompanyId || null,
+      linkedinLink: ov.linkedinLink || row.linkedinLink || mapEntry?.linkedinLink || null,
+      salesTeamPriority: ov.salesTeamPriority || row.salesTeamPriority || null,
+      evidenceStatus: row.evidenceStatus || null,
+      lastVerified: row.lastVerified ?? null,
+      deleted: Boolean(extra.deletedAt),
+      excluded: excludedKeys.has(key),
+      importedAt,
+      provenance: extra.provenance || {},
+    };
+    for (const field of PROVENANCE_FIELDS) view[field] = ov[field] ?? row[field] ?? null;
+
+    // A contact is relevant when it is at one of the wizard's seniority levels (R3.6). The research
+    // workbook's own Seniority column decides when it names a level ("Specialist" names none, and then
+    // the contact is not relevant); only a contact without that column falls back to the job-title
+    // guess, which misses titles like "Chief Digital & Information Officer". With no levels configured
+    // there is nothing to match against, so any contact counts rather than none.
+    const discoveryAt = extra.contactDiscoveryAttemptedAt || importedAt;
+    const selectedLevelIds = new Set(seniorityLevels.map((l) => (typeof l === "string" ? l : l.id)));
+    const isRelevant = (ct) => {
+      if (seniorityLevels.length === 0) return true;
+      if (ct.seniorityLevel) return true;   // Discovered: already matched against these levels
+      if (ct.seniority != null && String(ct.seniority).trim() !== "") {
+        const levelId = seniorityLevelFromLabel(ct.seniority);
+        return Boolean(levelId && selectedLevelIds.has(levelId));
+      }
+      return Boolean(classifyJobTitleSeniority(ct.jobTitle, seniorityLevels));
+    };
+    view.contacts = (contactsByCompanyId.get(row.companyId) || []).map((ct) => ({
+      fullName: ct.fullName,
+      relevant: isRelevant(ct),
+      linkedinUrl: ct.lastVerified2 || null,
+      verifiedAt: toEpochMs(ct.lastVerified) || (ct.source === "Discovered" ? discoveryAt : null),
+    }));
+
+    const facts = {
+      overridden: Object.fromEntries(PROVENANCE_FIELDS.map((f) => [f, ov[f] !== undefined && ov[f] !== null && ov[f] !== ""])),
+      webResearch: extra.webResearch || null,
+      linkedinResolveAttemptedAt: mapEntry?.linkedinResolveAttemptedAt || null,
+      sizeFetchAttemptedAt: extra.sizeFetchAttemptedAt || null,
+      employeeCountText: row.employeeCountText || null,
+    };
+    for (const field of ["linkedinCompanyId", ...PROVENANCE_FIELDS]) {
+      if (applicableProvenance(view, field)) continue;
+      const p = deriveProvenance(view, field, facts, now);
+      if (!p) continue;
+      view.provenance = { ...view.provenance, [field]: p };
+      (derived[key] = derived[key] || {})[field] = p;
+    }
+    views.push(view);
+  }
+
+  if (persistDerived && Object.keys(derived).length > 0) {
+    // Re-read right before writing and touch only provenance, so a write that landed in between
+    // (a web research, an edit) is never overwritten by this snapshot.
+    const fresh = await getTargetAccountExtras();
+    for (const [key, fields] of Object.entries(derived)) {
+      const cur = fresh[key] || emptyExtra();
+      fresh[key] = { ...cur, provenance: { ...(cur.provenance || {}), ...fields } };
+    }
+    await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
+  }
+  return views;
+}
+
+// The user's targeting settings in the shape readiness.js wants (design 3.1).
+export async function getReadinessConfig() {
+  const [universe, contactProfile] = await Promise.all([getTargetUniverseConfig(), getTargetContactProfile()]);
+  return {
+    locationPriorities: universe.locationPriorities || {},
+    sizeBuckets: universe.sizeBuckets || {},
+    industries: universe.industries || [],
+    seniorityLevels: contactProfile.seniorityLevels || [],
+  };
+}
+
+// Every live account with its assessment - what the Pipeline status pie and the Readiness column draw.
+export async function getAccountReadiness() {
+  const [views, cfg] = await Promise.all([getAccountViews(), getReadinessConfig()]);
+  const now = Date.now();
+  return views
+    .filter((v) => !v.deleted && !v.excluded)
+    .map((view) => ({ view, assessment: assessAccount(view, cfg, now) }));
 }
 
 // When the most recent scan started - lets the Dashboard flag which leads

@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js"]
+PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -817,6 +817,132 @@ def test_patch_shape(ctx):
     )
 
 
+def test_readiness(ctx):
+    """readiness.js - the one definition of Ready (DATA_PIPELINE_DESIGN.md section 3)."""
+    ctx.eval(r"""
+    var NOW = Date.UTC(2026, 8, 25);
+    var DAY = 86400000;
+    var LINK = "https://www.linkedin.com/company/nestle-s-a/";
+    // Targeting that weighs location and size but leaves industry at medium: industry is then not required.
+    var CFG = {
+      locationPriorities: { Switzerland: 3, Germany: 2 },
+      sizeBuckets: { large: { priority: 3 }, small: { priority: 2 } },
+      industries: [{ name: "Banking", priority: 2 }],
+      seniorityLevels: [{ id: "cxo", priority: 3 }],
+    };
+    function readyView(patch) {
+      var v = {
+        key: "nestle", company: "Nestle", source: "Imported",
+        linkedinCompanyId: "1234", linkedinLink: LINK, salesTeamPriority: "P2",
+        globalHqCountry: "Switzerland", globalEmployees: 270000, swissEmployees: null, industry: "Food",
+        evidenceStatus: "Rich Evidence", lastVerified: null, deleted: false, excluded: false, importedAt: NOW - 30 * DAY,
+        provenance: {
+          linkedinCompanyId: { src: "linkedin", at: NOW - 10 * DAY, link: LINK, v: "1234" },
+          globalHqCountry: { src: "workbook", at: NOW - 30 * DAY, evidence: "Rich Evidence", v: "Switzerland" },
+          globalEmployees: { src: "linkedin", at: NOW - 10 * DAY, v: 270000 },
+        },
+        contacts: [{ fullName: "A B", relevant: true, linkedinUrl: "https://www.linkedin.com/in/ab/", verifiedAt: NOW - 20 * DAY }],
+      };
+      for (var k in (patch || {})) v[k] = patch[k];
+      return v;
+    }
+    function withProv(field, p) { var v = readyView(); v.provenance[field] = p; return v; }
+    function state(v) { return assessAccount(v, CFG, NOW).state; }
+    function missingFields(v) { return assessAccount(v, CFG, NOW).missing.map(function (m) { return m.field + ":" + m.reason; }).join(","); }
+    """)
+
+    check("required fields follow the targeting (industry at medium is not required)",
+          ctx.eval("requiredFields(CFG).join(',')"), "linkedinCompanyId,salesTeamPriority,globalHqCountry,employees,contact")
+    check("everything medium: only id, priority, contact required",
+          ctx.eval("requiredFields({ locationPriorities: { CH: 2 }, sizeBuckets: {}, industries: [] }).join(',')"),
+          "linkedinCompanyId,salesTeamPriority,contact")
+
+    check("a fully verified account is Ready", ctx.eval("state(readyView())"), "ready")
+
+    # The id re-check rule: the id counts only once read off the very page the link points to.
+    check("id with no record of the page it was read from is not verified",
+          ctx.eval("missingFields(withProv('linkedinCompanyId', { src: 'linkedin', at: NOW, link: null, v: '1234' }))"),
+          "linkedinCompanyId:unverified")
+    check("...and the account is Usable, not Ready (it can still be scanned)",
+          ctx.eval("state(withProv('linkedinCompanyId', { src: 'linkedin', at: NOW, link: null, v: '1234' }))"),
+          "usable")
+    check("a link changed since the id was checked makes the id unverified",
+          ctx.eval("missingFields(readyView({ linkedinLink: 'https://www.linkedin.com/company/other-co/' }))"),
+          "linkedinCompanyId:unverified")
+    check("link variants of the same page still match (case, /about/, no www)",
+          ctx.eval("state(readyView({ linkedinLink: 'https://linkedin.com/company/Nestle-S-A/about/' }))"), "ready")
+    check("an id whose stored provenance was for a different id is re-derived, and unverified",
+          ctx.eval("var d = deriveProvenance(readyView({ linkedinCompanyId: '999' }), 'linkedinCompanyId', {}, NOW); d.src + '|' + d.link"),
+          "linkedin|null")
+    check("a Discovered row's id comes with its own link, so it is verified",
+          ctx.eval("var v = readyView({ source: 'Discovered' }); delete v.provenance.linkedinCompanyId; "
+                   "v.provenance.linkedinCompanyId = deriveProvenance(v, 'linkedinCompanyId', {}, NOW); state(v)"),
+          "ready")
+
+    check("id older than 12 months is expired",
+          ctx.eval("missingFields(withProv('linkedinCompanyId', { src: 'linkedin', at: NOW - 400 * DAY, link: LINK, v: '1234' }))"),
+          "linkedinCompanyId:expired")
+    check("headcount older than 6 months is expired",
+          ctx.eval("missingFields(withProv('globalEmployees', { src: 'linkedin', at: NOW - 200 * DAY, v: 270000 }))"),
+          "employees:expired")
+    check("workbook value with Provisional evidence is not verified",
+          ctx.eval("missingFields(withProv('globalHqCountry', { src: 'workbook', at: NOW, evidence: 'Provisional Evidence', v: 'Switzerland' }))"),
+          "globalHqCountry:unverified")
+    check("uncited web value is not verified",
+          ctx.eval("missingFields(withProv('globalEmployees', { src: 'web', at: NOW, cited: false, v: 270000 }))"),
+          "employees:unverified")
+    check("a manual edit counts as verified (D2)",
+          ctx.eval("state(withProv('globalEmployees', { src: 'user', at: NOW, v: 270000 }))"),
+          "ready")
+    check("stored provenance for a value that has since changed is ignored",
+          ctx.eval("missingFields(readyView({ globalEmployees: 5000 }))"),
+          "employees:unverified")
+    check("a missing global count falls back to the local one ('6,500+' counts as present)",
+          ctx.eval("var v = readyView({ globalEmployees: null, swissEmployees: '6,500+' }); v.provenance.swissEmployees = { src: 'linkedin', at: NOW, v: '6,500+' }; state(v)"),
+          "ready")
+
+    check("no relevant contact",
+          ctx.eval("missingFields(readyView({ contacts: [{ relevant: false, linkedinUrl: 'https://www.linkedin.com/in/x/', verifiedAt: NOW }] }))"),
+          "contact:absent")
+    check("relevant contact without a LinkedIn profile",
+          ctx.eval("missingFields(readyView({ contacts: [{ relevant: true, linkedinUrl: null, verifiedAt: NOW }] }))"),
+          "contact:unverified")
+    check("relevant contact checked 7 months ago",
+          ctx.eval("missingFields(readyView({ contacts: [{ relevant: true, linkedinUrl: 'https://www.linkedin.com/in/x/', verifiedAt: NOW - 213 * DAY }] }))"),
+          "contact:expired")
+
+    check("no LinkedIn id: In progress", ctx.eval("state(readyView({ linkedinCompanyId: null }))"), "in_progress")
+    check("no priority: In progress", ctx.eval("state(readyView({ salesTeamPriority: null }))"), "in_progress")
+    check("scope P2 excludes a P3", ctx.eval("isScannable(readyView({ salesTeamPriority: 'P3' }), 'P2')"), False)
+    check("scope all includes a P5", ctx.eval("isScannable(readyView({ salesTeamPriority: 'P5' }), 'all')"), True)
+    check("deleted is never scannable (old scope-all gap)", ctx.eval("isScannable(readyView({ deleted: true }), 'all')"), False)
+    check("excluded is never scannable", ctx.eval("isScannable(readyView({ excluded: true }), 'all')"), False)
+
+    # Design 3.4: every account assessAccount calls Ready or Usable is one the Scanner accepts.
+    check("Ready/Usable is always scannable (fixture sweep)", ctx.eval("""
+      var patches = [{}, { linkedinCompanyId: null }, { salesTeamPriority: null }, { salesTeamPriority: 'P5' },
+        { deleted: true }, { excluded: true }, { contacts: [] }, { linkedinLink: null }, { globalEmployees: null },
+        { globalHqCountry: null, salesTeamPriority: 'P4' }, { linkedinCompanyId: '', salesTeamPriority: 'P1' }];
+      patches.every(function (p) {
+        var v = readyView(p), a = assessAccount(v, CFG, NOW);
+        return (a.state !== 'ready' && a.state !== 'usable') || isScannable(v, 'all');
+      })"""), True)
+
+    for label, expected in [("C-level / Group", "cLevel"), ("Chief Digital & Information Officer", "cLevel"),
+                            ("Board member", "board"), ("SVP", "vp"), ("Vice President", "vp"), ("Head-level", "head"),
+                            ("Director", "director"), ("Senior Manager", "manager"), ("Specialist", None), ("", None)]:
+        check("seniority label %r" % label, ctx.eval("seniorityLevelFromLabel(%r)" % label), expected)
+
+    check("Excel serial date", ctx.eval("toEpochMs(46000) === Date.UTC(2025, 11, 9)"), True)
+    check("dd.mm.yyyy date", ctx.eval("toEpochMs('24.09.2026') === Date.UTC(2026, 8, 24)"), True)
+    check("derived workbook provenance uses Last_Verified, else the import date (D6)",
+          ctx.eval("deriveProvenance(readyView({ lastVerified: '2026-09-01' }), 'globalHqCountry', {}, NOW).at === Date.UTC(2026, 8, 1) && "
+                   "deriveProvenance(readyView(), 'globalHqCountry', {}, NOW).at === NOW - 30 * DAY"), True)
+    check("derived override with cited web research is web, cited",
+          ctx.eval("var p = deriveProvenance(readyView(), 'globalEmployees', { overridden: { globalEmployees: true }, webResearch: { at: 5e12, sources: ['x'] } }, NOW); p.src + '|' + p.cited"),
+          "web|true")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -834,6 +960,7 @@ def main():
     test_rule10_weakly_sourced_current_value(ctx)
     test_rule11_group_hq_over_local_entity(ctx)
     test_patch_shape(ctx)
+    test_readiness(ctx)
 
     print()
     for f in _failures:

@@ -89,7 +89,7 @@ async function run(items, { autofill, state, save, controllers, isStopping, stop
             if (autofill && fresh.length > 0) {
               const overrides = { ...(extras[item.key]?.overrides || {}) };
               for (const p of fresh) overrides[p.key] = p.found;
-              await saveTargetAccountExtra(item.key, { overrides });
+              await saveTargetAccountExtra(item.key, { overrides }, { src: "web" });
               state.filled += fresh.length;
             }
             if (proposals.some((p) => p.state === "different")) state.toReview++;

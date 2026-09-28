@@ -1248,6 +1248,14 @@ thead .actions-col {
 .priority-pill-findings-open { background: #fff4e0; color: #b26a00; }
 .priority-pill-findings-done { background: #f1f1f1; color: #757575; }
 
+/* Readiness (1.2 build step 1) - same hues as the Pipeline status pie's slices. */
+.priority-pill-readiness-ready { background: #e8f5e9; color: #1b5e20; }
+.priority-pill-readiness-usable { background: #f1f8e9; color: #33691e; }
+.priority-pill-readiness-in_progress { background: #fff8e1; color: #8d6e00; }
+.priority-pill-readiness-needs_decision { background: #ffebee; color: #b71c1c; }
+.priority-pill-readiness-lacking_evidence { background: #f1f1f1; color: #616161; }
+.pie-note { margin: 6px 0 0; font-size: 12px; color: #555; text-align: center; }
+
 .detail-row td {
   background: #f7f9fc;
   padding: 16px 20px;
