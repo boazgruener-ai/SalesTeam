@@ -77,6 +77,7 @@ import { sortResultsByRelevance } from "./ranking.js";
 import { sanitizeApiKey, suggestLookalikeTopics, analyzePostSearch } from "./agent-shared.js";
 import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
 import { getLinkedinTouchStats, formatTouchRelease, TOUCH_DANGER_THRESHOLD_24H } from "./linkedin-touch-log.js";
+import { initDecisionsDot } from "./decisions-dot.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -674,6 +675,9 @@ document.getElementById("open-debug-contact-btn").addEventListener("click", () =
 openHelpBtn.addEventListener("click", () => showEmbeddedPage("help.html", "Help"));
 
 openActivityLogBtn.addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
+// 1.2 build step 4: the decision queue, with its red dot (R12.4.1).
+document.getElementById("open-decisions-btn").addEventListener("click", () => showEmbeddedPage("decisions.html", "Decisions"));
+initDecisionsDot();
 
 openTargetAccountsBtn.addEventListener("click", () => showEmbeddedPage("target-accounts.html", "Target Accounts Dashboard"));
 document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));

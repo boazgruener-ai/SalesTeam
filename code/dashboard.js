@@ -62,6 +62,7 @@ import {
 } from "./agent-shared.js";
 import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
 import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
+import { initDecisionsDot } from "./decisions-dot.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -184,6 +185,9 @@ document.getElementById("open-settings-restore-btn").addEventListener("click", (
 document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
+// 1.2 build step 4: the decision queue, with its red dot (R12.4.1).
+document.getElementById("open-decisions-btn").addEventListener("click", () => showEmbeddedPage("decisions.html", "Decisions"));
+initDecisionsDot();
 document.getElementById("open-help-btn").addEventListener("click", () => showEmbeddedPage("help.html", "Help"));
 document.getElementById("open-debug-queue-btn").addEventListener("click", () => showEmbeddedPage("settings.html#discovery-queue-section", "Settings"));
 document.getElementById("open-debug-company-btn").addEventListener("click", () => showEmbeddedPage("settings.html#company-discovery-section", "Settings"));

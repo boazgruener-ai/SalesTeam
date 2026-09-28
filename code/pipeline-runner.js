@@ -18,8 +18,9 @@
 // Progress lives in storage under "pipelineState"; pipeline-status.js shows it on every SalesTeam page.
 import {
   getAccountViews, getReadinessConfig, savePipelineAccountState, applyResolvedCompanyIds, markLinkedinResolveAttempted,
-  applyEmployeeCheck, setContactLinkedinProfile, appendActivityLog,
+  applyEmployeeCheck, setContactLinkedinProfile, appendActivityLog, settleSafeDuplicates,
 } from "./storage.js";
+import { pageNamesAgree, cleanPageName, isEmptyPageBand } from "./decision-rules.js";
 import { assessAccount, companyLinkSlug, countReadiness } from "./readiness.js";
 import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
@@ -243,6 +244,9 @@ async function run(r) {
     clearInterval(keepAlive);
     if (!s.auto) chrome.power.releaseKeepAwake();
     if (worker) await chrome.windows.remove(worker.windowId).catch(() => {});
+    // Step 4 (V3): a re-check can reveal that two accounts are the same LinkedIn company. Settled here,
+    // after the run, when merging cannot pull a row out from under the account being worked on.
+    if (s.done > 0) await settleSafeDuplicates().catch(() => {});
     try { s.readyAfter = (await readinessNow()).counts.ready; s.ready = s.readyAfter; } catch { /* the summary just lacks the count */ }
     s.status = "finished";
     s.current = null;
@@ -298,9 +302,14 @@ async function runAccount(tab, entry, cfg, r) {
       // along on the resolver's visit.
       const withSize = jobs.includes("size") && Boolean(companyLinkSlug(view.linkedinLink));
       if (withSize) { ran.add("size"); attempted.add("size"); }
-      lines.push(...(await doResolve(tab, view, withSize)));
+      const res = await doResolve(tab, view, withSize, day);
+      lines.push(...res.lines);
+      if (res.pageChange) pipeline = { ...pipeline, pageChange: res.pageChange };
+      if (res.emptyPage) pipeline = { ...pipeline, emptyPage: day };
     } else if (job === "size") {
-      lines.push(...(await doSize(tab, view)));
+      const res = await doSize(tab, view);
+      lines.push(...res.lines);
+      if (res.emptyPage) pipeline = { ...pipeline, emptyPage: day };
     } else if (job === "profile") {
       profileSearches++;
       const res = await doProfile(tab, view, pipeline);
@@ -321,7 +330,13 @@ async function runAccount(tab, entry, cfg, r) {
 
   let attempts = pipeline.attempts || {};
   for (const j of failed) attempts = withFailedAttempt({ attempts }, j, day);
-  await savePipelineAccountState(key, { attempts, profileTried: pipeline.profileTried || [], lastRunDay: day });
+  // The whole state is written, not only what changed: when the account's inputs changed (step 4,
+  // R12.5.2), view.pipeline arrived already cleared, and this is where the clearing is stored.
+  await savePipelineAccountState(key, {
+    attempts, profileTried: pipeline.profileTried || [], lastRunDay: day, inputsKey: view.inputsKey || pipeline.inputsKey || null,
+    emptyPage: pipeline.emptyPage || null, keep: Boolean(pipeline.keep), pageChange: pipeline.pageChange || null,
+  });
+  if (pipeline.emptyPage) lines.push("LinkedIn page looks empty (0-1 employees): waiting for your decision (Keep or Remove)");
 
   // The score job (5.1): locally, for this account, never a manual or AI-judged priority.
   const before = view.salesTeamPriority;
@@ -349,10 +364,12 @@ async function runAccount(tab, entry, cfg, r) {
 // The jobs (5.1). Each writes its values, with provenance, the moment it has them (persist as you go).
 // ---------------------------------------------------------------------------------------------------
 
-async function doResolve(tab, view, withSize) {
+async function doResolve(tab, view, withSize, day) {
   const lines = [];
+  let pageChange = null;
   const company = {
     key: view.key, company: view.company, officialName: view.officialName, alternativeName: view.alternativeName,
+    alternativeNames: view.alternativeNames || [],
     linkedinLink: view.linkedinLink,
   };
   let armed = null;
@@ -389,15 +406,37 @@ async function doResolve(tab, view, withSize) {
       ? ` (the page did not answer${attempt.finalUrl ? `; landed on ${String(attempt.finalUrl).split("?")[0]}` : ""})`
       : d.pageName ? ` (page shows "${d.pageName}"${pageId ? `, id ${pageId}` : ", no id"}${oldId ? `; stored id ${oldId}` : ""})`
       : pageId ? ` (id ${pageId} on the page; stored id ${oldId || "none"})` : " (no id found on the page)";
-    lines.push(`LinkedIn company not confirmed${why}`);
+    // Step 4 (V4): the account's own link opens a page with a DIFFERENT company id - LinkedIn moved or
+    // merged the page (SIG Combibloc -> SIG Group), or the stored id was wrong. When the page's name
+    // agrees with the account's, the page is accepted, as T4 does for any re-check; when it does not,
+    // the user decides.
+    const pageName = cleanPageName(d.pageName);
+    const differs = pageId && (!oldId || String(pageId) !== String(oldId));
+    if (!attempt.timedOut && differs && pageName && view.linkedinLink) {
+      if (pageNamesAgree([view.company, view.officialName, view.alternativeName, ...(view.alternativeNames || [])], pageName)) {
+        await applyResolvedCompanyIds([{
+          key: view.key, linkedinCompanyId: pageId, checkedLink: view.linkedinLink, allowWorkbookRow: true, previousId: oldId,
+        }]);
+        lines.push(`LinkedIn page now shows "${pageName}": id ${oldId || "none"} -> ${pageId}, accepted (the names agree)`);
+      } else {
+        pageChange = { pageName, pageId: String(pageId), fromId: oldId ? String(oldId) : null, pageUrl: attempt.finalUrl || null, day };
+        lines.push(`LinkedIn company not confirmed${why}: waiting for your decision`);
+      }
+    } else {
+      lines.push(`LinkedIn company not confirmed${why}`);
+    }
   }
-  if (withSize) lines.push(await applySize(view, sizeResult));
-  return lines;
+  let emptyPage = false;
+  if (withSize) {
+    lines.push(await applySize(view, sizeResult));
+    emptyPage = Boolean(sizeResult && sizeResult.resolved && isEmptyPageBand(sizeResult.sizeBandText));
+  }
+  return { lines, pageChange, emptyPage };
 }
 
 async function doSize(tab, view) {
   const res = await readSizeOnTab(tab, { key: view.key, linkedinLink: view.linkedinLink });
-  return [await applySize(view, res)];
+  return { lines: [await applySize(view, res)], emptyPage: Boolean(res && res.resolved && isEmptyPageBand(res.sizeBandText)) };
 }
 
 async function applySize(view, res) {

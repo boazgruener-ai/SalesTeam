@@ -2,6 +2,8 @@ import { geoUrnForCountry } from "./geo-urn-map.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { DEFAULT_ARBITRATION_SETTINGS } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel } from "./readiness.js";
+import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
+import { computeFindingProposals } from "./web-research-apply.js";
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
 // post/job URL, with status, priority, and negative-topic-match reason), scan
@@ -1141,8 +1143,32 @@ export async function getTargetAccountsMeta() {
 // falls through to offering the stubborn remainder for retry/analysis,
 // oldest-attempt-first (so a company isn't retried again and again ahead
 // of one that's had a single attempt).
+// Every alternative name known for an account (1.2 step 4, option A): the workbook's own alternative-name
+// columns plus the Alt. name(s) the user typed on the account (overrides.alternativeCompanyName, a list).
+// The resolver searches LinkedIn with these when the main name finds nothing - how an account like
+// "Swiss Air-Rescue Rega", whose page is simply "Rega", gets found without anyone typing a LinkedIn link.
+// Names equal to the account's own name or official name are left out; duplicates are removed.
+export function accountAlternativeNames(company, officialName, sources) {
+  const skip = new Set([normalizeCompanyName(company), normalizeCompanyName(officialName)].filter(Boolean));
+  const seen = new Set();
+  const out = [];
+  for (const src of sources || []) {
+    const list = Array.isArray(src) ? src : [src];
+    for (const entry of list) {
+      for (const part of String(entry || "").split(/[;\n]+/)) {
+        const name = part.trim();
+        const key = normalizeCompanyName(name);
+        if (!name || !key || skip.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        out.push(name);
+      }
+    }
+  }
+  return out;
+}
+
 export async function getTargetAccountsMissingLinkedinId() {
-  const map = await getTargetAccounts();
+  const [map, extras] = await Promise.all([getTargetAccounts(), getTargetAccountExtras()]);
   // 28th round of direct feedback (2026-09-19): getTargetAccounts() now has
   // an extra key per known alias, all pointing at the SAME record object
   // (see importTargetAccounts) - without the key === normalizeCompanyName(v.company)
@@ -1163,6 +1189,7 @@ export async function getTargetAccountsMissingLinkedinId() {
       company: v.company,
       officialName: v.officialName || null,
       alternativeName: v.alternativeName || null,
+      alternativeNames: accountAlternativeNames(v.company, v.officialName, [v.alternativeName, extras[key]?.overrides?.alternativeCompanyName]),
       linkedinLink: v.linkedinLink || null,
       attemptedAt: v.linkedinResolveAttemptedAt || null,
     }))
@@ -1543,12 +1570,37 @@ export function buildDiscoveredContactRow(dcontact, companyRow) {
 // LinkedIn Company IDs" (an experimental, batch-run, opt-in feature) writes
 // it - most rows won't have one resolved yet, so name matching remains the
 // only signal available for those, not a fallback ever fully retired.
+// 1.2 build step 4 (R12.6.3, V2): a discovered company that matches an existing account by NAME only is
+// held back - not merged, no id written onto the existing row, its contacts kept waiting - until the user
+// says in the decision queue whether it is the same company. Almost every account has a LinkedIn id now,
+// so a name match that is not an id match usually means "same name, different LinkedIn company".
+// Decisions are keyed by the discovered company's LinkedIn id: "same" or "different".
+const DISCOVERY_NAME_DECISIONS_KEY = "discoveryNameDecisions";
+
+export async function getDiscoveryNameDecisions() {
+  const data = await chrome.storage.local.get(DISCOVERY_NAME_DECISIONS_KEY);
+  return data[DISCOVERY_NAME_DECISIONS_KEY] || {};
+}
+
+export async function saveDiscoveryNameDecision(discoveredId, choice) {
+  const decisions = await getDiscoveryNameDecisions();
+  decisions[String(discoveredId)] = choice;
+  await chrome.storage.local.set({ [DISCOVERY_NAME_DECISIONS_KEY]: decisions });
+}
+
+// "Different company": added as its own account under a name that cannot collide with the existing one -
+// accounts are keyed by their normalized name, so two rows called "Sunrise" would share one record.
+function distinctDiscoveredName(dc) {
+  return `${dc.name} (LinkedIn: ${dc.slug || dc.linkedinCompanyId})`;
+}
+
 async function computeDiscoveredMergeDiff() {
-  const [discoveredCompanies, discoveredContacts, workbook, targetAccountsMap] = await Promise.all([
+  const [discoveredCompanies, discoveredContacts, workbook, targetAccountsMap, nameDecisions] = await Promise.all([
     getDiscoveredCompanies(),
     getDiscoveredContacts(),
     getTargetAccountsWorkbook(),
     getTargetAccounts(),
+    getDiscoveryNameDecisions(),
   ]);
 
   const companyByName = new Map(workbook.companies.map((c) => [normalizeCompanyName(c.company), c]));
@@ -1565,22 +1617,36 @@ async function computeDiscoveredMergeDiff() {
   // actually be looked at (and, if it looks wrong, caught) before
   // committing, not just trusted blind.
   const matchedCompanies = [];
+  // Name-only matches still waiting for the user's decision (V2), and where each discovered company's
+  // contacts go: its own new row, the existing account, or nowhere yet.
+  const heldNameMatches = [];
+  const heldIds = new Set();
+  const rowByDiscoveredId = new Map();
   for (const dc of discoveredCompanies) {
     const idMatch = dc.linkedinCompanyId ? companyByLinkedinId.get(dc.linkedinCompanyId) : null;
     if (idMatch) {
       matchedCompanies.push({ discovered: dc, existing: idMatch, matchedBy: "id" });
+      rowByDiscoveredId.set(dc.linkedinCompanyId, idMatch);
       continue;
     }
     const nameKey = normalizeCompanyName(dc.name);
     const nameMatch = companyByName.get(nameKey);
-    if (nameMatch) {
-      matchedCompanies.push({ discovered: dc, existing: nameMatch, matchedBy: "name" });
+    const decision = dc.linkedinCompanyId ? nameDecisions[String(dc.linkedinCompanyId)] : null;
+    if (nameMatch && decision !== "different") {
+      if (decision === "same") {
+        matchedCompanies.push({ discovered: dc, existing: nameMatch, matchedBy: "name" });
+        rowByDiscoveredId.set(dc.linkedinCompanyId, nameMatch);
+      } else {
+        heldNameMatches.push({ discovered: dc, existing: nameMatch });
+        if (dc.linkedinCompanyId) heldIds.add(dc.linkedinCompanyId);
+      }
       continue;
     }
-    const row = buildDiscoveredCompanyRow(dc);
+    const row = nameMatch ? { ...buildDiscoveredCompanyRow(dc), company: distinctDiscoveredName(dc) } : buildDiscoveredCompanyRow(dc);
+    if (dc.linkedinCompanyId) rowByDiscoveredId.set(dc.linkedinCompanyId, row);
     // So a later discovered dupe in this same batch also resolves here,
     // by either signal.
-    companyByName.set(nameKey, row);
+    companyByName.set(normalizeCompanyName(row.company), row);
     if (dc.linkedinCompanyId) companyByLinkedinId.set(dc.linkedinCompanyId, row);
     newCompanyRows.push(row);
   }
@@ -1596,9 +1662,13 @@ async function computeDiscoveredMergeDiff() {
   // contact was staged, so there's nothing to attribute it to).
   let duplicateContactsSkipped = 0;
   let orphanedContactsSkipped = 0;
+  let heldContacts = 0;
   for (const dcontact of discoveredContacts) {
     const dc = discoveredCompanyById.get(dcontact.companyKey);
-    let companyRow = dc ? companyByName.get(normalizeCompanyName(dc.name)) : null;
+    // Its company is a name match still waiting for the user: the contact waits with it.
+    if (dc?.linkedinCompanyId && heldIds.has(dc.linkedinCompanyId)) { heldContacts++; continue; }
+    let companyRow = dc?.linkedinCompanyId ? rowByDiscoveredId.get(dc.linkedinCompanyId) : null;
+    if (!companyRow && dc) companyRow = companyByName.get(normalizeCompanyName(dc.name));
     if (!companyRow && dc?.linkedinCompanyId) companyRow = companyByLinkedinId.get(dc.linkedinCompanyId);
     if (!companyRow) { orphanedContactsSkipped++; continue; } // the company this contact belongs to was never itself discovered/known
     const row = buildDiscoveredContactRow(dcontact, companyRow);
@@ -1610,7 +1680,7 @@ async function computeDiscoveredMergeDiff() {
   }
 
   return {
-    workbook, newCompanyRows, newContactRows, matchedCompanies,
+    workbook, newCompanyRows, newContactRows, matchedCompanies, heldNameMatches, heldContacts,
     totalDiscoveredCompanies: discoveredCompanies.length,
     totalDiscoveredContacts: discoveredContacts.length,
     duplicateContactsSkipped,
@@ -1635,8 +1705,9 @@ export async function getPendingDiscoveredMergeCounts() {
 // also lists which discovered companies matched an EXISTING row (and how -
 // "id" or "name") instead of leaving that silent.
 export async function getPendingDiscoveredMergePreview() {
-  const { newCompanyRows, newContactRows, matchedCompanies } = await computeDiscoveredMergeDiff();
+  const { newCompanyRows, newContactRows, matchedCompanies, heldNameMatches } = await computeDiscoveredMergeDiff();
   return {
+    nameMatchesWaiting: heldNameMatches.length,
     companies: newCompanyRows.map((c) => ({ name: c.company, country: c.globalHqCountry, linkedinLink: c.linkedinLink })),
     contacts: newContactRows.map((c) => ({ name: c.fullName, company: c.company })),
     matchedCompanies: matchedCompanies.map((m) => ({
@@ -1650,9 +1721,10 @@ export async function getPendingDiscoveredMergePreview() {
 
 export async function mergeDiscoveredIntoWorkbook() {
   const {
-    workbook, newCompanyRows, newContactRows, matchedCompanies,
+    workbook, newCompanyRows, newContactRows, matchedCompanies, heldNameMatches, heldContacts,
     totalDiscoveredCompanies, totalDiscoveredContacts, duplicateContactsSkipped, orphanedContactsSkipped,
   } = await computeDiscoveredMergeDiff();
+  const targetAccountsMap = await getTargetAccounts();
 
   // Free LinkedIn ID backfill (2026-09-16, per the user's own proposal): a
   // company matched by NAME (not already by ID) just proved, via this exact
@@ -1667,8 +1739,12 @@ export async function mergeDiscoveredIntoWorkbook() {
   // policy the user asked for, no separate touch-costing action needed for
   // this specific case. A matchedBy: "id" company already had one; only
   // "name" matches are missing one to backfill.
+  // Since 1.2 step 4 a "name" match here is one the user confirmed as the same company in the decision
+  // queue; the id is written only when the account has none - one it already has is left for the
+  // pipeline's re-check against the account's own page to settle.
   const idBackfills = matchedCompanies
     .filter((m) => m.matchedBy === "name" && m.discovered.linkedinCompanyId)
+    .filter((m) => !(m.existing.linkedinCompanyId || targetAccountsMap[normalizeCompanyName(m.existing.company)]?.linkedinCompanyId))
     .map((m) => ({
       key: normalizeCompanyName(m.existing.company),
       linkedinCompanyId: m.discovered.linkedinCompanyId,
@@ -1685,6 +1761,7 @@ export async function mergeDiscoveredIntoWorkbook() {
 
   const baseResult = {
     totalDiscoveredCompanies, companiesMatched: matchedCompanies.length, idsBackfilled,
+    nameMatchesWaiting: heldNameMatches.length, contactsWaiting: heldContacts,
     totalDiscoveredContacts, duplicateContactsSkipped, orphanedContactsSkipped,
   };
 
@@ -4629,8 +4706,16 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       // For the pipeline (build step 2): the resolver's name search, and the per-account job state.
       officialName: row.officialName || null,
       alternativeName: row.alternativeName || null,
-      pipeline: extra.pipeline || {},
+      alternativeNames: accountAlternativeNames(row.company, row.officialName, [
+        row.alternativeName, mapEntry?.alternativeName, ov.alternativeCompanyName ?? row.alternativeCompanyName,
+      ]),
+      // Step 4 (R12.5.2): what the pipeline was given for this account. When it changes (a re-import, an
+      // edited link, name or Alt. name, a rules change), earlier failed attempts no longer count.
+      inputsKey: accountInputsKey([importedAt, row.company, row.officialName, row.alternativeName, ov.linkedinLink,
+        JSON.stringify(ov.alternativeCompanyName ?? null)]),
+      universeOrder: row.universeOrder ?? null,
     };
+    view.pipeline = effectivePipeline(extra.pipeline, view.inputsKey);
     for (const field of PROVENANCE_FIELDS) view[field] = ov[field] ?? row[field] ?? null;
 
     // A contact is relevant when it is at one of the wizard's seniority levels (R3.6). The research
@@ -4671,6 +4756,7 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       view.provenance = { ...view.provenance, [field]: p };
       (derived[key] = derived[key] || {})[field] = p;
     }
+    view.lacking = lackingReason(view, view.pipeline);
     views.push(view);
   }
 
@@ -4772,12 +4858,292 @@ export async function getReadinessConfig() {
 }
 
 // Every live account with its assessment - what the Pipeline status pie and the Readiness column draw.
+// Since step 4 an account with an item in the decision queue is "Needs your decision", and one that is
+// Lacking evidence (and not kept) is "Lacking evidence".
 export async function getAccountReadiness() {
   const [views, cfg] = await Promise.all([getAccountViews(), getReadinessConfig()]);
+  const queue = await buildDecisionQueue(views);
+  const decisionKeys = new Set(queue.items.filter((i) => i.kind !== "lacking_evidence").map((i) => i.accountKey));
   const now = Date.now();
   return views
     .filter((v) => !v.deleted && !v.excluded)
-    .map((view) => ({ view, assessment: assessAccount(view, cfg, now) }));
+    .map((view) => ({
+      view,
+      assessment: assessAccount(view, cfg, now, {
+        decision: decisionKeys.has(view.key), lacking: Boolean(view.lacking), keep: Boolean(view.pipeline && view.pipeline.keep),
+      }),
+    }));
+}
+
+// --------------------------------------------------------------------------
+// The decision queue (1.2 build step 4, DATA_PIPELINE_DESIGN.md section 7, touch-ups V1-V8)
+// --------------------------------------------------------------------------
+
+// V1: the queue is BUILT from the data every time, never stored as a list, so it cannot go stale: settle
+// a finding in the account's own Review dialog, or let new data reach a Lacking account, and its item is
+// simply not built any more. Only the user's answers are stored, each where its own data lives.
+
+// The rows duplicateGroups works on: one per live workbook company, with the LinkedIn id it carries
+// itself (a Discovered row) or through the map, and whether that id was re-checked against its page.
+async function duplicateRows() {
+  const [workbook, map, extras] = await Promise.all([getTargetAccountsWorkbook(), getTargetAccounts(), getTargetAccountExtras()]);
+  return (workbook.companies || [])
+    .filter((r) => r && r.company && r.companyId && !extras[normalizeCompanyName(r.company)]?.deletedAt)
+    .map((r) => {
+      const key = normalizeCompanyName(r.company);
+      const linkedinLink = r.linkedinLink || map[key]?.linkedinLink || null;
+      const linkedinCompanyId = r.linkedinCompanyId || map[key]?.linkedinCompanyId || null;
+      return {
+        companyId: r.companyId, key, company: r.company, source: r.source || "Imported", universeOrder: r.universeOrder ?? null,
+        linkedinCompanyId: linkedinCompanyId ? String(linkedinCompanyId) : null,
+        idVerified: idVerifiedFor(extras[key]?.provenance?.linkedinCompanyId, linkedinLink, r.source),
+        slug: parseLinkedinCompanySlug(linkedinLink || "") || null,
+        registryId: r.zefixUid || null,
+        city: extras[key]?.overrides?.globalHqCity ?? r.globalHqCity ?? null,
+        country: extras[key]?.overrides?.globalHqCountry ?? r.globalHqCountry ?? null,
+      };
+    });
+}
+
+// V3: merges every duplicate group that is safe to merge without asking (same LinkedIn id, re-checked on
+// at least one member). Returns how many rows were merged away. Called after a Discovery merge and after
+// each pipeline run.
+export async function settleSafeDuplicates() {
+  const groups = duplicateGroups(await duplicateRows(), await getKeptSeparatePairs()).filter((g) => g.auto);
+  let merged = 0;
+  for (const g of groups) {
+    const keep = g.members[0];
+    for (const drop of g.members.slice(1)) {
+      try {
+        const r = await mergeTargetAccounts(keep.key, drop.key, { keepId: keep.companyId, dropId: drop.companyId });
+        merged++;
+        appendActivityLog({
+          actor: "extension",
+          action: "target_accounts_merged",
+          label: `Merged duplicate "${r.dropName}" into "${r.keepName}" automatically: same LinkedIn company (${keep.linkedinCompanyId}). ${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there`,
+          relatedCompanyKey: keep.key,
+        }).catch(() => {});
+      } catch { /* one group failing leaves the others */ }
+    }
+  }
+  return merged;
+}
+
+// R12.6.1: a finished Discovery run is merged by itself. Matches by LinkedIn id merge silently; name-only
+// matches wait in the decision queue (V2). Then the safe duplicates are settled.
+export async function autoMergeDiscoveryResults() {
+  const r = await mergeDiscoveredIntoWorkbook();
+  const merged = await settleSafeDuplicates();
+  if (r.companiesAdded > 0 || r.contactsAdded > 0 || r.nameMatchesWaiting > 0 || merged > 0) {
+    appendActivityLog({
+      actor: "extension",
+      action: "discovered_merged_into_workbook",
+      label: `Discovery results merged automatically: ${r.companiesAdded} compan${r.companiesAdded === 1 ? "y" : "ies"} and ${r.contactsAdded} contact${r.contactsAdded === 1 ? "" : "s"} added` +
+        (r.nameMatchesWaiting > 0 ? `; ${r.nameMatchesWaiting} matched an account by name only and wait for your decision` : "") +
+        (merged > 0 ? `; ${merged} duplicate${merged === 1 ? "" : "s"} merged` : ""),
+      newValue: { ...r, duplicatesMerged: merged },
+    }).catch(() => {});
+  }
+  return { ...r, duplicatesMerged: merged };
+}
+
+function findingValueKey(v) {
+  return typeof v === "number" ? String(v) : String(v ?? "").trim().toLowerCase();
+}
+
+// The same test as the Review findings dialog (target-accounts.js isDismissedFinding): a finding turned
+// down stays quiet, but a later research that finds a DIFFERENT value asks again.
+function isDismissedWebFinding(dismissed, proposal) {
+  if (!dismissed || !Object.prototype.hasOwnProperty.call(dismissed, proposal.key)) return false;
+  const a = dismissed[proposal.key];
+  const b = proposal.found;
+  if (typeof a === "number" || typeof b === "number") {
+    const x = Number(a), y = Number(b);
+    return Number.isFinite(x) && Number.isFinite(y) && x === y;
+  }
+  return findingValueKey(a) === findingValueKey(b);
+}
+
+function revenueMoneySettings(money) {
+  return { targetCurrency: money.targetCurrency, rates: { rates: money.rates } };
+}
+
+// Builds the queue. `views` may be passed by a caller that already has them. Returns { items, count }.
+async function buildDecisionQueue(views) {
+  const [allViews, workbook, extras, kept, money, diff, discoveredContacts] = await Promise.all([
+    views || getAccountViews({ persistDerived: false }), getTargetAccountsWorkbook(), getTargetAccountExtras(),
+    getKeptSeparatePairs(), getRevenueNormalization(), computeDiscoveredMergeDiff(), getDiscoveredContacts(),
+  ]);
+  const live = allViews.filter((v) => !v.deleted && !v.excluded);
+  const byKey = new Map(live.map((v) => [v.key, v]));
+  const items = [];
+  const base = (v) => ({ accountKey: v.key, company: v.company, priority: v.salesTeamPriority || null });
+
+  // A changed LinkedIn page the pipeline could not accept by itself (V4)
+  for (const v of live) {
+    const pc = v.pipeline && v.pipeline.pageChange;
+    if (!pc || pc.kept) continue;
+    items.push({ ...base(v), id: `page:${v.key}:${pc.pageId}`, kind: "page_changed",
+      payload: { ...pc, currentId: v.linkedinCompanyId || null, link: v.linkedinLink || null } });
+  }
+
+  // Discovery companies that match an account by name only (V2)
+  for (const m of diff.heldNameMatches) {
+    const key = normalizeCompanyName(m.existing.company);
+    const v = byKey.get(key);
+    const dc = m.discovered;
+    items.push({
+      accountKey: key, company: m.existing.company, priority: v ? v.salesTeamPriority : null,
+      id: `name:${dc.linkedinCompanyId}`, kind: "name_match",
+      payload: {
+        discoveredId: dc.linkedinCompanyId, discoveredName: dc.name, discoveredCountry: dc.country || null,
+        discoveredIndustry: dc.industryText || null, discoveredLink: dc.slug ? `https://www.linkedin.com/company/${dc.slug}/` : null,
+        discoveredContacts: discoveredContacts.filter((c) => c.companyKey === dc.linkedinCompanyId).length,
+        existingId: v ? v.linkedinCompanyId : null, existingLink: v ? v.linkedinLink : (m.existing.linkedinLink || null),
+        existingCountry: m.existing.globalHqCountry || null, existingIndustry: m.existing.industry || null,
+      },
+    });
+  }
+
+  // Duplicates that are not safe to merge silently (V3)
+  for (const g of duplicateGroups(await duplicateRows(), kept)) {
+    if (g.auto) continue;
+    const first = byKey.get(g.members[0].key);
+    items.push({
+      accountKey: g.members[0].key, company: g.members[0].company, priority: first ? first.salesTeamPriority : null,
+      id: `dup:${g.members.map((m) => m.companyId).sort().join("|")}`, kind: "duplicate",
+      payload: {
+        reasons: g.reasons,
+        members: g.members.map((m) => ({
+          companyId: m.companyId, key: m.key, company: m.company, source: m.source, linkedinCompanyId: m.linkedinCompanyId,
+          link: m.slug ? `https://www.linkedin.com/company/${m.slug}/` : null, slug: m.slug,
+          registryId: m.registryId, city: m.city, country: m.country,
+          contacts: (workbook.contacts || []).filter((c) => c.companyId === m.companyId).length,
+        })),
+      },
+    });
+  }
+
+  // Lacking evidence (R12.5)
+  for (const v of live) {
+    if (!v.lacking || (v.pipeline && v.pipeline.keep)) continue;
+    items.push({ ...base(v), id: `lack:${v.key}:${v.lacking.reason}`, kind: "lacking_evidence",
+      payload: { reason: v.lacking.reason, text: v.lacking.text, link: v.linkedinLink || null, source: v.source } });
+  }
+
+  // Web findings the automatic resolve left for the user (V6). The currency is never asked on its own:
+  // it goes with the revenue amount.
+  const moneySettings = revenueMoneySettings(money);
+  const rowByKey = new Map((workbook.companies || []).filter((r) => r.company).map((r) => [normalizeCompanyName(r.company), r]));
+  for (const v of live) {
+    const extra = extras[v.key];
+    const row = rowByKey.get(v.key);
+    if (!extra || !extra.webResearch || !row) continue;
+    for (const p of computeFindingProposals(row, extra.overrides, extra.webResearch.data, moneySettings)) {
+      if (p.key === "revenueCurrency" || isDismissedWebFinding(extra.webFindingsDismissed, p)) continue;
+      items.push({ ...base(v), id: `finding:${v.key}:${p.key}:${findingValueKey(p.found)}`, kind: "finding",
+        payload: { field: p.key, label: p.label, current: p.current, found: p.found, state: p.state,
+          sources: (extra.webResearch.sources || []).length } });
+    }
+  }
+
+  const sorted = sortDecisions(items).map((i) => ({ ...i, similar: similarKey(i) }));
+  return { items: sorted, count: sorted.length };
+}
+
+export async function getDecisionQueue() {
+  return buildDecisionQueue();
+}
+
+// Clears an account's failed attempts, empty-page mark, Keep and pending page change: something new
+// arrived for it (R12.5.2), so the pipeline tries it again from scratch.
+async function resetPipelineFor(key) {
+  const extras = await getTargetAccountExtras();
+  const cur = extras[key] || emptyExtra();
+  extras[key] = { ...cur, pipeline: { ...(cur.pipeline || {}), attempts: {}, profileTried: [], emptyPage: null, keep: false, pageChange: null, lastRunDay: null } };
+  await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
+}
+
+// Applies one answer. item is a queue item as built above; choice is one of its kind's two choices:
+//   page_changed: "accept" | "keep"          name_match: "same" | "different"
+//   duplicate: "merge" | "separate"          lacking_evidence: "keep" | "remove"
+//   finding: "web" | "current"
+// Returns a short line saying what was done, for the page and the Activity Log.
+export async function applyDecision(item, choice) {
+  const p = item.payload || {};
+  let label;
+  if (item.kind === "page_changed") {
+    if (choice === "accept") {
+      // The page the account's own link opens is its identity (T4): the id read there is taken, checked
+      // against that same link, and the old one is kept on record.
+      await applyResolvedCompanyIds([{
+        key: item.accountKey, linkedinCompanyId: p.pageId, checkedLink: p.link || null, allowWorkbookRow: true, previousId: p.currentId || p.fromId || null,
+      }]);
+      await resetPipelineFor(item.accountKey);
+      label = `"${item.company}": LinkedIn page accepted as "${p.pageName}" (id ${p.currentId || "none"} -> ${p.pageId})`;
+    } else {
+      await savePipelineAccountState(item.accountKey, { pageChange: { ...(item.payload || {}), kept: true } });
+      label = `"${item.company}": kept the current LinkedIn company, not "${p.pageName}"`;
+    }
+  } else if (item.kind === "name_match") {
+    await saveDiscoveryNameDecision(p.discoveredId, choice === "same" ? "same" : "different");
+    const r = await mergeDiscoveredIntoWorkbook();
+    if (choice === "same") await resetPipelineFor(item.accountKey);
+    label = choice === "same"
+      ? `Discovery's "${p.discoveredName}" is the same company as "${item.company}": ${r.contactsAdded} contact${r.contactsAdded === 1 ? "" : "s"} added to it`
+      : `Discovery's "${p.discoveredName}" is a different company from "${item.company}": added as a new account`;
+  } else if (item.kind === "duplicate") {
+    const members = p.members || [];
+    if (choice === "merge") {
+      const keep = members[0];
+      const parts = [];
+      for (const drop of members.slice(1)) {
+        const r = await mergeTargetAccounts(keep.key, drop.key, { keepId: keep.companyId, dropId: drop.companyId });
+        parts.push(`"${r.dropName}" (${r.contactsMoved} contacts moved)`);
+      }
+      label = `Merged ${parts.join(", ")} into "${keep.company}"`;
+    } else {
+      const pairs = [];
+      for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) pairs.push(accountPairKey(members[i], members[j]));
+      await addKeptSeparatePairs(pairs);
+      label = `Kept ${members.map((m) => `"${m.company}"`).join(" and ")} as separate companies`;
+    }
+  } else if (item.kind === "lacking_evidence") {
+    if (choice === "remove") {
+      await saveTargetAccountExtra(item.accountKey, { deletedAt: Date.now() });
+      label = `Removed "${item.company}" (${p.text})`;
+    } else {
+      await savePipelineAccountState(item.accountKey, { keep: true });
+      label = `Kept "${item.company}" although it lacks evidence (${p.text}); not retried until something new arrives`;
+    }
+  } else if (item.kind === "finding") {
+    const extras = await getTargetAccountExtras();
+    const extra = extras[item.accountKey] || emptyExtra();
+    const overrides = { ...(extra.overrides || {}) };
+    const dismissed = { ...(extra.webFindingsDismissed || {}) };
+    if (choice === "web") {
+      overrides[p.field] = p.found;
+      delete dismissed[p.field];
+      // A revenue amount and its currency are one fact in two fields (as in the Review findings dialog).
+      if (p.field === "globalRevenue") {
+        const money = await getRevenueNormalization();
+        const row = ((await getTargetAccountsWorkbook()).companies || []).find((c) => c.company && normalizeCompanyName(c.company) === item.accountKey);
+        const currency = computeFindingProposals(row || {}, extra.overrides, extra.webResearch?.data, revenueMoneySettings(money))
+          .find((x) => x.key === "revenueCurrency");
+        if (currency) { overrides.revenueCurrency = currency.found; delete dismissed.revenueCurrency; }
+      }
+      await saveTargetAccountExtra(item.accountKey, { overrides, webFindingsDismissed: dismissed }, { src: "web" });
+      label = `"${item.company}": ${p.label} set to the web finding (${p.found})`;
+    } else {
+      dismissed[p.field] = p.found;
+      await saveTargetAccountExtra(item.accountKey, { webFindingsDismissed: dismissed });
+      label = `"${item.company}": kept the current ${p.label} (${p.current ?? "empty"}), not the web finding (${p.found})`;
+    }
+  } else {
+    throw new Error(`Unknown decision kind: ${item.kind}`);
+  }
+  appendActivityLog({ actor: "user", action: "decision", label: `Decision: ${label}`, relatedCompanyKey: item.accountKey, newValue: { kind: item.kind, choice } }).catch(() => {});
+  return label;
 }
 
 // When the most recent scan started - lets the Dashboard flag which leads

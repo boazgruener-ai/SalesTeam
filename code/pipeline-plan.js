@@ -171,9 +171,14 @@ function gap(assessment, field) {
 // Only the LinkedIn jobs of build step 2; web research joins in step 5.
 export function jobsNeeded(view, assessment, pipeline, now) {
   const jobs = [];
+  const p = pipeline || {};
+  // Step 4: an empty LinkedIn page, a Keep on a Lacking account, and a changed page waiting for the
+  // user's decision all stop the work until something new arrives or the user has answered.
+  if (p.emptyPage || p.keep || (p.pageChange && !p.pageChange.kept)) return jobs;
   const slug = companyLinkSlug(view.linkedinLink);
   const idGap = gap(assessment, "linkedinCompanyId");
-  if (idGap && !jobGaveUp(pipeline, "resolve")) jobs.push("resolve");
+  // "Keep current" on a changed page: the user has settled the id, so it is not re-checked again.
+  if (idGap && !jobGaveUp(pipeline, "resolve") && !(p.pageChange && p.pageChange.kept)) jobs.push("resolve");
   // Size needs the company's own page. When resolve is about to visit it, size rides along for free
   // (T3); the runner decides that, this list still names both.
   if (gap(assessment, "employees") && (slug || jobs.includes("resolve")) && !jobGaveUp(pipeline, "size")) jobs.push("size");

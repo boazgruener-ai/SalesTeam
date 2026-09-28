@@ -34,6 +34,7 @@ import {
   getTargetAccounts,
   getScanCompanyScope,
   getScanTargetCompanyIds,
+  autoMergeDiscoveryResults,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
@@ -43,6 +44,7 @@ import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
 import { startPipelineRun, stopPipelineRun, kickPipeline, pausePipelineForUser, clearUserJobHold } from "./pipeline-runner.js";
 import { setPipelinePausedDay } from "./pipeline-automation.js";
+import { rescoreDerivedPriorities } from "./auto-score.js";
 import { localDay } from "./pipeline-plan.js";
 
 const SCRAPE_TIMEOUT_MS = 15000;
@@ -111,6 +113,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
   const change = area === "local" && changes.activeBatchJob;
   if (!change || change.newValue || !change.oldValue || change.oldValue.pipeline) return;
   clearUserJobHold().then(() => kickPipeline("batch_end")).catch(() => {});
+});
+// 1.2 build step 4 (R12.6.1): a Discovery run that FINISHED is merged into the Target Accounts by itself -
+// id matches silently, name-only matches to the decision queue - and the pipeline then replans. A stopped
+// or restarted run never reaches "done", so its results stay in the holding area as before.
+chrome.storage.onChanged.addListener((changes, area) => {
+  const change = area === "local" && changes.discoveryQueueState;
+  if (!change || change.newValue?.status !== "done" || change.oldValue?.status === "done") return;
+  // New rows are scored locally first (no AI, no LinkedIn): an unscored account is invisible to the Scanner.
+  autoMergeDiscoveryResults()
+    .then(() => rescoreDerivedPriorities().catch(() => null))
+    .then(() => kickPipeline("discovery_merged"))
+    .catch(() => {});
 });
 
 function chunk(array, size) {
