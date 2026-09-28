@@ -1588,7 +1588,8 @@ function splitBriefingAndData(text) {
 // `signal` (optional) is the Stop button: it ends the research gracefully and keeps what was collected.
 // Throws a readable Error only when nothing at all could be collected.
 // `onlyTopics` (optional, e.g. ["employees", "revenue"]) limits the research to what is missing, which needs fewer searches.
-export async function researchAccountOnWeb(company, settings, { onStatus, signal, onlyTopics } = {}) {
+// `maxSearches` (optional) lowers the full research's search allowance: the pipeline's depth research uses 3 (2026-09-28).
+export async function researchAccountOnWeb(company, settings, { onStatus, signal, onlyTopics, maxSearches } = {}) {
   const apiKey = sanitizeApiKey(settings.apiKey || "");
   if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
 
@@ -1617,7 +1618,7 @@ export async function researchAccountOnWeb(company, settings, { onStatus, signal
         model: AGENT_MODEL,
         max_tokens: 3500,
         system,
-        tools: [{ type: toolType, name: "web_search", max_uses: onlyTopics && onlyTopics.length ? 2 : WEB_RESEARCH_MAX_SEARCHES }],
+        tools: [{ type: toolType, name: "web_search", max_uses: onlyTopics && onlyTopics.length ? 2 : Math.min(WEB_RESEARCH_MAX_SEARCHES, maxSearches || WEB_RESEARCH_MAX_SEARCHES) }],
         messages,
         ...(sendThinkingOff ? { thinking: { type: "disabled" } } : {}),
       };

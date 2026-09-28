@@ -16,15 +16,24 @@
 //
 // The batch lock is taken per account, not for the whole run (5.2): between two accounts it is free.
 // Progress lives in storage under "pipelineState"; pipeline-status.js shows it on every SalesTeam page.
+//
+// Build step 5 (W1-W6): web research joins as two more jobs, web_gap and web_full, paid from the user's
+// monthly web budget instead of LinkedIn visits. So the 60-visit ceiling no longer ends a run by itself:
+// once it is reached, the run carries on with accounts that only need web research, and the LinkedIn
+// window is opened only for an account that needs a LinkedIn job.
 import {
   getAccountViews, getReadinessConfig, savePipelineAccountState, applyResolvedCompanyIds, markLinkedinResolveAttempted,
   applyEmployeeCheck, setContactLinkedinProfile, appendActivityLog, settleSafeDuplicates,
+  applyPipelineWebResearch, autoResolveWebFindings, getTargetAccountsWorkbook, normalizeCompanyName,
+  getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig,
 } from "./storage.js";
+import { researchAccountOnWeb, apiBlockedReason } from "./agent-shared.js";
 import { pageNamesAgree, cleanPageName, isEmptyPageBand } from "./decision-rules.js";
 import { assessAccount, companyLinkSlug, countReadiness } from "./readiness.js";
 import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
   parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING, autoRunBlocker, USER_JOB_HOLD_MS,
+  isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS,
 } from "./pipeline-plan.js";
 import { resolveAccountOnTab } from "./company-resolve-extraction.js";
 import { armSizeRead, disarmSizeRead, readSizeOnTab } from "./company-size-extraction.js";
@@ -32,7 +41,9 @@ import { searchCompanyPeopleByName, discoverContactsForAccount } from "./contact
 import { getLinkedinTouchStats, countTouchesSince, recordLinkedinTouch } from "./linkedin-touch-log.js";
 import { withBatch, BatchBusyError, getRunningBatch, busyMessage } from "./batch-jobs.js";
 import { rescoreDerivedPriorities } from "./auto-score.js";
-import { getPipelineAutomation, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY } from "./pipeline-automation.js";
+import {
+  getPipelineAutomation, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, webBudgetState, recordWebSpend, setWebBlocked, apiKeyTail,
+} from "./pipeline-automation.js";
 
 export const PIPELINE_STATE_KEY = "pipelineState";
 const RUN_LABEL = "Run pipeline now";
@@ -44,6 +55,17 @@ const MIN_DELAY_MS = 4000;
 const MAX_DELAY_MS = 9000;
 const NAV_TIMEOUT_MS = 20000;
 const MAX_ACCOUNT_LINES = 50;
+// Web searches a full (depth) research may make. 3, not the manual research's 4 (Boaz, 2026-09-28): the
+// first live run cost US$0.20 a research at 4 searches, as every search result is read back as input.
+const DEPTH_MAX_SEARCHES = 3;
+// Why a run ended, as the Activity Log line says it (the codes alone were misread, 2026-09-28).
+const LOG_REASONS = {
+  budget: "LinkedIn limit reached",
+  linkedin_limit_web_done: "LinkedIn limit reached; no account needs web research now",
+  nothing_left: "nothing left to do today",
+  made_way: "made way for your job",
+  user: "stopped by you",
+};
 const LAST_AUTO_BACKUP_KEY = "lastAutoBackupAt"; // backup-restore.js
 
 let runner = null; // { stopRequested, pauseRequested, state }
@@ -63,7 +85,7 @@ export async function startPipelineRun({ limit, auto = false, source = null } = 
   const running = await getRunningBatch();
   if (running) return { ok: false, busy: true, error: busyMessage(running, RUN_LABEL) };
   const stats = await getLinkedinTouchStats();
-  if (stats.last24h >= PIPELINE_TOUCH_CEILING) {
+  if (stats.last24h >= PIPELINE_TOUCH_CEILING && (await webBudgetState()).reason) {
     return { ok: false, error: `The pipeline stops at ${PIPELINE_TOUCH_CEILING} LinkedIn page visits in any 24 hours, and ${stats.last24h} have been used. Try again later.` };
   }
   // An automatic run has no account limit (null): the ceiling or an empty list ends it.
@@ -71,6 +93,7 @@ export async function startPipelineRun({ limit, auto = false, source = null } = 
   const state = {
     status: "running", auto, source, limit: n, done: 0, touches: 0, current: null, remaining: null, ready: null, accounts: [],
     stoppedReason: null, error: null, busyLabel: null, madeWayFor: null, readyBefore: null, readyAfter: null,
+    webResearches: 0, webUsd: 0,
     // An automatic run shows no pop-up at the end (U3): it is born acknowledged.
     startedAt: Date.now(), heartbeatAt: Date.now(), finishedAt: null, acknowledged: auto,
   };
@@ -82,7 +105,11 @@ export async function startPipelineRun({ limit, auto = false, source = null } = 
 }
 
 export function stopPipelineRun() {
-  if (runner) runner.stopRequested = true;
+  if (runner) {
+    runner.stopRequested = true;
+    // A web research in progress stops at once and keeps what it found (as the bulk research's Stop does).
+    if (runner.webAbort) runner.webAbort.abort();
+  }
   return { ok: Boolean(runner) };
 }
 
@@ -122,15 +149,19 @@ export async function kickPipeline(source) {
     const auto = await getPipelineAutomation();
     if (!auto.enabled) return { started: false, reason: "off" };
     const store = await chrome.storage.local.get([PIPELINE_HOLD_KEY, LAST_AUTO_BACKUP_KEY]);
-    const [stats, runningBatch] = await Promise.all([getLinkedinTouchStats(), getRunningBatch()]);
+    const [stats, runningBatch, web] = await Promise.all([getLinkedinTouchStats(), getRunningBatch(), webBudgetState()]);
     const now = Date.now();
     let reason = autoRunBlocker({
       enabled: auto.enabled, pausedDay: auto.pausedDay, today: localDay(now), holdUntil: store[PIPELINE_HOLD_KEY] || 0,
-      runningBatch, touches24h: stats.last24h, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now,
+      runningBatch, touches24h: stats.last24h, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now, webPossible: !web.reason,
     });
     if (!reason) {
+      // W5: settling the web findings the rules can settle is local and free, so it happens on every
+      // kick that could start a run, whether or not there is LinkedIn or web work to do.
+      await autoResolveWebFindings().catch(() => {});
       const { entries } = await readinessNow();
-      if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS).length === 0) reason = "nothing_left";
+      const opts = { linkedin: stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason };
+      if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts).length === 0) reason = opts.linkedin ? "nothing_left" : "budget";
     }
     if (reason) {
       // Kept only for the reasons the status line explains; hold and busy pass by themselves.
@@ -196,33 +227,42 @@ async function run(r) {
   if (!s.auto) chrome.power.requestKeepAwake("system");
   let worker = null;
   try {
+    await autoResolveWebFindings().catch(() => {});   // W5: local and free, before anything is ranked
     const first = await readinessNow();
     s.readyBefore = first.counts.ready;
     const underLimit = () => s.limit == null || s.done < s.limit;
     while (!r.stopRequested && !r.pauseRequested && underLimit()) {
-      if ((await getLinkedinTouchStats()).last24h >= PIPELINE_TOUCH_CEILING) { s.stoppedReason = "budget"; break; }
+      // W1: the LinkedIn ceiling stops the LinkedIn jobs only; web research goes on within its budget.
+      const linkedinOk = (await getLinkedinTouchStats()).last24h < PIPELINE_TOUCH_CEILING;
+      const webOk = !(await webBudgetState()).reason;
+      if (!linkedinOk && !webOk) { s.stoppedReason = "budget"; break; }
       const { cfg, entries, counts } = s.done === 0 ? first : await readinessNow();
       s.ready = counts.ready;
       const now = Date.now();
-      const ranked = rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS);
+      const opts = { linkedin: linkedinOk, web: webOk };
+      const ranked = rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts);
       s.remaining = ranked.length;
       const next = ranked[0];
-      if (!next) { s.stoppedReason = "nothing_left"; break; }
+      // At the LinkedIn limit with web research allowed, an empty list means no account needs web research
+      // now - not that the money ran out (first live run, 2026-09-28, read as "stopped at US$0.99").
+      if (!next) { s.stoppedReason = linkedinOk ? "nothing_left" : webOk ? "linkedin_limit_web_done" : "budget"; break; }
 
-      if (!worker) {
+      const needsLinkedin = next.jobs.some(isLinkedinJob);
+      if (needsLinkedin && !worker) {
         const before = Date.now();
         worker = await openWorkerWindow();
         s.windowId = worker.windowId; // lets a page close it if this worker dies mid-run (pipeline-status.js)
         s.touches += await countTouchesSince(before);
       }
-      if (!(await workerAlive(worker))) { s.stoppedReason = "window_closed"; break; }
+      if (needsLinkedin && !(await workerAlive(worker))) { s.stoppedReason = "window_closed"; break; }
 
       s.current = next.view.company;
       await save();
       const started = Date.now();
       let outcome;
       try {
-        outcome = await withBatch(`SalesTeam is preparing accounts (${next.view.company})`, () => runAccount(worker.tab, next, cfg, r), { pipeline: true });
+        outcome = await withBatch(`SalesTeam is preparing accounts (${next.view.company})`,
+          () => runAccount(worker ? worker.tab : null, next, cfg, r, opts), { pipeline: true });
       } catch (err) {
         if (err instanceof BatchBusyError) { s.stoppedReason = "busy"; s.busyLabel = err.running?.label || null; break; }
         throw err;
@@ -233,8 +273,11 @@ async function run(r) {
       s.accounts = [...s.accounts, { company: next.view.company, lines: outcome.lines, touches, state: outcome.state }].slice(-MAX_ACCOUNT_LINES);
       s.current = null;
       await save();
+      s.webResearches += outcome.webResearches || 0;
+      s.webUsd += outcome.webUsd || 0;
       if (outcome.windowClosed) { s.stoppedReason = "window_closed"; break; }
-      if (!r.stopRequested && !r.pauseRequested && underLimit()) await sleep(randomDelay());
+      // The pause between accounts paces LinkedIn; an account that visited no LinkedIn page needs none.
+      if (!r.stopRequested && !r.pauseRequested && underLimit()) await sleep(touches > 0 ? randomDelay() : 500);
     }
     if (!s.stoppedReason) s.stoppedReason = r.stopRequested ? "user" : r.pauseRequested ? "made_way" : "limit";
   } catch (err) {
@@ -258,8 +301,9 @@ async function run(r) {
       actor: "extension",
       action: "pipeline_run",
       label: `${s.auto ? "Automatic pipeline run" : "Pipeline run"}: ${s.done} account${s.done === 1 ? "" : "s"}, ${s.touches} LinkedIn page visit${s.touches === 1 ? "" : "s"}` +
-        (s.readyBefore != null && s.readyAfter != null ? `, Ready ${s.readyBefore} -> ${s.readyAfter}` : "") + ` (${s.stoppedReason})`,
-      newValue: { done: s.done, touches: s.touches, stoppedReason: s.stoppedReason, readyBefore: s.readyBefore, readyAfter: s.readyAfter },
+        (s.webResearches > 0 ? `, ${s.webResearches} web research${s.webResearches === 1 ? "" : "es"} (about US$${s.webUsd.toFixed(2)})` : "") +
+        (s.readyBefore != null && s.readyAfter != null ? `, Ready ${s.readyBefore} -> ${s.readyAfter}` : "") + ` (${LOG_REASONS[s.stoppedReason] || s.stoppedReason})`,
+      newValue: { done: s.done, touches: s.touches, webResearches: s.webResearches, webUsd: s.webUsd, stoppedReason: s.stoppedReason, readyBefore: s.readyBefore, readyAfter: s.readyAfter },
     }).catch(() => {});
   }
 }
@@ -272,7 +316,7 @@ async function freshView(key) {
   return (await getAccountViews()).find((v) => v.key === key) || null;
 }
 
-async function runAccount(tab, entry, cfg, r) {
+async function runAccount(tab, entry, cfg, r, opts) {
   const key = entry.view.key;
   const day = localDay();
   const lines = [];
@@ -285,11 +329,34 @@ async function runAccount(tab, entry, cfg, r) {
   const replacedLinks = [];
   let profileSearches = 0;
   let windowClosed = false;
+  let webResearches = 0;
+  let webUsd = 0;
 
   while (!r.stopRequested) {
     const job = jobs.find((j) => (j === "profile" ? profileSearches < MAX_PROFILE_SEARCHES_PER_ACCOUNT : !ran.has(j)));
     if (!job) break;
-    if ((await getLinkedinTouchStats()).last24h >= PIPELINE_TOUCH_CEILING) break;
+    if (WEB_JOBS.has(job)) {
+      // One research per account and pass, whichever kind (a full one covers the gaps).
+      for (const j of WEB_JOBS) ran.add(j);
+      const plan = webPlan(view, assessAccount(view, cfg, Date.now()), pipeline, Date.now(), jobs.filter(isLinkedinJob));
+      if (!plan) continue;
+      attempted.add(plan.job);
+      const res = await doWeb(view, plan, r);
+      if (res.line) lines.push(res.line);
+      if (res.ok) {
+        webResearches++;
+        webUsd += res.costUsd || 0;
+        if (plan.topics) {
+          const at = Date.now();
+          pipeline = { ...pipeline, webGapAt: { ...(pipeline.webGapAt || {}), ...Object.fromEntries(plan.topics.map((t) => [t, at])) } };
+        }
+      } else if (res.failed) failed.add(plan.job);
+      view = (await freshView(key)) || view;
+      jobs = jobsNeeded(view, assessAccount(view, cfg, Date.now()), pipeline, Date.now(), opts);
+      continue;
+    }
+    // LinkedIn jobs: none without the worker window, none once the day's visits are used up (W1).
+    if (!tab || (await getLinkedinTouchStats()).last24h >= PIPELINE_TOUCH_CEILING) { ran.add(job); continue; }
     try { await chrome.tabs.get(tab.id); } catch { windowClosed = true; break; }
     ran.add(job);
     // Everything but resolve needs the company's own page. A failed lookup can leave an account with
@@ -305,6 +372,7 @@ async function runAccount(tab, entry, cfg, r) {
       const res = await doResolve(tab, view, withSize, day);
       lines.push(...res.lines);
       if (res.pageChange) pipeline = { ...pipeline, pageChange: res.pageChange };
+      if (res.idTaken) pipeline = { ...pipeline, idTaken: res.idTaken };
       if (res.emptyPage) pipeline = { ...pipeline, emptyPage: day };
     } else if (job === "size") {
       const res = await doSize(tab, view);
@@ -322,10 +390,11 @@ async function runAccount(tab, entry, cfg, r) {
 
     view = (await freshView(key)) || view;
     const assessment = assessAccount(view, cfg, Date.now());
-    jobs = jobsNeeded(view, assessment, pipeline, Date.now());
+    jobs = jobsNeeded(view, assessment, pipeline, Date.now(), opts);
     // A job that ran and is still needed did not close its gap: one failed day for it (5.5). The
-    // profile job keeps its own record instead - the names already searched.
-    for (const j of attempted) if (j !== "profile" && jobs.includes(j)) failed.add(j);
+    // profile job keeps its own record instead - the names already searched. A web job counts as failed
+    // only when the research itself failed (above): its result can wait in Decisions for days.
+    for (const j of attempted) if (j !== "profile" && !WEB_JOBS.has(j) && jobs.includes(j)) failed.add(j);
   }
 
   let attempts = pipeline.attempts || {};
@@ -335,6 +404,7 @@ async function runAccount(tab, entry, cfg, r) {
   await savePipelineAccountState(key, {
     attempts, profileTried: pipeline.profileTried || [], lastRunDay: day, inputsKey: view.inputsKey || pipeline.inputsKey || null,
     emptyPage: pipeline.emptyPage || null, keep: Boolean(pipeline.keep), pageChange: pipeline.pageChange || null,
+    idTaken: pipeline.idTaken || null, webGapAt: pipeline.webGapAt || {},
   });
   if (pipeline.emptyPage) lines.push("LinkedIn page looks empty (0-1 employees): waiting for your decision (Keep or Remove)");
 
@@ -357,7 +427,7 @@ async function runAccount(tab, entry, cfg, r) {
     newValue: { lines, state: finalState, ...(replacedLinks.length ? { replacedContactLinks: replacedLinks } : {}) },
     relatedCompanyKey: key,
   }).catch(() => {});
-  return { lines, state: finalState, windowClosed };
+  return { lines, state: finalState, windowClosed, webResearches, webUsd };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -391,12 +461,18 @@ async function doResolve(tab, view, withSize, day) {
   if (!attempt.linkedinCompanyId && oldId && pageId && String(pageId) === String(oldId) && company.linkedinLink) {
     attempt.linkedinCompanyId = pageId;
   }
+  let idTaken = null;
   if (attempt.linkedinCompanyId) {
-    await applyResolvedCompanyIds([{
+    const resolution = {
       key: view.key, linkedinCompanyId: attempt.linkedinCompanyId, companyPageUrl: attempt.companyPageUrl || null,
       checkedLink: attempt.checkedLink, allowWorkbookRow: true, previousId: oldId,
-    }]);
-    if (!oldId) lines.push("LinkedIn company found");
+    };
+    await applyResolvedCompanyIds([resolution]);
+    // W7: found by name, and another account already has this LinkedIn company - the user decides.
+    if (resolution.refused) {
+      idTaken = resolution.refused;
+      lines.push(`LinkedIn search found company id ${idTaken.pageId}, which "${idTaken.otherCompany}" already has: waiting for your decision`);
+    } else if (!oldId) lines.push("LinkedIn company found");
     else if (String(oldId) === String(attempt.linkedinCompanyId)) lines.push("LinkedIn company re-checked");
     else lines.push(`LinkedIn company id changed from ${oldId} to ${attempt.linkedinCompanyId} (read from its own page)`);
   } else {
@@ -431,7 +507,55 @@ async function doResolve(tab, view, withSize, day) {
     lines.push(await applySize(view, sizeResult));
     emptyPage = Boolean(sizeResult && sizeResult.resolved && isEmptyPageBand(sizeResult.sizeBandText));
   }
-  return { lines, pageChange, emptyPage };
+  return { lines, pageChange, emptyPage, idTaken };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Web research (build step 5, design section 6, W1-W6). Paid from the monthly web budget, no LinkedIn visit.
+// ---------------------------------------------------------------------------------------------------
+
+async function doWeb(view, plan, r) {
+  const budget = await webBudgetState();
+  if (budget.reason) return { line: null };
+  const workbook = await getTargetAccountsWorkbook();
+  const company = (workbook.companies || []).find((c) => c.company && normalizeCompanyName(c.company) === view.key);
+  if (!company) return { line: "Web research skipped (account not found)" };
+  const config = await getTargetUniverseConfig();
+  const settings = {
+    apiKey: budget.apiKey,
+    companyContext: await getCompanyContext(),
+    idealCustomerProfile: await getIdealCustomerProfile(),
+    outputLanguage: await getOutputLanguage(),
+    targetCountries: config?.countries || [],
+  };
+  const topics = plan.topics ? plan.topics.map((t) => WEB_GAP_TOPICS[t]) : null;
+  const what = plan.topics ? `Web research (${plan.topics.join(", ")})` : "Web research";
+  const controller = new AbortController();
+  r.webAbort = controller;
+  try {
+    const result = await researchAccountOnWeb(company, settings, { signal: controller.signal, onlyTopics: topics, maxSearches: DEPTH_MAX_SEARCHES });
+    const costUsd = result.costUsd || 0;
+    await recordWebSpend(costUsd);
+    const applied = await applyPipelineWebResearch(view.key, result, { topics });
+    const bits = [];
+    if (applied) {
+      if (applied.filled) bits.push(`${applied.filled} empty field${applied.filled === 1 ? "" : "s"} filled`);
+      if (applied.applied) bits.push(`${applied.applied} value${applied.applied === 1 ? "" : "s"} updated`);
+      if (applied.dismissed) bits.push(`${applied.dismissed} kept as they were`);
+      if (applied.review) bits.push(`${applied.review} for your decision`);
+      if (applied.initiatives) bits.push(`${applied.initiatives} initiative${applied.initiatives === 1 ? "" : "s"}`);
+    }
+    return { ok: true, costUsd, line: `${what}: ${bits.length ? bits.join(", ") : "nothing new"} (about US$${costUsd.toFixed(2)})` };
+  } catch (err) {
+    const blocked = apiBlockedReason(err);
+    if (blocked) {
+      await setWebBlocked(blocked, apiKeyTail(budget.apiKey));
+      return { line: `${what} paused: ${blocked === "credit" ? "the Anthropic API credit balance is empty" : "the spending limit set in the Anthropic Console is reached"}` };
+    }
+    return { failed: true, line: `${what} failed: ${String((err && err.message) || err)}` };
+  } finally {
+    r.webAbort = null;
+  }
 }
 
 async function doSize(tab, view) {

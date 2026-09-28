@@ -39,6 +39,25 @@ export const WEB_FINDING_FIELDS = [
   { key: "zefixAddress", label: "Registry address", from: (d) => d.registryAddress },
 ];
 
+// Build step 5: the fields a research CONFIRMS - it found a value, the account has one, and the two agree
+// (the same test that keeps a matching value from ever becoming a finding). A value that agrees is never
+// a finding, so without this a weakly evidenced workbook value would stay unverified however often the
+// web agreed with it. `keys` limits the fields looked at.
+export function researchConfirms(company, overrides, data, money = null, keys = null) {
+  if (!data) return [];
+  const effective = { ...(company || {}), ...(overrides || {}) };
+  const differing = new Set(computeFindingProposals(company, overrides, data, money).map((p) => p.key));
+  const out = [];
+  for (const f of WEB_FINDING_FIELDS) {
+    if (keys && !keys.includes(f.key)) continue;
+    const found = f.from(data);
+    if (isBlankFinding(found) || (f.numeric && parseLooseNumber(found) === null)) continue;
+    if (isBlankFinding(effective[f.key]) || differing.has(f.key)) continue;
+    out.push(f.key);
+  }
+  return out;
+}
+
 export function isBlankFinding(v) {
   return v === null || v === undefined || v === "" || (typeof v === "number" && !Number.isFinite(v));
 }

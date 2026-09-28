@@ -137,3 +137,12 @@ export async function confirmIfCostly(kind, count, actionLabel, askConfirm) {
     "This is a rough estimate; your Anthropic Console shows the real cost. You can change or switch off this warning in Settings > Billing.\n\nContinue?",
     { okLabel: "Continue", cancelLabel: "Cancel" });
 }
+
+// Average cost of one full web research so far, from this extension's own record, or a generous default
+// until there are a few to average (build step 5: the pipeline's monthly web budget, W3).
+export const DEFAULT_WEB_RESEARCH_USD = 0.12;
+export async function averageWebResearchUsd() {
+  const usage = await getApiUsage();
+  const all = sumDays(usage, Object.keys(usage)).webResearch;
+  return all.calls >= 3 ? all.usd / all.calls : DEFAULT_WEB_RESEARCH_USD;
+}

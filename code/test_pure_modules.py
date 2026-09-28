@@ -1025,6 +1025,88 @@ def test_auto_run_blocker(ctx):
     check("a backup older than 24 hours waits for a page (U1)", ctx.eval("blk({ lastBackupAt: NOW - 25 * H })"), "no_backup")
 
 
+def test_web_lane(ctx):
+    """Build step 5 (W1-W8): which web research an account gets, the budget, confirmation, the W7 state.
+    Reuses test_readiness's readyView/withProv/CFG/NOW."""
+    ctx.eval(r"""
+    function wjobs(v, pipeline, opts) { return jobsNeeded(v, assessAccount(v, CFG, NOW), pipeline || {}, NOW, opts || { web: true }).join(','); }
+    function noEmp(p) { var v = readyView(p); v.globalEmployees = null; delete v.provenance.globalEmployees; return v; }
+    var WEAK_HQ = { src: 'workbook', at: NOW, evidence: 'Weak', v: 'Switzerland' };
+    """)
+    check("a Ready P2 account never researched gets a full research, last", ctx.eval("wjobs(readyView())"), "web_full")
+    check("web off: no research job", ctx.eval("wjobs(readyView(), {}, { web: false })"), "")
+    check("a full research from 10 days ago covers it",
+          ctx.eval("wjobs(readyView({ webFullResearchAt: NOW - 10 * DAY }))"), "")
+    check("a full research older than 12 months is repeated",
+          ctx.eval("wjobs(readyView({ webFullResearchAt: NOW - 400 * DAY }))"), "web_full")
+    check("P4 is never researched automatically", ctx.eval("wjobs(readyView({ salesTeamPriority: 'P4' }))"), "")
+    check("missing headcount, P2: one full research, FIRST, before the size visit (D3)",
+          ctx.eval("wjobs(noEmp())"), "web_full,size")
+    check("missing headcount, unscored: a short research first",
+          ctx.eval("wjobs(noEmp({ salesTeamPriority: null }))"), "web_gap,size")
+    check("the short research asks only for the headcount",
+          ctx.eval("var v = noEmp({ salesTeamPriority: null }); JSON.stringify(webPlan(v, assessAccount(v, CFG, NOW), {}, NOW, ['size']).topics)"), '["employees"]')
+    check("no headcount research when the resolver visits the page anyway (size rides along)",
+          ctx.eval("var v = noEmp({ salesTeamPriority: null }); v.provenance.linkedinCompanyId = { src: 'linkedin', at: NOW, v: '1234' }; wjobs(v)"), "resolve,size")
+    check("an unverified HQ country is a gap only the web closes",
+          ctx.eval("var v = withProv('globalHqCountry', WEAK_HQ); v.salesTeamPriority = null; wjobs(v)"), "web_gap")
+    check("a short research is not repeated within 12 months",
+          ctx.eval("var v = withProv('globalHqCountry', WEAK_HQ); v.salesTeamPriority = null; wjobs(v, { webGapAt: { headquarters: NOW - 5 * DAY } })"), "")
+    check("a web research that failed on 2 days stops",
+          ctx.eval("wjobs(readyView(), { attempts: { web_full: ['2026-09-20', '2026-09-21'] } })"), "")
+    check("LinkedIn budget used up: only web work remains (W1)",
+          ctx.eval("wjobs(noEmp(), {}, { web: true, linkedin: false })"), "web_full")
+    check("a LinkedIn company already used elsewhere stops everything until answered (W7)",
+          ctx.eval("wjobs(noEmp(), { idTaken: { pageId: '9' } })"), "")
+    check("'Different company' stops the name search, not the rest",
+          ctx.eval("var v = readyView(); v.provenance.linkedinCompanyId = { src: 'linkedin', at: NOW, v: '1234' }; wjobs(v, { idTaken: { pageId: '9', kept: true } }, { web: false })"), "")
+    check("gap work before depth, whatever the priority (W2)",
+          ctx.eval(r"""
+          var deep = readyView({ key: 'deep', salesTeamPriority: 'P1' });
+          var gapv = noEmp({ key: 'gap', salesTeamPriority: 'P3' });
+          rankCandidates([deep, gapv].map(function (v) { return { view: v, assessment: assessAccount(v, CFG, NOW), pipeline: {} }; }),
+            NOW, 2, { web: true }).map(function (e) { return e.view.key + (e.depthOnly ? '*' : ''); }).join(',')"""), "gap,deep*")
+    check("web research visits no LinkedIn page", ctx.eval("estimateTouches(['web_full', 'size'], readyView(), 2)"), 1)
+
+    # Budget (W3, W6)
+    ctx.eval(r"""
+    function wb(o) {
+      var base = { enabled: true, hasKey: true, monthlyUsd: 10, spentUsd: 2, nextCostUsd: 0.09, blocked: null, today: '2026-09-27' };
+      for (var k in o) base[k] = o[k];
+      return webBudgetBlocker(base);
+    }
+    """)
+    check("budget: may research", ctx.eval("wb({})"), None)
+    check("budget: off until consented", ctx.eval("wb({ enabled: false })"), "off")
+    check("budget: no API key", ctx.eval("wb({ hasKey: false })"), "no_key")
+    check("budget: zero is stated", ctx.eval("wb({ monthlyUsd: 0 })"), "zero")
+    check("budget: the next research must still fit (never exceeded)", ctx.eval("wb({ spentUsd: 9.95 })"), "used_up")
+    check("budget: exactly fitting is allowed", ctx.eval("wb({ spentUsd: 9.91 })"), None)
+    check("budget: empty API credit holds for the day", ctx.eval("wb({ blocked: { reason: 'credit', day: '2026-09-27' } })"), "credit")
+    check("budget: yesterday's refusal no longer holds", ctx.eval("wb({ blocked: { reason: 'limit', day: '2026-09-26' } })"), None)
+    check("month key", ctx.eval("monthKey(new Date(2026, 8, 30).getTime())"), "2026-09")
+    check("at the LinkedIn ceiling a run may still start for web work (W1)",
+          ctx.eval("autoRunBlocker({ enabled: true, today: 'x', touches24h: PIPELINE_TOUCH_CEILING, lastBackupAt: NOW, now: NOW, webPossible: true })"), None)
+
+    # Confirmation by an agreeing research
+    check("research agreeing on HQ and within 10% on headcount confirms both",
+          ctx.eval("researchConfirms({ globalHqCountry: 'Switzerland', globalEmployees: 1000 }, {}, { hqCountry: 'switzerland', employeesGlobal: 1050 }, null, ['globalEmployees', 'globalHqCountry']).join(',')"),
+          "globalEmployees,globalHqCountry")
+    check("a disagreeing headcount confirms nothing (it is a finding)",
+          ctx.eval("researchConfirms({ globalHqCountry: 'Switzerland', globalEmployees: 1000 }, {}, { hqCountry: 'Switzerland', employeesGlobal: 5000 }, null, ['globalEmployees']).join(',')"), "")
+    check("an empty field is filled, not confirmed",
+          ctx.eval("researchConfirms({ globalHqCountry: null }, {}, { hqCountry: 'Switzerland' }, null, ['globalHqCountry']).length"), 0)
+    check("confirmation reads the override, not the workbook value",
+          ctx.eval("researchConfirms({ globalHqCountry: 'Germany' }, { globalHqCountry: 'Switzerland' }, { hqCountry: 'Switzerland' }, null, ['globalHqCountry']).join(',')"), "globalHqCountry")
+
+    # W7 / inputs change
+    check("new inputs clear a waiting LinkedIn-company question and the short-research dates",
+          ctx.eval("var p = effectivePipeline({ inputsKey: 'a', idTaken: { pageId: '9' }, webGapAt: { employees: 1 } }, 'b'); String(p.idTaken) + '|' + Object.keys(p.webGapAt).length"), "null|0")
+    check("the account context is built the same for the page and the background",
+          ctx.eval("var c = arbitrationContext({ globalRevenue: 5, employeeCountText: '11-50' }, { overrides: { globalRevenue: 0 } }, { buckets: [], locationTier: null, contactCount: 3 }); c.hasRevenue + '|' + c.contactCount + '|' + c.employeesFromLinkedin"),
+          "false|3|true")
+
+
 def test_decision_rules(ctx):
     """decision-rules.js - build step 4 (V1-V8): changed pages, empty pages, Lacking evidence, duplicates."""
     # LinkedIn's page titles, as the resolver read them on 2026-09-26 (Activity Log)
@@ -1140,6 +1222,7 @@ def main():
     test_readiness(ctx)
     test_pipeline_plan(ctx)
     test_auto_run_blocker(ctx)
+    test_web_lane(ctx)
     test_decision_rules(ctx)
 
     print()

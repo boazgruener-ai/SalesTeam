@@ -182,6 +182,19 @@
       <div class="settings-buttons-row">
         <button type="button" id="automation-resume-btn" hidden>Resume today</button>
       </div>
+      <!-- Build step 5 (W3, W4): web research, its own consent and monthly budget. -->
+      <label class="checkbox-label">
+        <input type="checkbox" id="automation-web-checkbox" />
+        <span id="automation-web-label"></span>
+      </label>
+      <p class="field-hint" id="automation-web-text"></p>
+      <div class="settings-buttons-row">
+        <label for="automation-web-budget">Monthly budget US$</label>
+        <input type="number" id="automation-web-budget" min="0" step="1" style="width: 90px" />
+        <button type="button" id="automation-web-budget-save" disabled>Save</button>
+        <span id="automation-web-budget-status" class="field-hint" role="status"></span>
+      </div>
+      <p class="field-hint" id="automation-web-status-line" hidden></p>
     </section>
 
     <!-- PRD 6.20 Phase 10 follow-up (2026-09-18), user's own request - no

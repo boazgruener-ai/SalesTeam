@@ -13,9 +13,10 @@
 import { getApiUsage, sumDays, clearApiUsage, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
 import { askConfirm } from "./confirm-dialog.js";
 import { initBatchStatus } from "./batch-status.js";
-import { watchPipelineStatusLine, kickPipelineFromPage, kickAndExplain } from "./pipeline-status.js";
+import { watchPipelineStatusLine, watchWebStatusLine, kickPipelineFromPage, kickAndExplain } from "./pipeline-status.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, setPipelinePausedDay, CONSENT_TITLE, CONSENT_TEXT, PIPELINE_AUTOMATION_KEY,
+  setWebResearchAutomation, WEB_CONSENT_TITLE, WEB_CONSENT_TEXT, DEFAULT_WEB_BUDGET_USD,
 } from "./pipeline-automation.js";
 import { localDay } from "./pipeline-plan.js";
 import {
@@ -923,11 +924,36 @@ const automationCheckbox = document.getElementById("automation-enabled-checkbox"
 const automationResumeBtn = document.getElementById("automation-resume-btn");
 document.getElementById("automation-enabled-label").textContent = CONSENT_TITLE;
 document.getElementById("automation-consent-text").textContent = CONSENT_TEXT;
+const automationWebCheckbox = document.getElementById("automation-web-checkbox");
+const automationWebBudget = document.getElementById("automation-web-budget");
+const automationWebBudgetSave = document.getElementById("automation-web-budget-save");
+const automationWebBudgetStatus = document.getElementById("automation-web-budget-status");
+document.getElementById("automation-web-label").textContent = WEB_CONSENT_TITLE;
+document.getElementById("automation-web-text").textContent = WEB_CONSENT_TEXT;
 async function renderAutomationCard() {
   const a = await getPipelineAutomation();
   automationCheckbox.checked = a.enabled;
   automationResumeBtn.hidden = !(a.enabled && a.pausedDay === localDay());
+  automationWebCheckbox.checked = a.webEnabled;
+  // W3: off means 0; the default is offered as soon as the box is ticked.
+  if (document.activeElement !== automationWebBudget) {
+    automationWebBudget.value = a.webMonthlyUsd > 0 ? String(a.webMonthlyUsd) : a.webEnabled ? String(DEFAULT_WEB_BUDGET_USD) : "0";
+    automationWebBudgetSave.disabled = true;
+  }
 }
+automationWebCheckbox.addEventListener("change", async () => {
+  await setWebResearchAutomation({ enabled: automationWebCheckbox.checked }, "Settings");
+  if (automationWebCheckbox.checked) kickPipelineFromPage("settings");
+});
+automationWebBudget.addEventListener("input", () => { automationWebBudgetSave.disabled = false; automationWebBudgetStatus.textContent = ""; });
+automationWebBudgetSave.addEventListener("click", async () => {
+  const value = Math.max(0, Number(automationWebBudget.value) || 0);
+  await setWebResearchAutomation({ monthlyUsd: value }, "Settings");
+  automationWebBudgetSave.disabled = true;
+  automationWebBudgetStatus.textContent = "Saved ✓";
+  setTimeout(() => { if (automationWebBudgetStatus.textContent === "Saved ✓") automationWebBudgetStatus.textContent = ""; }, 2500);
+  kickPipelineFromPage("settings");
+});
 automationCheckbox.addEventListener("change", async () => {
   await setPipelineAutomationEnabled(automationCheckbox.checked, "Settings");
   if (automationCheckbox.checked) kickAndExplain("settings");
@@ -940,6 +966,7 @@ automationResumeBtn.addEventListener("click", async () => {
 chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[PIPELINE_AUTOMATION_KEY]) renderAutomationCard(); });
 renderAutomationCard();
 watchPipelineStatusLine(document.getElementById("automation-status-line"));
+watchWebStatusLine(document.getElementById("automation-web-status-line"));
 
 // ---- Web Findings - Automatic Arbitration ----
 // The seven rule rows are generated from ARBITRATION_RULES rather than written into settings.html,

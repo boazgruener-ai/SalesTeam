@@ -890,6 +890,82 @@ Branch `feature/pipeline-step4`, stacked on step 3. Version 1.1.7.
 - **Not built:** the design's `dedupe-safe` as a separate pipeline job (settling runs after each run and
   each Discovery merge instead); a link from the pie's status line to Decisions.
 
+### Step 5 touch-ups (agreed 2026-09-27)
+
+Boaz agreed to all eight as recommended.
+
+| # | Question | Decision |
+|---|---|---|
+| **W1** | Where web research runs | In the same pipeline, one account at a time, but **not limited by the 60-visit LinkedIn ceiling**: once it is reached, the run carries on with accounts that only need web work, without opening the LinkedIn window. It makes way for the user's own jobs like the LinkedIn jobs, a manual bulk research included |
+| **W2** | Which accounts, in what order | **Gaps first:** a missing headcount (D3: before Fetch Company Size) or a missing or unverified HQ country gets a short research on just that topic. **Then depth:** a full research for scannable accounts never researched or researched over 12 months ago, P1 first. P4/P5 are never researched automatically |
+| **W3** | Budget | A monthly US$ budget per calendar month, **off (0) by default**. It counts only what the pipeline spends. The next account starts only if this month's spend plus the average cost of a research still fits, so the budget is never exceeded. US$10 is filled in when it is turned on |
+| **W4** | Consent | Settings > Automation gets a second part: *Research accounts on the web*, the monthly budget, and this month's spend. The wizard's last step gets the same tick box, unticked. **No pop-up** for existing users: the paused message (W6) says it is available |
+| **W5** | Findings after research | Resolved automatically, per account, straight after its research, with the rules of *Resolve findings automatically*. Empty fields are always filled. What the rules leave goes to Decisions (V6) |
+| **W6** | Paused message | R12.7.3's wording under the pie and on the Automation card, with its own version for off, no API key, empty API credit and the Console's spending limit |
+| **W7** | Leftover from step 4 | The resolver refuses a LinkedIn company id that another account already holds and sends the case to Decisions |
+| **W8** | Version | 1.1.7 -> **1.1.8** |
+
+### Step 5 as built (2026-09-27)
+
+Branch `feature/pipeline-step5`, stacked on step 4. Version 1.1.8.
+
+- **Two web jobs** in `pipeline-plan.js`: `web_gap` (a short research of the missing topics, about 0.6 of a
+  full one) and `web_full`. `webPlan` decides; `jobsNeeded(view, assessment, pipeline, now, { linkedin, web })`
+  places research that closes a gap **first** and depth research **last**. Refinements made while building:
+  - **An account that qualifies for both gets one full research, early, never both** (a full research
+    covers the gaps, and the pair would cost ~1.6 researches for the same facts).
+  - **No headcount research when the resolver is about to visit the company page anyway**: LinkedIn's size
+    band comes with that visit for free (T3), so the research would only spend money.
+  - **Industry is not a web gap:** the research does not report one.
+  - A short research is not repeated for 12 months (`pipeline.webGapAt`, cleared when the inputs change);
+    a research that *errors* on 2 different days stops, like the LinkedIn jobs. A research whose finding
+    waits in Decisions is not a failure.
+  - `rankCandidates` puts every account with a gap before any depth-only account, whatever the priority.
+- **Budget** (`pipeline-automation.js`): consent and budget in `pipelineAutomation` (`webEnabled`,
+  `webMonthlyUsd`), this month's spend in `pipelineWebSpend`; `webBudgetBlocker` (pure) gives off / no_key /
+  zero / credit / limit / used_up. The next research must fit at the *average full* cost
+  (`averageWebResearchUsd`, api-usage.js), or at the pipeline's own average this month when that is higher
+  (first live run, 2026-09-28: US$0.20 a research against ~0.085 by hand).
+- **Depth research is capped at 3 web searches** (Boaz, 2026-09-28; manual research keeps 4). The live run
+  showed why a full research costs ~US$0.20: 4 searches and ~64k input tokens each, against the 22 Sep
+  runs' 2 searches and ~24k (mostly "only missing" researches, which made the old ~0.085 average misleading).
+  Expected at 3: about US$0.15. A short gap research keeps its 2.
+- **First live run (2026-09-28): 5 researches, US$0.99, then stopped with US$1 of the US$2 budget left** -
+  not the budget: no other P1-P3 account lacked a full research (the 22 Sep manual runs covered them), and
+  LinkedIn was at its limit. The run said "(budget)", which read as the money. It now ends as
+  `linkedin_limit_web_done`, and the Activity Log line gives its reason in words. **An API refusal for money (empty credit, Console limit) holds
+  for the rest of the day, or until the key or the budget changes** - refinement of W6, because topping up
+  credit happens in the Anthropic Console, where SalesTeam cannot see it, and a refused call costs nothing.
+- **The run** (`pipeline-runner.js`): the ceiling now stops only LinkedIn jobs; the LinkedIn window is opened
+  only for an account that needs a LinkedIn job; the 4-9 s pause only follows an account that visited
+  LinkedIn. Stop aborts a research in progress (what was found is kept). The Activity Log run line adds the
+  researches and their cost.
+- **Automatic resolve** (`storage.js autoResolveWebFindings`): after each research for that account, and for
+  **every researched account at the start of each run and on each kick that could start one** - it is local
+  and free, so the ~450 accounts researched by hand before 1.2 are settled too (V6's "running that resolve
+  automatically"). It does not touch the manual button's Undo; every settled finding is logged. The rules'
+  account context moved to `web-findings-arbitration.js arbitrationContext`, shared with the page.
+- **A research that agrees confirms (new):** a value the web found the same (within the findings'
+  tolerance) is never a finding, so a weakly evidenced workbook headcount or HQ country stayed unverified
+  however often the web agreed. `researchConfirms` (web-research-apply.js) + `getAccountViews` now record
+  such a value as verified by the cited research (`src: "web", confirmed: true`), dated at the research.
+  Only an upgrade: a good source at least as recent is left alone. **Expect the pie to move** on the first
+  page open, for accounts whose existing research agreed with the workbook.
+- **Full vs short research:** a research now stores `topics` (null = full). The bulk research does the same
+  from now on; researches from before carry none and count as full.
+- **W7** (`applyResolvedCompanyIds`): only for a company found **by name** (the account has no LinkedIn link
+  of its own) whose id another live account holds - an id read from the account's own link is the account's
+  identity (T4) and is never refused. The refusal is stored as `pipeline.idTaken`; Decisions shows it as
+  *LinkedIn company already used*: **Same company** writes the id and lets the duplicate rules settle or ask;
+  **Different company** stops the name search until the inputs change. It applies to Advanced tools >
+  Resolve LinkedIn Company IDs as well.
+- **UI:** the web line under the pie and on Settings > Automation (`webStatusLine`, hidden while automatic
+  preparation itself is off); the wizard's last step has the web tick box and budget, enabled only with the
+  main consent ticked.
+- **Tests:** 33 new checks in `test_pure_modules.py` (254 total).
+- **Not built:** a per-account "research now" from the pipeline; a web research budget for anything but the
+  pipeline (manual research keeps its cost warning).
+
 ---
 
 ## 12. Decisions — all agreed 2026-09-24

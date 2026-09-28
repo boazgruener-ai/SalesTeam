@@ -18,6 +18,7 @@ const WATCHED_KEYS = new Set([
 
 const CHOICES = {
   page_changed: [["accept", "Accept new page"], ["keep", "Keep current"]],
+  id_taken: [["same", "Same company"], ["different", "Different company"]],
   name_match: [["same", "Same company"], ["different", "Different company"]],
   duplicate: [["merge", "Merge"], ["separate", "Keep both"]],
   lacking_evidence: [["keep", "Keep"], ["remove", "Remove"]],
@@ -26,6 +27,7 @@ const CHOICES = {
 
 const KIND_PLURAL = {
   page_changed: ["LinkedIn page changed", "LinkedIn pages changed"],
+  id_taken: ["LinkedIn company already used", "LinkedIn companies already used"],
   name_match: ["possible same company", "possible same companies"],
   duplicate: ["possible duplicate", "possible duplicates"],
   lacking_evidence: ["account lacking evidence", "accounts lacking evidence"],
@@ -83,6 +85,21 @@ function bodyFor(item) {
       <p>${link(p.link, "Open the page")}</p>
       <p class="note"><strong>Accept new page</strong> if it is the same company under a new LinkedIn page (renamed
       or merged). <strong>Keep current</strong> if it is not: the current id stays and is not re-checked again.</p>`;
+  }
+  if (item.kind === "id_taken") {
+    return `
+      <p>This account has no LinkedIn link of its own, so SalesTeam searched LinkedIn by its name. The company it
+      found (id ${esc(p.pageId)}) already belongs to another account, <strong>"${esc(p.otherCompany)}"</strong>.
+      A name search can pick the wrong company, so nothing was written.</p>
+      <table class="compare">
+        <tr><th></th><th>This account</th><th>Other account</th></tr>
+        <tr><th>Name</th><td>${esc(item.company)}</td><td>${esc(p.otherCompany)}${p.otherGone ? " <span class=\"note\">(since removed)</span>" : ""}</td></tr>
+        <tr><th>Country</th><td>${esc(show(p.currentCountry))}</td><td>${esc(show(p.otherCountry))}</td></tr>
+        <tr><th>LinkedIn</th><td>${link(p.pageUrl, "Page found by name")}</td><td>${link(p.otherLink, "Open")}</td></tr>
+      </table>
+      <p class="note"><strong>Same company</strong>: the LinkedIn company is written to this account too, and the two
+      accounts are then merged by themselves or offered to you as a duplicate. <strong>Different company</strong>:
+      nothing is written, and this account is not searched by name again until its name or link changes.</p>`;
   }
   if (item.kind === "name_match") {
     return `

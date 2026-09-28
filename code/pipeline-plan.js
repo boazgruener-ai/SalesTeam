@@ -21,14 +21,21 @@ export const PIPELINE_TOUCH_CEILING = 60;
 export const MAX_FAILED_DAYS = 2;
 
 const ONE_DAY_MS = 86400000;
-export const PIPELINE_JOBS = ["resolve", "size", "profile", "contacts"];
+export const PIPELINE_JOBS = ["resolve", "size", "profile", "contacts", "web_gap", "web_full"];
 export const JOB_LABELS = {
   resolve: "LinkedIn company re-check",
   size: "Employee count",
   profile: "Contact's LinkedIn profile",
   contacts: "Contact discovery",
+  web_gap: "Web research of a missing fact",
+  web_full: "Web research",
   score: "Priority",
 };
+// The web jobs (build step 5) visit no LinkedIn page: they cost US$ on the user's API key instead.
+export const WEB_JOBS = new Set(["web_gap", "web_full"]);
+export function isLinkedinJob(job) {
+  return !WEB_JOBS.has(job);
+}
 
 // Local calendar day, "YYYY-MM-DD": "tried on 2 different days" means the user's days, not UTC's.
 export function localDay(ms) {
@@ -167,18 +174,83 @@ function gap(assessment, field) {
   return (assessment.missing || []).find((m) => m.field === field) || null;
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Web research (build step 5, DATA_PIPELINE_DESIGN.md section 6 and the step 5 touch-ups W1-W8)
+// ---------------------------------------------------------------------------------------------------
+
+// A full research younger than this covers every topic (design 6: "never researched, or older than 12
+// months"). A short research of one missing fact is not repeated within it either.
+export const WEB_RESEARCH_MAX_AGE_DAYS = 365;
+// The topics a short research asks about, in the words the research prompt uses (target-accounts.js
+// BULK_TOPICS). Industry is not among them: the research does not report one.
+export const WEB_GAP_TOPICS = { employees: "employees", headquarters: "headquarters (city and country)" };
+// A short research costs about this share of a full one (measured for the bulk dialog's "only missing").
+export const WEB_GAP_COST_FACTOR = 0.6;
+
+function priorityLevel(priority) {
+  const m = /^P([1-5])$/.exec(priority || "");
+  return m ? Number(m[1]) : null;
+}
+
+// What web research an account needs, or null: { job, topics, early }. W2: first the gaps a research can
+// close - a missing headcount (D3: before Fetch Company Size, which would cost a LinkedIn visit) and an
+// HQ country that is missing or not verified (the web is its only source besides the workbook); then,
+// for scannable P1-P3 accounts, a full research when there is none from the last 12 months. An account
+// that qualifies for both gets the full one, early (it covers the gaps too), never both. P4 and P5 are
+// never researched automatically. `linkedinJobs`: when the resolver is about to visit the company page
+// anyway, LinkedIn's size band comes with it for free, so the headcount is not a gap to research.
+export function webPlan(view, assessment, pipeline, now, linkedinJobs) {
+  if (!view || view.deleted || view.excluded) return null;
+  const t = typeof now === "number" ? now : Date.now();
+  const lvl = priorityLevel(view.salesTeamPriority);
+  if (lvl !== null && lvl >= 4) return null;
+  const p = pipeline || {};
+  const fresh = (at) => { const ms = toEpochMs(at); return Boolean(ms) && t - ms <= WEB_RESEARCH_MAX_AGE_DAYS * ONE_DAY_MS; };
+  if (fresh(view.webFullResearchAt)) return null;
+  const tried = p.webGapAt || {};
+  const topics = [];
+  const emp = gap(assessment, "employees");
+  if (emp && emp.reason === "absent" && !(linkedinJobs || []).includes("resolve") && !fresh(tried.employees)) topics.push("employees");
+  if (gap(assessment, "globalHqCountry") && !fresh(tried.headquarters)) topics.push("headquarters");
+  if (lvl !== null && view.linkedinCompanyId && !jobGaveUp(p, "web_full")) return { job: "web_full", topics: null, early: topics.length > 0 };
+  if (topics.length > 0 && !jobGaveUp(p, "web_gap")) return { job: "web_gap", topics, early: true };
+  return null;
+}
+
+// W3: why the pipeline may not spend on web research now, or null when it may. `nextCostUsd` is what
+// the next research is expected to cost at most (a full one): it starts only if it still fits, so the
+// monthly budget is never exceeded. `blocked` is the API's own refusal ({ reason: "credit" | "limit",
+// day }); it holds for the rest of that day, or until the key or the budget changes (which clears it).
+export function webBudgetBlocker({ enabled, hasKey, monthlyUsd, spentUsd, nextCostUsd, blocked, today }) {
+  if (!enabled) return "off";
+  if (!hasKey) return "no_key";
+  if (!(Number(monthlyUsd) > 0)) return "zero";
+  if (blocked && blocked.day === today && (blocked.reason === "credit" || blocked.reason === "limit")) return blocked.reason;
+  if ((Number(spentUsd) || 0) + (Number(nextCostUsd) || 0) > Number(monthlyUsd)) return "used_up";
+  return null;
+}
+
+// "YYYY-MM" in local time: the budget is per calendar month.
+export function monthKey(ms) {
+  const d = new Date(typeof ms === "number" ? ms : Date.now());
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 // Ordered job ids for one account, from its readiness assessment. `pipeline` is its per-account state.
-// Only the LinkedIn jobs of build step 2; web research joins in step 5.
-export function jobsNeeded(view, assessment, pipeline, now) {
+// `opts.linkedin` (default true): LinkedIn jobs may run - false once the day's visits are used up (W1).
+// `opts.web` (default false): the web budget allows a research now.
+export function jobsNeeded(view, assessment, pipeline, now, opts) {
+  const o = opts || {};
   const jobs = [];
   const p = pipeline || {};
   // Step 4: an empty LinkedIn page, a Keep on a Lacking account, and a changed page waiting for the
-  // user's decision all stop the work until something new arrives or the user has answered.
-  if (p.emptyPage || p.keep || (p.pageChange && !p.pageChange.kept)) return jobs;
+  // user's decision all stop the work until something new arrives or the user has answered. So does a
+  // LinkedIn company that another account already holds (W7), until the user says which it is.
+  if (p.emptyPage || p.keep || (p.pageChange && !p.pageChange.kept) || (p.idTaken && !p.idTaken.kept)) return jobs;
   const slug = companyLinkSlug(view.linkedinLink);
   const idGap = gap(assessment, "linkedinCompanyId");
   // "Keep current" on a changed page: the user has settled the id, so it is not re-checked again.
-  if (idGap && !jobGaveUp(pipeline, "resolve") && !(p.pageChange && p.pageChange.kept)) jobs.push("resolve");
+  if (idGap && !jobGaveUp(pipeline, "resolve") && !(p.pageChange && p.pageChange.kept) && !(p.idTaken && p.idTaken.kept)) jobs.push("resolve");
   // Size needs the company's own page. When resolve is about to visit it, size rides along for free
   // (T3); the runner decides that, this list still names both.
   if (gap(assessment, "employees") && (slug || jobs.includes("resolve")) && !jobGaveUp(pipeline, "size")) jobs.push("size");
@@ -188,7 +260,12 @@ export function jobsNeeded(view, assessment, pipeline, now) {
     if (known) jobs.push("profile");
     else if (!jobGaveUp(pipeline, "contacts")) jobs.push("contacts");
   }
-  return jobs;
+  const linkedinJobs = o.linkedin === false ? [] : jobs;
+  const plan = o.web ? webPlan(view, assessment, p, now, jobs) : null;
+  if (!plan) return linkedinJobs;
+  // Research that closes a gap goes first, so a headcount it finds saves the size visit (D3); research
+  // for depth only goes last.
+  return plan.early ? [plan.job, ...linkedinJobs] : [...linkedinJobs, plan.job];
 }
 
 // Planning estimate only (5.1): the real count is measured as the run goes.
@@ -200,6 +277,7 @@ export function estimateTouches(jobs, view, contactChunks) {
     else if (j === "size") n += combinedSize ? 0 : 1;
     else if (j === "profile") n += 1;
     else if (j === "contacts") n += Math.max(1, contactChunks || 1);
+    // web_gap / web_full: no LinkedIn visit
   }
   return n;
 }
@@ -208,18 +286,23 @@ export function estimateTouches(jobs, view, contactChunks) {
 // them: provisional priority (P1 first, unscored counts as P3), then fewest touches to Ready, then the
 // account the pipeline has waited longest to handle. An account already handled today is skipped, so
 // a job that failed is retried tomorrow, not again in the same run.
-export function rankCandidates(entries, now, contactChunks) {
+// W2: accounts with a gap to close come before accounts that only get a full web research ("depth").
+export function rankCandidates(entries, now, contactChunks, opts) {
   const today = localDay(now);
-  const level = (p) => { const m = /^P([1-5])$/.exec(p || ""); return m ? Number(m[1]) : 3; };
+  const level = (p) => priorityLevel(p) || 3;
   return (entries || [])
     .filter((e) => e && e.view && !e.view.deleted && !e.view.excluded)
     .filter((e) => !(e.pipeline && e.pipeline.lastRunDay === today))
     .map((e) => {
-      const jobs = jobsNeeded(e.view, e.assessment, e.pipeline, now);
-      return { ...e, jobs, touches: estimateTouches(jobs, e.view, contactChunks) };
+      const jobs = jobsNeeded(e.view, e.assessment, e.pipeline, now, opts);
+      // Depth only: nothing to do but a full research that closes no gap.
+      const depthOnly = jobs.length === 1 && jobs[0] === "web_full" &&
+        !(webPlan(e.view, e.assessment, e.pipeline, now, jobsNeeded(e.view, e.assessment, e.pipeline, now)) || {}).early;
+      return { ...e, jobs, depthOnly, touches: estimateTouches(jobs, e.view, contactChunks) };
     })
     .filter((e) => e.jobs.length > 0)
     .sort((a, b) =>
+      Number(a.depthOnly) - Number(b.depthOnly) ||
       level(a.view.salesTeamPriority) - level(b.view.salesTeamPriority) ||
       a.touches - b.touches ||
       String((a.pipeline && a.pipeline.lastRunDay) || "").localeCompare(String((b.pipeline && b.pipeline.lastRunDay) || ""))
@@ -239,12 +322,13 @@ export const USER_JOB_HOLD_MS = 3 * 60 * 1000;
 
 // The reason an automatic run may not start, or null when it may. In the order the user would care:
 // switched off, paused by the user for today, making way for a user's job, the LinkedIn budget, the backup.
-export function autoRunBlocker({ enabled, pausedDay, today, holdUntil, runningBatch, touches24h, lastBackupAt, now }) {
+// `webPossible` (step 5, W1): web research may run, so a used-up LinkedIn budget alone no longer stops a run.
+export function autoRunBlocker({ enabled, pausedDay, today, holdUntil, runningBatch, touches24h, lastBackupAt, now, webPossible }) {
   if (!enabled) return "off";
   if (pausedDay && pausedDay === today) return "paused_today";
   if (holdUntil && now < holdUntil) return "hold";
   if (runningBatch) return "busy";
-  if (touches24h >= PIPELINE_TOUCH_CEILING) return "budget";
+  if (touches24h >= PIPELINE_TOUCH_CEILING && !webPossible) return "budget";
   if (!lastBackupAt || now - lastBackupAt > AUTO_BACKUP_MAX_AGE_MS) return "no_backup";
   return null;
 }

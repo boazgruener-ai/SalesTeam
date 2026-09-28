@@ -16,6 +16,7 @@ import { getOnboardingCompletedAt } from "./storage.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, claimConsentQuestion, CONSENT_TITLE, CONSENT_TEXT,
   PIPELINE_AUTOMATION_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_KICK_EVERY_MS,
+  webBudgetState, PIPELINE_WEB_SPEND_KEY,
 } from "./pipeline-automation.js";
 
 const PIPELINE_STATE_KEY = "pipelineState"; // pipeline-runner.js
@@ -63,6 +64,7 @@ const WHY = {
   limit: "",
   nothing_left: "Every account that can be worked on today has been handled.",
   budget: `Stopped at ${PIPELINE_TOUCH_CEILING} LinkedIn page visits in the last 24 hours. Room frees up as older visits pass 24 hours.`,
+  linkedin_limit_web_done: `Stopped at ${PIPELINE_TOUCH_CEILING} LinkedIn page visits in the last 24 hours, and no account needs web research just now (the web budget is not used up). It carries on as older visits pass 24 hours.`,
   user: "Stopped by you.",
   made_way: "Paused to make way for a job you started",
   busy: "Stopped because another batch process started",
@@ -184,6 +186,40 @@ export async function pipelineStatusLine() {
   if (idle && idle.reason === "nothing_left") return "All accounts processed for today. Your daily LinkedIn limit is now free for scanning.";
   if (idle && idle.reason === "no_backup") return "Waiting for today's backup before starting. It is made while a SalesTeam page is open.";
   return "Automatic preparation is on. It starts on its own while Chrome is open.";
+}
+
+// Build step 5 (W6, R12.7.3): the web research line, under the pie and in Settings > Automation. A zero
+// or used-up budget is stated, not hidden. Empty while automatic preparation itself is off - the line
+// above already says so, and web research runs only inside it.
+function usd(n) {
+  return `US$${(Number(n) || 0).toFixed(2).replace(/\.00$/, "")}`;
+}
+
+export async function webStatusLine() {
+  const auto = await getPipelineAutomation();
+  if (!auto.enabled) return "";
+  const w = await webBudgetState();
+  const without = "Accounts will still be made ready from LinkedIn, but without web details.";
+  switch (w.reason) {
+    case "off": return `Web research is off. ${without} You can turn it on in Settings > Automation.`;
+    case "no_key": return `Web research is paused: there is no Anthropic API key. ${without} Add a key in Settings > API key to continue.`;
+    case "zero": return `Web research is paused: the monthly budget is US$0. ${without} Set a budget in Settings > Automation to continue.`;
+    case "used_up": return `Web research is paused: this month's budget of ${usd(w.monthlyUsd)} is used up. ${without} Raise the budget to continue.`;
+    case "credit": return `Web research is paused for today: the Anthropic API credit balance is empty. ${without} Add credits in the Anthropic Console under Plans & Billing; it tries again tomorrow, or at once when the key or the budget changes.`;
+    case "limit": return `Web research is paused for today: the spending limit set in the Anthropic Console is reached. ${without} Raise it there under Settings > Limits; it tries again tomorrow, or at once when the key or the budget changes.`;
+    default: return `Web research is on: ${usd(w.spentUsd)} of ${usd(w.monthlyUsd)} used this month (${w.researches} research${w.researches === 1 ? "" : "es"}).`;
+  }
+}
+
+export function watchWebStatusLine(el) {
+  if (!el) return;
+  const paint = async () => {
+    try { const text = await webStatusLine(); el.textContent = text; el.hidden = !text; } catch { /* leave the last text */ }
+  };
+  const keys = [PIPELINE_AUTOMATION_KEY, PIPELINE_WEB_SPEND_KEY, PIPELINE_STATE_KEY];
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && keys.some((k) => changes[k])) paint(); });
+  setInterval(paint, 60000);
+  paint();
 }
 
 // Keeps an element showing pipelineStatusLine(), refreshed whenever what it depends on changes.
