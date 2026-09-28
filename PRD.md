@@ -22,7 +22,8 @@ in a system; they don't help *find* them on LinkedIn in the first place.
   to ask an AI mentor the same question after every scan.
 - Give the salesperson an AI team on top of the data: a mentor for strategy, a simulated buyer to pressure-test
   messages against, and reviewed (never auto-sent) drafting.
-- Do all of this safely: manual-trigger only (no scheduled/background automation), nothing sent without
+- Do all of this safely: scans are manual; the only automatic work is account preparation after one
+  standing consent the user can withdraw, within the daily LinkedIn limit; nothing sent without
   explicit review, and destructive actions (bulk status changes) require deliberate friction.
 
 ## 3. Non-goals
@@ -30,8 +31,10 @@ in a system; they don't help *find* them on LinkedIn in the first place.
 - Not a full CRM. No pipeline stages beyond a simple status label, no deal value/forecasting, no team
   features (single-user, local-only storage) - team use is a planned future milestone, see section 8.
 - Never sends a message on the user's behalf. Drafts are generated for copy-paste only.
-- No scheduled or background scanning. Every scan is a manual click, by design — this keeps the tool's
-  behavior indistinguishable from a careful human user, not an automation bot, for LinkedIn ToS reasons.
+- No timer-driven scanning. Every Posts/Jobs scan is a manual click. Account preparation (1.2.0 pipeline)
+  runs by itself only after the user switches it on once, only while Chrome is open, visibly, within the
+  daily LinkedIn limit, and it makes way for any scan the user starts. Public wording: “You start it once;
+  SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser.”
 - Not a general LinkedIn scraper — scoped to the Posts and Jobs search-results pages the user is already
   viewing, using their own authenticated session.
 
@@ -1970,7 +1973,7 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 7. Non-functional requirements
 
-- **Manual-trigger only** — no `alarms`, no background scanning, ever.
+- **No timers, one standing consent** — no `alarms`. Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.
 - **LinkedIn touch-volume visibility (v0.29.49)** — reported directly: a single day of concentrated testing
   (one scan, one profile-extraction run, and nine separate company-ID-resolver runs spread from 00:54 to
   12:23 UTC) triggered LinkedIn's own "unusual activity" account warning. Reconstructed after the fact from
@@ -3044,4 +3047,4 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.1.8**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.1.9**.

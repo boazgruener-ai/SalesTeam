@@ -9,9 +9,13 @@
 // Phase 5 (company discovery) and Phase 6 (contact discovery), not yet
 // built, will call into this to checkpoint their own progress.
 //
-// Deliberately no chrome.alarms anywhere in this codebase, ever - resuming
-// a multi-day run across sessions is always a deliberate "Continue
-// Discovery Scan" click (resumeDiscoveryQueue below), never scheduled.
+// No chrome.alarms anywhere in this codebase. The only work that runs by
+// itself is the 1.2.0 account pipeline (background.js), and only after the
+// user's one standing consent (Settings > Automation); it is started by
+// kicks - Chrome start, a SalesTeam page opening, an import, a scan ending -
+// never by a timer. A Discovery run is not part of that: resuming it across
+// sessions is always a deliberate "Continue Discovery Scan" click
+// (resumeDiscoveryQueue below).
 // Cooperative stop reuses the exact same scanAbortRequested storage flag
 // every other scan loop already watches (background.js's checkAbort(),
 // company-resolve-extraction.js, people-search-extraction.js) - this

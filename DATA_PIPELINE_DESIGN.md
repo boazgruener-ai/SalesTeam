@@ -966,6 +966,28 @@ Branch `feature/pipeline-step5`, stacked on step 4. Version 1.1.8.
 - **Not built:** a per-account "research now" from the pipeline; a web research budget for anything but the
   pipeline (manual research keeps its cost warning).
 
+### Step 6 as built (2026-09-28), v1.1.9
+
+Public wording (R12.2.3). Posts/Jobs scans stay "you click"; account preparation is described as the one
+thing that runs by itself, after one consent, with the approved sentence *"You start it once; SalesTeam
+keeps your accounts ready within your daily LinkedIn limit, visible in your browser."*
+
+- **Store listing** (`Chrome Web Store Listing.md` + `.docx`): new "Accounts kept ready automatically"
+  bullet, new "Web research" bullet, the personal-use paragraph, the privacy line ("pages opened in your own
+  browser"), the linkedin.com justification (tab or small window of its own) and the api.anthropic.com
+  justification (web research). Permissions are unchanged, so no new justification is needed.
+- **Website** (`website/build.py`, `dist/` rebuilt): home lede, "Built to be careful", the checklist, "In
+  your control", a features bullet, "You start it, you see it", "No hidden automation", the LinkedIn FAQ,
+  Get started (optional consent step), Support FAQ "Does SalesTeam scan on its own?", Privacy (scans vs
+  account preparation, the web research exception, "No activity you did not start").
+- **In-app**: Help `manual-only` answer rewritten; the shared "How SalesTeam works with online platforms"
+  paragraph (Help `linkedin-use` and the wizard note) updated.
+- **Code comment**: `discovery-queue.js` now states the actual rule (no alarms; pipeline started by kicks
+  after consent; Discovery resume stays a click).
+- **PRD**: goal, non-goal and non-functional lines updated (+ `gen_docs.py` mirror).
+- **Not done here**: the privacy policy artifact the store links to (claude.ai) is separate from the
+  website's privacy page and needs the same change, or the store's privacy URL switched to the website.
+
 ---
 
 ## 12. Decisions — all agreed 2026-09-24
