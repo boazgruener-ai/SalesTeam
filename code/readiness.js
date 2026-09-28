@@ -201,7 +201,7 @@ export function deriveProvenance(view, field, facts, now) {
 // Verification (R5.2)
 // ---------------------------------------------------------------------------------------------------
 
-function isGoodSource(p) {
+export function isGoodSource(p) {
   if (!p) return false;
   if (p.src === "linkedin" || p.src === "discovery" || p.src === "user") return true;   // D2: user = verified
   if (p.src === "web") return Boolean(p.cited);

@@ -1,9 +1,9 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
-import { DEFAULT_ARBITRATION_SETTINGS } from "./web-findings-arbitration.js";
-import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel } from "./readiness.js";
+import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
+import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
-import { computeFindingProposals } from "./web-research-apply.js";
+import { computeFindingProposals, researchConfirms } from "./web-research-apply.js";
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
 // post/job URL, with status, priority, and negative-topic-match reason), scan
@@ -1248,14 +1248,46 @@ export async function getScanTargetCompanyIds(scope) {
 // provenance in the same write: an id only counts as verified once it was read off the very page the
 // account's link points to (1.2 build step 1; step 0 found 6 of 30 stored ids disagreeing with it).
 export async function applyResolvedCompanyIds(resolutions) {
-  const [map, extras] = await Promise.all([getTargetAccounts(), getTargetAccountExtras()]);
+  const [map, extras, workbookBefore] = await Promise.all([getTargetAccounts(), getTargetAccountExtras(), getTargetAccountsWorkbook()]);
   let updated = 0;
+  let refused = 0;
   const at = Date.now();
+  // W7 (build step 5): which live account holds which LinkedIn company id, and each account's own link.
+  const rowByKey = new Map();
+  const holders = new Map();   // id -> [{ key, company, link }]
+  for (const row of workbookBefore.companies || []) {
+    if (!row.company) continue;
+    const k = normalizeCompanyName(row.company);
+    if (!rowByKey.has(k)) rowByKey.set(k, row);
+    if (extras[k]?.deletedAt) continue;
+    const id = map[k]?.linkedinCompanyId || row.linkedinCompanyId;
+    if (!id) continue;
+    const link = extras[k]?.overrides?.linkedinLink || row.linkedinLink || map[k]?.linkedinLink || null;
+    if (!holders.has(String(id))) holders.set(String(id), []);
+    holders.get(String(id)).push({ key: k, company: row.company, link });
+  }
   // Accounts with no entry in the map (Discovered rows keep their id on the workbook row) get the id
   // written onto that row instead, when the caller allows it (the 1.2 pipeline's re-check).
   const rowWrites = new Map();
   for (const r of resolutions) {
     if (!r.linkedinCompanyId) continue;
+    // W7: a company found by NAME - the account had no LinkedIn link of its own to check the page
+    // against - whose id another live account already holds is not written. Two accounts on one LinkedIn
+    // company is exactly how a name search goes wrong (HT5 AG / PSI, Basilea / ADC before step 4). The
+    // account waits in Decisions instead: the same company, or not. The caller can read `r.refused`.
+    const ownLink = extras[r.key]?.overrides?.linkedinLink || rowByKey.get(r.key)?.linkedinLink || map[r.key]?.linkedinLink || null;
+    const others = (holders.get(String(r.linkedinCompanyId)) || []).filter((h) => h.key !== r.key);
+    if (!ownLink && others.length > 0 && !r.sharedIdConfirmed) {
+      const other = others[0];
+      r.refused = {
+        pageId: String(r.linkedinCompanyId), pageUrl: r.companyPageUrl || r.checkedLink || null,
+        otherKey: other.key, otherCompany: other.company, otherLink: other.link, day: localDayString(at),
+      };
+      const cur = extras[r.key] || emptyExtra();
+      extras[r.key] = { ...cur, pipeline: { ...(cur.pipeline || {}), idTaken: r.refused } };
+      refused++;
+      continue;
+    }
     const previousId = map[r.key]?.linkedinCompanyId || null;
     if (!map[r.key]) {
       if (!r.allowWorkbookRow) continue;
@@ -1292,7 +1324,7 @@ export async function applyResolvedCompanyIds(resolutions) {
     });
     await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, companies } });
   }
-  if (updated > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map, [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
+  if (updated > 0 || refused > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map, [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
   // ...and again into the WORKBOOK, which is a genuinely separate store (see syncLinkedinLinksToWorkbook).
   await syncLinkedinLinksToWorkbook();
   return updated;
@@ -4714,6 +4746,8 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       inputsKey: accountInputsKey([importedAt, row.company, row.officialName, row.alternativeName, ov.linkedinLink,
         JSON.stringify(ov.alternativeCompanyName ?? null)]),
       universeOrder: row.universeOrder ?? null,
+      // Build step 5: when the last FULL web research ran. A short one (only some topics) does not count.
+      webFullResearchAt: extra.webResearch && !extra.webResearch.topics ? extra.webResearch.at || null : null,
     };
     view.pipeline = effectivePipeline(extra.pipeline, view.inputsKey);
     for (const field of PROVENANCE_FIELDS) view[field] = ov[field] ?? row[field] ?? null;
@@ -4756,6 +4790,20 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       view.provenance = { ...view.provenance, [field]: p };
       (derived[key] = derived[key] || {})[field] = p;
     }
+    // Build step 5: a cited web research that found the SAME value confirms it. An agreeing value is
+    // never a finding, so without this a weakly evidenced workbook value stayed unverified however
+    // often the web agreed. Only upgrades: a good source that is at least as recent is left alone.
+    const research = extra.webResearch;
+    if (research && research.at && research.data && Array.isArray(research.sources) && research.sources.length > 0) {
+      for (const field of researchConfirms(row, ov, research.data, null, WEB_CONFIRM_FIELDS)) {
+        if (!isPresent(view[field])) continue;
+        const cur = applicableProvenance(view, field);
+        if (cur && isGoodSource(cur) && (cur.at || 0) >= research.at) continue;
+        const p = { src: "web", at: research.at, cited: true, v: view[field], confirmed: true };
+        view.provenance = { ...view.provenance, [field]: p };
+        (derived[key] = derived[key] || {})[field] = p;
+      }
+    }
     view.lacking = lackingReason(view, view.pipeline);
     views.push(view);
   }
@@ -4771,6 +4819,115 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
   }
   return views;
+}
+
+// The fields a web research can confirm for readiness (build step 5): the headcount and the HQ country.
+const WEB_CONFIRM_FIELDS = ["globalEmployees", "swissEmployees", "globalHqCountry"];
+
+function isPresent(v) {
+  return v !== null && v !== undefined && v !== "";
+}
+
+function localDayString(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// ---- Web research in the pipeline (build step 5, DATA_PIPELINE_DESIGN.md section 6, W1-W8) ----
+
+// W5: resolves the open web findings of every researched account (or only `onlyKeys`) with the same
+// rules as Target Accounts > Resolve findings automatically, and writes the result in one go. What the
+// rules cannot settle stays open and so appears in Decisions (V6). Never touches that button's Undo:
+// every settled finding is in the Activity Log, and a dismissed one is kept, so it can be taken back
+// from the account's Review findings dialog. Returns { accounts, applied, dismissed, review }.
+export async function autoResolveWebFindings({ onlyKeys = null } = {}) {
+  const [workbook, extras, config, settings, money] = await Promise.all([
+    getTargetAccountsWorkbook(), getTargetAccountExtras(), getTargetUniverseConfig(), getWebFindingsArbitration(), getRevenueNormalization(),
+  ]);
+  const only = onlyKeys ? new Set(onlyKeys) : null;
+  const moneySettings = revenueMoneySettings(money);
+  const locationTier = (country) => resolveLocationPriority(country, config.locationPriorities);
+  const contactCounts = new Map();
+  for (const c of workbook.contacts || []) if (c.companyId) contactCounts.set(c.companyId, (contactCounts.get(c.companyId) || 0) + 1);
+  const patches = {};
+  const entries = [];
+  const out = { accounts: 0, applied: 0, dismissed: 0, review: 0 };
+  const seen = new Set();
+  for (const company of workbook.companies || []) {
+    if (!company.company) continue;
+    const key = normalizeCompanyName(company.company);
+    if (seen.has(key) || (only && !only.has(key))) continue;
+    seen.add(key);
+    const extra = extras[key];
+    if (!extra || !extra.webResearch || extra.deletedAt) continue;
+    const data = extra.webResearch.data;
+    const proposals = computeFindingProposals(company, extra.overrides, data, moneySettings)
+      .map((p) => ({ ...p, dismissed: isDismissedWebFinding(extra.webFindingsDismissed, p) }));
+    if (!proposals.some((p) => !p.dismissed)) continue;
+    const ctx = arbitrationContext(company, extra, { buckets: SIZE_PRIORITY_BUCKETS, locationTier, contactCount: contactCounts.get(company.companyId) || 0 });
+    const { decisions, patch } = arbitrateAccount({ proposals, extra, ctx, settings, data });
+    for (const d of decisions) {
+      if (d.action === "review") { out.review++; continue; }
+      if (d.action === "apply") out.applied++; else out.dismissed++;
+      const outcome = d.action === "apply"
+        ? `took the web value ${d.proposal.found}`
+        : `kept the current value ${d.proposal.current === null ? "(empty)" : d.proposal.current}`;
+      entries.push({
+        actor: "extension",
+        action: "web_finding_auto_resolved",
+        label: `${company.company} - ${d.proposal.label}: ${outcome} (automatic, rule ${d.rule}: ${d.why})`,
+        prevValue: d.proposal.current === undefined ? null : d.proposal.current,
+        newValue: d.action === "apply" ? d.proposal.found : d.proposal.current,
+        relatedCompanyKey: key,
+      });
+    }
+    if (patch) { patches[key] = patch; out.accounts++; }
+  }
+  if (Object.keys(patches).length > 0) {
+    // Re-read right before writing, so a write that landed while the rules ran is not lost.
+    const fresh = await getTargetAccountExtras();
+    for (const [key, patch] of Object.entries(patches)) {
+      const before = fresh[key] || emptyExtra();
+      const next = { ...emptyExtra(), ...before, ...patch };
+      if (patch.overrides) next.provenance = stampOverrideProvenance(before.overrides, patch.overrides, next, "web");
+      fresh[key] = next;
+    }
+    await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
+    await appendActivityLogBatch(entries);
+  }
+  return out;
+}
+
+// Stores one research the pipeline ran, the same way the bulk research does: the briefing, its
+// initiatives, every finding for an EMPTY field taken at once (W5: "empty fields are always filled"),
+// then the automatic resolve for this account. `topics` marks a short research (only some topics), which
+// does not count as the account's full research. Returns { filled, initiatives, applied, dismissed, review }.
+export async function applyPipelineWebResearch(key, result, { topics = null } = {}) {
+  const workbook = await getTargetAccountsWorkbook();
+  const company = (workbook.companies || []).find((c) => c.company && normalizeCompanyName(c.company) === key);
+  if (!company) return null;
+  await saveTargetAccountExtra(key, {
+    webResearch: {
+      text: result.text, sources: result.sources, searches: result.searches, at: Date.now(), data: result.data || null,
+      stopped: result.stopped, costUsd: result.costUsd, topics: topics && topics.length ? topics : null, by: "pipeline",
+    },
+  });
+  const initiatives = await addWebResearchInitiatives(company.companyId, company.company, result.data?.initiatives);
+  const extras = await getTargetAccountExtras();
+  const money = await getRevenueNormalization();
+  const fresh = computeFindingProposals(company, extras[key]?.overrides, result.data, revenueMoneySettings(money)).filter((p) => p.state === "new");
+  if (fresh.length > 0) {
+    const overrides = { ...(extras[key]?.overrides || {}) };
+    for (const p of fresh) overrides[p.key] = p.found;
+    await saveTargetAccountExtra(key, { overrides }, { src: "web" });
+    appendActivityLogBatch(fresh.map((p) => ({
+      actor: "extension", action: "web_finding_auto_resolved",
+      label: `${company.company} - ${p.label}: took the web value ${p.found} (automatic, the field was empty)`,
+      prevValue: null, newValue: p.found, relatedCompanyKey: key,
+    }))).catch(() => {});
+  }
+  const resolved = await autoResolveWebFindings({ onlyKeys: [key] });
+  return { filled: fresh.length, initiatives, applied: resolved.applied, dismissed: resolved.dismissed, review: resolved.review };
 }
 
 // ---- Writes made by the 1.2 data pipeline (build step 2, DATA_PIPELINE_DESIGN.md 5.5 and T1-T4) ----
@@ -4987,6 +5144,16 @@ async function buildDecisionQueue(views) {
       payload: { ...pc, currentId: v.linkedinCompanyId || null, link: v.linkedinLink || null } });
   }
 
+  // A LinkedIn company found by name that another account already holds (W7)
+  for (const v of live) {
+    const it = v.pipeline && v.pipeline.idTaken;
+    if (!it || it.kept) continue;
+    const other = byKey.get(it.otherKey);
+    items.push({ ...base(v), id: `taken:${v.key}:${it.pageId}`, kind: "id_taken",
+      payload: { ...it, currentLink: v.linkedinLink || null, currentCountry: v.globalHqCountry || null,
+        otherCountry: other ? other.globalHqCountry || null : null, otherGone: !other } });
+  }
+
   // Discovery companies that match an account by name only (V2)
   for (const m of diff.heldNameMatches) {
     const key = normalizeCompanyName(m.existing.company);
@@ -5138,6 +5305,20 @@ export async function applyDecision(item, choice) {
       dismissed[p.field] = p.found;
       await saveTargetAccountExtra(item.accountKey, { webFindingsDismissed: dismissed });
       label = `"${item.company}": kept the current ${p.label} (${p.current ?? "empty"}), not the web finding (${p.found})`;
+    }
+  } else if (item.kind === "id_taken") {
+    if (choice === "same") {
+      // The user says both accounts are the one LinkedIn company: the id is written after all, and the
+      // two are then either merged by themselves (same id, one re-checked: V3) or shown as a duplicate.
+      const res = { key: item.accountKey, linkedinCompanyId: p.pageId, companyPageUrl: p.pageUrl || null, checkedLink: p.pageUrl || null,
+        allowWorkbookRow: true, sharedIdConfirmed: true };
+      await applyResolvedCompanyIds([res]);
+      await savePipelineAccountState(item.accountKey, { idTaken: null });
+      await settleSafeDuplicates().catch(() => {});
+      label = `"${item.company}" is the same LinkedIn company as "${p.otherCompany}" (id ${p.pageId})`;
+    } else {
+      await savePipelineAccountState(item.accountKey, { idTaken: { ...p, kept: true } });
+      label = `"${item.company}" is not "${p.otherCompany}": the LinkedIn company found by name (id ${p.pageId}) was not taken, and it is not searched by name again`;
     }
   } else {
     throw new Error(`Unknown decision kind: ${item.kind}`);

@@ -604,6 +604,26 @@ function discardWholeBriefingIfImplausible(decisions, settings) {
   }));
 }
 
+// Everything the rules need about one account that is not in the finding itself. Both the illogical
+// checks and rules 4-7 are cross-field ("0 employees, but it has revenue"; "does this country move
+// the location priority?"), so the effective row - stored data with the account's own overrides on
+// top, exactly what the table shows - is what gets handed over, never the bare workbook row.
+// Moved here from target-accounts.js in build step 5, so the background pipeline builds the same context.
+export function arbitrationContext(company, extra, { buckets, locationTier, contactCount }) {
+  const effective = { ...company, ...((extra && extra.overrides) || {}) };
+  const revenue = Number(effective.globalRevenue);
+  return {
+    buckets,
+    locationTier,
+    effective,
+    hasRevenue: Number.isFinite(revenue) && revenue > 0,
+    contactCount: contactCount || 0,
+    // A LinkedIn-fetched count is the company's own published size band - not an exact headcount, but
+    // the most trustworthy thing there is for deciding which band it belongs in.
+    employeesFromLinkedin: Boolean(company.employeeCountText) || company.source === "Discovered",
+  };
+}
+
 export function arbitrateAccount({ proposals, extra, ctx, settings, data }) {
   // Every value this research run reported, so a finding can be judged against the rest of the same
   // briefing rather than only against the account (see illogicalReasons).

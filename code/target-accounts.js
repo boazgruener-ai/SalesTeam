@@ -93,10 +93,10 @@ import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
 import { DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
-import { arbitrateAccount, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
+import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
-import { watchPipelineStatusLine } from "./pipeline-status.js";
+import { watchPipelineStatusLine, watchWebStatusLine } from "./pipeline-status.js";
 import { parseCsv, detectHubspotFile, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
@@ -4608,23 +4608,10 @@ function ruleLabel(id) {
   return r ? r.label : "an unknown rule";
 }
 
-// Everything the rules need about one account that is not in the finding itself. Both the illogical
-// checks and rules 4-7 are cross-field ("0 employees, but it has revenue"; "does this country move
-// the location priority?"), so the effective row - stored data with the account's own overrides on
-// top, exactly what the table shows - is what gets handed over, never the bare workbook row.
+// The account context the rules need lives in web-findings-arbitration.js (arbitrationContext), shared
+// with the background pipeline's automatic resolve (build step 5).
 function arbitrationCtxFor(company, extra, { buckets, locationTier, contactCounts }) {
-  const effective = { ...company, ...(extra?.overrides || {}) };
-  const revenue = Number(effective.globalRevenue);
-  return {
-    buckets,
-    locationTier,
-    effective,
-    hasRevenue: Number.isFinite(revenue) && revenue > 0,
-    contactCount: contactCounts.get(company.companyId) || 0,
-    // A LinkedIn-fetched count is the company's own published size band - not an exact headcount, but
-    // the most trustworthy thing there is for deciding which band it belongs in.
-    employeesFromLinkedin: Boolean(company.employeeCountText) || company.source === "Discovered",
-  };
+  return arbitrationContext(company, extra, { buckets, locationTier, contactCount: contactCounts.get(company.companyId) || 0 });
 }
 
 // A dry run over every researched account. Writes nothing - the dialog renders this, and the same
@@ -6444,6 +6431,7 @@ async function init() {
   openActionFromHash();
   initBatchStatus(onBulkStateChange);
   watchPipelineStatusLine(document.getElementById("pie-pipeline-status")); // build step 3, U3
+  watchWebStatusLine(document.getElementById("pie-web-status")); // build step 5, W6
   // Catches every other way data arrives (web research, edits, a run on another page): scores follow
   // the data on the next page open. Local and free; silent when nothing moved.
   autoPrioritizeNewCompanies().catch(() => {});

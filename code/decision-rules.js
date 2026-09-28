@@ -9,10 +9,11 @@
 import { companyLinkSlug } from "./readiness.js";
 import { parseSizeBand, jobGaveUp } from "./pipeline-plan.js";
 
-export const DECISION_KINDS = ["page_changed", "name_match", "duplicate", "lacking_evidence", "finding"];
+export const DECISION_KINDS = ["page_changed", "id_taken", "name_match", "duplicate", "lacking_evidence", "finding"];
 
 export const DECISION_KIND_LABELS = {
   page_changed: "LinkedIn page changed",
+  id_taken: "LinkedIn company already used",
   name_match: "Same company?",
   duplicate: "Possible duplicate",
   lacking_evidence: "Lacking evidence",
@@ -45,10 +46,11 @@ export function accountInputsKey(parts) {
 export function effectivePipeline(pipeline, inputsKey) {
   const p = pipeline || {};
   const hasHistory = Boolean(
-    (p.attempts && Object.keys(p.attempts).length > 0) || p.emptyPage || p.keep || p.pageChange || (p.profileTried && p.profileTried.length > 0)
+    (p.attempts && Object.keys(p.attempts).length > 0) || p.emptyPage || p.keep || p.pageChange || (p.profileTried && p.profileTried.length > 0) ||
+    p.idTaken || (p.webGapAt && Object.keys(p.webGapAt).length > 0)
   );
   if (!hasHistory || p.inputsKey === inputsKey) return { ...p, inputsKey };
-  return { ...p, attempts: {}, profileTried: [], emptyPage: null, keep: false, pageChange: null, inputsKey };
+  return { ...p, attempts: {}, profileTried: [], emptyPage: null, keep: false, pageChange: null, idTaken: null, webGapAt: {}, inputsKey };
 }
 
 // ---------------------------------------------------------------------------------------------------

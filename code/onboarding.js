@@ -8,7 +8,10 @@
 // optional step here). Phase 5/6 (company/contact discovery scanning)
 // consume everything captured here.
 import { rescoreDerivedPriorities } from "./auto-score.js";
-import { getPipelineAutomation, setPipelineAutomationEnabled, CONSENT_TITLE, CONSENT_TEXT } from "./pipeline-automation.js";
+import {
+  getPipelineAutomation, setPipelineAutomationEnabled, CONSENT_TITLE, CONSENT_TEXT,
+  setWebResearchAutomation, WEB_CONSENT_TITLE, WEB_CONSENT_TEXT, DEFAULT_WEB_BUDGET_USD,
+} from "./pipeline-automation.js";
 import {
   getTargetUniverseConfig, saveTargetUniverseConfig,
   getTargetContactProfile, saveTargetContactProfile,
@@ -1617,6 +1620,9 @@ el("change-back-to-menu-link").addEventListener("click", async (event) => {
 
 el("finish-btn").addEventListener("click", async () => {
   await setPipelineAutomationEnabled(el("finish-automation-checkbox").checked, "Setup wizard");
+  // W4: web research only with automatic preparation on, since it runs inside it.
+  const webOn = el("finish-automation-checkbox").checked && el("finish-web-checkbox").checked;
+  await setWebResearchAutomation({ enabled: webOn, monthlyUsd: webOn ? Math.max(0, Number(el("finish-web-budget").value) || 0) : undefined }, "Setup wizard");
   await markOnboardingCompleted();
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
@@ -1629,7 +1635,20 @@ async function init() {
   el("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
   el("finish-automation-title").textContent = CONSENT_TITLE;
   el("finish-automation-text").textContent = CONSENT_TEXT;
-  el("finish-automation-checkbox").checked = (await getPipelineAutomation()).enabled;
+  const automation = await getPipelineAutomation();
+  el("finish-automation-checkbox").checked = automation.enabled;
+  el("finish-web-title").textContent = WEB_CONSENT_TITLE;
+  el("finish-web-text").textContent = WEB_CONSENT_TEXT;
+  el("finish-web-checkbox").checked = automation.webEnabled;
+  el("finish-web-budget").value = String(automation.webMonthlyUsd > 0 ? automation.webMonthlyUsd : DEFAULT_WEB_BUDGET_USD);
+  const syncWebBox = () => {
+    const on = el("finish-automation-checkbox").checked;
+    el("finish-web-checkbox").disabled = !on;
+    el("finish-web-budget").disabled = !on || !el("finish-web-checkbox").checked;
+  };
+  el("finish-automation-checkbox").addEventListener("change", syncWebBox);
+  el("finish-web-checkbox").addEventListener("change", syncWebBox);
+  syncWebBox();
   renderWizardStepList();
 
   targetUniverseConfig = await getTargetUniverseConfig();

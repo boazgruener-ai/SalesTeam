@@ -358,6 +358,16 @@
           <strong id="finish-automation-title"></strong>
         </label>
         <p class="field-hint" id="finish-automation-text"></p>
+        <!-- Build step 5 (W4): web research, its own consent and monthly budget. Off unless ticked. -->
+        <label class="checkbox-label">
+          <input type="checkbox" id="finish-web-checkbox" />
+          <strong id="finish-web-title"></strong>
+        </label>
+        <p class="field-hint" id="finish-web-text"></p>
+        <p class="field-hint">
+          <label for="finish-web-budget">Monthly budget US$</label>
+          <input type="number" id="finish-web-budget" min="0" step="1" style="width: 80px" />
+        </p>
       </div>
       <div class="wizard-buttons">
         <button type="button" id="finish-btn">Finish Setup</button>

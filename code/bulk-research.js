@@ -81,7 +81,7 @@ async function run(items, { autofill, state, save, controllers, isStopping, stop
           consecutiveFailures = 0;
           state.spent += result.costUsd || 0;
           await (saveChain = saveChain.then(async () => {
-            await saveTargetAccountExtra(item.key, { webResearch: { text: result.text, sources: result.sources, searches: result.searches, at: Date.now(), data: result.data || null, stopped: result.stopped, costUsd: result.costUsd } });
+            await saveTargetAccountExtra(item.key, { webResearch: { text: result.text, sources: result.sources, searches: result.searches, at: Date.now(), data: result.data || null, stopped: result.stopped, costUsd: result.costUsd, topics: item.onlyTopics || null } });
             state.initiatives += await addWebResearchInitiatives(company.companyId, company.company, result.data?.initiatives);
             const extras = await getTargetAccountExtras();
             const proposals = computeFindingProposals(company, extras[item.key]?.overrides, result.data);
