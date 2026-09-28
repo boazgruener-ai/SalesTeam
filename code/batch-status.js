@@ -36,7 +36,9 @@ function ensureBanner() {
 }
 
 function bannerText(s) {
-  return `Researching accounts on the web in the background: ${s.done} of ${s.total} done${s.failed ? `, ${s.failed} failed` : ""} - about ${usd(s.spent)} so far. ` +
+  const waitSec = s.pausedUntil ? Math.max(0, Math.round((s.pausedUntil - Date.now()) / 1000)) : 0;
+  const paused = waitSec > 0 ? ` Paused - Anthropic asked us to slow down; resuming in about ${waitSec < 90 ? `${waitSec} s` : `${Math.round(waitSec / 60)} min`}.` : "";
+  return `Researching accounts on the web in the background: ${s.done} of ${s.total} done${s.failed ? `, ${s.failed} failed` : ""} - about ${usd(s.spent)} so far.${paused} ` +
     "You can keep using SalesTeam.";
 }
 
@@ -49,6 +51,7 @@ function resultText(s) {
     : s.stoppedReason === "interrupted" ? "It was interrupted (the browser or the extension was restarted). What was already saved is kept."
     : s.stoppedReason === "credit" ? "Stopped because your Anthropic API credit balance is empty. Add credits in the Anthropic Console under Plans & Billing, then start the research again - everything found so far is saved."
     : s.stoppedReason === "limit" ? `Stopped because you reached the spending limit set on your Anthropic API account. This is a cap you configure in the Console - not your credit balance, which still has money in it. Raise it under Settings > Limits, or wait for it to reset, then start the research again; everything found so far is saved.${s.lastError ? `\n\n${s.lastError}` : ""}`
+    : s.stoppedReason === "rate_limit" ? `Paused because Anthropic kept answering "too many requests", even after waiting in between. Start the research again later for the accounts not yet done - everything found so far is saved.`
     : s.stoppedReason === "errors" ? `Stopped because of errors${s.lastError ? `: ${s.lastError}` : "."}` : "";
   return `Web research finished.\n\n${completed} of ${s.total} account${s.total === 1 ? "" : "s"} researched` +
     `${s.failed ? `, ${s.failed} failed` : ""}${notStarted > 0 ? `, ${notStarted} not started` : ""}.\n` +

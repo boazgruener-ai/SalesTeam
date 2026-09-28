@@ -79,6 +79,22 @@ is running could still collide. Step 0 therefore also routes those page-side wri
 worker as a message, which applies them under the same lock. Step 0 starts by listing every page-side
 caller of these writers, to size that part before building it.
 
+**As built (step 0, 1.2.0.1):** the lock is a Web Lock (`navigator.locks`), not an in-memory chain. Web
+Locks are shared by every context of the extension — the background worker and each open page — so the
+page-side callers (almost all in `target-accounts.js`, plus full-backup restore) are covered as they are,
+without a message round-trip. 23 writers wrap their unchanged body (`<name>Unlocked`); `getAccountViews`
+and `autoResolveWebFindings` lock only their final re-read-and-write. The lock is not re-entrant, so the
+two nested calls (`applyResolvedCompanyIds` → workbook sync, discovery merge → `applyResolvedCompanyIds`)
+use the unlocked versions. A V8 run of the real `storage.js` with 20 overlapping saves kept 3 of 20
+accounts before the lock and all 20 after it.
+
+The lock alone does not stop a *stale* write: the account edit form, the findings review and research's
+automatic fill each took a copy of the account's `overrides`, changed a few keys and wrote the whole copy
+back, undoing anything written meanwhile (research filling a field while the form was open). They now pass
+the copy they started from as `base`, and `saveTargetAccountExtra` applies only the keys that changed onto
+the stored values (`extras-merge.js`, pure, tested). Live test 2026-09-28: bulk research of 20 accounts,
+20 of 20 researched, US$1.50, a manual edit made during the run kept.
+
 ### 2.3 Sources are kept per research, not per field
 
 `researchAccountOnWeb` returns one `sources` list for the whole answer, and

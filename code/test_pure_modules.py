@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js"]
+PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1202,6 +1202,40 @@ def test_decision_rules(ctx):
     check("sortDecisions", order, "dbca")
 
 
+def test_rate_limit_backoff(ctx):
+    # 1.2.1 build step 0 (ONBOARDING_RESEARCH_DESIGN.md 5.6): a 429 pauses and retries, it no longer ends the run.
+    check("429 is a rate limit", ctx.eval("isRateLimited({ status: 429 })"), True)
+    check("529 overloaded is a rate limit", ctx.eval("isRateLimited({ status: 529 })"), True)
+    check("web search too_many_requests is a rate limit", ctx.eval("isRateLimited({ rateLimited: true })"), True)
+    check("401 is not a rate limit", ctx.eval("isRateLimited({ status: 401 })"), False)
+    check("no error is not a rate limit", ctx.eval("isRateLimited(null)"), False)
+    check("first back-off is 30 s", ctx.eval("backoffDelayMs(null, 1)"), 30000)
+    check("second doubles to 60 s", ctx.eval("backoffDelayMs(undefined, 2)"), 60000)
+    check("fourth is 240 s", ctx.eval("backoffDelayMs('', 4)"), 240000)
+    check("capped at 5 min", ctx.eval("backoffDelayMs(null, 9)"), 300000)
+    check("retry-after seconds win", ctx.eval("backoffDelayMs('12', 3)"), 12000)
+    check("retry-after 0 still waits 1 s", ctx.eval("backoffDelayMs('0', 1)"), 1000)
+    check("retry-after as an HTTP date", ctx.eval("backoffDelayMs('Mon, 28 Sep 2026 10:00:20 GMT', 1, Date.parse('Mon, 28 Sep 2026 10:00:00 GMT'))"), 20000)
+    check("huge retry-after is capped", ctx.eval("backoffDelayMs('3600', 1)"), 300000)
+    check("garbage retry-after falls back", ctx.eval("backoffDelayMs('soon', 1)"), 30000)
+
+
+def test_extras_merge(ctx):
+    # 1.2.1 build step 0: a writer applies only what it changed; a change made meanwhile by another writer stays.
+    ctx.eval("""var m1 = mergeFieldChanges({ a: 1 }, { a: 1, b: 2 }, { a: 1, c: 3 });""")
+    check("an edit adds its field and keeps one filled meanwhile", ctx.eval("JSON.stringify(m1)"), '{"a":1,"c":3,"b":2}')
+    ctx.eval("""var m2 = mergeFieldChanges({ a: 1, b: 2 }, { a: 1 }, { a: 1, b: 2, c: 3 });""")
+    check("a removed field is removed, the rest kept", ctx.eval("JSON.stringify(m2)"), '{"a":1,"c":3}')
+    ctx.eval("""var m3 = mergeFieldChanges({ a: 1 }, { a: 1 }, { a: 5 });""")
+    check("an untouched field keeps the newer stored value", ctx.eval("JSON.stringify(m3)"), '{"a":5}')
+    ctx.eval("""var m4 = mergeFieldChanges({ a: 1 }, { a: 2 }, { a: 5 });""")
+    check("the same field changed on both sides: this writer wins", ctx.eval("JSON.stringify(m4)"), '{"a":2}')
+    ctx.eval("""var m5 = mergeFieldChanges(undefined, { x: [1, 2] }, undefined);""")
+    check("no base and nothing stored", ctx.eval("JSON.stringify(m5)"), '{"x":[1,2]}')
+    ctx.eval("""var m6 = mergeFieldChanges({ l: ["a"] }, { l: ["a"] }, { l: ["a", "b"] });""")
+    check("an unchanged list compares by value, not identity", ctx.eval("JSON.stringify(m6)"), '{"l":["a","b"]}')
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1224,6 +1258,8 @@ def main():
     test_auto_run_blocker(ctx)
     test_web_lane(ctx)
     test_decision_rules(ctx)
+    test_rate_limit_backoff(ctx)
+    test_extras_merge(ctx)
 
     print()
     for f in _failures:

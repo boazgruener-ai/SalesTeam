@@ -5108,8 +5108,11 @@ async function refreshBulkSummary() {
   // The automatic pipeline is not a blocker: Start asks it to make way (U2).
   const found = await getRunningBatch();
   const running = found && !found.pipeline ? found : null;
-  document.getElementById("bulk-research-start-btn").disabled = items.length === 0 || (onlyMissing && topics.length === 0) || !!running;
-  if (running) el.textContent = busyMessage(running, "web research of these accounts").replace(/\n\n/g, " ");
+  // Checked before Start, not by the run: without a key every account would fail at once and be counted as "failed".
+  const hasKey = !!sanitizeApiKey((await getAnthropicApiKey()) || "");
+  document.getElementById("bulk-research-start-btn").disabled = !hasKey || items.length === 0 || (onlyMissing && topics.length === 0) || !!running;
+  if (!hasKey) el.textContent = "Add your Anthropic API key first (Settings > Anthropic API Key) - web research runs on your own key.";
+  else if (running) el.textContent = busyMessage(running, "web research of these accounts").replace(/\n\n/g, " ");
   else if (onlyMissing && topics.length === 0) el.textContent = "Tick at least one thing to look for.";
   else if (items.length === 0) el.textContent = "No accounts match these choices.";
   else {
@@ -5179,7 +5182,19 @@ document.getElementById("bulk-research-page-btn").addEventListener("click", asyn
 document.getElementById("bulk-research-start-btn").addEventListener("click", async () => {
   const { items } = bulkSelection();
   if (items.length === 0) return;
-  if (!(await guardBatchStart("web research of many accounts", askConfirm))) { await refreshBulkSummary(); return; } // the dialog and its choices stay as they are
+  // Visible at once that the click landed: making way for the pipeline can take a while (guardBatchStart).
+  const startBtn = document.getElementById("bulk-research-start-btn");
+  const startLabel = startBtn.textContent;
+  startBtn.disabled = true;
+  startBtn.textContent = "Starting…";
+  let free;
+  try {
+    free = await guardBatchStart("web research of many accounts", askConfirm);
+  } finally {
+    startBtn.textContent = startLabel;
+    startBtn.disabled = false;
+  }
+  if (!free) { await refreshBulkSummary(); return; } // the dialog and its choices stay as they are
   const estimate = bulkEstimate(items, await bulkPerAccountUsd());
   const budget = Number(document.getElementById("bulk-budget-input").value) || 0;
   const limit = await getCostWarningUsd();
@@ -5483,7 +5498,8 @@ function openWebFindingsReview(companyKey, { onSaved } = {}) {
     for (const p of chosen) delete dismissed[p.key];
     for (const p of revived) delete dismissed[p.key];
     for (const p of kept) dismissed[p.key] = p.found;
-    await saveTargetAccountExtra(companyKey, { overrides, webFindingsDismissed: dismissed }, { src: "web" });
+    // `base` = the copy this dialog opened with: only the rows ticked here are written (extras-merge.js)
+    await saveTargetAccountExtra(companyKey, { overrides, webFindingsDismissed: dismissed }, { src: "web", base: { overrides: accountExtras[companyKey]?.overrides, webFindingsDismissed: accountExtras[companyKey]?.webFindingsDismissed } });
     const parts = [];
     if (chosen.length) parts.push(`saved ${chosen.map((p) => p.label).join(", ")}`);
     if (kept.length) parts.push(`kept own value for ${kept.map((p) => p.label).join(", ")}`);
@@ -5533,7 +5549,9 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
   if (accountEditMode) {
     overviewEl.appendChild(buildEditForm(ACCOUNT_EDIT_FIELDS, effectiveCompany, async (formValues, newStatus) => {
       const { overrides, changedLabels } = diffEditFormValues(ACCOUNT_EDIT_FIELDS, company, accountOverrides, formValues);
-      await saveTargetAccountExtra(companyKey, { overrides });
+      // `base` = the values the form opened with, so only the fields edited here are written - a web research
+      // that filled another field while the form was open is kept (extras-merge.js).
+      await saveTargetAccountExtra(companyKey, { overrides }, { base: { overrides: accountOverrides } });
       if (newStatus !== undefined) {
         await saveTargetAccountExtra(companyKey, { manualStatus: newStatus, manualStatusAt: newStatus ? Date.now() : null });
         appendActivityLog({
@@ -5592,7 +5610,7 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
               delete overrides.salesTeamPriority;
               delete overrides.salesTeamPriorityReason;
             }
-            await saveTargetAccountExtra(companyKey, { overrides });
+            await saveTargetAccountExtra(companyKey, { overrides }, { base: { overrides: accountOverrides } });
             appendActivityLog({
               actor: "user",
               action: "target_account_priority_overridden",
