@@ -35,55 +35,62 @@ The core scanning, filtering, and Dashboard features work with no AI key at all.
 
 PRIVACY
 
-SalesTeam only reads LinkedIn pages opened in your own browser (Posts/Jobs search, Company/People search, company and profile pages), stores everything locally in your browser, and never sends anything to a server we operate. See the full privacy policy at: https://claude.ai/artifact/F8o4GecGJnb1LD8VQJ3npG
+SalesTeam only reads LinkedIn pages opened in your own browser (Posts/Jobs search, Company/People search, company and profile pages), stores everything locally in your browser, and never sends anything to a server we operate. See the full privacy policy at: https://aisalesteam.app/privacy.html
 
-## Single purpose description (required field)
+## Privacy tab - fields in the order they appear on the page
+
+### 1. Single purpose description (required field)
 Searches LinkedIn's Posts, Jobs, Company, and People search results, plus individual company and profile pages, to build a target-account/contact universe and surface B2B sales leads, using the same logged-in LinkedIn session the user would browse with manually — no separate credentials or automation account. Also offers optional AI-assisted analysis, prioritization, and message drafting using the user's own Anthropic API key.
 
-## Permission justifications (required field per permission)
-storage:
+### 2. Permission justifications (one field per permission)
+
+storage justification:
 
 Stores the user's search Topics, filters, leads, target account/contact lists, and AI conversation history locally in the browser.
 
-sidePanel:
-
-Displays quick links to open the Scanner, Target Accounts, Target Contacts and Posts dashboards, plus pipeline stats.
-
-clipboardWrite:
-
-Lets the user copy an AI-drafted message with one click, to paste into LinkedIn's own message compose box.
-
-power:
-
-Keeps the machine awake for the duration of a long-running search or lookup, so a multi-minute pass initiated by the user isn't interrupted by the system sleeping partway through.
-
-unlimitedStorage:
+unlimitedStorage justification:
 
 Lets the extension keep the data a user builds up - imported research workbooks (thousands of contacts and initiatives), searched leads and conversation history - in the browser's local storage without hitting Chrome's default 10 MB limit, after which saving new data would start to fail. Nothing is uploaded; the data stays on the user's device.
 
-Host permission - https://www.linkedin.com/*:
+sidePanel justification:
 
+Displays quick links to open the Scanner, Target Accounts, Target Contacts and Posts dashboards, plus pipeline stats.
+
+clipboardWrite justification:
+
+Lets the user copy an AI-drafted message with one click, to paste into LinkedIn's own message compose box.
+
+power justification:
+
+Keeps the machine awake for the duration of a long-running search or lookup, so a multi-minute pass initiated by the user isn't interrupted by the system sleeping partway through.
+
+### 3. Host permission justification (one field - paste both paragraphs)
+
+Host permission - https://www.linkedin.com/*:
 Required to read the Posts, Jobs, Company Search, People Search, individual company, and individual profile pages the user is already viewing (or that a user-triggered search, or the automatic account preparation the user has switched on, opens in a tab or a small window of its own), in order to match leads and build/enrich the user's target-account and target-contact lists. The extension does not run on any other website.
 
 Host permission - https://api.anthropic.com/*:
-
 Required so the optional AI features (prioritization, message drafting, web research, Sales Mentor, Customer Voice) can call Anthropic's API directly from the browser, authenticated with the user's own API key.
 
-## Remote code question
+### 4. Are you using remote code?
 Answer: No. The extension makes data API calls to Anthropic (text in, text out) - it does not fetch or execute remote JavaScript.
 
-## Data usage disclosure (Chrome's "Privacy practices" tab)
+### 5. Data usage - what user data do you collect
 - From Data Usage Checkboxes - only check: PII, Authentication Information and Website content.
 Does this extension collect or transmit user data (Personal Identifiable Information) ? Yes - lead and target-account text and chat content, only when the optional AI features are used, sent directly to Anthropic's API using the user's own key.
 
-- Is this data sold or used for purposes unrelated to the extension's function? No.
-- Is this data used for advertising? No.
-- Privacy policy URL: https://claude.ai/artifact/F8o4GecGJnb1LD8VQJ3npG
+### 6. I certify that the following disclosures are true (tick all three)
+- I do not sell or transfer user data to third parties, outside of the approved use cases
+- I do not use or transfer user data for purposes that are unrelated to my item's single purpose
+- I do not use or transfer user data to determine creditworthiness or for lending purposes
+
+### 7. Privacy policy
+- Privacy policy URL: https://aisalesteam.app/privacy.html
 
 ## Support URL (optional field)
-https://claude.ai/artifact/MroEuwHoz9tbqAYoXWt3G5
+https://aisalesteam.app/support.html
 
-(Must be shared with "anyone with the link" from the page's Share menu, or reviewers and users can't open it.)
+(Both pages are on the SalesTeam website, aisalesteam.app, and open for anyone.)
 
 ## Visibility
 Set to "Unlisted" (not "Public") so it's installable only by people you send the link to, without appearing in Chrome Web Store search.

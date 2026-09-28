@@ -50,6 +50,8 @@ with open(SOURCE_MD, encoding="utf-8") as f:
             doc.add_heading(line[2:], level=1)
         elif line.startswith("## "):
             doc.add_heading(line[3:], level=2)
+        elif line.startswith("### "):
+            doc.add_heading(line[4:], level=3)
         elif line.startswith("- "):
             doc.add_paragraph(line[2:], style="List Bullet")
         elif is_label(line):
