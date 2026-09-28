@@ -1,8 +1,8 @@
 # SalesTeam — Data Pipeline & Readiness: Requirements
 
 Target release: **1.2.0**
-Status: **Requirements — for review.** Design and implementation follow separately.
-Date: 2026-09-22
+Status: **Requirements — agreed 2026-09-24.** Design and implementation follow separately.
+Date: 2026-09-22 (review afterthoughts added 2026-09-24, section 12 and Appendix A)
 
 ---
 
@@ -160,6 +160,9 @@ at a high-fit company is worth far more than the same post from an unknown autho
 should therefore be expressed against the seniority levels configured in the Setup wizard — at least
 one contact matching them — rather than as a bare number.
 
+**Decided (2026-09-24):** the bar is **at least 1 contact at one of the seniority levels chosen in
+the Setup wizard**.
+
 
 ---
 
@@ -232,6 +235,28 @@ its **source**, an **evidence quality**, and a **last-verified date**.
 
 **R5.2** — A field counts as *verified* when it has a source, an evidence quality at or above a
 configured threshold, and a last-verified date within a configured freshness window.
+
+**Freshness windows, decided (2026-09-24):**
+
+| Field | Stays verified for |
+|---|---|
+| LinkedIn identity (company id) | 12 months |
+| Headcount | 6 months |
+| Contacts | 6 months (people change jobs) |
+| Revenue | 12 months |
+
+**Minimum evidence quality, decided (2026-09-24).** A field counts as verified only if it came
+from one of these sources:
+
+1. **LinkedIn**, which is authoritative;
+2. **web research with a cited source**;
+3. **the research workbook, where the account's Evidence Status is Sufficient Evidence or better**
+   (Sufficient, Rich or Full).
+
+Anything below that (Provisional or Insufficient Evidence, not yet researched, or a value with no
+source) is treated as **unverified**, and the pipeline fetches the value from LinkedIn. This is the
+quality-versus-speed setting: with no threshold, "verified" would mean only "a value is present";
+accepting LinkedIn alone would cost a LinkedIn visit per field and waste web research.
 
 **R5.3 — Staleness must expire verification.** A field verified on 2026-09-05 is trustworthy today
 and will not be in eighteen months. Without a decay policy, "verified" silently becomes false over
@@ -377,18 +402,23 @@ paced, within the daily touch limit.
 ## 10. Open questions for the design stage
 
 1. ~~What exactly makes an account Ready?~~ **Answered (sections 3.1–3.3): whatever the Scanner
-   needs, computed from the user's own targeting configuration.** What remains is narrower — the
-   freshness thresholds in R5.2, and the exact contact bar in R3.7 (how many, at what seniority).
-2. **How large is the starting subset?** Is the first target a fixed number (100), a priority tier
-   (all of P1), or whatever can be completed in the first 24 hours?
-3. **How much consent is enough?** One approval per pipeline run, per day, or a standing
-   "keep my data ready" setting with a budget cap?
-4. **Freshness windows.** How long does each kind of field stay verified — headcount, revenue,
-   contacts, LinkedIn identity? These plainly differ.
-5. **Scanner integration.** Signals are continuous and entity enrichment converges; do they share
-   one budget and one queue, or two?
-6. **Migration.** What happens to an existing installation whose 541 accounts have never been
-   assessed against a readiness bar?
+   needs, computed from the user's own targeting configuration.** The contact bar (R3.7) and the
+   freshness windows (R5.2) are now decided too, and so is the minimum evidence quality (R5.2).
+   **No open questions remain.**
+2. ~~How large is the starting subset?~~ **Answered (R12.3): whatever can be completed within one
+   day's LinkedIn touch budget, not a fixed number.**
+3. ~~How much consent is enough?~~ **Answered (R12.2): one standing consent at the end of
+   onboarding; after that the pipeline plans and runs each day without asking.** Web research
+   has its own consent with a spending budget (R12.7).
+4. ~~Freshness windows.~~ **Answered (R5.2).**
+5. ~~Scanner integration.~~ **Answered (2026-09-24): one daily LinkedIn budget (R12.2.5) and one
+   scheduler.**
+   The Scanner needs no queue of its own: scans are started by the user and run in one go. When the
+   user starts a scan, the pipeline pauses at the end of its current account and resumes after the
+   scan. The existing one-job-at-a-time guard (`batch-jobs.js`) already enforces the "one at a
+   time" part.
+6. ~~Migration.~~ **Answered (R12.8): no separate step; accounts are rated on first run, and
+   existing users give the standing consent once after the update.**
 
 ---
 
@@ -410,3 +440,247 @@ Worth stating plainly, because the remaining gap is smaller than it appears:
 
 **The missing piece is the scheduler.** `batch-jobs.js` enforces "one job at a time"; nothing yet
 decides *which* job, or *what next*.
+
+---
+
+## 12. Afterthoughts from review (2026-09-24)
+
+### 12.1 Pipeline status: a pie chart on the Target Accounts Dashboard
+
+**R12.1.1** — Pipeline status is shown as a **pie chart at the top of the Target Accounts
+Dashboard**, next to the existing pies, not as a separate menu page. One slice per state:
+
+| Slice | Meaning |
+|---|---|
+| **Ready** | Meets the full bar (R3.3). |
+| **Usable** | Scannable, enrichment still missing (R3.2). |
+| **In progress** | Incomplete, and the pipeline still has work queued for it. |
+| **Needs your decision** | Waiting on a human judgement (R12.4). |
+| **Lacking evidence** | Went through every applicable job and still cannot reach Usable (R12.5). |
+
+**R12.1.2** — **Clicking a slice filters the accounts table to that state.** The dashboard's
+existing status pies already work this way (`onSliceClick`). The filtered table is the detailed
+view, so no separate page is needed. This is also how the user finds the accounts that failed.
+
+**R12.1.3** — Under the pie, one line states progress honestly (R6.4.4): *"38 ready · about 25
+more expected by end of day"*.
+
+**R12.1.4** — The pie updates when an account changes state, not on a timer. The pipeline writes
+to storage, and the dashboard redraws from `chrome.storage.onChanged`. That is immediate and costs
+nothing when idle, whereas polling every minute would do work whether or not anything changed.
+
+### 12.2 The pipeline runs by itself after one consent
+
+**R12.2.1** — The user is asked **once**, at the end of the onboarding wizard, and never again.
+The wizard's last step tells them whether their settings are enough to start working (a target
+region, sizes and seniority levels are set, and LinkedIn is signed in). If they are, it offers the
+single consent: *"Keep my accounts ready automatically, within my daily LinkedIn limit"*.
+
+**R12.2.2** — After that consent, SalesTeam **plans each day's work by itself and starts it
+without asking**. It works out how many accounts it can bring to Ready within today's touch budget,
+queues the jobs depth-first (R6.4.1) and runs them. It replans:
+
+- on the first time Chrome is open on a new day (the touch budget has reset);
+- straight after any source delivers data (workbook import, HubSpot import, a finished Discovery
+  run, which is merged automatically per R12.6);
+- when the day's plan finishes early and budget remains.
+
+**R12.2.3 — A change of posture that needs a deliberate decision.** Today the codebase runs
+nothing on its own: `discovery-queue.js` says there is *"deliberately no chrome.alarms anywhere in
+this codebase, ever"*, and the public messaging promises *"user-initiated scans"*. The standing
+consent in R12.2.1 is what keeps the new behaviour user-initiated: the user starts it once and can
+switch it off. The store listing, website and Help must be updated to say so before 1.2.0 ships.
+
+**Decided (2026-09-24): approved.** The user starts the pipeline once. Because the daily
+LinkedIn limit makes it take several days, it carries on by itself after that first start, and it
+is still work the user started. Public wording to use: *"You start it once; SalesTeam keeps your
+accounts ready within your daily LinkedIn limit, visible in your browser."*
+
+**R12.2.4 — Not at midnight.** The pipeline runs in the user's own Chrome and visits LinkedIn in
+it, so it can only run while Chrome is open. At midnight the laptop is usually closed. Replanning
+therefore happens **the first time Chrome is open each day**, the same check-when-open pattern the
+daily backup already uses (`runAutoBackupIfDue`). No `chrome.alarms` is needed.
+
+**Decided (2026-09-24): approved.**
+
+**R12.2.5 — The pipeline must leave room for the Scanner.** The pipeline and the Scanner share
+one daily LinkedIn budget (75 warn / 99 hard). If the pipeline plans up to the full 99, the user can
+never scan. **The pipeline plans up to the warn line (75), and the band from 75 to 99 is kept for
+the user's own scans.** This answers the budget half of open question 5. The exact split can be
+tuned later, but the pipeline must always leave the Scanner something.
+
+**Decided (2026-09-24): approved.** The 75 is a **ceiling for the pipeline, not a reservation**:
+any touches the pipeline does not use on a given day are free for the Scanner. Heavy pipeline use
+is expected only for the first few days, while the existing accounts are worked through. After
+that, the pipeline only needs touches for new data (imports, Discovery) and for re-verifying fields
+whose verification has expired (R5.3). **In steady state, most of the daily budget goes to the
+Scanner.** The progress line (R12.1.3) should say so when the backlog clears, for example
+*"All accounts processed. Your daily LinkedIn limit is now free for scanning."*
+
+### 12.3 The first day
+
+**R12.3.1** — The first-day target is **not a fixed number**. It is however many accounts the
+day's budget can bring to Ready: `accounts ≈ pipeline budget ÷ touches needed per account`.
+
+**R12.3.2 — Estimate, to be measured in design.** An account that needs everything (resolve its
+LinkedIn id, fetch its size, and a People search for contacts) takes several touches. Accounts
+imported with a LinkedIn link already need fewer. So a realistic first day is likely **tens of
+accounts rather than 100**. The design stage must measure touches per account on real data before
+any number is shown to users.
+
+**R12.3.3** — The first Ready accounts should appear **within the first hour**, not at the end of
+the day. Depth-first order does this naturally: the first account is completed before the second
+is started.
+
+**R12.3.4 — Scanning unlocks early.** The user may start scanning **as soon as a small minimum of
+accounts is Ready**, even on the first day, so they are never left waiting with nothing to do. This
+is the concrete form of R7.4 ("the quality gate must not become a wall"). The minimum is one named
+constant, not scattered through the code. **Proposed starting value: 5**, to be tuned once real
+scans show how many posts a small account set actually yields.
+
+**R12.3.5 — Tell the user, never just refuse.** If the user opens the Scanner below the minimum, it
+says so plainly with the numbers and when to expect more: *"You have 3 Ready accounts. The Scanner
+needs at least 5 to start. About 12 more are expected by end of day."*
+
+### 12.4 When the user is involved
+
+The user is needed in exactly two places:
+
+1. **To start it**, once, at the end of onboarding (R12.2.1).
+2. **To decide what only a human can decide**: web-finding conflicts that could change a decision
+   (R5.4), the Lacking-evidence review (R12.5), and Discovery companies matched only by name
+   (R12.6.3).
+
+**R12.4.1** — When decisions are waiting, the menu item that opens the decision queue carries a
+**red dot**. The user does not have to remember to check; the dot tells them. The queue itself is
+next / skip / keep (R6.3.3).
+
+### 12.5 Accounts the pipeline cannot complete: "Lacking evidence"
+
+**R12.5.1** — An account is **Lacking evidence** when every job that applies to it has been tried
+and it still cannot reach Usable. It stops being retried and gets its own slice in the pie.
+**Decided (2026-09-24):** "tried" means **2 attempts on different days**, because a LinkedIn page
+that fails once can simply be a bad moment. The exception is an empty LinkedIn company page
+(R12.5.3), which counts at once.
+
+**R12.5.2** — It is retried only when something new arrives for it: a re-import, a Discovery
+merge, or a manual edit. Otherwise it would consume budget every day with no result.
+
+**R12.5.3 — Fake or empty LinkedIn companies are a known cause.** Some companies on LinkedIn are
+empty shells, with no employees and no content. When the resolver or the size fetch lands on such a
+page, that should itself mark the account as Lacking evidence, with the reason *"LinkedIn page
+looks empty"*, rather than leaving it to fail silently later.
+
+**R12.5.4** — The user reviews these accounts and chooses **Keep** or **Remove**. Remove uses
+the existing soft delete (`deletedAt`), so it can be recovered. Keep means *"leave it, and stop
+retrying"*.
+
+**R12.5.5** — Each account in this state shows **why**: which fields are still missing and what
+was tried. Otherwise the user cannot make an informed Keep / Remove decision.
+
+### 12.6 Discovery results merge automatically
+
+Today a Discovery scan leaves its results in a holding area (`discoveredCompanies`), and they reach
+the Target Accounts only when the user clicks **Review & Merge Discovery Results** and then **Add
+Them**. That is exactly the pattern this redesign removes: data waiting until the user remembers
+to act.
+
+**R12.6.1** — When a Discovery run finishes, its results are **merged into the Target Accounts
+automatically**, and the pipeline replans (R12.2.2). The holding area stays, so a stopped or redone
+run still never touches committed data. Only a *finished* run is merged.
+
+**R12.6.2 — Why this is safe to do silently.** Discovery results come from the user's own targeting
+settings and arrive with a LinkedIn company id, which is authoritative. Adding an account is
+reversible, because removal is the existing soft delete. It therefore sits in the silent tier
+(R6.2.1): logged, reported in aggregate (*"Discovery added 42 companies and 96 contacts"*), and
+undoable.
+
+**R12.6.3 — Name-only matches go to the decision queue.** A discovered company that matches an
+existing account **by LinkedIn id** is merged silently, including the existing free back-fill of
+the LinkedIn id. A company that matches an existing account **only by name** is not merged. It goes
+to the decision queue (R12.4, with the red dot), because this is the one case where two different
+companies can be wrongly merged into one.
+
+**R12.6.4** — The **Review & Merge Discovery Results** menu item moves to the support-only Advanced
+tools (R6.2.3).
+
+### 12.7 Web research runs automatically, within a spending budget
+
+**R12.7.1** — Bulk web research gets **its own standing consent with a spending budget**, separate
+from the LinkedIn consent, because it spends the user's money on their Anthropic API key. Once
+given, the pipeline runs web research automatically, depth-first, like the other jobs.
+
+**R12.7.2** — The budget is set by the user (for example a monthly amount in US$) and is never
+exceeded. The existing web-research cost estimate and the Billing page's API usage are the basis.
+
+**R12.7.3 — Zero or used-up budget is stated, not hidden.** If the budget is zero or used up, web
+research simply does not run, and the user is told so plainly: *"Web research is paused: this
+month's budget of US$20 is used up. Accounts will still be made ready from LinkedIn, but without
+web details. Raise the budget to continue."* Topping up resumes it.
+
+**R12.7.4** — Web research is **not required for Ready** unless it is the only source for a
+mandatory field. LinkedIn provides the identity, size and contacts. So a user with no web budget
+still gets Ready accounts, only with less depth.
+
+### 12.8 Migration of existing installations
+
+**R12.8.1** — There is **no separate migration step**. On the first run of 1.2.0, every existing
+account is rated against the readiness bar, and the pie shows the result straight away.
+
+**R12.8.2** — Accounts that already qualify are available to the Scanner at once. The pipeline works
+on the rest in the background. The user can keep scanning throughout.
+
+**R12.8.3 — Existing users must still give the consent.** They completed onboarding before the
+standing consent existed (R12.2.1). After the update, they are shown that one consent once. Until
+they give it, nothing runs automatically, and 1.1.x behaviour continues.
+
+---
+
+## Appendix A — Job inventory, as of 1.1.3 (for review)
+
+The *In 1.2.0* column was **agreed on 2026-09-24**.
+
+### A.1 Jobs the user triggers
+
+| Job | Where | Uses | In 1.2.0 |
+|---|---|---|---|
+| Import Research Workbook | Menu | — | Stays user-triggered; triggers a replan |
+| Import from HubSpot | Menu | — | Stays user-triggered; triggers a replan |
+| Restore Accounts & Contacts from Backup | Menu | — | Stays user-triggered |
+| Discovery of companies and contacts (Setup wizard, incl. Continue Discovery Scan) | Wizard | LinkedIn | Stays user-triggered (a source) |
+| Review & Merge Discovery Results | Menu | — | **Automatic** when a Discovery run finishes, then replans; name-only matches go to the decision queue; menu item becomes support-only (R12.6) |
+| Discover Contacts for Existing Companies | Menu | LinkedIn | **Automatic** |
+| Resolve LinkedIn Company IDs | Advanced | LinkedIn | **Automatic** |
+| Fetch Company Size | Advanced | LinkedIn | **Automatic** |
+| Find & Merge Duplicates | Advanced | — | **Automatic** for duplicates that can be settled safely; only those that cannot go to the decision queue for the user |
+| Prioritize Companies | Advanced | AI (API) | **Automatic** |
+| Research Accounts on the Web (bulk) | Menu | US$ (API) | **Automatic within its own spending budget** (R12.7); paused and stated when the budget is zero or used up |
+| Research this account on the web | Account page | US$ (API) | Stays user-triggered |
+| Resolve Web Findings Automatically | Menu | — | **Automatic (silent tier)** |
+| Review findings | Account page | — | Moves into the decision queue |
+| Extract Companies | Advanced | AI (API) | Automatic (already runs during every scan) |
+| Extract Companies & Locations from Profiles | Advanced | LinkedIn | Automatic, depth-first, within budget |
+| Prioritize Unscored Leads | Advanced | AI (API) | Automatic (already runs during every scan) |
+| Re-score All Priorities | Advanced | AI (API) | Automatic when targeting settings change; support-only otherwise |
+| Apply Location Filter | Advanced | — | Automatic when the location setting changes |
+| Scanner scan | Scanner | LinkedIn | Stays user-triggered: this is the product |
+| Bulk edit, Remove account | Tables | — | Stays user-triggered |
+| Export to HubSpot, Export CSV | Menu | — | Stays user-triggered |
+| Backup / Restore (manual) | Settings | — | Stays user-triggered |
+
+### A.2 Jobs that already run automatically
+
+| Job | When it runs |
+|---|---|
+| Open the Setup wizard | On first install (`background.js`, `onInstalled`) |
+| Prioritize newly added companies | After workbook import, HubSpot import and Discovery merge (`autoPrioritizeNewCompanies`) |
+| Sync LinkedIn links into the workbook | Every time the workbook loads (`syncLinkedinLinksToWorkbook`): the silent-repair model |
+| Extract the company for scanned leads | During every scan, for leads missing one (AI) |
+| Prioritize scanned leads with the Sales Mentor | During every scan |
+| Tag leads with their target-account signal | During every scan |
+| Stop a scan at the daily LinkedIn limit | During every scan |
+| Daily backup | When due, checked when a SalesTeam page is open (no alarm) |
+| Export closed Activity Log days to /log | When the Scan button is pressed |
+
+None of these spends LinkedIn touches outside a scan the user started. **That is the posture that
+R12.2 changes. The change was approved on 2026-09-24 (R12.2.3).**
