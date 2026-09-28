@@ -18,22 +18,24 @@ SalesTeam turns LinkedIn into a self-building, prioritized pipeline of target ac
 WHAT IT DOES
 
 - Target Account & Contact Discovery: point it at your ideal customer profile (industry, size, location) and it builds your target company and contact universe automatically, with AI-driven prioritization rules - import a research spreadsheet, or let it discover companies and contacts on LinkedIn itself.
+- Accounts kept ready automatically: switch it on once and SalesTeam links your accounts to their LinkedIn pages, finds their size and their key contacts, and shows how many are ready to work - within your daily LinkedIn limit, in a small window of its own, making way whenever you start a scan. What it cannot settle by itself waits for you in one Decisions list. Turn it off at any time in Settings > Automation.
 - Define "Topics" (keyword groups) once, then click "Scan All Topics" to search LinkedIn Posts and Jobs for all of them in one go, scoped to your target accounts and contacts.
 - Define "Negative Topics" too - competitors and recruiter/staffing posts that match the same keywords but are never real prospects get auto-filtered out, not left for you to skip past manually. Two are built in; add your own for any other recurring noise.
 - Results are merged, deduplicated, and ranked, with matched keywords, hiring/freelance signals, and connection-degree shown on every lead.
 - A Dashboard tab turns the results into a real pipeline view: pie charts by status, a sortable/filterable table, per-lead detail pages, CSV export, and safe bulk status changes (confirmation required, one level of undo). A Target Accounts Explorer does the same for your company/contact universe - priority, evidence level, and contact coverage at a glance.
-- Built for personal use, the way a person would use these sites: your research draws on publicly available sources (company registries and websites, through the research prompt) and on platforms such as LinkedIn. Every scan starts when you click a button, every search and page visit happens in a browser tab you can see, and your browser stays open while it runs. There are no scheduled scans and no bulk page collection, and a built-in daily limit keeps searches and page visits modest. SalesTeam has no server or database of its own, never resells or shares data, and never sends messages for you.
+- Built for personal use, the way a person would use these sites: your research draws on publicly available sources (company registries and websites, through the research prompt) and on platforms such as LinkedIn. Every scan starts when you click a button. Automatic account preparation runs only if you switch it on: You start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser, and you can turn it off at any time. Every search and page visit happens in a browser tab or window you can see, only while your browser is open. There is no bulk page collection, and a built-in daily limit keeps searches and page visits modest. SalesTeam has no server or database of its own, never resells or shares data, and never sends messages for you.
 YOUR AI SALES TEAM (optional, needs your own Anthropic API key)
 
 - Automatic prioritization: after every scan, each new lead is scored 1 (highest) to 5 (lowest) by real fit and urgency - not just keyword overlap - so you always know what to work on first. Target companies get their own AI-judged Strategic Fit score the same way.
 - AI-drafted opening messages for any lead - editable, and only ever copied for you to paste and send yourself. Nothing is auto-sent.
 - Sales Mentor: an AI agent you can ask "Which lead should I approach first?" or general sales-strategy questions. It looks up your real lead data only when a question actually needs it.
 - Customer Voice: an AI agent that roleplays as a realistic buyer, so you can pressure-test a message or approach before you send it.
+- Web research: researches your accounts on the public web, with sources you can open and check. Click to research an account, or let account preparation do it within a monthly budget you set, never above it.
 The core scanning, filtering, and Dashboard features work with no AI key at all. The AI Sales Team features (prioritization, drafting, Sales Mentor, Customer Voice) are entirely optional, and require you to provide your own Anthropic API key, which is stored only on your device.
 
 PRIVACY
 
-SalesTeam only reads LinkedIn pages you're already viewing (Posts/Jobs search, Company/People search, company and profile pages), stores everything locally in your browser, and never sends anything to a server we operate. See the full privacy policy at: https://claude.ai/artifact/F8o4GecGJnb1LD8VQJ3npG
+SalesTeam only reads LinkedIn pages opened in your own browser (Posts/Jobs search, Company/People search, company and profile pages), stores everything locally in your browser, and never sends anything to a server we operate. See the full privacy policy at: https://claude.ai/artifact/F8o4GecGJnb1LD8VQJ3npG
 
 ## Single purpose description (required field)
 Searches LinkedIn's Posts, Jobs, Company, and People search results, plus individual company and profile pages, to build a target-account/contact universe and surface B2B sales leads, using the same logged-in LinkedIn session the user would browse with manually — no separate credentials or automation account. Also offers optional AI-assisted analysis, prioritization, and message drafting using the user's own Anthropic API key.
@@ -61,11 +63,11 @@ Lets the extension keep the data a user builds up - imported research workbooks 
 
 Host permission - https://www.linkedin.com/*:
 
-Required to read the Posts, Jobs, Company Search, People Search, individual company, and individual profile pages the user is already viewing (or that a user-triggered search opens in a background tab), in order to match leads and build/enrich the user's target-account and target-contact lists. The extension does not run on any other website.
+Required to read the Posts, Jobs, Company Search, People Search, individual company, and individual profile pages the user is already viewing (or that a user-triggered search, or the automatic account preparation the user has switched on, opens in a tab or a small window of its own), in order to match leads and build/enrich the user's target-account and target-contact lists. The extension does not run on any other website.
 
 Host permission - https://api.anthropic.com/*:
 
-Required so the optional AI features (prioritization, message drafting, Sales Mentor, Customer Voice) can call Anthropic's API directly from the browser, authenticated with the user's own API key.
+Required so the optional AI features (prioritization, message drafting, web research, Sales Mentor, Customer Voice) can call Anthropic's API directly from the browser, authenticated with the user's own API key.
 
 ## Remote code question
 Answer: No. The extension makes data API calls to Anthropic (text in, text out) - it does not fetch or execute remote JavaScript.

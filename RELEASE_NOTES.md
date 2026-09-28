@@ -1,3 +1,64 @@
+# SalesTeam — v1.2.0
+
+## Accounts kept ready automatically: one pipeline instead of twelve maintenance tools (builds 1.1.4-1.1.9)
+
+- **Keep my accounts ready automatically** - you start it once (at the end of the Setup wizard, or on the one-time card
+  existing users see after updating); from then on SalesTeam links accounts to their LinkedIn company page, confirms their
+  size and finds their key contacts by itself, one account at a time, in a small window of its own, visible in your
+  browser. It is **off until you turn it on**, and can be turned off at any time in **Settings > Automation**.
+- **Within your daily LinkedIn limit** - automatic preparation uses at most 60 LinkedIn page visits in any 24 hours, leaving
+  the rest of the daily limit for your own scans. It **makes way** for any job you start (a scan, web research, Discovery,
+  the Advanced tools): the account in progress is finished, your job runs, and preparation resumes by itself afterwards.
+  A full backup from the last 24 hours is required before an automatic run starts.
+- **Pipeline status** - a new first pie on the Target Accounts Dashboard shows how many accounts are Ready, Usable,
+  Needs your decision, Lacking evidence and so on, with one status line under it (what is being worked on, when the limit
+  frees up, or that all accounts are processed) and a "Still to do" count per missing field. Clicking a slice filters the
+  table through the new **Readiness** column; hovering a Readiness pill lists what the account still lacks.
+- **A quiet status pill** at the bottom right of every SalesTeam page while preparation runs, with **Pause** (off for the
+  rest of the day; **Resume today** in Settings > Automation). Automatic runs show no pop-up; what they did goes to the
+  Activity Log.
+- **Verified, not just filled** - every account field now records where its value came from and when it was confirmed.
+  LinkedIn company ids stored before 1.2 are re-checked against the account's own LinkedIn page, and the company size is read
+  on the same visit (a stored headcount inside LinkedIn's band is kept as more precise; one outside it is replaced, with the
+  old value kept in the trace).
+- **Finding a known person's LinkedIn profile** - where the research already names a senior contact but has no LinkedIn
+  profile for them (or only a news article), SalesTeam searches the company's People tab for that name and accepts only an
+  exact, unambiguous match. It never guesses. If nobody known is found, ordinary contact discovery by title takes over.
+- **Decisions** (new menu item with a red dot, on every page) - the only place the pipeline needs you: a company page that
+  now shows a different company, a Discovery result that matches an account by name only, possible duplicates, a LinkedIn
+  company another account already uses, accounts lacking evidence (no LinkedIn company after two tries, or an empty page),
+  and web findings the automatic rules leave open. One card at a time, with Skip; where several cases are truly the same
+  (same field, same cause), a tick box applies the answer to all of them after a confirmation.
+- **Safer merging** - Discovery results now merge by themselves when a run finishes, but only on a matching LinkedIn id;
+  name-only matches wait in Decisions and no id is written onto an existing account without your answer. Duplicates merge
+  on their own only when they share a re-checked LinkedIn id, and never when their links open different pages or their
+  registry ids differ.
+- **Web research in the pipeline (optional)** - a second switch in Settings > Automation (and on the wizard's last step)
+  researches accounts on the web with your own Anthropic API key, within a **monthly US$ budget** that is never exceeded
+  (off by default; US$10 suggested). Missing headcounts and HQ countries get a short research first, then scannable
+  accounts never researched or researched over 12 months ago get a full one, P1 first; P4/P5 are never researched
+  automatically. Findings are resolved straight away with the automatic rules; a research that agrees with the current
+  value now counts as confirming it. Research carries on after the LinkedIn limit is reached, without opening LinkedIn.
+- **Scanner gate** - with 0 Ready accounts the Scanner explains why it cannot start; with 1-4 it explains and offers
+  **Scan anyway**. Discovered companies with a P1-P3 priority are now scanned too.
+- **Tidier menus** - Review & Merge Discovery Results, Resolve LinkedIn Company IDs, Fetch Company Size, Discover Contacts for
+  Existing Companies and Find & Merge Duplicates move to Advanced tools, fully working, each noting that the automatic
+  pipeline normally does this for you. **Run pipeline now** (Advanced tools) runs a chosen number of accounts on demand.
+- **Alternative names** - when LinkedIn finds no confident match for an account's name, the resolver also tries its
+  alternative names (from the workbook, or typed on the account as Alt. name), so an account such as "Swiss Air-Rescue
+  Rega" can be linked to its page "Rega".
+- **Fixed** - LinkedIn's new "Name: Overview | LinkedIn" page titles made ten company look-ups give up (Stadler, Sunrise,
+  SIG and others); company counts such as "6,500+" are read correctly when looking for missing sizes; contact relevance
+  reads the research's own Seniority column first, and any "Chief … Officer" title counts as C-level; automatic scoring
+  also refreshes locally computed priorities (never a manual override or an AI-judged score).
+- **Contact Link** - the contact column "LinkedIn Profile" is now "Contact Link"; it shows "LinkedIn ↗" only for a real
+  profile and the site name for any other page.
+- **Wording** - the store listing, website, Help and Setup wizard describe account preparation as the one thing that runs
+  by itself, after your consent, within your daily LinkedIn limit and visible in your browser. Posts and Jobs scans still
+  run only when you click. No new permissions.
+
+---
+
 # SalesTeam — v1.1.3
 
 ## Settings in the side panel; Backup and Restore are now two separate pages

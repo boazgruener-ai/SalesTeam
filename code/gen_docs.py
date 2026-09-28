@@ -93,7 +93,8 @@ add_bullets(doc, [
     "having to ask an AI mentor the same question after every scan.",
     "Give the salesperson an AI team on top of the data: a mentor for strategy, a simulated buyer to "
     "pressure-test messages against, and reviewed (never auto-sent) drafting.",
-    "Do all of this safely: manual-trigger only (no scheduled/background automation), nothing sent without "
+    "Do all of this safely: scans are manual; the only automatic work is account preparation after one "
+    "standing consent the user can withdraw, within the daily LinkedIn limit; nothing sent without "
     "explicit review, and destructive actions (bulk status changes) require deliberate friction.",
 ])
 
@@ -102,8 +103,10 @@ add_bullets(doc, [
     "Not a full CRM. No pipeline stages beyond a simple status label, no deal value/forecasting, no team "
     "features (single-user, local-only storage) - team use is a planned future milestone, see section 8.",
     "Never sends a message on the user's behalf. Drafts are generated for copy-paste only.",
-    "No scheduled or background scanning. Every scan is a manual click, by design — this keeps the tool's "
-    "behavior indistinguishable from a careful human user, not an automation bot, for LinkedIn ToS reasons.",
+    "No timer-driven scanning. Every Posts/Jobs scan is a manual click. Account preparation (1.2.0 pipeline) "
+    "runs by itself only after the user switches it on once, only while Chrome is open, visibly, within the "
+    "daily LinkedIn limit, and it makes way for any scan the user starts. Public wording: “You start it once; "
+    "SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser.”",
     "Not a general LinkedIn scraper — scoped to the Posts and Jobs search-results pages the user is already "
     "viewing, using their own authenticated session.",
 ])
@@ -1841,7 +1844,7 @@ add_bullets(doc, [
 
 doc.add_heading("7. Non-functional requirements", level=2)
 add_bullets(doc, [
-    "Manual-trigger only — no alarms, no background scanning, ever.",
+    "No timers, one standing consent — no alarms. Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.",
     "Local-first privacy — all data in chrome.storage.local; the only outbound calls are to linkedin.com "
     "(reading pages already open) and api.anthropic.com (only when AI features are used, with the user's "
     "own key). No server operated by this project.",
@@ -2856,7 +2859,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.1.8."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0."
 )
 
 for section in doc.sections:
