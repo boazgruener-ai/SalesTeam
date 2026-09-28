@@ -176,6 +176,7 @@ document.getElementById("open-settings-setup-btn").addEventListener("click", () 
 document.getElementById("open-settings-change-btn").addEventListener("click", () => showEmbeddedPage("settings.html#change-settings", "Settings"));
 applyOnboardingNavState(document.getElementById("open-settings-setup-btn")).catch(() => {});
 document.getElementById("open-settings-profile-btn").addEventListener("click", () => showEmbeddedPage("settings.html#profile-section", "Settings"));
+document.getElementById("open-settings-automation-btn").addEventListener("click", () => showEmbeddedPage("settings.html#automation-section", "Settings"));
 document.getElementById("open-settings-language-btn").addEventListener("click", () => showEmbeddedPage("settings.html#language-section", "Settings"));
 document.getElementById("open-settings-apikey-btn").addEventListener("click", () => showEmbeddedPage("settings.html#api-key-section", "Settings"));
 document.getElementById("open-settings-backup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#backup-section", "Settings"));

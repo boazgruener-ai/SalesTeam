@@ -768,6 +768,54 @@ Branch `feature/pipeline-step2`, stacked on step 1. Nothing runs unless **Run pi
 5. **Discovered rows** keep their id on the workbook row, not in the id map. A re-check of one writes
    the id there.
 
+### Step 3 touch-ups (agreed 2026-09-25)
+
+Boaz agreed to all six as recommended.
+
+| # | Question | Decision |
+|---|---|---|
+| **U1** | Only a page can save the daily backup (the background worker cannot write files). What if Chrome starts with no SalesTeam page open? | An automatic run starts only with a full backup from the **last 24 hours**. Without one it waits for the first SalesTeam page, which makes the backup (the same 12-hour rule as before a scan) and then kicks |
+| **U2** | The design pauses the pipeline only for a scan | It makes way for **any** job the user starts: a scan, web research, Discovery, the Advanced-tools runners. Start asks it to pause, a note says *"Waiting for SalesTeam to finish the account in progress…"*, and the job starts when it has. No "one batch at a time" refusal because of the pipeline. When the job ends, the pipeline resumes by itself |
+| **U3** | A pop-up after every automatic run would be intrusive | Automatic runs show **no pop-up**. What they did goes to the Activity Log and to one status line under the Pipeline status pie (10.2). The pill reads *"Preparing accounts · 21 ready · Nestlé"*, with **Pause**. A manual **Run pipeline now** keeps its pop-up |
+| **U4** | The Scanner gate (fewer than 5 Ready): the Scanner also searches topics, and only one of its three phases uses accounts | **0 Ready blocks** the scan, with the reason. **1-4 Ready: a soft gate**, the Scanner explains and offers **Scan anyway**. 5 or more: scans straight away. (Refined by Boaz 2026-09-25; first agreed as a soft gate at every count) |
+| **U5** | Consent and the default | **Off** until turned on. Asked at the end of the setup wizard, and once for existing users on the first SalesTeam page they open after updating. The switch lives in **Settings > Automation**. The web-research line waits for step 5. No keep-awake (D4) |
+| **U6** | Version | 1.1.5 → **1.1.6** |
+
+### Step 3 as built (2026-09-25)
+
+Branch `feature/pipeline-step3`, stacked on step 2. Version 1.1.6.
+
+- **`code/pipeline-automation.js`** holds the switch (`pipelineAutomation`: `enabled`, `decidedAt`,
+  `askedAt`, `pausedDay`), the consent wording, and the keys for the idle reason and the hold.
+- **`pipeline-plan.js` `autoRunBlocker`** (pure, tested) decides whether an automatic run may start:
+  off, paused for today, making way for a user's job, another batch running, the visit ceiling, no
+  backup from the last 24 hours. `kickPipeline` then also checks that some account can be worked on
+  today, so a kick with nothing to do never opens the LinkedIn window.
+- **Triggers (5.4):** Chrome starts (`onStartup`, 20 seconds later so the network is up); a SalesTeam page
+  opens and every 10 minutes while one is open; a user's batch job ends (seen as the batch record being
+  removed, wherever the job ran); Setup is saved (the wizard re-scores derived priorities, then kicks).
+  Imports and Discovery are covered by the page kicks and the batch-end kick.
+- **Automatic runs** have no account limit: they end at the ceiling, when nothing is left for today, or
+  when they make way. They do not keep the computer awake. A run that handled nothing is not logged.
+- **Making way (U2):** `guardBatchStart` asks the pipeline to pause and waits, up to 2.5 minutes, while
+  it finishes the account in progress. It also sets a 3-minute hold on every user start, so no kick can
+  slip in between the check and the job taking the batch lock. The end of the job clears the hold and
+  kicks. The pipeline's own batches are marked `pipeline: true`, so they never count as a blocker.
+- **Pause** on the pill stops the run and keeps automation off for the rest of the local day. **Resume
+  today** in Settings > Automation undoes it.
+- **Status line** (`pipelineStatusLine`), under the pie and in Settings: working on an account; off;
+  paused for today; paused while you scan or run another job; limit reached, with the time it frees
+  up (`timeBelowCeiling`); all accounts processed; waiting for today's backup.
+- **Ceiling lowered from 75 to 60** (2026-09-25, Boaz), after one scan used 70 of the 99 on the first day
+  of automatic runs. The pipeline now leaves 39 visits a day to the user's own scans. The 75 elsewhere in
+  this document is the original design figure.
+- **Scanner:** 0 Ready accounts: the scan does not start, and the message says why. 1 to 4: **Scan anyway** /
+  **Cancel**. Both messages point to Settings > Automation when it is off.
+- **Not built in step 3:** the wizard's readiness checklist before the consent (10.1: region, sizes,
+  seniority levels, LinkedIn signed in). The consent is a plain tick box on the last step. The
+  "about 25 more by the end of the day" estimate (10.2 and 10.4) is left out: there is no measured
+  rate yet to base it on.
+
 ---
 
 ## 12. Decisions — all agreed 2026-09-24

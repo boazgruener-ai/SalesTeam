@@ -67,7 +67,10 @@ import {
   getScanCompanyScope,
   saveScanCompanyScope,
   getScanTargetCompanyIds,
+  getAccountReadiness,
 } from "./storage.js";
+import { MIN_READY_TO_SCAN } from "./readiness.js";
+import { getPipelineAutomation } from "./pipeline-automation.js";
 import { runAutoBackupIfDue, startAutoBackup } from "./backup-restore.js";
 import { mountLocationPicker } from "./location-picker.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -656,6 +659,7 @@ document.getElementById("open-settings-setup-btn").addEventListener("click", () 
 document.getElementById("open-settings-change-btn").addEventListener("click", () => showEmbeddedPage("settings.html#change-settings", "Settings"));
 applyOnboardingNavState(document.getElementById("open-settings-setup-btn")).catch(() => {});
 document.getElementById("open-settings-profile-btn").addEventListener("click", () => showEmbeddedPage("settings.html#profile-section", "Settings"));
+document.getElementById("open-settings-automation-btn").addEventListener("click", () => showEmbeddedPage("settings.html#automation-section", "Settings"));
 document.getElementById("open-settings-language-btn").addEventListener("click", () => showEmbeddedPage("settings.html#language-section", "Settings"));
 document.getElementById("open-settings-apikey-btn").addEventListener("click", () => showEmbeddedPage("settings.html#api-key-section", "Settings"));
 document.getElementById("open-settings-backup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#backup-section", "Settings"));
@@ -1680,7 +1684,37 @@ clearResultsBtn.addEventListener("click", () => {
   appendActivityLog({ actor: "user", action: "results_view_cleared", label: "Cleared results view (leads are not deleted)" });
 });
 
+// Build step 3, U4 as refined 2026-09-25: 0 Ready accounts blocks the scan; 1 to MIN_READY_TO_SCAN - 1
+// explains and offers "Scan anyway"; MIN_READY_TO_SCAN or more scans straight away.
+async function confirmReadyGate() {
+  let ready = 0;
+  let total = 0;
+  try {
+    const rows = await getAccountReadiness();
+    total = rows.length;
+    ready = rows.filter((r) => r.assessment.state === "ready").length;
+  } catch {
+    return true; // the gate is advice; never block a scan on a failed count
+  }
+  if (ready >= MIN_READY_TO_SCAN) return true;
+  const auto = await getPipelineAutomation();
+  const more = total === 0 ? " Import your target accounts, or run Discovery, first."
+    : auto.enabled ? " SalesTeam is preparing more automatically while Chrome is open."
+    : " Automatic preparation can get them ready: Settings > Automation.";
+  if (ready === 0) {
+    const have = total === 0 ? "You have no target accounts yet." : "None of your accounts is Ready yet.";
+    await askConfirm(`${have} The Scanner needs at least one Ready account to start.${more}`, { okLabel: "OK", cancelLabel: "Close" });
+    return false;
+  }
+  return askConfirm(
+    `You have ${ready} Ready account${ready === 1 ? "" : "s"}. The Scanner works best with at least ${MIN_READY_TO_SCAN}: ` +
+    `it searches for posts from people at your accounts, and only well-prepared accounts give good matches.${more}`,
+    { okLabel: "Scan anyway", cancelLabel: "Cancel" },
+  );
+}
+
 scanBtn.addEventListener("click", async () => {
+  if (!(await confirmReadyGate())) return;
   if (!(await guardBatchStart("Scanner (searching LinkedIn for posts and jobs)", askConfirm))) return;
   scanBtn.disabled = true;
   progressTextEl.textContent = "Checking backup…";

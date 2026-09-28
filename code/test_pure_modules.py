@@ -1002,6 +1002,29 @@ def test_pipeline_plan(ctx):
           }), NOW, 2).map(function (e) { return e.view.key; }).join(',')"""), "b,c,a")
 
 
+def test_auto_run_blocker(ctx):
+    """pipeline-plan.js autoRunBlocker - when an automatic run may start (build step 3, U1-U5)."""
+    ctx.eval(r"""
+    var H = 3600000;
+    function blk(o) {
+      var base = { enabled: true, pausedDay: null, today: '2026-09-25', holdUntil: 0, runningBatch: null,
+                   touches24h: 10, lastBackupAt: NOW - 2 * H, now: NOW };
+      for (var k in o) base[k] = o[k];
+      return autoRunBlocker(base);
+    }
+    """)
+    check("all clear: may start", ctx.eval("blk({})"), None)
+    check("off until the user turns it on", ctx.eval("blk({ enabled: false })"), "off")
+    check("paused by the user for today", ctx.eval("blk({ pausedDay: '2026-09-25' })"), "paused_today")
+    check("a pause from yesterday no longer holds", ctx.eval("blk({ pausedDay: '2026-09-24' })"), None)
+    check("making way for a user's job (U2)", ctx.eval("blk({ holdUntil: NOW + 60000 })"), "hold")
+    check("another batch is running", ctx.eval("blk({ runningBatch: { label: 'Scanner' } })"), "busy")
+    check("stops at the ceiling", ctx.eval("blk({ touches24h: PIPELINE_TOUCH_CEILING })"), "budget")
+    check("one below the ceiling may start", ctx.eval("blk({ touches24h: PIPELINE_TOUCH_CEILING - 1 })"), None)
+    check("no backup at all waits for a page (U1)", ctx.eval("blk({ lastBackupAt: 0 })"), "no_backup")
+    check("a backup older than 24 hours waits for a page (U1)", ctx.eval("blk({ lastBackupAt: NOW - 25 * H })"), "no_backup")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1021,6 +1044,7 @@ def main():
     test_patch_shape(ctx)
     test_readiness(ctx)
     test_pipeline_plan(ctx)
+    test_auto_run_blocker(ctx)
 
     print()
     for f in _failures:

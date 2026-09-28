@@ -96,6 +96,7 @@ import { DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { arbitrateAccount, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
+import { watchPipelineStatusLine } from "./pipeline-status.js";
 import { parseCsv, detectHubspotFile, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
@@ -338,6 +339,7 @@ document.getElementById("open-settings-setup-btn").addEventListener("click", () 
 document.getElementById("open-settings-change-btn").addEventListener("click", () => showEmbeddedPage("settings.html#change-settings", "Settings"));
 applyOnboardingNavState(document.getElementById("open-settings-setup-btn")).catch(() => {});
 document.getElementById("open-settings-profile-btn").addEventListener("click", () => showEmbeddedPage("settings.html#profile-section", "Settings"));
+document.getElementById("open-settings-automation-btn").addEventListener("click", () => showEmbeddedPage("settings.html#automation-section", "Settings"));
 document.getElementById("open-settings-language-btn").addEventListener("click", () => showEmbeddedPage("settings.html#language-section", "Settings"));
 document.getElementById("open-settings-apikey-btn").addEventListener("click", () => showEmbeddedPage("settings.html#api-key-section", "Settings"));
 document.getElementById("open-settings-backup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#backup-section", "Settings"));
@@ -5110,7 +5112,9 @@ async function refreshBulkSummary() {
   const el = document.getElementById("bulk-research-summary");
   const budget = document.getElementById("bulk-budget-input");
   if (!budget.dataset.touched) budget.value = String(Math.max(0.5, Math.ceil(estimate * 1.5 * 2) / 2));
-  const running = await getRunningBatch();
+  // The automatic pipeline is not a blocker: Start asks it to make way (U2).
+  const found = await getRunningBatch();
+  const running = found && !found.pipeline ? found : null;
   document.getElementById("bulk-research-start-btn").disabled = items.length === 0 || (onlyMissing && topics.length === 0) || !!running;
   if (running) el.textContent = busyMessage(running, "web research of these accounts").replace(/\n\n/g, " ");
   else if (onlyMissing && topics.length === 0) el.textContent = "Tick at least one thing to look for.";
@@ -6433,6 +6437,7 @@ async function init() {
   await route();
   openActionFromHash();
   initBatchStatus(onBulkStateChange);
+  watchPipelineStatusLine(document.getElementById("pie-pipeline-status")); // build step 3, U3
   // Catches every other way data arrives (web research, edits, a run on another page): scores follow
   // the data on the next page open. Local and free; silent when nothing moved.
   autoPrioritizeNewCompanies().catch(() => {});

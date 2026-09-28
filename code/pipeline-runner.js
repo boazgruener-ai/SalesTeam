@@ -3,10 +3,16 @@
 // work (pipeline-plan.js rankCandidates), runs every LinkedIn job that account needs, re-scores it, and
 // moves to the next.
 //
-// Step 2 is started only by hand, from Advanced tools > Run pipeline now, for a set number of accounts.
-// It already works the way the automatic runs of step 3 will: one small unfocused window of its own
-// holding a single LinkedIn tab (decision D1, proven by step 0), never brought to the front. Because the
-// user started it, it keeps the computer awake while it runs, like every user-started job (D4).
+// Two ways in. By hand, from Advanced tools > Run pipeline now, for a set number of accounts (step 2).
+// Automatically (step 3), once the user has turned it on: kickPipeline() is called when Chrome starts,
+// when a SalesTeam page opens and every 10 minutes while one is open, and when a user's batch job ends
+// (design 5.4). An automatic run has no account limit - it stops at the 75-visit ceiling or when nothing
+// is left for today - and it does not keep the computer awake (D4). Both use one small unfocused window
+// of their own holding a single LinkedIn tab (decision D1, proven by step 0), never brought to the front.
+//
+// U2: the pipeline makes way for any job the user starts. guardBatchStart (batch-jobs.js) sends
+// PIPELINE_PAUSE; the run stops after the account in progress and stays out of the way for a few
+// minutes, and the end of the user's job kicks it again.
 //
 // The batch lock is taken per account, not for the whole run (5.2): between two accounts it is free.
 // Progress lives in storage under "pipelineState"; pipeline-status.js shows it on every SalesTeam page.
@@ -17,7 +23,7 @@ import {
 import { assessAccount, companyLinkSlug, countReadiness } from "./readiness.js";
 import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
-  parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING,
+  parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING, autoRunBlocker, USER_JOB_HOLD_MS,
 } from "./pipeline-plan.js";
 import { resolveAccountOnTab } from "./company-resolve-extraction.js";
 import { armSizeRead, disarmSizeRead, readSizeOnTab } from "./company-size-extraction.js";
@@ -25,6 +31,7 @@ import { searchCompanyPeopleByName, discoverContactsForAccount } from "./contact
 import { getLinkedinTouchStats, countTouchesSince, recordLinkedinTouch } from "./linkedin-touch-log.js";
 import { withBatch, BatchBusyError, getRunningBatch, busyMessage } from "./batch-jobs.js";
 import { rescoreDerivedPriorities } from "./auto-score.js";
+import { getPipelineAutomation, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY } from "./pipeline-automation.js";
 
 export const PIPELINE_STATE_KEY = "pipelineState";
 const RUN_LABEL = "Run pipeline now";
@@ -36,8 +43,10 @@ const MIN_DELAY_MS = 4000;
 const MAX_DELAY_MS = 9000;
 const NAV_TIMEOUT_MS = 20000;
 const MAX_ACCOUNT_LINES = 50;
+const LAST_AUTO_BACKUP_KEY = "lastAutoBackupAt"; // backup-restore.js
 
-let runner = null; // { stopRequested, state }
+let runner = null; // { stopRequested, pauseRequested, state }
+let kicking = false;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,21 +56,25 @@ function randomDelay() {
   return MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS);
 }
 
-export async function startPipelineRun({ limit } = {}) {
+export async function startPipelineRun({ limit, auto = false, source = null } = {}) {
   if (runner) return { ok: false, error: "The pipeline is already running." };
+  await closeInterruptedRecord();
   const running = await getRunningBatch();
   if (running) return { ok: false, busy: true, error: busyMessage(running, RUN_LABEL) };
   const stats = await getLinkedinTouchStats();
   if (stats.last24h >= PIPELINE_TOUCH_CEILING) {
     return { ok: false, error: `The pipeline stops at ${PIPELINE_TOUCH_CEILING} LinkedIn page visits in any 24 hours, and ${stats.last24h} have been used. Try again later.` };
   }
-  const n = Math.max(1, Math.min(500, Math.floor(Number(limit) || 5)));
+  // An automatic run has no account limit (null): the ceiling or an empty list ends it.
+  const n = auto ? null : Math.max(1, Math.min(500, Math.floor(Number(limit) || 5)));
   const state = {
-    status: "running", limit: n, done: 0, touches: 0, current: null, remaining: null, accounts: [],
-    stoppedReason: null, error: null, busyLabel: null, readyBefore: null, readyAfter: null,
-    startedAt: Date.now(), heartbeatAt: Date.now(), finishedAt: null, acknowledged: false,
+    status: "running", auto, source, limit: n, done: 0, touches: 0, current: null, remaining: null, ready: null, accounts: [],
+    stoppedReason: null, error: null, busyLabel: null, madeWayFor: null, readyBefore: null, readyAfter: null,
+    // An automatic run shows no pop-up at the end (U3): it is born acknowledged.
+    startedAt: Date.now(), heartbeatAt: Date.now(), finishedAt: null, acknowledged: auto,
   };
-  runner = { stopRequested: false, state };
+  runner = { stopRequested: false, pauseRequested: false, state };
+  await chrome.storage.local.remove(PIPELINE_IDLE_KEY).catch(() => {});
   await chrome.storage.local.set({ [PIPELINE_STATE_KEY]: state });
   run(runner).catch(() => {}).finally(() => { runner = null; });
   return { ok: true };
@@ -70,6 +83,66 @@ export async function startPipelineRun({ limit } = {}) {
 export function stopPipelineRun() {
   if (runner) runner.stopRequested = true;
   return { ok: Boolean(runner) };
+}
+
+// U2: a user is starting a job of their own. Stop after the account in progress and stay out of the way
+// for USER_JOB_HOLD_MS, so their job can take the batch lock first.
+export async function pausePipelineForUser(forLabel) {
+  await chrome.storage.local.set({ [PIPELINE_HOLD_KEY]: Date.now() + USER_JOB_HOLD_MS });
+  if (runner) {
+    runner.pauseRequested = true;
+    runner.state.madeWayFor = forLabel || null;
+  }
+  return { ok: true, wasRunning: Boolean(runner) };
+}
+
+// The user's job has ended (its batch lock was released): the hold is no longer needed.
+export async function clearUserJobHold() {
+  await chrome.storage.local.remove(PIPELINE_HOLD_KEY).catch(() => {});
+}
+
+// A record still saying "running" while this worker has no runner belongs to a worker that died (an
+// extension reload, Chrome closed mid-run). Close it, and its window, before anything new starts.
+async function closeInterruptedRecord() {
+  if (runner) return;
+  const s = (await chrome.storage.local.get(PIPELINE_STATE_KEY))[PIPELINE_STATE_KEY];
+  if (!s || s.status !== "running") return;
+  if (s.windowId) await chrome.windows.remove(s.windowId).catch(() => {});
+  await chrome.storage.local.set({ [PIPELINE_STATE_KEY]: { ...s, status: "finished", stoppedReason: "interrupted", current: null, finishedAt: Date.now() } });
+}
+
+// The automatic trigger (design 5.4). Cheap when there is nothing to do: it never opens the LinkedIn
+// window unless an account can actually be worked on.
+export async function kickPipeline(source) {
+  if (runner || kicking) return { started: false, reason: "running" };
+  kicking = true;
+  try {
+    await closeInterruptedRecord();
+    const auto = await getPipelineAutomation();
+    if (!auto.enabled) return { started: false, reason: "off" };
+    const store = await chrome.storage.local.get([PIPELINE_HOLD_KEY, LAST_AUTO_BACKUP_KEY]);
+    const [stats, runningBatch] = await Promise.all([getLinkedinTouchStats(), getRunningBatch()]);
+    const now = Date.now();
+    let reason = autoRunBlocker({
+      enabled: auto.enabled, pausedDay: auto.pausedDay, today: localDay(now), holdUntil: store[PIPELINE_HOLD_KEY] || 0,
+      runningBatch, touches24h: stats.last24h, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now,
+    });
+    if (!reason) {
+      const { entries } = await readinessNow();
+      if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS).length === 0) reason = "nothing_left";
+    }
+    if (reason) {
+      // Kept only for the reasons the status line explains; hold and busy pass by themselves.
+      if (["nothing_left", "no_backup", "budget"].includes(reason)) {
+        await chrome.storage.local.set({ [PIPELINE_IDLE_KEY]: { reason, at: now } });
+      }
+      return { started: false, reason };
+    }
+    const res = await startPipelineRun({ auto: true, source });
+    return { started: Boolean(res.ok), reason: res.ok ? null : (res.error || "not started") };
+  } finally {
+    kicking = false;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -117,14 +190,18 @@ async function run(r) {
   const save = () => chrome.storage.local.set({ [PIPELINE_STATE_KEY]: { ...s, heartbeatAt: Date.now() } }).catch(() => {});
   // Extension API calls keep the background worker alive; this also keeps the "still alive" stamp fresh.
   const keepAlive = setInterval(save, 10000);
-  chrome.power.requestKeepAwake("system");
+  // Only a run the user started keeps the computer awake (D4): an automatic one freezes with sleep and
+  // is picked up again by the next kick.
+  if (!s.auto) chrome.power.requestKeepAwake("system");
   let worker = null;
   try {
     const first = await readinessNow();
     s.readyBefore = first.counts.ready;
-    while (!r.stopRequested && s.done < s.limit) {
+    const underLimit = () => s.limit == null || s.done < s.limit;
+    while (!r.stopRequested && !r.pauseRequested && underLimit()) {
       if ((await getLinkedinTouchStats()).last24h >= PIPELINE_TOUCH_CEILING) { s.stoppedReason = "budget"; break; }
-      const { cfg, entries } = s.done === 0 ? first : await readinessNow();
+      const { cfg, entries, counts } = s.done === 0 ? first : await readinessNow();
+      s.ready = counts.ready;
       const now = Date.now();
       const ranked = rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS);
       s.remaining = ranked.length;
@@ -144,7 +221,7 @@ async function run(r) {
       const started = Date.now();
       let outcome;
       try {
-        outcome = await withBatch(`SalesTeam is preparing accounts (${next.view.company})`, () => runAccount(worker.tab, next, cfg, r));
+        outcome = await withBatch(`SalesTeam is preparing accounts (${next.view.company})`, () => runAccount(worker.tab, next, cfg, r), { pipeline: true });
       } catch (err) {
         if (err instanceof BatchBusyError) { s.stoppedReason = "busy"; s.busyLabel = err.running?.label || null; break; }
         throw err;
@@ -156,25 +233,27 @@ async function run(r) {
       s.current = null;
       await save();
       if (outcome.windowClosed) { s.stoppedReason = "window_closed"; break; }
-      if (!r.stopRequested && s.done < s.limit) await sleep(randomDelay());
+      if (!r.stopRequested && !r.pauseRequested && underLimit()) await sleep(randomDelay());
     }
-    if (!s.stoppedReason) s.stoppedReason = r.stopRequested ? "user" : "limit";
+    if (!s.stoppedReason) s.stoppedReason = r.stopRequested ? "user" : r.pauseRequested ? "made_way" : "limit";
   } catch (err) {
     s.stoppedReason = "error";
     s.error = String((err && err.message) || err);
   } finally {
     clearInterval(keepAlive);
-    chrome.power.releaseKeepAwake();
+    if (!s.auto) chrome.power.releaseKeepAwake();
     if (worker) await chrome.windows.remove(worker.windowId).catch(() => {});
-    try { s.readyAfter = (await readinessNow()).counts.ready; } catch { /* the summary just lacks the count */ }
+    try { s.readyAfter = (await readinessNow()).counts.ready; s.ready = s.readyAfter; } catch { /* the summary just lacks the count */ }
     s.status = "finished";
     s.current = null;
     s.finishedAt = Date.now();
     await save();
-    appendActivityLog({
+    if (s.stoppedReason === "nothing_left") await chrome.storage.local.set({ [PIPELINE_IDLE_KEY]: { reason: "nothing_left", at: Date.now() } }).catch(() => {});
+    // An automatic run that handled nothing (it made way at once, say) is not worth a log line.
+    if (!(s.auto && s.done === 0)) appendActivityLog({
       actor: "extension",
       action: "pipeline_run",
-      label: `Pipeline run: ${s.done} account${s.done === 1 ? "" : "s"}, ${s.touches} LinkedIn page visit${s.touches === 1 ? "" : "s"}` +
+      label: `${s.auto ? "Automatic pipeline run" : "Pipeline run"}: ${s.done} account${s.done === 1 ? "" : "s"}, ${s.touches} LinkedIn page visit${s.touches === 1 ? "" : "s"}` +
         (s.readyBefore != null && s.readyAfter != null ? `, Ready ${s.readyBefore} -> ${s.readyAfter}` : "") + ` (${s.stoppedReason})`,
       newValue: { done: s.done, touches: s.touches, stoppedReason: s.stoppedReason, readyBefore: s.readyBefore, readyAfter: s.readyAfter },
     }).catch(() => {});

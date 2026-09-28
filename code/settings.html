@@ -86,6 +86,7 @@
         </a>
         <a href="#change-settings" class="nav-item" id="nav-change-settings" title="Change one setting directly - location, size, industry, what you sell...">Change Settings</a>
         <div class="nav-group-sublabel">General</div>
+        <a href="#automation-section" class="nav-item" id="nav-automation-section">Automation</a>
         <a href="#profile-section" class="nav-item" id="nav-profile-section">User Profile</a>
         <a href="#language-section" class="nav-item" id="nav-language-section">Message / Response Language</a>
         <a href="#api-key-section" class="nav-item" id="nav-api-key-section">Anthropic API Key</a>
@@ -165,6 +166,21 @@
         <button type="button" id="edit-setup-btn">Continue Setup…</button>
       </div>
       <p id="edit-setup-status" class="field-hint"></p>
+    </section>
+
+    <!-- 1.2 data pipeline, build step 3 (DATA_PIPELINE_DESIGN.md 10.1, U5): the switch for automatic
+         account preparation. Off until the user turns it on. -->
+    <section class="settings-card" id="automation-section">
+      <h3>Automation</h3>
+      <label class="checkbox-label">
+        <input type="checkbox" id="automation-enabled-checkbox" />
+        <span id="automation-enabled-label"></span>
+      </label>
+      <p class="field-hint" id="automation-consent-text"></p>
+      <p class="field-hint" id="automation-status-line"></p>
+      <div class="settings-buttons-row">
+        <button type="button" id="automation-resume-btn" hidden>Resume today</button>
+      </div>
     </section>
 
     <!-- PRD 6.20 Phase 10 follow-up (2026-09-18), user's own request - no

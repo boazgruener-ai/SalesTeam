@@ -35,20 +35,76 @@ export function busyMessage(running, newLabel) {
     `Please stop it, or wait for it to finish, before you start: ${newLabel}.`;
 }
 
+const PIPELINE_STATE_KEY = "pipelineState"; // pipeline-runner.js
+const PIPELINE_YIELD_WAIT_MS = 150000;
+const NOTE_MIN_MS = 3000;
+
+async function pipelineRunning() {
+  const s = (await chrome.storage.local.get(PIPELINE_STATE_KEY))[PIPELINE_STATE_KEY];
+  return Boolean(s) && s.status === "running";
+}
+
+// A small note in the corner while the user's job waits for the pipeline to make way.
+function showWaitNote(text) {
+  if (typeof document === "undefined" || !document.body) return { remove() {} };
+  const note = document.createElement("div");
+  note.setAttribute("role", "status");
+  note.style.cssText = "position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483001;background:#fff;" +
+    "border:1px solid #c9d7e8;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);padding:8px 14px;font:13px system-ui,sans-serif;color:#1a1a1a;";
+  note.textContent = text;
+  document.body.append(note);
+  return note;
+}
+
+// Step 3 touch-up U2: the automatic pipeline makes way for any job the user starts. It stops after the
+// account in progress (usually well under a minute) and stays out of the way until this job has begun.
+// Resolves with whatever still blocks the way afterwards (null when free).
+async function waitForPipelineToMakeWay(newLabel) {
+  chrome.runtime.sendMessage({ type: "PIPELINE_PAUSE", forLabel: newLabel }).catch(() => {});
+  const note = showWaitNote("Waiting for SalesTeam to finish the account in progress…");
+  const shownAt = Date.now();
+  // Between two accounts the pipeline stops almost at once, and a note that flashes for a moment is not
+  // seen (first live test). It stays at least NOTE_MIN_MS, saying what happened.
+  const settle = async (result) => {
+    note.textContent = "SalesTeam paused its automatic account preparation for your job. It carries on by itself when your job is done.";
+    const left = NOTE_MIN_MS - (Date.now() - shownAt);
+    if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+    return result;
+  };
+  try {
+    const until = Date.now() + PIPELINE_YIELD_WAIT_MS;
+    while (Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const running = await getRunningBatch();
+      if (running && !running.pipeline) return running;
+      if (!running && !(await pipelineRunning())) return settle(null);
+    }
+    return await getRunningBatch();
+  } finally {
+    note.remove();
+  }
+}
+
 // Shows the explanation and returns false when another batch is running; returns true when the way is free.
+// The data pipeline never blocks the user: it is asked to make way instead (U2).
 export async function guardBatchStart(newLabel, askConfirm) {
-  const running = await getRunningBatch();
+  let running = await getRunningBatch();
+  if ((running && running.pipeline) || (!running && (await pipelineRunning()))) running = await waitForPipelineToMakeWay(newLabel);
+  // Even with no pipeline run in progress, keep the next automatic one from starting in the moment
+  // between this check and the job taking the batch lock (the Scanner makes a backup first).
+  else if (!running) chrome.runtime.sendMessage({ type: "PIPELINE_PAUSE", forLabel: newLabel }).catch(() => {});
   if (!running) return true;
   await askConfirm(busyMessage(running, newLabel), { okLabel: "OK", cancelLabel: "Close" });
   return false;
 }
 
 // Registers a running batch; returns an async release function. Throws BatchBusyError when another one is running.
-export async function acquireBatch(label) {
+// `pipeline` marks the data pipeline's own per-account batches: a user's job asks those to make way.
+export async function acquireBatch(label, { pipeline = false } = {}) {
   const running = await getRunningBatch();
   if (running) throw new BatchBusyError(busyMessage(running, label), running);
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const record = { id, label, startedAt: Date.now(), heartbeatAt: Date.now(), hasLock: !!navigator.locks };
+  const record = { id, label, startedAt: Date.now(), heartbeatAt: Date.now(), hasLock: !!navigator.locks, ...(pipeline ? { pipeline: true } : {}) };
   let releaseLock = null;
   if (navigator.locks) {
     await new Promise((resolve) => {
@@ -70,8 +126,8 @@ export async function acquireBatch(label) {
   };
 }
 
-export async function withBatch(label, fn) {
-  const release = await acquireBatch(label);
+export async function withBatch(label, fn, options) {
+  const release = await acquireBatch(label, options);
   try {
     return await fn();
   } finally {
