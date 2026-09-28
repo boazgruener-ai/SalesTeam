@@ -3,6 +3,7 @@
 // background worker died (no sign of life) so nothing looks busy forever.
 import { askConfirm } from "./confirm-dialog.js";
 import { BULK_STATE_KEY, getRunningBatch } from "./batch-jobs.js";
+import { initPipelineStatus } from "./pipeline-status.js";
 
 const STALE_MS = 180000;
 let bannerEl = null;
@@ -89,6 +90,7 @@ async function render(state) {
 export async function initBatchStatus(changed) {
   if (window.self !== window.top) return; // an embedded page: the page around it already shows the bar and the pop-up
   onChange = changed || null;
+  initPipelineStatus(); // the data pipeline's own quiet pill, on the same pages
   const read = async () => (await chrome.storage.local.get(BULK_STATE_KEY))[BULK_STATE_KEY] || null;
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes[BULK_STATE_KEY]) render(changes[BULK_STATE_KEY].newValue || null);

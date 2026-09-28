@@ -25,6 +25,25 @@
     </div>
   </dialog>
 
+  <dialog id="pipeline-run-dialog">
+    <h3>Run pipeline now</h3>
+    <p>
+      Works through your accounts one at a time, best first: re-checks each LinkedIn company page (reading the
+      employee count on the same visit), looks up the LinkedIn profile of contacts you already know by name, and
+      finds contacts where none is known. Each account is then re-scored.
+    </p>
+    <p>
+      It opens a small separate LinkedIn window that stays in the background - you can keep working. It stops by
+      itself at 75 LinkedIn page visits in any 24 hours. Every value is saved the moment it is found.
+    </p>
+    <p><label>Accounts to work on: <input type="number" id="pipeline-run-limit" min="1" max="500" value="5" style="width:5em"></label></p>
+    <p id="pipeline-run-status" class="page-subtitle" role="status"></p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="pipeline-run-start-btn">Start</button>
+      <button type="button" id="pipeline-run-close-btn">Cancel</button>
+    </div>
+  </dialog>
+
   <dialog id="find-duplicates-dialog">
     <h3>Find &amp; Merge Duplicates</h3>
     <p id="find-duplicates-intro">
@@ -186,6 +205,7 @@
 
       <details class="nav-group nav-group-debug">
         <summary class="nav-group-label">Advanced tools</summary>
+        <button id="nav-run-pipeline-btn" type="button" class="nav-item" title="Data pipeline (1.2, manual start): work through the accounts that most need it - re-check LinkedIn, read sizes, find known contacts' profiles, discover contacts">Run pipeline now…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>

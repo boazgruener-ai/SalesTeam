@@ -90,3 +90,9 @@ export function formatTouchRelease(stats) {
     .map((r, i) => (i === 0 ? `By ${fmt(r.at)} you'll have ${r.available} touches available` : `by ${fmt(r.at)}, ${r.available}`))
     .join(", ") + ".";
 }
+
+// Touches recorded since a moment - the 1.2 pipeline measures its real touches per account with it.
+export async function countTouchesSince(sinceMs) {
+  const { [TOUCH_LOG_KEY]: log = [] } = await chrome.storage.local.get(TOUCH_LOG_KEY);
+  return log.filter((ts) => ts >= sinceMs).length;
+}

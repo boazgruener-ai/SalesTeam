@@ -1224,24 +1224,46 @@ export async function applyResolvedCompanyIds(resolutions) {
   const [map, extras] = await Promise.all([getTargetAccounts(), getTargetAccountExtras()]);
   let updated = 0;
   const at = Date.now();
+  // Accounts with no entry in the map (Discovered rows keep their id on the workbook row) get the id
+  // written onto that row instead, when the caller allows it (the 1.2 pipeline's re-check).
+  const rowWrites = new Map();
   for (const r of resolutions) {
-    if (!r.linkedinCompanyId || !map[r.key]) continue;
-    map[r.key].linkedinCompanyId = r.linkedinCompanyId;
+    if (!r.linkedinCompanyId) continue;
+    const previousId = map[r.key]?.linkedinCompanyId || null;
+    if (!map[r.key]) {
+      if (!r.allowWorkbookRow) continue;
+      rowWrites.set(r.key, r);
+    } else {
+      map[r.key].linkedinCompanyId = r.linkedinCompanyId;
+    }
     // Fill a MISSING linkedinLink from the page the resolver actually landed on - never overwrite
     // one the workbook already carries (2026-09-22). 24 accounts imported with no link had resolved
     // ids all along and no way to get a link: the resolver read this url and threw it away, and
     // getTargetAccountsMissingLinkedinId() would never queue them again since they HAVE an id.
     // A missing link also made them permanently ineligible for Fetch Company Size, which requires one.
-    if (r.companyPageUrl && !map[r.key].linkedinLink) map[r.key].linkedinLink = r.companyPageUrl;
+    if (map[r.key] && r.companyPageUrl && !map[r.key].linkedinLink) map[r.key].linkedinLink = r.companyPageUrl;
     const cur = extras[r.key] || emptyExtra();
+    // A re-check that read a different id overwrites the old one (agreed 2026-09-25, design T4): the
+    // page the account's own link points to is its identity. The old id stays on record here.
+    const oldId = previousId || r.previousId || null;
+    const replaced = oldId && String(oldId) !== String(r.linkedinCompanyId) ? { replaced: oldId } : {};
     extras[r.key] = {
       ...cur,
       provenance: {
         ...(cur.provenance || {}),
-        linkedinCompanyId: { src: r.src || "linkedin", at, link: r.checkedLink || r.companyPageUrl || null, v: r.linkedinCompanyId },
+        linkedinCompanyId: { src: r.src || "linkedin", at, link: r.checkedLink || r.companyPageUrl || null, v: r.linkedinCompanyId, ...replaced },
       },
     };
     updated++;
+  }
+  if (rowWrites.size > 0) {
+    const workbook = await getTargetAccountsWorkbook();
+    const companies = (workbook.companies || []).map((c) => {
+      const r = rowWrites.get(normalizeCompanyName(c.company));
+      if (!r) return c;
+      return { ...c, linkedinCompanyId: r.linkedinCompanyId, linkedinLink: c.linkedinLink || r.companyPageUrl || null };
+    });
+    await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, companies } });
   }
   if (updated > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map, [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
   // ...and again into the WORKBOOK, which is a genuinely separate store (see syncLinkedinLinksToWorkbook).
@@ -4604,6 +4626,10 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       excluded: excludedKeys.has(key),
       importedAt,
       provenance: extra.provenance || {},
+      // For the pipeline (build step 2): the resolver's name search, and the per-account job state.
+      officialName: row.officialName || null,
+      alternativeName: row.alternativeName || null,
+      pipeline: extra.pipeline || {},
     };
     for (const field of PROVENANCE_FIELDS) view[field] = ov[field] ?? row[field] ?? null;
 
@@ -4624,6 +4650,7 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       return Boolean(classifyJobTitleSeniority(ct.jobTitle, seniorityLevels));
     };
     view.contacts = (contactsByCompanyId.get(row.companyId) || []).map((ct) => ({
+      contactKey: contactKeyFor(ct.company, ct.fullName),
       fullName: ct.fullName,
       relevant: isRelevant(ct),
       linkedinUrl: ct.lastVerified2 || null,
@@ -4658,6 +4685,79 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
   }
   return views;
+}
+
+// ---- Writes made by the 1.2 data pipeline (build step 2, DATA_PIPELINE_DESIGN.md 5.5 and T1-T4) ----
+
+// Merges into extras[key].pipeline - attempts per job, contacts already searched, the day last handled.
+export async function savePipelineAccountState(key, patch) {
+  const extras = await getTargetAccountExtras();
+  const cur = extras[key] || emptyExtra();
+  extras[key] = { ...cur, pipeline: { ...(cur.pipeline || {}), ...patch } };
+  await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
+}
+
+// LinkedIn's size band against the count already stored (pipeline-plan.js sizeVerdict). "confirm"
+// keeps the stored count and records it as verified by LinkedIn - it is usually more precise than the
+// band. "fill" and "replace" write LinkedIn's number (the band's lower bound); "replace" keeps the old
+// count in the trace. The count is checked through the account's override when it has one - the value
+// the table and readiness show - and a replaced override is replaced in place, so it cannot go on
+// shadowing the row. Returns { kept, previous }.
+export async function applyEmployeeCheck(key, { verdict, employeeCount, sizeBandText }) {
+  if (!verdict) return null;
+  const [workbook, extras] = await Promise.all([getTargetAccountsWorkbook(), getTargetAccountExtras()]);
+  const cur = extras[key] || emptyExtra();
+  const ov = cur.overrides || {};
+  const present = (v) => v !== undefined && v !== null && v !== "";
+  const overridden = present(ov.globalEmployees);
+  const at = Date.now();
+  const bandText = sizeBandText ? `${sizeBandText} employees` : null;
+  let found = false;
+  let kept = null;
+  let previous = null;
+  const companies = (workbook.companies || []).map((c) => {
+    if (found || normalizeCompanyName(c.company) !== key) return c;
+    found = true;
+    const current = overridden ? ov.globalEmployees : c.globalEmployees;
+    if (verdict === "confirm" && present(current)) {
+      kept = current;
+      return { ...c, employeeCountText: c.employeeCountText || bandText };
+    }
+    previous = present(current) ? current : null;
+    kept = employeeCount;
+    return overridden ? c : { ...c, globalEmployees: employeeCount, employeeCountText: bandText };
+  });
+  if (!found) return null;
+  const overrides = overridden && kept !== ov.globalEmployees ? { ...ov, globalEmployees: kept } : ov;
+  extras[key] = {
+    ...cur,
+    overrides,
+    provenance: {
+      ...(cur.provenance || {}),
+      globalEmployees: { src: "linkedin", at, v: kept, band: sizeBandText || null, ...(previous !== null ? { replaced: previous } : {}) },
+    },
+    sizeFetchAttemptedAt: at,
+  };
+  await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, companies }, [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
+  return { kept, previous };
+}
+
+// T1: the profile found for a known contact, or the confirmation that a known profile still shows the
+// person at the company. Written onto the workbook contact row (Contact Link = lastVerified2, dated
+// lastVerified), which is what readiness reads. Returns the previous Contact Link, or undefined when
+// the contact is gone.
+export async function setContactLinkedinProfile(contactKey, profileUrl) {
+  const workbook = await getTargetAccountsWorkbook();
+  let previous;
+  const today = new Date().toISOString().slice(0, 10);
+  const contacts = (workbook.contacts || []).map((ct) => {
+    if (previous !== undefined || contactKeyFor(ct.company, ct.fullName) !== contactKey) return ct;
+    previous = ct.lastVerified2 || null;
+    return { ...ct, lastVerified2: profileUrl, lastVerified: today };
+  });
+  if (previous === undefined) return undefined;
+  await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, contacts } });
+  return previous;
 }
 
 // The user's targeting settings in the shape readiness.js wants (design 3.1).

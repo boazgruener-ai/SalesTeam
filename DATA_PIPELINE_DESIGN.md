@@ -674,6 +674,100 @@ Branch `feature/pipeline-step1`. Still read-only: nothing visits LinkedIn that d
    LinkedIn profile is a narrower, likely cheaper job than a People-tab discovery, and should be
    designed as its own job.
 
+### Step 2 touch-ups (agreed 2026-09-25)
+
+Step 1's live reading changed what step 2 mostly has to do. The biggest gaps are not missing data.
+They are data that is already there but not yet confirmed on LinkedIn: 533 ids to re-check and 289
+known contacts with no LinkedIn profile. Four changes follow.
+
+**T1. A new job, `profile`: find a known person's LinkedIn profile.** It runs when the contact gap is
+*"no LinkedIn profile"* or *"out of date"*. It takes the most senior relevant contact the account
+already names, and searches the company's own People tab for that name:
+`linkedin.com/company/<slug>/people/?keywords=<first last>`. That is **1 touch**, and it reuses the
+existing contact-discovery page reader unchanged.
+
+- **Accepted** only when exactly one result's name matches the contact's name (accents, case and
+  middle names ignored; first and last name must both match) and its headline does not name a
+  different company. The profile link goes into the contact's Contact Link, dated today, with
+  provenance `linkedin`.
+- **Never guessed.** No match, or two or more matches, is recorded as an attempt and nothing is
+  written.
+- The People tab lists only current employees. So a person who is not found has probably left, or
+  is spelled differently. Once every known contact has been searched (see "Step 2 as built"), the `profile` job stops for that account, and
+  the ordinary `contacts` job (People-tab discovery by title) takes over.
+- A stale contact (older than 6 months) goes through the same search, which also confirms the person
+  is still at the company.
+
+| Job | Tier | After | Existing code it wraps |
+|---|---|---|---|
+| `profile` | linkedin | `resolve` | `fetchContactCandidates` in `contact-discovery-extraction.js`, with a name keyword |
+
+`contacts` now runs only when no relevant contact exists, or when `profile` has given up.
+
+**T2. `resolve` also re-checks.** Its `needs` covers an id that is missing **and** an id that is *"not
+yet re-checked"*. With a LinkedIn link, the re-check is one direct visit to that link (1 touch).
+
+**T3. Size comes free on the same visit.** The id reader and the size reader are separate content
+scripts, and both already run on every `/company/` page, each switched on by its own flag. When an
+account needs both, the pipeline sets both flags before the one visit and waits for both answers.
+So re-check + size = **1 touch**, not 2. `size` runs as its own visit only when the id is already
+verified.
+
+**T4. When the re-check reads a different id** (6 of 30 in the step 0 test): the id read from the
+account's own link page is written, because that page is the account's identity. The old id is kept
+in the provenance entry (`replaced`) and written to the batch log, so it can be traced.
+
+**Cost of the current backlog**, at the rolling 75-touch ceiling: about 533 re-checks (size included)
++ 289 profile searches + 78 contact discoveries at about 2–3 touches each ≈ **1,000 touches, about 14
+days** if nothing else used LinkedIn. It is a one-time cost: after it, only expiries and new accounts
+need touches.
+
+**Step 2 also uses the worker window.** The build order put the unfocused worker window (D1) in step
+3. Step 0 proved it works, and the one-account entry points need a way to be handed a tab anyway.
+Building them on a foreground tab first and then changing them would be wasted work. So step 2's
+**Run pipeline now** already opens the small unfocused window. Because the user clicked it, it keeps
+the computer awake while it runs, like every other user-started job (D4).
+
+**Run pipeline now** is in Advanced tools. It asks how many accounts to process (default 5), so the
+first runs are small and the touches per account can be measured.
+
+### Step 2 as built (2026-09-25)
+
+Branch `feature/pipeline-step2`, stacked on step 1. Nothing runs unless **Run pipeline now** is clicked.
+
+- **`code/pipeline-plan.js`** (pure, covered by `test_pure_modules.py`): `jobsNeeded`, `rankCandidates`,
+  the 2-day rule (`withFailedAttempt`, `jobGaveUp`), name matching (`namesMatch`, `pickProfileMatch`)
+  and size bands (`parseSizeBand`, `sizeVerdict`).
+- **`code/pipeline-runner.js`** is the loop, in the background worker. The design's `pipeline-jobs.js`
+  was folded into it: with only four LinkedIn jobs, a separate descriptor file added nothing.
+- **One-account entry points** in the existing runner files: `resolveAccountOnTab`, `armSizeRead` /
+  `readSizeOnTab`, `searchCompanyPeopleByName`, `discoverContactsForAccount`. The old batch runners are
+  unchanged apart from an `activate` option on their navigation, which defaults to today's behaviour.
+- **`code/auto-score.js`** holds the local re-scoring, now shared by the Target Accounts page and the
+  pipeline's score step.
+- **`code/pipeline-status.js`**: the quiet pill (bottom right, every SalesTeam page, with Stop) and the
+  summary pop-up at the end, listing each account's visits and what changed.
+
+**Refinements made while building:**
+
+1. **T1: which contact, how often.** Each profile search takes the next relevant known contact not yet
+   searched (those with no LinkedIn profile first, then those out of date). An account gets at most
+   3 name searches a day. When every known contact has been searched without a match, `contacts`
+   takes over. This replaces the 2-day rule for this one job. A page that did not answer does not
+   count as searched.
+2. **T3: size is checked, not blindly overwritten.** LinkedIn shows a band ("1,001-5,000"), stored as
+   its lower bound. A stored count inside the band is **kept** and marked verified by LinkedIn,
+   because it is usually more precise. A count outside the band is replaced, and the old one is kept
+   in the provenance entry (`replaced`), as for ids (T4). A count held as an override is checked and
+   replaced in place, so it cannot go on hiding the new value.
+3. **A found profile can replace a news link.** The research often put a news article in Contact
+   Link. When the LinkedIn profile replaces it, the old link is written to the activity log entry for
+   that account, so the evidence can still be found.
+4. **One pass per account per day.** An account the pipeline has handled today is not picked again
+   until tomorrow, so a failed job is retried on another day, not in a loop.
+5. **Discovered rows** keep their id on the workbook row, not in the id map. A re-check of one writes
+   the id there.
+
 ---
 
 ## 12. Decisions — all agreed 2026-09-24
