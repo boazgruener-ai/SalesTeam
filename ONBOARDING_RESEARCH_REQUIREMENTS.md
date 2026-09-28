@@ -386,6 +386,21 @@ company's LinkedIn People page is searched only when the web gave too few contac
 company's website) is stored with the URL it came from, as web research already does, so the user can
 check it and the arbitration of 1.2.0 can compare it with a LinkedIn value.
 
+**R7a.7 — As few searches as possible: one credible source per fact is enough (decided 2026-09-28).**
+Once a fact (employees, revenue, HQ location, …) has **one credible source**, research does not search
+for it again. Each research call is told what is already known and asks only for what is missing,
+so that:
+
+- a listing that already gave employees and HQ (R7.1a) leaves only the rest to find;
+- one annual report that gives employees, revenue and HQ together closes all three at once;
+- an account with nothing missing gets no further research until its verification expires (1.2.0
+  R5.3).
+
+*Credible* means what 1.2.0 already counts as verified: a cited source of adequate quality (1.2.0
+R5.2). A second source is sought only when the first is not credible enough, or when two sources
+already found disagree in a way that could change a decision (1.2.0 R5.4). The existing
+*only what is missing* mode of web research is the starting point.
+
 **For the design stage:** reading reports and websites costs more per account than 1.2.0's three-search
 depth research, while LinkedIn touches per account should fall (no size fetch when the web gave one;
 fewer People-page searches). Section 8's figures are to be re-measured on this basis. Whether pages
