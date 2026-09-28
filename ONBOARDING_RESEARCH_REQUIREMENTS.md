@@ -272,6 +272,35 @@ hospitals, associations, and companies surfaced through relevant initiatives).
 Web Research, Scanner). It searches the web for organisations that match the Ideal customer in the
 target geography, using the seller research and the confirmed wizard answers.
 
+**R7.1a — The initial list comes from company listings, not from LinkedIn (decided 2026-09-28).** The
+first accounts are built from published listings of companies in each target country, found by web
+search. For example:
+
+- **rankings of the largest companies** in country X (*"top 100 largest companies in Switzerland"*,
+  by employees or revenue), from business press, statistics offices and similar publishers;
+- **business directories** that exist for every country, such as Dun & Bradstreet's;
+- **official company registries**, such as Zefix for Switzerland and its equivalents elsewhere — these
+  list every registered company but do not rank them, so they mainly confirm identity, legal name and
+  address (the workbook's existing Registry fields);
+- any other web source that answers the same question for that country.
+
+Listings are the fastest way to a solid starting list: the companies on them demonstrably exist, and
+the source already states size, HQ and often industry.
+
+**R7.1b — LinkedIn is assumed, and checked afterwards.** Practically all companies on a national
+top-100 list have a LinkedIn company page; one or two exceptions are expected and not a concern. The
+list is therefore built without LinkedIn, and LinkedIn confirms each company after onboarding
+(R3.4.1). An exception simply ends as Lacking evidence (R7.7).
+
+**R7.1c — The listing is chosen to match the targeting.** A top-100-largest list fits a seller whose
+size targets are large companies. If the wizard's size bands, industries or organisation types point
+elsewhere (e.g. mid-sized manufacturers, hospitals), the search asks for listings of *those* (a
+ranking by industry, a directory filtered by size, a list of hospitals), and the companies taken from
+any listing are filtered by the wizard's size, industry and exclusion answers before they are added.
+The fit-driven search of the Master Prompt (its section 25: subsidiaries, regional headquarters,
+public bodies, companies surfaced through relevant initiatives) **adds** to the listings; it does not
+replace them.
+
 **R7.2 — Every candidate arrives with evidence**: name, website, HQ country, one line on why it fits,
 and the source URL(s) it was found on. **A candidate without a source is discarded.** A LinkedIn
 company URL is kept only if a cited source shows it, and even then it is **verified by the
@@ -293,8 +322,8 @@ pipeline's resolve job** before it counts. Nothing is ever guessed.
 A candidate that matches an existing account **only by name** goes to the decision queue (as 1.2.0
 R12.6.3 does for LinkedIn Discovery).
 
-**R7.5 — Best fit first.** Discovery returns the strongest-fitting organisations first, so that the
-first days of the Build clock produce the best accounts. This is 1.2.0's depth-first rule applied to
+**R7.5 — Best fit first.** From the listings and the searches, discovery adds the strongest-fitting
+organisations first, so that the first days of the Build clock produce the best accounts. This is 1.2.0's depth-first rule applied to
 discovery.
 
 **R7.6 — Discover only as far ahead as can be processed.** LinkedIn can process roughly 30 accounts a
@@ -316,11 +345,60 @@ wrong.
 
 ---
 
+## 7a. Researching each account: web first, LinkedIn last (decided 2026-09-28)
+
+Once a company is on the list (section 7), it needs what the Ready bar and the targets ask for: its
+**size in employees**, its **HQ location**, optionally its **revenue**, and then **initiatives** and
+**contacts**. Most of this is published, and the web is the cheaper and faster place to get it.
+
+**R7a.1 — Traded companies first, from their own filings.** For a publicly traded company, the annual
+and quarterly reports and its press releases are the best single source for almost everything
+needed: HQ location, employees, revenue, initiatives, management, budgets and investments. Web
+research looks for these first. Traded companies are researched before the others.
+
+**R7a.2 — Every account's own website is read.** For each company, research opens its website and takes
+as much as is relevant from it: HQ location, number of employees (mainly for companies that are not
+traded, where no filing gives it), initiatives, **C-level and management names with their titles**,
+and a short summary of the company.
+
+**R7a.3 — Private companies, non-profits, associations and public bodies come second.** They publish
+less, so they are harder to complete from the web. They are researched after the traded companies,
+and are expected to rely on LinkedIn more often for the fields the web did not give.
+
+**R7a.4 — LinkedIn only fills gaps and verifies.** After the web research, LinkedIn is used for two
+things only:
+
+- **to find what is still missing** — for example the employee count of a private company whose
+  website does not state it, or contacts where the web gave none;
+- **to verify what the web research found** — the company page (which the Scanner needs in any case,
+  R7.7) and the LinkedIn profile of each contact found on the web.
+
+It is **not** used to re-fetch a field that web research already found with a cited source; 1.2.0 already
+counts such a field as verified (1.2.0 R5.2).
+
+**R7a.5 — Contacts found on the web are matched to LinkedIn by name.** A contact named on the website or
+in a report (e.g. *"Anna Muster, Chief Operating Officer"*) is looked up on LinkedIn by name, which the
+1.2.0 pipeline already does for contacts without a profile. It counts towards Ready (at least one
+contact at a chosen seniority level with a LinkedIn profile) only once its profile is found. The
+company's LinkedIn People page is searched only when the web gave too few contacts to meet the target.
+
+**R7a.6 — Every value keeps its source.** Each value found (a report, a press release, a page of the
+company's website) is stored with the URL it came from, as web research already does, so the user can
+check it and the arbitration of 1.2.0 can compare it with a LinkedIn value.
+
+**For the design stage:** reading reports and websites costs more per account than 1.2.0's three-search
+depth research, while LinkedIn touches per account should fall (no size fetch when the web gave one;
+fewer People-page searches). Section 8's figures are to be re-measured on this basis. Whether pages
+are opened with a web-fetch tool or through search results is a design choice.
+
+---
+
 ## 8. Time and money, told up front
 
 These estimates come from measurements already made for 1.2.0 (DATA_PIPELINE_DESIGN.md section 9, and
 the first live web run of 2026-09-28). They are **for this document only**; the design stage must
-measure web discovery before any number is shown to users.
+measure web discovery before any number is shown to users. They predate section 7a (web first, LinkedIn last),
+which should raise the web cost and lower the LinkedIn touches per account.
 
 | | Per account | For 400 accounts |
 |---|---|---|
