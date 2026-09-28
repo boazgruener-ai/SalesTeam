@@ -1,7 +1,7 @@
 # SalesTeam — Onboarding Research: Design
 
 Target release: **1.2.1** (test builds 1.2.0.1, 1.2.0.2 …)
-Status: **Design — draft for review.** Decisions D1–D6 (section 12) wait for Boaz.
+Status: **Design — agreed 2026-09-28.** Boaz agreed to every recommendation in D1–D9 (section 12).
 Date: 2026-09-28
 Builds on: `ONBOARDING_RESEARCH_REQUIREMENTS.md` (agreed 2026-09-28). Requirement numbers (R4.2a,
 R7a.7…) refer to that document; "1.2.0 R…" and "1.2.0 design …" refer to `DATA_PIPELINE_REQUIREMENTS.md`
@@ -321,6 +321,25 @@ an existing account goes to the decision queue (R7.4, reusing 1.2.0's name-match
   subsidiaries, regional HQs, public bodies, companies with relevant initiatives) runs as a third call
   with `web_search` (R7.1c).
 
+**Size-targeted discovery (D9, agreed 2026-09-28).** The size bands are the wizard's own
+(`SIZE_PRIORITY_BUCKETS`: Small 0–200, Medium 201–500, Large 501–1,000, Extra Large 1,001–5,000, Extra
+Extra Large 5,001+), shown with their ranges on the Size step, where the user ticks the bands to cover —
+there is no standard definition, so the ranges are always visible. Discovery follows them:
+
+- **Listings match the bands.** A top-100-largest ranking is used only when the ticked bands are the
+  largest ones; otherwise the listing call asks for companies of the ticked range (by industry,
+  region or directory), never the largest ones by default (R7.1c).
+- **The target is split across the ticked bands in proportion to their priorities** (e.g. 100 accounts,
+  Large High and Medium Medium → about 60 and 40).
+- **Centre of the band first.** Within a band, candidates are ordered by how close their headcount is to
+  the band's log-scale midpoint (√(min × max): ~707 for Large, ~317 for Medium, ~2,236 for Extra Large;
+  Small and Extra Extra Large, open at one end, use 100 and 10,000). This replaces the idea of
+  collecting *all* companies of a band and taking 50 either side of its median: no free source lists
+  every company of a band with its headcount, and company counts rise steeply towards a band's lower
+  end, so its median would sit near the bottom. Fit still comes first: the centre distance ranks
+  candidates of equal pre-score, so a strong fit at the band's edge beats a weak fit at its centre.
+  Candidates without a headcount yet rank after those with one.
+
 ### 4.4 Adding the accounts
 
 A new row source, **"Web"**:
@@ -431,8 +450,8 @@ else state = "in_progress";
 - every **targeting field** in `requiredFields(cfg)` other than the LinkedIn id and contacts —
   HQ country, employees, industry, as the user's own targeting requires (1.2.0 R3.5) — is verified.
 
-The assessment returns `usableVia: "linkedin" | "web"`. `isScannable`, the Ready bar, `MIN_READY_TO_SCAN`
-(5) and the Scanner's selection are **unchanged**, so 1.2.0 R3.4 still holds for Ready (R3.4.2–3).
+The assessment returns `usableVia: "linkedin" | "web"`. `isScannable`, the Ready bar and the Scanner's
+selection are **unchanged** (`MIN_READY_TO_SCAN` rises from 5 to 10, D7, section 7.3), so 1.2.0 R3.4 still holds for Ready (R3.4.2–3).
 
 ### 6.2 What the user sees
 
@@ -468,6 +487,29 @@ stop), or the account has waited more than a day.
 **D2:** verify **one** web contact by name (enough for Ready), then use one People-page visit for the rest,
 rather than one name search per web contact. Three name searches would cost three touches for what the
 People page usually gives in one.
+
+### 7.3 The first 10 Ready, then the rest (D7, agreed 2026-09-28)
+
+A Leads scan over fewer than about 10 verified accounts is unlikely to find posts by target titles, and
+borrowing touches from the user's scanning room cannot work, because a scan the user starts later cannot
+be predicted and spent touches cannot be given back. So the first day trades a short wait for a useful
+first scan, and the ceiling is never raised:
+
+- **`MIN_READY_TO_SCAN` rises from 5 to 10**, every day, not only the first (after day 1 the Ready count
+  only grows, so it is the same in practice and simpler). **This changes 1.2.0 R12.3.4 (5).** The gate
+  stays soft: 0 Ready blocks the scan; 1–9 explain and offer **Scan anyway**, with the progress and time
+  left (*"6 of 10 accounts ready, about 25 minutes to go"*).
+- **Until 10 accounts are Ready, the LinkedIn loop works only towards Ready:** it picks the accounts with
+  the fewest touches to Ready (web research done, a web contact to verify), takes each only as far as
+  Ready (company page and one relevant contact with a profile), and postpones what lies above Ready —
+  contacts 2–3, the People page for the target, the next discovery wave. Expected: 13–15 accounts
+  attempted, about 30–35 touches, **about an hour** (to be measured in build step 4).
+- The Finish screen says it: *"Your first 10 accounts will be ready in about an hour; the Scanner opens
+  then."*
+- **The pipeline ceiling stays at 60** of the 99 in any rolling 24 hours. Because the window rolls, day 2
+  does not start with a fresh 99: the guarantee is **at least 39 touches for the user's scans at any
+  moment**. Build step 4 measures the touches a typical scan of 10–20 accounts needs; if 39 proves too
+  few, the answer is a lower pipeline ceiling, never a borrowed one.
 
 ---
 
@@ -537,14 +579,16 @@ from **Advanced tools** before the wizard uses them, so their real cost is measu
 | **1** | Per-field provenance format (5.3), `webUsable` (6), "Web" row source (4.4), exclusions by name/domain (3.9), the pure modules' tests | Usable count includes web-only accounts | `test_pure_modules.py`; existing accounts unchanged |
 | **2** | Web lane with web fetch, `missingWebTopics`, contacts from the web; Advanced > *Research accounts on the web (new)* | nothing new in normal use | **measure** cost and time per account on 20 real accounts, traded and private |
 | **3** | Web Discovery from listings; Advanced > *Find accounts on the web* | new accounts appear as "Web" | **measure** listing cost, rows kept after filtering, share found on LinkedIn |
-| **4** | LinkedIn after web (7): ranking rule, one profile search + People page | fewer People-page visits | touches per account vs. section 9 |
+| **4** | LinkedIn after web (7): ranking rule, one profile search + People page; first 10 Ready first and the Scanner at 10 (7.3, D7) | fewer People-page visits | touches per account vs. section 9; time to 10 Ready; touches per Leads scan (D7) |
 | **5** | Wizard: About you, seller research, progress screen, proposals on the existing steps, `proposal-ui.js` | the new wizard start | a clean profile with 3 real company websites |
 | **6** | Wizard: initiative stages, included companies, targets with the estimate, Finish kicks both lanes; stop rule (8); coverage lines | the full onboarding | a full onboarding in a clean profile, 100 accounts |
 | **7** | Settings offer for existing installs (3.12); Help, store listing and website wording; release notes; **1.2.1** | — | store package |
 
 ---
 
-## 12. Decisions for Boaz
+## 12. Decisions — all agreed 2026-09-28
+
+Boaz agreed to every recommendation below.
 
 | # | Decision | Recommendation |
 |---|---|---|
@@ -554,6 +598,9 @@ from **Advanced tools** before the wizard uses them, so their real cost is measu
 | **D4** | Four web workers, as in bulk research | **Yes**; more raises the 429 risk for little gain |
 | **D5** | Traded companies first, by the listing's or the research's `isPublic` | **Yes** (R7a.1) |
 | **D6** | Build step 0 (the write lock) ships alone as 1.2.0.1, because it fixes a risk in the version already in the store's queue | **Yes** — it is small and independent of everything else |
+| **D7** | Raise the pipeline's LinkedIn ceiling (e.g. 60 → 75) after onboarding to build faster? | **No** — the Scanner needs **10 Ready** (was 5, soft gate), and the pipeline goes for the first 10 Ready before anything else (7.3). The ceiling stays 60, guaranteeing at least 39 touches for scans; touches per scan are measured in step 4. Boaz's proposal, 2026-09-28 |
+| **D8** | Use touches left under the 60 at night (e.g. 01:00–05:00) for extra LinkedIn work? | **No change.** The pipeline already resumes whenever it is under 60 in the rolling 24 hours, day or night, while Chrome and a SalesTeam page are open. Night adds no capacity (a touch at 03:00 counts until 03:00 next day). Not added: a background timer without a page open, or keeping the computer awake at night (1.2.0 D4 stands; unseen 03:00 activity would contradict "visible in your browser") |
+| **D9** | Discovery for medium or small companies instead of the largest | **Size-band listings, the target split by band priority, centre of each band first** (4.3). Bands stay the wizard's S/M/L/XL/XXL, shown with their ranges on the Size step. Boaz's proposal, adapted 2026-09-28 |
 
 ---
 
