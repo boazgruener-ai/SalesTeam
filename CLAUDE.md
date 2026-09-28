@@ -130,9 +130,13 @@ assumption about which rule fires on an illogical value.
 
 ## Versioning and store submission
 
-- **Default to bumping the patch digit only** (1.1.3 -> 1.1.4). Minor and major bumps are
-  Boaz's explicit call, never something to propose per feature batch. Chrome allows each
-  segment up to 65535, so there's no shortage.
+- **Rule from 2026-09-28:** each store release is one whole work item (1.2.1 = onboarding
+  research, 1.2.2 = team use). **Test builds add a 4th segment to the version already out:**
+  1.2.0.1, 1.2.0.2 ... then the finished item ships as 1.2.1; then 1.2.1.1 ... -> 1.2.2. Numbers
+  always rise - never 1.2.1.1 -> 1.2.1, which sorts below its own builds. A quick fix to a live
+  version takes the next test-build number (e.g. 1.2.0.3) and ships as that.
+- Minor and major bumps are Boaz's explicit call, never something to propose per feature batch.
+  Chrome allows each segment up to 65535, so there's no shortage.
 - Keep `code/manifest.json`'s version and `PRD.md`'s "Current version" line in sync on every
   bump, regardless of tier. Release notes are optional for patches — ask if a patch is going
   to the store.
