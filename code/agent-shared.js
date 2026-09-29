@@ -1531,7 +1531,7 @@ async function streamWebResearch(apiKey, body, signal, onSearch) {
     else if (ev.type === "content_block_start") {
       const block = { ...ev.content_block };
       if (block.type === "text") { block.text = block.text || ""; block.citations = block.citations || []; }
-      if (block.type === "server_tool_use") { block._json = ""; if (onSearch) onSearch(); }
+      if (block.type === "server_tool_use") { block._json = ""; if (onSearch) onSearch(block.name); }
       blocks[ev.index] = block;
     } else if (ev.type === "content_block_delta") {
       const block = blocks[ev.index];
@@ -1680,4 +1680,156 @@ export async function researchAccountOnWeb(company, settings, { onStatus, signal
   }
   if (!briefing) finalText = stopped === "user" ? "[Stopped before the briefing was written - only the sources found so far are kept.]" : "[No briefing was written - only the sources found are kept.]";
   return { text: finalText, data, sources: [...sources.values()], searches, model, stopped, costUsd };
+}
+
+// ---------------------------------------------------------------------------
+// 1.2.1 web lane (ONBOARDING_RESEARCH_DESIGN.md 5.2-5.4): one research per account that asks ONLY for what is
+// missing, reads the company's own pages (web fetch) before searching, and answers every fact with its own
+// source. D10 (2026-09-29): it also reports the LinkedIn company page and people's LinkedIn profile links that
+// the search results list, so the LinkedIn lane has fewer pages to visit.
+const WEB_FETCH_TOOL_CURRENT = "web_fetch_20260209";
+const WEB_FETCH_TOOL_BASIC = "web_fetch_20250910";
+const LANE_TIME_LIMIT_MS = 240000;
+
+const STAGE_WORDS = "poc (proof of concept), exploration, pilot, early_production, scaling, mature, tech_native";
+
+function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, industryNames }) {
+  const home = (targetCountries && targetCountries[0]) || "the seller's home market";
+  const cited = "{\"value\":...,\"url\":\"the page that states it\",\"year\":YYYY|null}";
+  return (
+    "You are a B2B account researcher. You get a company, the facts already known about it, and the TOPICS still missing. " +
+    "Research only those topics. Where to look, in this order: for a publicly traded company its latest annual or quarterly " +
+    "report and investor-relations news; for every company its own website - home, about, leadership or management, news. " +
+    "Read those pages with web fetch. Use web search only for what they do not give, and to find the LinkedIn links asked for below. " +
+    "One credible source per fact is enough - do not look for a second one. Never invent a fact, a name or a link: " +
+    "if something is not found, use null." +
+    companyContextBlock(companyContext) +
+    idealCustomerProfileBlock(idealCustomerProfile) +
+    "\nInitiatives: only ones from about the last two years that could matter to the seller, each with its stage, one of: " + STAGE_WORDS + ".\n" +
+    "Contacts: named people in senior roles (management board, heads of IT, digital, data, operations, finance and similar) as " +
+    "the company's own pages or reports name them. For each, if a web search result shows their LinkedIn profile " +
+    "(linkedin.com/in/...), give that link - never guess one, and do not open LinkedIn pages.\n" +
+    (industryNames && industryNames.length ? "Industry: answer with exactly one of these names, or null: " + industryNames.join("; ") + ".\n" : "") +
+    "Write at most five short plain-text lines about what you found (no markdown), then as the very last line DATA: followed " +
+    "by ONE line of JSON. Every fact is " + cited + " (numbers as plain numbers, no units or separators); use null for a topic " +
+    "not asked or not found. Keys: " +
+    "{\"employeesGlobal\":" + cited + ",\"employeesLocal\":" + cited + " (employees in " + home + ")," +
+    "\"revenueGlobal\":" + cited + ",\"revenueCurrency\":\"ISO code\"|null,\"hqCity\":" + cited + ",\"hqCountry\":" + cited + "," +
+    "\"industry\":" + cited + ",\"website\":" + cited + ",\"isPublic\":{\"value\":true|false,\"url\":...}," +
+    "\"linkedinCompanyUrl\":\"https://www.linkedin.com/company/...\"|null,\"summary\":{\"text\":\"two sentences\",\"url\":...}," +
+    "\"initiatives\":[{\"name\":string,\"description\":string,\"date\":\"YYYY-MM\"|null,\"stage\":string|null,\"status\":string|null,\"sourceUrl\":string}]," +
+    "\"contacts\":[{\"fullName\":string,\"title\":string,\"sourceUrl\":string,\"linkedinUrl\":string|null}]}\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
+// `known`: [{ label, value, url }] - facts already held, each with its source when there is one.
+function laneUserMessage(company, known, topicWords, targetCountries) {
+  const lines = [`Company: ${company.company}`];
+  if (company.website) lines.push(`Website: ${company.website}`);
+  if (company.alternativeCompanyName) lines.push(`Also known as: ${[].concat(company.alternativeCompanyName).join(", ")}`);
+  if (company.linkedinLink) lines.push(`LinkedIn page: ${company.linkedinLink}`);
+  if (company.primarySourceUrl) lines.push(`Found in: ${company.primarySourceUrl}`);
+  if (targetCountries && targetCountries.length) lines.push(`The seller's target market: ${targetCountries.join(", ")}`);
+  if (known && known.length) {
+    lines.push("Already known (do not research again):");
+    for (const k of known) lines.push(`- ${k.label}: ${k.value}${k.url ? ` (source: ${k.url})` : ""}`);
+  }
+  lines.push(`Research ONLY these topics: ${topicWords.join("; ")}.`);
+  return lines.join("\n");
+}
+
+// Returns { text, data, sources, searches, fetches, model, stopped, costUsd, ms, usage }. Throws like researchAccountOnWeb.
+// `company` carries the effective values (overrides applied) and its `website`.
+export async function researchAccountForLane(company, { known, topicWords, industryNames }, settings, { signal } = {}) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
+  const started = Date.now();
+  const controller = new AbortController();
+  let stopped = null;
+  const timer = setTimeout(() => { stopped = stopped || "timeout"; controller.abort(); }, LANE_TIME_LIMIT_MS);
+  const onUserStop = () => { stopped = stopped || "user"; controller.abort(); };
+  if (signal) {
+    if (signal.aborted) onUserStop();
+    else signal.addEventListener("abort", onUserStop, { once: true });
+  }
+  const messages = [{ role: "user", content: laneUserMessage(company, known, topicWords, settings.targetCountries) }];
+  const system = buildLaneSystemPrompt({ ...settings, industryNames });
+  let current = true; // the dynamic-filtering tool versions first; the basic ones if the model refuses them
+  let sendThinkingOff = true;
+  const sources = new Map();
+  let text = "";
+  let searches = 0;
+  let fetches = 0;
+  let model = AGENT_MODEL;
+  const usageTotal = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  try {
+    for (let turn = 0; turn < 5; turn++) {
+      const body = {
+        model: AGENT_MODEL,
+        max_tokens: 4000,
+        system,
+        tools: [
+          { type: current ? WEB_FETCH_TOOL_CURRENT : WEB_FETCH_TOOL_BASIC, name: "web_fetch", max_uses: 4, max_content_tokens: 10000 },
+          { type: current ? WEB_SEARCH_TOOL_CURRENT : WEB_SEARCH_TOOL_BASIC, name: "web_search", max_uses: 2 },
+        ],
+        messages,
+        ...(sendThinkingOff ? { thinking: { type: "disabled" } } : {}),
+      };
+      let data;
+      try {
+        data = await streamWebResearch(apiKey, body, controller.signal, (name) => {
+          if (name === "web_search") searches++;
+          else if (name === "web_fetch") fetches++;
+        });
+      } catch (err) {
+        if (err.status === 400 && sendThinkingOff && /thinking/i.test(err.body || "")) { sendThinkingOff = false; turn--; continue; }
+        if (err.status === 400 && current && /web_(fetch|search)|tool/i.test(err.body || "")) { current = false; turn--; continue; }
+        if (err.status === 400 && /web.?(search|fetch)/i.test(err.body || "")) {
+          throw new Error(`${err.message} - if web search or web fetch is not switched on for your Anthropic account, ask its owner to enable it in the Anthropic Console settings, then try again.`);
+        }
+        throw err;
+      }
+      model = data.model || model;
+      for (const k of Object.keys(usageTotal)) usageTotal[k] += data.usage?.[k] || 0;
+      text = "";
+      for (const block of data.content || []) {
+        if (block.type === "web_search_tool_result") {
+          if (Array.isArray(block.content)) {
+            for (const r of block.content) if (r.url && !sources.has(r.url)) sources.set(r.url, { url: r.url, title: r.title || r.url });
+          } else if (block.content && ["unavailable", "too_many_requests"].includes(block.content.error_code)) {
+            const err = new Error(`The web search service reported "${block.content.error_code}". Try again in a few minutes.`);
+            err.rateLimited = true;
+            throw err;
+          }
+        } else if (block.type === "web_fetch_tool_result") {
+          const c = block.content || {};
+          if (c.url && !sources.has(c.url)) sources.set(c.url, { url: c.url, title: (c.content && c.content.title) || c.url });
+          if (c.error_code === "too_many_requests") {
+            const err = new Error("The web fetch service reported \"too_many_requests\". Try again in a few minutes.");
+            err.rateLimited = true;
+            throw err;
+          }
+        } else if (block.type === "text") {
+          text += block.text;
+          for (const c of block.citations || []) if (c.url && !sources.has(c.url)) sources.set(c.url, { url: c.url, title: c.title || c.url });
+        }
+      }
+      if (data.stop_reason === "aborted") break;
+      if (data.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: data.content }); continue; }
+      break;
+    }
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onUserStop);
+    await recordApiUsage("webResearch", "Account web research (web lane)", model, { ...usageTotal, searches });
+  }
+  const costUsd = estimateCostUsd(model, { ...usageTotal, searches }).totalUsd;
+  const { briefing, data } = splitBriefingAndData(text);
+  if (!briefing && !data && sources.size === 0 && searches === 0 && fetches === 0) {
+    throw new Error(stopped ? "Stopped before anything was collected." : "The web research returned no text. Please try again.");
+  }
+  let finalText = briefing || "[No briefing was written.]";
+  if (stopped) finalText += stopped === "user" ? "\n\n[Stopped early - incomplete.]" : "\n\n[Stopped after 4 minutes - incomplete.]";
+  return { text: finalText, data, sources: [...sources.values()], searches, fetches, model, stopped, costUsd, ms: Date.now() - started, usage: usageTotal };
 }

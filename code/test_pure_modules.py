@@ -1340,6 +1340,72 @@ def test_web_usable(ctx):
           ctx.eval("state(readyView({ linkedinCompanyId: null, linkedinLink: null }))"), "in_progress")
 
 
+def test_web_lane_step2(ctx):
+    """1.2.1 step 2 (design 5.1-5.5, D10): what the web lane asks for, in which order, and what it keeps."""
+    full = "{ initiatives: 1, relevantContacts: 3, hasSummary: true }"
+    check("nothing missing: no research at all (R7a.7)",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, %s, null, NOW))" % full), "[]")
+    check("the listed account typically needs initiatives, contacts and a summary",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, {}, null, NOW))"), '["initiatives","contacts","summary"]')
+    check("an HQ without a url is asked for again",
+          ctx.eval("var v = webView(); v.provenance.globalHqCountry = { src: 'web', at: NOW - DAY, cited: false, v: 'Switzerland' }; "
+                   "JSON.stringify(missingWebTopics(v, CFG, %s, null, NOW))" % full), '["headquarters"]')
+    check("missing employees are asked for",
+          ctx.eval("JSON.stringify(missingWebTopics(webView({ globalEmployees: null }), CFG, %s, null, NOW))" % full), '["employees"]')
+    check("industry only when the setup weighs it (CFG does not)",
+          ctx.eval("JSON.stringify(missingWebTopics(webView({ industry: null }), CFG, %s, null, NOW))" % full), "[]")
+    check("...and asked when it does",
+          ctx.eval("var c = JSON.parse(JSON.stringify(CFG)); c.industries = [{ name: 'Banking', priority: 3 }]; "
+                   "JSON.stringify(missingWebTopics(webView({ industry: null }), c, %s, null, NOW))" % full), '["industry"]')
+    check("two contacts are below the default target of 3",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, { initiatives: 1, relevantContacts: 2, hasSummary: true }, null, NOW))"), '["contacts"]')
+    check("a lower target is honoured",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, { initiatives: 1, relevantContacts: 2, hasSummary: true }, { contactsPerAccount: 2 }, NOW))"), "[]")
+    check("excluded: nothing", ctx.eval("missingWebTopics(webView({ excluded: true }), CFG, {}, null, NOW).length"), 0)
+
+    check("traded first, then priority, then listing order",
+          ctx.eval("webLaneOrder([{ key: 'a', isPublic: null, priority: 'P1', order: 1 }, { key: 'b', isPublic: true, priority: 'P3', order: 9 },"
+                   " { key: 'c', isPublic: false, priority: 'P1', order: 0 }, { key: 'd', isPublic: true, priority: 'P2', order: 5 },"
+                   " { key: 'e', isPublic: null, priority: null, order: 2 }]).map(function (e) { return e.key; }).join('')"), "dbcae")
+
+    for text, expected in [("Public", True), ("Publicly listed (SIX)", True), ("Listed", True), ("Private", False),
+                           ("Privately held", False), ("Unlisted", False), ("Cooperative", False), ("State-owned", False),
+                           ("Public body", False), ("National tourism organization / public-law corporation", False),
+                           ("Swiss company", None), ("Foundation", False), ("", None), ("Global company", None)]:
+        check("isPubliclyTraded(%r)" % text, ctx.eval("isPubliclyTraded(%r, null)" % text), expected)
+    check("the research's own answer wins", ctx.eval("isPubliclyTraded('Private', true)"), True)
+
+    check("profile link normalised", ctx.eval("linkedinProfileUrl('https://ch.linkedin.com/in/anna-muster-12ab/?trk=x')"),
+          "https://www.linkedin.com/in/anna-muster-12ab/")
+    check("a company page is not a profile", ctx.eval("linkedinProfileUrl('https://www.linkedin.com/company/acme/')"), None)
+    check("company page normalised", ctx.eval("linkedinCompanyUrl('https://linkedin.com/company/acme-ag/about/')"),
+          "https://www.linkedin.com/company/acme-ag/")
+    ctx.eval(r"""
+    var LANE_DATA = { contacts: [
+      { fullName: "Anna  Muster", title: "CIO", sourceUrl: "https://acme.ch/management", linkedinUrl: "https://ch.linkedin.com/in/anna-muster" },
+      { fullName: "anna muster", title: "CIO", sourceUrl: "https://acme.ch/management" },
+      { fullName: "The CFO", title: "CFO", sourceUrl: "https://acme.ch/management" },
+      { fullName: "Peter Beispiel", title: "CEO", sourceUrl: null },
+      { fullName: "Eva Probe", title: "Head of Data", sourceUrl: "https://acme.ch/ar.pdf", linkedinUrl: "https://example.com/eva" },
+    ], initiatives: [
+      { name: "AI claims triage", stage: "pilot", sourceUrl: "https://acme.ch/news/1" },
+      { name: "Cloud move", stage: "whatever", sourceUrl: "not a url" },
+      { name: "  " },
+    ], isPublic: { value: true, url: "https://six-group.com/acme" } };
+    """)
+    check("contacts need two names and a source of their own; duplicates dropped",
+          ctx.eval("researchContacts(LANE_DATA).map(function (c) { return c.fullName; }).join('|')"), "Anna Muster|Eva Probe")
+    check("...with the profile link a search listed (D10), and none for a non-LinkedIn link",
+          ctx.eval("researchContacts(LANE_DATA).map(function (c) { return c.linkedinUrl; }).join('|')"), "https://www.linkedin.com/in/anna-muster/|")
+    check("initiatives keep a known stage only, and a real url only",
+          ctx.eval("JSON.stringify(researchInitiatives(LANE_DATA).map(function (i) { return [i.name, i.stage, i.sourceUrl]; }))"),
+          '[["AI claims triage","pilot","https://acme.ch/news/1"],["Cloud move",null,null]]')
+    check("isPublic read from the per-field answer", ctx.eval("researchIsPublic(LANE_DATA)"), True)
+    check("an industry finding is proposed like any other field",
+          ctx.eval("JSON.stringify(computeFindingProposals({ company: 'Acme' }, {}, { industry: { value: 'Banking', url: 'https://acme.ch' } }).map(function (p) { return p.key + ':' + p.found; }))"),
+          '["industry:Banking"]')
+
+
 def test_user_retry_first(ctx):
     """2026-09-29: an account the user gave a new Alt. name or link is tried first, once."""
     ctx.eval(r"""
@@ -1404,6 +1470,7 @@ def main():
     test_per_field_research(ctx)
     test_web_usable(ctx)
     test_user_retry_first(ctx)
+    test_web_lane_step2(ctx)
 
     print()
     for f in _failures:

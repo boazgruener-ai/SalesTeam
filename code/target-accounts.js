@@ -13,6 +13,7 @@
 // populates both in one action. Also owns the confidence threshold and the
 // experimental Resolve LinkedIn Company IDs action (6.16), both likewise
 // moved here from Settings the same day.
+import { webLaneCandidates } from "./web-lane.js";
 import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
@@ -193,6 +194,38 @@ document.getElementById("pipeline-run-start-btn").addEventListener("click", asyn
   if (res && res.ok) { document.getElementById("pipeline-run-dialog").close(); return; }
   startBtn.disabled = false;
   statusEl.textContent = (res && res.error) || "The pipeline could not start.";
+});
+
+// 1.2.1 build step 2: the web lane, started by hand to measure its cost and time per account (web-lane.js).
+document.getElementById("nav-web-lane-btn").addEventListener("click", async () => {
+  const candidatesEl = document.getElementById("web-lane-candidates");
+  document.getElementById("web-lane-status").textContent = "";
+  document.getElementById("web-lane-start-btn").disabled = false;
+  candidatesEl.textContent = "Counting the accounts that need it…";
+  document.getElementById("web-lane-dialog").showModal();
+  try {
+    const list = await webLaneCandidates();
+    const traded = list.filter((c) => c.isPublic === true).length;
+    candidatesEl.textContent = list.length
+      ? `${list.length} account${list.length === 1 ? " needs" : "s need"} web research${traded ? ` (${traded} known to be publicly traded)` : ""}. First: ${list.slice(0, 5).map((c) => c.company).join(", ")}${list.length > 5 ? " …" : ""}`
+      : "No account needs web research right now.";
+  } catch (err) {
+    candidatesEl.textContent = `Could not count them: ${err.message}`;
+  }
+});
+document.getElementById("web-lane-close-btn").addEventListener("click", () => document.getElementById("web-lane-dialog").close());
+document.getElementById("web-lane-start-btn").addEventListener("click", async () => {
+  const startBtn = document.getElementById("web-lane-start-btn");
+  const statusEl = document.getElementById("web-lane-status");
+  const limit = parseInt(document.getElementById("web-lane-limit").value, 10);
+  const budget = parseFloat(document.getElementById("web-lane-budget").value);
+  if (!Number.isFinite(limit) || limit < 1) { statusEl.textContent = "Enter a number of accounts, 1 or more."; return; }
+  startBtn.disabled = true;
+  statusEl.textContent = "Starting…";
+  const res = await chrome.runtime.sendMessage({ type: "WEB_LANE_START", limit, budget: Number.isFinite(budget) ? budget : 0 }).catch((err) => ({ ok: false, error: err.message }));
+  if (res && res.ok) { document.getElementById("web-lane-dialog").close(); return; }
+  startBtn.disabled = false;
+  statusEl.textContent = (res && res.error) || "The web research could not start.";
 });
 
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", async () => {

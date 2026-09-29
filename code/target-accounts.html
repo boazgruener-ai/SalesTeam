@@ -45,6 +45,28 @@
     </div>
   </dialog>
 
+  <dialog id="web-lane-dialog">
+    <h3>Research accounts on the web (new)</h3>
+    <p>
+      The new web research of SalesTeam 1.2.1. Each account is asked <strong>only for what it still lacks</strong>: HQ,
+      employees, industry (if your setup weighs it), initiatives, named senior people and a short summary. It reads the
+      company's own pages and reports first and searches only for the rest. People it finds are added as contacts, with
+      their LinkedIn profile when a web search lists one - no LinkedIn page is visited.
+    </p>
+    <p>
+      Publicly traded companies go first, then by priority. It runs in the background, beside the automatic LinkedIn work,
+      and costs money on your own Anthropic API key. When it finishes, it reports the cost and time per account.
+    </p>
+    <p id="web-lane-candidates" class="page-subtitle"></p>
+    <p><label>Accounts to research: <input type="number" id="web-lane-limit" min="1" max="500" value="20" style="width:5em"></label></p>
+    <p><label>Stop when the cost reaches US$ <input type="number" id="web-lane-budget" min="0" step="0.5" value="5" style="width:5em"></label></p>
+    <p id="web-lane-status" class="page-subtitle" role="status"></p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="web-lane-start-btn">Start</button>
+      <button type="button" id="web-lane-close-btn">Cancel</button>
+    </div>
+  </dialog>
+
   <dialog id="find-duplicates-dialog">
     <h3>Find &amp; Merge Duplicates</h3>
     <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
@@ -210,6 +232,7 @@
         </div>
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
         <button id="nav-run-pipeline-btn" type="button" class="nav-item" title="Data pipeline (1.2, manual start): work through the accounts that most need it - re-check LinkedIn, read sizes, find known contacts' profiles, discover contacts">Run pipeline now…</button>
+        <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>

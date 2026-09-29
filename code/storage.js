@@ -3,7 +3,7 @@ import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
-import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue } from "./web-research-apply.js";
+import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
 import { normalizeCompanyName, buildExclusionMatcher, matchesExclusion, websiteDomain } from "./company-identity.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
@@ -4390,6 +4390,7 @@ async function addWebResearchInitiativesUnlocked(companyId, companyName, items) 
       description: item.description || null,
       status: item.status || null,
       announcedDate: item.date || null,
+      stage: item.stage || null, // 1.2.1 web lane: one of INITIATIVE_STAGES (web-research-apply.js)
       sourceUrl: item.sourceUrl || null,
       lastVerified: today,
       evidenceQuality: "Web research (not verified)",
@@ -4838,7 +4839,8 @@ export async function getAccountViews({ persistDerived = true } = {}) {
         JSON.stringify(ov.alternativeCompanyName ?? null)]),
       universeOrder: row.universeOrder ?? null,
       // Build step 5: when the last FULL web research ran. A short one (only some topics) does not count.
-      webFullResearchAt: extra.webResearch && !extra.webResearch.topics ? extra.webResearch.at || null : null,
+      // A web-lane research (1.2.1) asks only for what is missing, so it counts as a full one.
+      webFullResearchAt: extra.webResearch && (!extra.webResearch.topics || extra.webResearch.by === "lane") ? extra.webResearch.at || null : null,
       // 1.2.1 step 1 (onboarding design 6.1): what identifies the account without LinkedIn - its website
       // (a "Web" row's own, an edit, or one its web research cited) and the source it was found in.
       website: ov.website || row.website || citedResearchWebsite(extra.webResearch) || null,
@@ -5023,9 +5025,15 @@ export async function applyPipelineWebResearch(key, result, { topics = null } = 
     },
   });
   const initiatives = await addWebResearchInitiatives(company.companyId, company.company, result.data?.initiatives);
+  return { ...(await fillEmptyAndResolve(key, company, result.data)), initiatives };
+}
+
+// W5: every finding for an EMPTY field is taken at once, then the automatic resolve for this account.
+// Returns { filled, applied, dismissed, review }.
+async function fillEmptyAndResolve(key, company, data) {
   const extras = await getTargetAccountExtras();
   const money = await getRevenueNormalization();
-  const fresh = computeFindingProposals(company, extras[key]?.overrides, result.data, revenueMoneySettings(money)).filter((p) => p.state === "new");
+  const fresh = computeFindingProposals(company, extras[key]?.overrides, data, revenueMoneySettings(money)).filter((p) => p.state === "new");
   if (fresh.length > 0) {
     const overrides = { ...(extras[key]?.overrides || {}) };
     for (const p of fresh) overrides[p.key] = p.found;
@@ -5037,7 +5045,81 @@ export async function applyPipelineWebResearch(key, result, { topics = null } = 
     }))).catch(() => {});
   }
   const resolved = await autoResolveWebFindings({ onlyKeys: [key] });
-  return { filled: fresh.length, initiatives, applied: resolved.applied, dismissed: resolved.dismissed, review: resolved.review };
+  return { filled: fresh.length, applied: resolved.applied, dismissed: resolved.dismissed, review: resolved.review };
+}
+
+// 1.2.1 web lane (ONBOARDING_RESEARCH_DESIGN.md 5.3-5.5): stores one lane research. The research before it
+// is kept one level back (webResearchPrevious), since a lane research only answers the topics it was asked;
+// provenance already stamped from the earlier one stays as it is. Then, like applyPipelineWebResearch: the
+// initiatives (now with their stage), every empty field filled, the automatic resolve. New in the lane:
+// named people become contact rows (source "Web"), with the LinkedIn profile link a web search listed for
+// them (D10 - such a contact counts towards Ready without a LinkedIn visit), a known contact without a
+// profile gets the one found, and an account with no LinkedIn page gets the company page the search listed
+// (the LinkedIn lane still confirms it on its first visit).
+// Returns { filled, initiatives, contacts, profiles, linkedinPage, applied, dismissed, review } or null.
+export async function applyWebLaneResearch(key, result, { topics = null } = {}) {
+  const workbook = await getTargetAccountsWorkbook();
+  const company = (workbook.companies || []).find((c) => c.company && normalizeCompanyName(c.company) === key);
+  if (!company) return null;
+  const data = result.data || null;
+  const before = (await getTargetAccountExtras())[key] || {};
+  await saveTargetAccountExtra(key, {
+    webResearch: {
+      text: result.text, sources: result.sources, searches: result.searches, fetches: result.fetches || 0, at: Date.now(), data,
+      stopped: result.stopped, costUsd: result.costUsd, topics: topics && topics.length ? topics : null, by: "lane",
+    },
+    ...(before.webResearch ? { webResearchPrevious: before.webResearch } : {}),
+  });
+  const initiatives = await addWebResearchInitiatives(company.companyId, company.company, researchInitiatives(data));
+  const out = { ...(await fillEmptyAndResolve(key, company, data)), initiatives, contacts: 0, profiles: 0, linkedinPage: null };
+
+  // People
+  const found = researchContacts(data);
+  if (found.length > 0 && company.companyId) {
+    const levels = ((await getTargetContactProfile()).seniorityLevels || []).filter((l) => l && typeof l === "object");
+    const today = new Date().toISOString().slice(0, 10);
+    const known = new Map((workbook.contacts || []).filter((ct) => ct.companyId === company.companyId)
+      .map((ct) => [contactKeyFor(company.company, ct.fullName), ct]));
+    const rows = [];
+    for (const p of found) {
+      const ctKey = contactKeyFor(company.company, p.fullName);
+      const existing = known.get(ctKey);
+      if (existing) {
+        if (p.linkedinUrl && !existing.lastVerified2 && (await setContactLinkedinProfile(ctKey, p.linkedinUrl)) !== undefined) out.profiles++;
+        continue;
+      }
+      const level = classifyJobTitleSeniority(p.title, levels);
+      rows.push({
+        contactId: `WEB-${company.companyId}-${ctKey.replace(/[^a-z0-9]+/gi, "-").slice(-40)}`,
+        companyId: company.companyId,
+        company: company.company,
+        fullName: p.fullName,
+        jobTitle: p.title,
+        seniorityLevel: level ? level.id : null,
+        seniorityPriority: level ? level.priority ?? null : null,
+        lastVerified2: p.linkedinUrl || null,
+        // The day the web showed this person at this company - with a profile link, what readiness counts as verified.
+        lastVerified: p.linkedinUrl ? today : null,
+        primarySourceUrl: p.sourceUrl,
+        source: "Web",
+      });
+    }
+    out.contacts = await appendContactsToWorkbook(rows);
+    out.profiles += rows.filter((r) => r.lastVerified2).length;
+  }
+
+  // The company's LinkedIn page, only where the account has none.
+  const page = linkedinCompanyUrl(data && data.linkedinCompanyUrl);
+  if (page) {
+    const extras = await getTargetAccountExtras();
+    const map = await getTargetAccounts();
+    const ov = extras[key]?.overrides || {};
+    if (!ov.linkedinLink && !company.linkedinLink && !map[key]?.linkedinLink) {
+      await saveTargetAccountExtra(key, { overrides: { ...ov, linkedinLink: page } }, { src: "web", base: { overrides: extras[key]?.overrides } });
+      out.linkedinPage = page;
+    }
+  }
+  return out;
 }
 
 // ---- Writes made by the 1.2 data pipeline (build step 2, DATA_PIPELINE_DESIGN.md 5.5 and T1-T4) ----

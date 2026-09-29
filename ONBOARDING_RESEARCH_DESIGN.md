@@ -620,9 +620,30 @@ the wizard is kept in `companyExclusionsLifted` and overrides the research workb
 import's backfill put them back); and an account the user gave an Alt. name or LinkedIn link is taken
 first by the pipeline until it has been tried once with it (`userRetryFirst`, pipeline-plan.js).
 
+**As built (step 2, 1.2.0.6):** `web-lane.js` (background, four workers, no batch lock; refuses to start while a
+bulk web research runs) is started from Advanced tools > *Research accounts on the web (new)…* with a number of
+accounts and a cost cap. `missingWebTopics` (pipeline-plan.js) asks for HQ and employees without a good fresh
+source, industry only when the setup weighs it, initiatives and relevant contacts below
+`DEFAULT_COMPLETION_TARGETS` (3 contacts, 1 initiative - the Targets step sets them in step 6), and a summary; an
+account with nothing missing is skipped, and one the lane researched in the last 30 days is not asked again.
+`webLaneOrder`: traded first, then priority, then listing order. On the 2026-09-29 backup, 519 of the accounts
+need something (515 of them contacts), and the workbook's Company Type says whether a company is listed for
+**none** of them ("Swiss company", "International company"), so the first lane pass runs in priority order; each
+research answers `isPublic`, which the measurement uses to split traded from private. The call
+(`researchAccountForLane`, agent-shared.js): `web_fetch_20260209` (4 uses, 10,000 tokens a page) and
+`web_search_20260209` (2 uses), falling back to the basic versions if refused; Sonnet 5; the facts already known
+go in with their sources. `applyWebLaneResearch` (storage.js) keeps the research before it as
+`webResearchPrevious`, stores initiatives with their `stage`, fills empty fields and runs the automatic resolve
+(shared with the 1.2.0 pipeline via `fillEmptyAndResolve`), adds named people as `source: "Web"` contact rows
+(a name needs two words, no role words, and a source url of its own), gives a known contact without a profile
+the one found, and fills an empty LinkedIn company link (D10). Industry became a web finding field. A lane
+research counts as the account's full research (`webFullResearchAt`). When a run ends, the pop-up and the
+Activity Log give cost, time, searches and pages read per account, traded and private apart. Web fetch has no
+per-use fee: the pages read are billed as input tokens, which the measurement includes.
+
 ---
 
-## 12. Decisions — all agreed 2026-09-28
+## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29)
 
 Boaz agreed to every recommendation below.
 
@@ -637,6 +658,7 @@ Boaz agreed to every recommendation below.
 | **D7** | Raise the pipeline's LinkedIn ceiling (e.g. 60 → 75) after onboarding to build faster? | **No** — the Scanner needs **10 Ready** (was 5, soft gate), and the pipeline goes for the first 10 Ready before anything else (7.3). The ceiling stays 60, guaranteeing at least 39 touches for scans; touches per scan are measured in step 4. Boaz's proposal, 2026-09-28 |
 | **D8** | Use touches left under the 60 at night (e.g. 01:00–05:00) for extra LinkedIn work? | **No change.** The pipeline already resumes whenever it is under 60 in the rolling 24 hours, day or night, while Chrome and a SalesTeam page are open. Night adds no capacity (a touch at 03:00 counts until 03:00 next day). Not added: a background timer without a page open, or keeping the computer awake at night (1.2.0 D4 stands; unseen 03:00 activity would contradict "visible in your browser") |
 | **D9** | Discovery for medium or small companies instead of the largest | **Size-band listings, the target split by band priority, centre of each band first** (4.3). Bands stay the wizard's S/M/L/XL/XXL, shown with their ranges on the Size step. Boaz's proposal, adapted 2026-09-28 |
+| **D10** | The LinkedIn ceiling of 60 makes Ready slow (about 5 visits per account: company page, People page, one search per contact) | **The web lane collects LinkedIn links from search results** - the company page and each named person's profile - at no LinkedIn visit. A profile link found that way **counts towards Ready** (the contact's verified date is the day the web showed it); LinkedIn is visited only to confirm the company page and for what the web did not find. Expected: about 1-2 visits per account instead of about 5. The ceiling stays 60. Boaz's choice, 2026-09-29 |
 
 ---
 
