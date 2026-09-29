@@ -5082,7 +5082,7 @@ export async function getReadinessConfig() {
 // Lacking evidence (and not kept) is "Lacking evidence".
 export async function getAccountReadiness() {
   const [views, cfg] = await Promise.all([getAccountViews(), getReadinessConfig()]);
-  const queue = await buildDecisionQueue(views);
+  const queue = await buildDecisionQueueShared(views);
   const decisionKeys = new Set(queue.items.filter((i) => i.kind !== "lacking_evidence").map((i) => i.accountKey));
   const now = Date.now();
   return views
@@ -5281,8 +5281,22 @@ async function buildDecisionQueue(views) {
   return { items: sorted, count: sorted.length };
 }
 
+// The Decisions dot and the Readiness column both need the queue as a page opens, and each build reads the
+// three large account stores (about 9 MB) and scores every web finding. One build is shared by every caller
+// within SHARED_QUEUE_MS (1.2.0.2: Target Accounts built it twice per load). The queue is only read here;
+// applyDecision works on the item it is handed, and a later call after the window builds afresh.
+const SHARED_QUEUE_MS = 2000;
+let sharedQueue = null; // { at, promise }
+function buildDecisionQueueShared(views) {
+  if (sharedQueue && Date.now() - sharedQueue.at < SHARED_QUEUE_MS) return sharedQueue.promise;
+  const promise = buildDecisionQueue(views);
+  sharedQueue = { at: Date.now(), promise };
+  promise.catch(() => { if (sharedQueue && sharedQueue.promise === promise) sharedQueue = null; });
+  return promise;
+}
+
 export async function getDecisionQueue() {
-  return buildDecisionQueue();
+  return buildDecisionQueueShared();
 }
 
 // Clears an account's failed attempts, empty-page mark, Keep and pending page change: something new
@@ -5571,6 +5585,7 @@ const ACTIVITY_LOG_PREFIX = "activityLog:";
 const LEGACY_ACTIVITY_LOG_KEY = "activityLog"; // pre-90-day-retention flat array (v0.26.0/0.26.1)
 const ACTIVITY_LOG_RETENTION_DAYS = 90;
 const ACTIVITY_LOG_EXPORTED_DAYS_KEY = "activityLogExportedDays";
+const ACTIVITY_LOG_PRUNED_DAY_KEY = "activityLogPrunedDay";
 
 function activityLogDayKey(date) {
   const y = date.getFullYear();
@@ -5611,16 +5626,25 @@ export async function appendActivityLog({
   });
   await chrome.storage.local.set({ [key]: dayLog });
 
+  // Retention pruning once per day, not per entry (1.2.0.2): it used to read the ENTIRE store (about 10 MB -
+  // the workbook and every account's research) on every single log line, which was measured at seconds per
+  // call and made the pages sluggish. getKeys() lists the keys without reading any values.
+  const { [ACTIVITY_LOG_PRUNED_DAY_KEY]: prunedDay } = await chrome.storage.local.get(ACTIVITY_LOG_PRUNED_DAY_KEY);
+  if (prunedDay === key) return;
+  await chrome.storage.local.set({ [ACTIVITY_LOG_PRUNED_DAY_KEY]: key });
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - ACTIVITY_LOG_RETENTION_DAYS);
   const cutoffKey = activityLogDayKey(cutoff);
-  const all = await chrome.storage.local.get(null);
-  const staleKeys = Object.keys(all).filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX) && k < cutoffKey);
+  const allKeys = chrome.storage.local.getKeys
+    ? await chrome.storage.local.getKeys()
+    : Object.keys(await chrome.storage.local.get(null));
+  const staleKeys = allKeys.filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX) && k < cutoffKey);
   if (staleKeys.length > 0) await chrome.storage.local.remove(staleKeys);
 
   // The exported-days tracking list (see getPendingActivityLogExportDays
   // below) should never grow forever either - drop anything referring to a
   // day that's already aged out of retention.
+  const all = await chrome.storage.local.get(ACTIVITY_LOG_EXPORTED_DAYS_KEY);
   const exportedDays = all[ACTIVITY_LOG_EXPORTED_DAYS_KEY] || [];
   const prunedExportedDays = exportedDays.filter((d) => `${ACTIVITY_LOG_PREFIX}${d}` >= cutoffKey);
   if (prunedExportedDays.length !== exportedDays.length) {

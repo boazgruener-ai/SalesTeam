@@ -284,11 +284,17 @@ async function recordBackup(info) {
 // ---------------------------------------------------------------- fresh install / storage status / retention
 // True when nothing of the user's is stored yet (a new install, or one wiped by a reinstall). There is nothing to
 // back up then, and it is exactly when "restore from a backup" is what the user needs.
+// The large stores (leads, the workbook - several MB) are only SIZED, never read: an empty list or object is a few
+// bytes, anything real is far more (1.2.0.2 - reading them here cost seconds on every page open).
+const FRESH_MAX_BYTES = 200;
 async function isFreshInstall() {
-  const d = await chrome.storage.local.get(["topics", "results", "targetAccountsWorkbook", "onboardingCompletedAt", "onboardingProgressStepIndex", "targetUniverseConfig"]);
+  const d = await chrome.storage.local.get(["topics", "onboardingCompletedAt", "onboardingProgressStepIndex", "targetUniverseConfig"]);
   const hasTopics = Array.isArray(d.topics) && d.topics.length > 0;
-  const hasLeads = d.results && Object.keys(d.results).length > 0;
-  const hasWorkbook = d.targetAccountsWorkbook && (d.targetAccountsWorkbook.companies || []).length > 0;
+  const [leadBytes, workbookBytes] = await Promise.all([
+    chrome.storage.local.getBytesInUse("results"), chrome.storage.local.getBytesInUse("targetAccountsWorkbook"),
+  ]);
+  const hasLeads = leadBytes > FRESH_MAX_BYTES;
+  const hasWorkbook = workbookBytes > FRESH_MAX_BYTES;
   return !hasTopics && !hasLeads && !hasWorkbook && !d.onboardingCompletedAt && !(d.onboardingProgressStepIndex > 0) && !d.targetUniverseConfig;
 }
 
@@ -370,9 +376,10 @@ export async function runAutoBackupIfDue({ force = false, gesture = false } = {}
   const run = async () => {
     const prefs = await getBackupPrefs();
     if (!prefs.enabled && !force) return false;
-    if (await isFreshInstall()) return false; // nothing to protect yet
+    // The schedule first: this runs every minute, and the fresh-install test used to read the whole workbook each time.
     const { [LAST_AUTO_BACKUP_KEY]: last = 0 } = await chrome.storage.local.get(LAST_AUTO_BACKUP_KEY);
     if (force ? Date.now() - last < 12 * 3600 * 1000 : !isBackupDue(last, prefs.time)) return false;
+    if (await isFreshInstall()) return false; // nothing to protect yet
     // Claim the slot first so a second page opening at the same moment doesn't also save one.
     await chrome.storage.local.set({ [LAST_AUTO_BACKUP_KEY]: Date.now() });
     try {

@@ -2750,6 +2750,7 @@ function scheduleReadinessRefresh() {
 }
 
 function renderReadinessPie() {
+  if (readinessByCompanyId.size === 0) return; // not assessed yet (the table is drawn first) - no "0 ready" flash
   const counts = countReadiness([...readinessByCompanyId.values()]);
   const slices = READINESS_STATES
     .filter((s) => counts[s] > 0 || s === "ready")
@@ -2871,9 +2872,13 @@ async function loadWorkbook() {
   contactsTableScrollTopEl.hidden = !hasContacts;
   contactsStatsSectionEl.hidden = !hasContacts;
   if (hasData) {
-    await refreshReadiness();
+    // The table first, readiness right after (1.2.0.2): readiness joins every account with its contacts and
+    // the decision queue, and waiting for it kept the whole page empty for seconds.
     renderTable();
     renderAccountsStats();
+    await refreshReadiness();
+    renderReadinessPie();
+    if (!listViewEl.hidden) renderTable();
   }
   if (hasContacts) {
     renderContactsTable();
