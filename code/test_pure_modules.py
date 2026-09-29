@@ -1340,6 +1340,26 @@ def test_web_usable(ctx):
           ctx.eval("state(readyView({ linkedinCompanyId: null, linkedinLink: null }))"), "in_progress")
 
 
+def test_user_retry_first(ctx):
+    """2026-09-29: an account the user gave a new Alt. name or link is tried first, once."""
+    ctx.eval(r"""
+    function rview(name, prio, edit) { return { key: name, company: name, salesTeamPriority: prio, linkedinCompanyId: null, linkedinLink: null, userIdentityEdit: edit, provenance: {}, contacts: [] }; }
+    function rentry(v, pipeline) { return { view: v, assessment: assessAccount(v, CFG, NOW), pipeline: pipeline || {} }; }
+    """)
+    check("an edited P3 account goes before an unedited P1",
+          ctx.eval("rankCandidates([rentry(rview('P1 co', 'P1', false)), rentry(rview('Rega', 'P3', true))], NOW, 2).map(function (e) { return e.view.company; }).join(',')"),
+          "Rega,P1 co")
+    check("once the pipeline has tried it, it goes back to its place",
+          ctx.eval("rankCandidates([rentry(rview('P1 co', 'P1', false)), rentry(rview('Rega', 'P3', true), { attempts: { resolve: ['2026-09-24'] } })], NOW, 2).map(function (e) { return e.view.company; }).join(',')"),
+          "P1 co,Rega")
+    check("without an edit, priority order as before",
+          ctx.eval("rankCandidates([rentry(rview('P3 co', 'P3', false)), rentry(rview('P1 co', 'P1', false))], NOW, 2).map(function (e) { return e.view.company; }).join(',')"),
+          "P1 co,P3 co")
+    ctx.eval("var EXL = buildExclusionMatcher([{ slug: 'temenos', category: 'competitor' }], ['SophiaGenetics']);")
+    check("a lifted slug is recorded, case-insensitively", ctx.eval("EXL.lifted.has('sophiagenetics')"), True)
+    check("...and is not itself an exclusion", ctx.eval("matchesExclusion(EXL, { slug: 'sophiagenetics' })"), False)
+
+
 def test_extras_merge(ctx):
     # 1.2.1 build step 0: a writer applies only what it changed; a change made meanwhile by another writer stays.
     ctx.eval("""var m1 = mergeFieldChanges({ a: 1 }, { a: 1, b: 2 }, { a: 1, c: 3 });""")
@@ -1383,6 +1403,7 @@ def main():
     test_company_identity(ctx)
     test_per_field_research(ctx)
     test_web_usable(ctx)
+    test_user_retry_first(ctx)
 
     print()
     for f in _failures:

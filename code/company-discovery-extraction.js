@@ -42,9 +42,10 @@ import {
   getTargetAccountsWorkbook,
   parseLinkedinCompanySlug,
   normalizeCompanyName,
+  getExclusionMatcher,
 } from "./storage.js";
 import { geoUrnForCountry } from "./geo-urn-map.js";
-import { buildExclusionMatcher, matchesExclusion } from "./company-identity.js";
+import { matchesExclusion } from "./company-identity.js";
 import { industryIdForName } from "./industry-id-map.js";
 import { localCountryName } from "./country-local-names.js";
 import { findIsoCountryCodeInText, COUNTRY_BY_ISO_CODE } from "./iso-country-codes.js";
@@ -358,7 +359,7 @@ async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort } = {}) {
   // mechanics regardless of category - the category only matters for
   // *why*, shown elsewhere, not for whether a card gets skipped here.
   // Matches by LinkedIn slug, and since 1.2.1 also by company name or website domain (design 3.9).
-  const exclusionMatcher = buildExclusionMatcher(companyExclusions);
+  const exclusionMatcher = await getExclusionMatcher();
   // Reported directly, 2026-09-17: Discovery had no idea which companies
   // were already in the real Target Accounts workbook (528 ChatGPT-
   // researched rows, in the user's own real case) - it would happily

@@ -566,8 +566,32 @@ export async function getCompanyExclusions() {
   return data[COMPANY_EXCLUSIONS_KEY] || [];
 }
 
+// Slugs the user took OFF the exclusion list (2026-09-29). The research workbook's Exclusion_List marks some
+// companies "Competitor" (Excluded = Yes on the row) and the import copies them onto this list; before this,
+// removing one in the wizard changed nothing, because the row's own flag still excluded it. A lifted slug
+// overrides that flag, and the import's backfill never puts it back - so the user's removal survives a
+// re-import. Putting the slug back on the list un-lifts it.
+const COMPANY_EXCLUSIONS_LIFTED_KEY = "companyExclusionsLifted";
+
+export async function getCompanyExclusionsLifted() {
+  const data = await chrome.storage.local.get(COMPANY_EXCLUSIONS_LIFTED_KEY);
+  return data[COMPANY_EXCLUSIONS_LIFTED_KEY] || [];
+}
+
+// The matcher every exclusion check uses: the list plus the lifted slugs.
+export async function getExclusionMatcher() {
+  const [exclusions, lifted] = await Promise.all([getCompanyExclusions(), getCompanyExclusionsLifted()]);
+  return buildExclusionMatcher(exclusions, lifted);
+}
+
 export async function saveCompanyExclusions(exclusions) {
-  await chrome.storage.local.set({ [COMPANY_EXCLUSIONS_KEY]: exclusions, [COMPANY_EXCLUSIONS_MIGRATED_KEY]: true });
+  const [before, lifted] = await Promise.all([getCompanyExclusions(), getCompanyExclusionsLifted()]);
+  const keptSlugs = new Set(exclusions.map((e) => e && e.slug).filter(Boolean));
+  const removed = before.map((e) => e && e.slug).filter((s) => s && !keptSlugs.has(s));
+  const nextLifted = [...new Set([...lifted, ...removed])].filter((s) => !keptSlugs.has(s));
+  await chrome.storage.local.set({
+    [COMPANY_EXCLUSIONS_KEY]: exclusions, [COMPANY_EXCLUSIONS_MIGRATED_KEY]: true, [COMPANY_EXCLUSIONS_LIFTED_KEY]: nextLifted,
+  });
 }
 
 // A Companies-sheet row's own Excluded column (added 2026-09-17, confirmed
@@ -591,8 +615,10 @@ export function isExcludedFlagTruthy(value) {
 // before 1.2.1) is still accepted.
 export function isCompanyRowExcluded(companyRow, matcher) {
   if (!companyRow) return false;
-  if (isExcludedFlagTruthy(companyRow.excluded)) return true;
   const slug = parseLinkedinCompanySlug(companyRow.linkedinLink || "");
+  // The workbook's flag counts unless the user took this company off the list (companyExclusionsLifted).
+  const lifted = Boolean(slug && matcher && matcher.lifted && matcher.lifted.has(String(slug).toLowerCase()));
+  if (isExcludedFlagTruthy(companyRow.excluded) && !lifted) return true;
   if (matcher instanceof Set) return slug ? matcher.has(slug) : false;
   return matchesExclusion(matcher, { slug, name: companyRow.company, website: companyRow.website });
 }
@@ -638,8 +664,9 @@ export async function backfillCompanyExclusionsFromWorkbook(workbook) {
   );
   const excludedCompanies = (workbook.companies || []).filter((c) => isExcludedFlagTruthy(c.excluded));
 
-  const exclusions = await getCompanyExclusions();
-  const existingSlugs = new Set(exclusions.map((e) => e.slug));
+  const [exclusions, lifted] = await Promise.all([getCompanyExclusions(), getCompanyExclusionsLifted()]);
+  // A slug the user took off the list stays off (companyExclusionsLifted).
+  const existingSlugs = new Set([...exclusions.map((e) => e.slug), ...lifted]);
   const added = [];
   let skippedNoLink = 0;
   let skippedUnrecognizedReason = 0;
@@ -1877,7 +1904,7 @@ export async function getExistingCompaniesNeedingContacts(maxExistingContacts = 
   const [workbook, extras, exclusions] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(),
   ]);
-  const exclusionMatcher = buildExclusionMatcher(exclusions);
+  const exclusionMatcher = await getExclusionMatcher();
   const contactCountByCompanyId = new Map();
   for (const contact of workbook.contacts || []) {
     if (!contact.companyId) continue;
@@ -1957,7 +1984,7 @@ export async function getCompaniesNeedingSize() {
   const [workbook, extras, exclusions] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(),
   ]);
-  const exclusionMatcher = buildExclusionMatcher(exclusions);
+  const exclusionMatcher = await getExclusionMatcher();
   return (workbook.companies || [])
     .filter((c) => c.company && c.companyId && c.linkedinLink)
     // The count must be read THROUGH the account's own overrides, not off the workbook row alone.
@@ -3511,7 +3538,7 @@ export async function getCompaniesForPrioritization({ rescoreAll = false, rescor
   const [workbook, extras, exclusions, threshold] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(), getTargetAccountScoreThreshold(),
   ]);
-  const exclusionMatcher = buildExclusionMatcher(exclusions);
+  const exclusionMatcher = await getExclusionMatcher();
   const contactCountByCompanyId = new Map();
   for (const contact of workbook.contacts || []) {
     if (!contact.companyId) continue;
@@ -3874,7 +3901,7 @@ export async function partitionLeadsByTargetAccount(leads) {
   // Added 2026-09-17: a workbook that scores a competitor normally instead
   // of writing "Out of Scope" (the whole reason this column exists) would
   // otherwise still trigger an automatic floor/ceiling here.
-  const exclusionMatcher = buildExclusionMatcher(await getCompanyExclusions());
+  const exclusionMatcher = await getExclusionMatcher();
   const isExcludedCompanyName = (name) => isCompanyRowExcluded(companyByName.get(normalizeCompanyName(name)) || { company: name }, exclusionMatcher);
 
   const threshold = await getTargetAccountScoreThreshold();
@@ -4758,7 +4785,7 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     getCompanyExclusions(), getTargetContactProfile(),
   ]);
   const importedAt = data[TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY] || data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null;
-  const exclusionMatcher = buildExclusionMatcher(exclusions);
+  const exclusionMatcher = await getExclusionMatcher();
   const seniorityLevels = contactProfile.seniorityLevels || [];
   const now = Date.now();
 
@@ -4816,6 +4843,8 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       // (a "Web" row's own, an edit, or one its web research cited) and the source it was found in.
       website: ov.website || row.website || citedResearchWebsite(extra.webResearch) || null,
       primarySourceUrl: row.primarySourceUrl || null,
+      // The user gave the LinkedIn lookup something new to try (pipeline-plan.js userRetryFirst).
+      userIdentityEdit: Boolean(ov.linkedinLink) || [].concat(ov.alternativeCompanyName ?? []).some((n) => String(n || "").trim() !== ""),
     };
     view.pipeline = effectivePipeline(extra.pipeline, view.inputsKey);
     for (const field of PROVENANCE_FIELDS) view[field] = ov[field] ?? row[field] ?? null;

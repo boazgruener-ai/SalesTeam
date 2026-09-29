@@ -13,7 +13,7 @@ import { askConfirm } from "./confirm-dialog.js";
 
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
-  "companyExclusions", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
+  "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
 ]);
 
 const CHOICES = {

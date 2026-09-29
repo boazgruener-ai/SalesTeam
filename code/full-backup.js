@@ -37,7 +37,7 @@ export const BACKUP_CATEGORIES = [
   {
     id: "wizard", label: "Setup wizard configuration",
     detail: "Target universe, target contacts, exclusions, prioritization rules and guidelines, languages, your profile and company website, wizard progress.",
-    keys: ["targetUniverseConfig", "targetContactProfile", "companyExclusions", "companyExclusionsMigrated", "companyAliases",
+    keys: ["targetUniverseConfig", "targetContactProfile", "companyExclusions", "companyExclusionsMigrated", "companyExclusionsLifted", "companyAliases",
       "postPrioritizationRules", "prioritizationRuleOverrides", "accountPriorityGuidelines", "organizationTypeEligibility",
       "keywordSearchLanguages", "userProfile", "companyWebsite", "onboardingCompletedAt", "onboardingProgressStepIndex",
       "targetAccountScoreThreshold"],

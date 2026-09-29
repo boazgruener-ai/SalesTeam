@@ -60,6 +60,7 @@ import {
   clearKeptSeparatePairs,
   getCompanyExclusions,
   isCompanyRowExcluded,
+  getExclusionMatcher,
   backfillCompanyExclusionsFromWorkbook,
   getExistingCompaniesNeedingContacts,
   getTargetUniverseConfig,
@@ -2856,13 +2857,13 @@ async function loadWorkbook() {
   // Dashboard entirely, which is what we do for our own excluded
   // companies") - a company the workbook's own Excluded column marks "Yes",
   // or that matches this app's own companyExclusions blocklist by LinkedIn
-  // slug (isCompanyRowExcluded checks both), is hidden the same way a soft-
+  // slug, name or website, unless the user took it off that list (isCompanyRowExcluded checks all), is hidden the same way a soft-
   // deleted account is: filtered out here, once, not per call site - never
   // actually dropped from storage, so nothing is lost if either source
   // later stops flagging it.
-  const exclusionSlugSet = new Set(companyExclusions.map((e) => e.slug));
+  const exclusionMatcher = await getExclusionMatcher();
   const excludedCompanyKeys = new Set(
-    wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionSlugSet)).map((c) => normalizeCompanyName(c.company))
+    wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionMatcher)).map((c) => normalizeCompanyName(c.company))
   );
   workbook = {
     ...wb,

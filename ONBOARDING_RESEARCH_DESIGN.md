@@ -614,6 +614,11 @@ without `https://`) or an `http(s)` primary source url; a website comes from the
 research that cited it. Measured on the 2026-09-29 backup: of 551 live accounts, 11 are not scannable
 and one of them (Swiss Air-Rescue Rega, P3) becomes Usable via the web; nothing else changes, and every
 stored research is in the old format, so no provenance changes. `MIN_READY_TO_SCAN` stays 5 until step 4.
+Two fixes in the same build, from Boaz's check of those numbers: a slug taken off the exclusion list in
+the wizard is kept in `companyExclusionsLifted` and overrides the research workbook's own Excluded flag
+(before, the ten companies its Exclusion_List marks "Competitor" could not be included again, and the
+import's backfill put them back); and an account the user gave an Alt. name or LinkedIn link is taken
+first by the pipeline until it has been tried once with it (`userRetryFirst`, pipeline-plan.js).
 
 ---
 

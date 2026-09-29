@@ -39,8 +39,9 @@ export function webCompanyId(website, name) {
 
 // companyExclusions entries are { slug?, name?, domain?, category, source? }: a LinkedIn slug (as before
 // 1.2.1), and/or a company name and website domain (proposed by onboarding research, which never visits
-// LinkedIn for an exclusion). Built once per list, not per row.
-export function buildExclusionMatcher(exclusions) {
+// LinkedIn for an exclusion). Built once per list, not per row. `lifted`: LinkedIn slugs the user took off
+// the list, which also overrides the research workbook's own Excluded flag (storage.js isCompanyRowExcluded).
+export function buildExclusionMatcher(exclusions, lifted) {
   const slugs = new Set();
   const names = new Set();
   const domains = new Set();
@@ -52,7 +53,8 @@ export function buildExclusionMatcher(exclusions) {
     const d = websiteDomain(e.domain || "");
     if (d) domains.add(d);
   }
-  return { slugs, names, domains };
+  const liftedSlugs = new Set((lifted || []).filter(Boolean).map((s) => String(s).toLowerCase()));
+  return { slugs, names, domains, lifted: liftedSlugs };
 }
 
 // true when the matcher names this company by its LinkedIn slug, its normalised name or its website domain.

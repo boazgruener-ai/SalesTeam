@@ -14,7 +14,7 @@ import {
   getCompanyExclusions,
   isCompanyRowExcluded,
   normalizeCompanyName,
-  buildExclusionMatcher,
+  getExclusionMatcher,
   contactKeyFor,
   getResults,
   LEAD_STATUSES,
@@ -69,7 +69,7 @@ async function computePipelineStats() {
     getCompanyExclusions(),
     getResults(),
   ]);
-  const exclusionMatcher = buildExclusionMatcher(companyExclusions);
+  const exclusionMatcher = await getExclusionMatcher();
   const excludedKeys = new Set(
     (workbook.companies || [])
       .filter((c) => isCompanyRowExcluded(c, exclusionMatcher))

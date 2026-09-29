@@ -287,6 +287,16 @@ export function estimateTouches(jobs, view, contactChunks) {
 // account the pipeline has waited longest to handle. An account already handled today is skipped, so
 // a job that failed is retried tomorrow, not again in the same run.
 // W2: accounts with a gap to close come before accounts that only get a full web research ("depth").
+// 2026-09-29: before all of that, an account whose LinkedIn lookup has something new to try because the user
+// gave it an Alt. name or a LinkedIn link (view.userIdentityEdit), and that the pipeline has not yet tried
+// with it. The user acted on that account and expects to see the result, not to wait behind every P1 and
+// P2 account ("Swiss Air-Rescue Rega" -> "Rega", P3, waited two days). One try: after it the attempt is
+// recorded, and the account goes back to its normal place.
+export function userRetryFirst(entry) {
+  const tried = entry.pipeline && entry.pipeline.attempts && entry.pipeline.attempts.resolve;
+  return Boolean(entry.view.userIdentityEdit && entry.jobs.includes("resolve") && !(tried && tried.length));
+}
+
 export function rankCandidates(entries, now, contactChunks, opts) {
   const today = localDay(now);
   const level = (p) => priorityLevel(p) || 3;
@@ -302,6 +312,7 @@ export function rankCandidates(entries, now, contactChunks, opts) {
     })
     .filter((e) => e.jobs.length > 0)
     .sort((a, b) =>
+      Number(userRetryFirst(b)) - Number(userRetryFirst(a)) ||
       Number(a.depthOnly) - Number(b.depthOnly) ||
       level(a.view.salesTeamPriority) - level(b.view.salesTeamPriority) ||
       a.touches - b.touches ||
