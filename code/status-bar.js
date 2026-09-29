@@ -1,8 +1,9 @@
 // The ONE place for "something is running or waiting" messages (1.2.0.2). Boaz, live test 2026-09-29: messages
 // appeared at the top, at the bottom and as pop-ups, and were pale - "the user does not know where to look".
 // The rule since then: anything running or waiting is shown here, in a strong bar across the top of the window;
-// a pop-up only asks a question or reports a job the user started that has finished; the automatic pipeline
-// stays quiet in its own Pipeline status box. Do not add another floating note or toast - use this.
+// a pop-up only asks a question or reports a job the user started that has finished. The automatic pipeline is
+// shown here too, always - running or waiting (2026-09-29, pipeline-status.js). Do not add another floating
+// note or toast - use this.
 //
 // The bar is a manual popover, so it sits in the browser's top layer: above an open modal <dialog> and its grey
 // backdrop (a note in <body> was hidden behind one - Start looked dead for up to 2.5 minutes). An in-flow spacer
