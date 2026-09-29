@@ -46,6 +46,11 @@ function ensureBar() {
   barEl.append(text, btn);
   document.body.prepend(spacerEl);
   document.body.append(barEl);
+  // The spacer follows the bar's real height: measured once at first show it came out wrong (236 px for a
+  // 40 px bar), and a long message wraps onto a second line on a narrow window.
+  new ResizeObserver(() => {
+    if (barEl.style.display !== "none") spacerEl.style.height = `${barEl.offsetHeight}px`;
+  }).observe(barEl);
   return barEl;
 }
 

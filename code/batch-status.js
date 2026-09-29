@@ -77,8 +77,7 @@ async function render(state) {
     stopping = false;
     setStatusMessage("bulk", {
       tone: "error",
-      text: `Web research stopped: ${stopReasonText(state).split("
-")[0]}`,
+      text: `Web research stopped: ${stopReasonText(state).split("\n")[0]}`,
       action: { label: "Close", onClick: closeErrorBar },
     });
   } else {
