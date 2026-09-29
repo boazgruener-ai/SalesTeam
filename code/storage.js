@@ -3,8 +3,10 @@ import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
-import { computeFindingProposals, researchConfirms } from "./web-research-apply.js";
+import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
+import { normalizeCompanyName, buildExclusionMatcher, matchesExclusion, websiteDomain } from "./company-identity.js";
+export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
 // post/job URL, with status, priority, and negative-topic-match reason), scan
@@ -581,16 +583,18 @@ export function isExcludedFlagTruthy(value) {
 
 // A company is excluded if EITHER source says so: the workbook's own
 // Excluded flag (ChatGPT's research-time exclusion), or this app's own
-// companyExclusions list (the user's manually-curated LinkedIn-slug
-// blocklist, matched via the row's linkedinLink) - either one is enough,
-// independent of the other. exclusionSlugSet is a Set of companyExclusions
-// slugs, built once by the caller (getCompanyExclusions().map(e => e.slug))
-// rather than refetched per row.
-export function isCompanyRowExcluded(companyRow, exclusionSlugSet) {
+// companyExclusions list - either one is enough, independent of the other.
+// The list matches by LinkedIn slug (via the row's linkedinLink), and since
+// 1.2.1 step 1 also by normalised company name or website domain (design
+// 3.9). `matcher` is buildExclusionMatcher(getCompanyExclusions()), built
+// once by the caller rather than per row; a plain Set of slugs (the form
+// before 1.2.1) is still accepted.
+export function isCompanyRowExcluded(companyRow, matcher) {
   if (!companyRow) return false;
   if (isExcludedFlagTruthy(companyRow.excluded)) return true;
   const slug = parseLinkedinCompanySlug(companyRow.linkedinLink || "");
-  return slug ? exclusionSlugSet.has(slug) : false;
+  if (matcher instanceof Set) return slug ? matcher.has(slug) : false;
+  return matchesExclusion(matcher, { slug, name: companyRow.company, website: companyRow.website });
 }
 
 // Real Exclusion_Reason values confirmed live (Swiss_AI_Prospects_528_V55) -
@@ -1873,7 +1877,7 @@ export async function getExistingCompaniesNeedingContacts(maxExistingContacts = 
   const [workbook, extras, exclusions] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(),
   ]);
-  const exclusionSlugSet = new Set(exclusions.map((e) => e.slug));
+  const exclusionMatcher = buildExclusionMatcher(exclusions);
   const contactCountByCompanyId = new Map();
   for (const contact of workbook.contacts || []) {
     if (!contact.companyId) continue;
@@ -1882,7 +1886,7 @@ export async function getExistingCompaniesNeedingContacts(maxExistingContacts = 
   return (workbook.companies || [])
     .filter((c) => c.company && c.companyId)
     .filter((c) => !extras[normalizeCompanyName(c.company)]?.deletedAt)
-    .filter((c) => !isCompanyRowExcluded(c, exclusionSlugSet))
+    .filter((c) => !isCompanyRowExcluded(c, exclusionMatcher))
     .map((c) => {
       const key = normalizeCompanyName(c.company);
       return {
@@ -1953,7 +1957,7 @@ export async function getCompaniesNeedingSize() {
   const [workbook, extras, exclusions] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(),
   ]);
-  const exclusionSlugSet = new Set(exclusions.map((e) => e.slug));
+  const exclusionMatcher = buildExclusionMatcher(exclusions);
   return (workbook.companies || [])
     .filter((c) => c.company && c.companyId && c.linkedinLink)
     // The count must be read THROUGH the account's own overrides, not off the workbook row alone.
@@ -1971,7 +1975,7 @@ export async function getCompaniesNeedingSize() {
       return parseLooseNumber(global) === null && parseLooseNumber(local) === null;
     })
     .filter((c) => !extras[normalizeCompanyName(c.company)]?.deletedAt)
-    .filter((c) => !isCompanyRowExcluded(c, exclusionSlugSet))
+    .filter((c) => !isCompanyRowExcluded(c, exclusionMatcher))
     .map((c) => {
       const key = normalizeCompanyName(c.company);
       return {
@@ -2363,7 +2367,8 @@ async function applyWizardSourceLists(topics) {
   const resolved = Object.fromEntries(
     sourceListsNeeded.map((key) => [
       key,
-      exclusions.filter((e) => e.category === NEGATIVE_TOPIC_SOURCE_CATEGORY[key]).map((e) => slugToCompanyKeyword(e.slug)),
+      // An entry named without a LinkedIn slug (1.2.1, design 3.9) contributes its name.
+      exclusions.filter((e) => (e.slug || e.name) && e.category === NEGATIVE_TOPIC_SOURCE_CATEGORY[key]).map((e) => (e.slug ? slugToCompanyKeyword(e.slug) : String(e.name).trim())),
     ])
   );
   return topics.map((t) => (t.sourceList ? { ...t, keywords: resolved[t.sourceList] || [], matchField: "company" } : t));
@@ -3162,17 +3167,8 @@ export async function setLeadPriority(key, priority) {
   await saveResults(results);
 }
 
-// Best-effort match key for grouping leads by company - not authoritative
-// (e.g. "Azqore" vs "Azqore SA" collapse to the same key, but an unusual
-// suffix this doesn't know about won't). Always show the lead's own raw
-// `company` string alongside any grouping so a bad merge is still visible.
-const COMPANY_SUFFIX_RE = /\s+(sa|ag|gmbh|inc|ltd|llc|corp|plc|co|sarl|srl|bv|nv|group|holding|holdings)\s*$/i;
-
-export function normalizeCompanyName(name) {
-  if (!name) return "";
-  const collapsed = name.toLowerCase().replace(/[.,]/g, "").replace(/\s+/g, " ").trim();
-  return collapsed.replace(COMPANY_SUFFIX_RE, "").trim();
-}
+// normalizeCompanyName lives in company-identity.js (pure, tested) since 1.2.1 step 1; re-exported at the top
+// of this file so every existing import from storage.js still works.
 
 // --------------------------------------------------------------------------
 // Prioritization rules & company scoring
@@ -3515,7 +3511,7 @@ export async function getCompaniesForPrioritization({ rescoreAll = false, rescor
   const [workbook, extras, exclusions, threshold] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getCompanyExclusions(), getTargetAccountScoreThreshold(),
   ]);
-  const exclusionSlugSet = new Set(exclusions.map((e) => e.slug));
+  const exclusionMatcher = buildExclusionMatcher(exclusions);
   const contactCountByCompanyId = new Map();
   for (const contact of workbook.contacts || []) {
     if (!contact.companyId) continue;
@@ -3524,7 +3520,7 @@ export async function getCompaniesForPrioritization({ rescoreAll = false, rescor
   return (workbook.companies || [])
     .filter((c) => c.company && c.companyId)
     .filter((c) => !extras[normalizeCompanyName(c.company)]?.deletedAt)
-    .filter((c) => !isCompanyRowExcluded(c, exclusionSlugSet))
+    .filter((c) => !isCompanyRowExcluded(c, exclusionMatcher))
     .filter((c) => rescoreAll || !c.salesTeamPriority || (rescoreDerived && isDerivedPriority(c, extras[normalizeCompanyName(c.company)])))
     .map((c) => {
       const contactCount = contactCountByCompanyId.get(c.companyId) || 0;
@@ -3878,8 +3874,8 @@ export async function partitionLeadsByTargetAccount(leads) {
   // Added 2026-09-17: a workbook that scores a competitor normally instead
   // of writing "Out of Scope" (the whole reason this column exists) would
   // otherwise still trigger an automatic floor/ceiling here.
-  const exclusionSlugSet = new Set((await getCompanyExclusions()).map((e) => e.slug));
-  const isExcludedCompanyName = (name) => isCompanyRowExcluded(companyByName.get(normalizeCompanyName(name)), exclusionSlugSet);
+  const exclusionMatcher = buildExclusionMatcher(await getCompanyExclusions());
+  const isExcludedCompanyName = (name) => isCompanyRowExcluded(companyByName.get(normalizeCompanyName(name)) || { company: name }, exclusionMatcher);
 
   const threshold = await getTargetAccountScoreThreshold();
   const rules = await getPrioritizationRules();
@@ -4719,8 +4715,10 @@ export function hasOverdueAction(extra) {
 const PROVENANCE_FIELDS = ["globalHqCountry", "globalEmployees", "swissEmployees", "industry"];
 
 // Records where each changed override came from, in the same write as the value (design 4.2).
-// src "web" is an accepted web finding (cited when the account's web research has sources); anything
-// else is a manual edit, which D2 counts as verified from the moment it was typed.
+// src "web" is an accepted web finding: since 1.2.1 cited only when the research gave THAT value a url of
+// its own, which becomes the provenance's link (onboarding design 5.3; a research stored before 1.2.1
+// keeps the old rule, cited when it had any source). Anything else is a manual edit, which D2 counts as
+// verified from the moment it was typed.
 function stampOverrideProvenance(prevOverrides, nextOverrides, extra, src) {
   const provenance = { ...(extra.provenance || {}) };
   const now = Date.now();
@@ -4730,12 +4728,24 @@ function stampOverrideProvenance(prevOverrides, nextOverrides, extra, src) {
     if (provenanceValueKey(value) === provenanceValueKey(prevOverrides?.[field])) continue;
     if (src === "web") {
       const research = extra.webResearch || {};
-      provenance[field] = { src: "web", at: research.at || now, cited: (research.sources || []).length > 0, v: value };
+      const c = webCitationFor(research.data, research.sources, field, value);
+      provenance[field] = { src: "web", at: research.at || now, cited: Boolean(c && c.cited), ...(c && c.link ? { link: c.link } : {}), v: value };
     } else {
       provenance[field] = { src: "user", at: now, v: value };
     }
   }
   return provenance;
+}
+
+// The website a web research found for an account, when the research stands behind it: a url of its own
+// (1.2.1 format), or any source at all (a research stored before 1.2.1).
+function citedResearchWebsite(research) {
+  const raw = research && research.data ? research.data.website : null;
+  if (!raw) return null;
+  const value = findingValue(raw);
+  if (!value) return null;
+  if (isCitedValue(raw)) return findingUrl(raw) ? String(value).trim() : null;
+  return (research.sources || []).length > 0 ? String(raw).trim() : null;
 }
 
 // Builds the views. With persistDerived (the default), provenance that had to be derived from
@@ -4748,7 +4758,7 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     getCompanyExclusions(), getTargetContactProfile(),
   ]);
   const importedAt = data[TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY] || data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null;
-  const exclusionSlugSet = new Set(exclusions.map((e) => e.slug));
+  const exclusionMatcher = buildExclusionMatcher(exclusions);
   const seniorityLevels = contactProfile.seniorityLevels || [];
   const now = Date.now();
 
@@ -4765,7 +4775,7 @@ export async function getAccountViews({ persistDerived = true } = {}) {
   // two rows share a name (a researched row and a Discovered one) and either is excluded, both are. Per
   // row, the pie counted 541 accounts against the table's 540.
   const excludedKeys = new Set(
-    (workbook.companies || []).filter((c) => c.company && isCompanyRowExcluded(c, exclusionSlugSet)).map((c) => normalizeCompanyName(c.company))
+    (workbook.companies || []).filter((c) => c.company && isCompanyRowExcluded(c, exclusionMatcher)).map((c) => normalizeCompanyName(c.company))
   );
   const views = [];
   const derived = {};   // key -> { field: provenance } still to be written back
@@ -4802,6 +4812,10 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       universeOrder: row.universeOrder ?? null,
       // Build step 5: when the last FULL web research ran. A short one (only some topics) does not count.
       webFullResearchAt: extra.webResearch && !extra.webResearch.topics ? extra.webResearch.at || null : null,
+      // 1.2.1 step 1 (onboarding design 6.1): what identifies the account without LinkedIn - its website
+      // (a "Web" row's own, an edit, or one its web research cited) and the source it was found in.
+      website: ov.website || row.website || citedResearchWebsite(extra.webResearch) || null,
+      primarySourceUrl: row.primarySourceUrl || null,
     };
     view.pipeline = effectivePipeline(extra.pipeline, view.inputsKey);
     for (const field of PROVENANCE_FIELDS) view[field] = ov[field] ?? row[field] ?? null;
@@ -4833,6 +4847,10 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     const facts = {
       overridden: Object.fromEntries(PROVENANCE_FIELDS.map((f) => [f, ov[f] !== undefined && ov[f] !== null && ov[f] !== ""])),
       webResearch: extra.webResearch || null,
+      // Per field: does the web research stand behind the value in place, and with which url (design 5.3).
+      webCitations: extra.webResearch && extra.webResearch.data
+        ? Object.fromEntries(PROVENANCE_FIELDS.map((f) => [f, webCitationFor(extra.webResearch.data, extra.webResearch.sources, f, view[f])]))
+        : null,
       linkedinResolveAttemptedAt: mapEntry?.linkedinResolveAttemptedAt || null,
       sizeFetchAttemptedAt: extra.sizeFetchAttemptedAt || null,
       employeeCountText: row.employeeCountText || null,
@@ -4848,12 +4866,15 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     // never a finding, so without this a weakly evidenced workbook value stayed unverified however
     // often the web agreed. Only upgrades: a good source that is at least as recent is left alone.
     const research = extra.webResearch;
-    if (research && research.at && research.data && Array.isArray(research.sources) && research.sources.length > 0) {
+    // Since 1.2.1 a value confirms only when the research cited a url for THAT value (design 5.3).
+    if (research && research.at && research.data) {
       for (const field of researchConfirms(row, ov, research.data, null, WEB_CONFIRM_FIELDS)) {
         if (!isPresent(view[field])) continue;
+        const citation = webCitationFor(research.data, research.sources, field, view[field]);
+        if (!citation || !citation.cited) continue;
         const cur = applicableProvenance(view, field);
         if (cur && isGoodSource(cur) && (cur.at || 0) >= research.at) continue;
-        const p = { src: "web", at: research.at, cited: true, v: view[field], confirmed: true };
+        const p = { src: "web", at: research.at, cited: true, ...(citation.link ? { link: citation.link } : {}), v: view[field], confirmed: true };
         view.provenance = { ...view.provenance, [field]: p };
         (derived[key] = derived[key] || {})[field] = p;
       }

@@ -14,6 +14,7 @@ import {
   getCompanyExclusions,
   isCompanyRowExcluded,
   normalizeCompanyName,
+  buildExclusionMatcher,
   contactKeyFor,
   getResults,
   LEAD_STATUSES,
@@ -68,10 +69,10 @@ async function computePipelineStats() {
     getCompanyExclusions(),
     getResults(),
   ]);
-  const exclusionSlugSet = new Set(companyExclusions.map((e) => e.slug));
+  const exclusionMatcher = buildExclusionMatcher(companyExclusions);
   const excludedKeys = new Set(
     (workbook.companies || [])
-      .filter((c) => isCompanyRowExcluded(c, exclusionSlugSet))
+      .filter((c) => isCompanyRowExcluded(c, exclusionMatcher))
       .map((c) => normalizeCompanyName(c.company))
   );
   const isAccountDeleted = (key) => Boolean(accountExtras[key]?.deletedAt);

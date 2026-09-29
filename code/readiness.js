@@ -7,8 +7,9 @@
 // does the joining of the three account stores and hands this module one flat `view` per account.
 //
 // view = {
-//   key, company, source,                         // source: "Imported" | "Discovered" | "HubSpot"
+//   key, company, source,                         // source: "Imported" | "Discovered" | "HubSpot" | "Web"
 //   linkedinCompanyId, linkedinLink,
+//   website, primarySourceUrl,                    // what identifies it without LinkedIn (1.2.1, webUsable)
 //   salesTeamPriority,                            // effective: manual override, else the row's
 //   globalHqCountry, globalEmployees, swissEmployees, industry,   // effective values
 //   evidenceStatus, lastVerified,                 // the imported row's own columns
@@ -57,6 +58,10 @@ export const FIELD_LABELS = {
 
 function isPresent(v) {
   return v !== null && v !== undefined && String(v).trim() !== "";
+}
+
+function isHttpUrl(v) {
+  return isPresent(v) && /^https?:\/\/\S+\.\S+/i.test(String(v).trim());
 }
 
 // A date as stored anywhere in this extension: epoch ms, an Excel serial day number (what xlsx-lite
@@ -178,6 +183,13 @@ export function deriveProvenance(view, field, facts, now) {
 
   if (f.overridden && f.overridden[field]) {
     const research = f.webResearch;
+    // 1.2.1 (onboarding design 5.3): storage.js hands the per-field verdict in webCitations - the research
+    // stands behind this value, cited only with a url of its own. Without it, the old rule.
+    if (f.webCitations && research && research.at) {
+      const c = f.webCitations[field];
+      if (c) return { ...base, src: "web", at: research.at, cited: Boolean(c.cited), ...(c.link ? { link: c.link } : {}) };
+      return { ...base, src: "user", at: importedAt };
+    }
     if (research && Array.isArray(research.sources) && research.sources.length > 0 && research.at) {
       return { ...base, src: "web", at: research.at, cited: true };
     }
@@ -188,6 +200,12 @@ export function deriveProvenance(view, field, facts, now) {
     return { ...base, src: "linkedin", at: f.sizeFetchAttemptedAt };
   }
   if (view.source === "Discovered") return { ...base, src: "discovery", at: f.discoveredAt || importedAt };
+  // A row found on the web (onboarding design 4.4) is normally stamped when it is added; a value without a
+  // stamp is cited by the listing it came from, when there is one.
+  if (view.source === "Web") {
+    const link = isHttpUrl(view.primarySourceUrl) ? String(view.primarySourceUrl).trim() : null;
+    return { ...base, src: "web", at: f.discoveredAt || importedAt, cited: Boolean(link), ...(link ? { link } : {}) };
+  }
   if (view.source === "HubSpot") return { ...base, src: "workbook", at: importedAt, evidence: null };
   return {
     ...base,
@@ -285,6 +303,26 @@ function jobsFor(missing) {
   return jobs;
 }
 
+// 1.2.1 (onboarding design 6.1): Usable WITHOUT LinkedIn. An account the web has identified - a website or
+// the source it was found in - with a P1-P5 priority, and every targeting field this user's setup depends
+// on (HQ country, employees, industry; R3.5) present and verified. The LinkedIn id and the contacts are
+// what the LinkedIn lane adds afterwards, so they are not asked for here. It is not scannable: the Scanner
+// still needs a LinkedIn id (isScannable is unchanged), and Ready is unchanged too.
+export function webUsable(view, cfg, now) {
+  if (!view || view.deleted || view.excluded) return false;
+  if (!isHttpUrl(view.website) && !isHttpUrl(view.primarySourceUrl) && !isBareDomain(view.website)) return false;
+  if (!/^P[1-5]$/.test(view.salesTeamPriority || "")) return false;
+  const t = typeof now === "number" ? now : Date.now();
+  return requiredFields(cfg)
+    .filter((field) => field !== "linkedinCompanyId" && field !== "contact")
+    .every((field) => checkField(view, field, t) === null);
+}
+
+// "nestle.com" - a website written without its https://.
+function isBareDomain(v) {
+  return isPresent(v) && /^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+\/?$/i.test(String(v).trim());
+}
+
 // state, in the order section 3.2 checks it. `pending` (optional) carries what build steps 4-5 add:
 // { decision: true } when the decision queue holds an item for this account, { lacking: true } when
 // R12.5 is met. Step 1 never sets either, so it only ever returns ready / usable / in_progress.
@@ -301,8 +339,12 @@ export function assessAccount(view, cfg, now, pending) {
   else if (pending && pending.lacking && !(pending.keep)) state = "lacking_evidence";
   else if (scannable && missing.length === 0) state = "ready";
   else if (scannable) state = "usable";
+  else if (webUsable(view, cfg, t)) state = "usable";
   else state = "in_progress";
-  return { state, scannable, missing, nextJobs: jobsFor(missing) };
+  // usableVia: "linkedin" (the Scanner can search it) or "web" (not yet on LinkedIn), for the Usable slice's
+  // "not yet on LinkedIn" count and the table's "web only" tag (design 6.2).
+  const usableVia = state === "usable" ? (scannable ? "linkedin" : "web") : null;
+  return { state, scannable, usableVia, missing, nextJobs: jobsFor(missing) };
 }
 
 // Plain-language summary of what an account still lacks, for a tooltip or a table cell.

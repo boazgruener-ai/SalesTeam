@@ -26,18 +26,74 @@ const MONEY_FIELDS = { globalRevenue: "revenueCurrency", swissRevenue: "swissRev
 // and 11.9% apart at the table's 1.25.
 const SAME_CURRENCY_TOLERANCE = 0.1;
 const CROSS_CURRENCY_TOLERANCE = 0.25;
+// 1.2.1 (ONBOARDING_RESEARCH_DESIGN.md 5.3): the research's DATA line gives each fact with ITS OWN source,
+// { value, url, year } (a summary is { text, url }), instead of a plain value. A value counts as cited only
+// when it carries a url - the model can no longer make a guessed number count by citing something else.
+// A research stored before 1.2.1 (plain values) is still read; it keeps the old rule, cited when the
+// research as a whole cited any source.
+export function isCitedValue(raw) {
+  return raw !== null && typeof raw === "object" && !Array.isArray(raw) && ("value" in raw || "text" in raw);
+}
+
+export function findingValue(raw) {
+  if (!isCitedValue(raw)) return raw;
+  return "value" in raw ? raw.value : raw.text;
+}
+
+export function findingUrl(raw) {
+  if (!isCitedValue(raw) || typeof raw.url !== "string") return null;
+  const url = raw.url.trim();
+  return /^https?:\/\/\S+$/i.test(url) ? url : null;
+}
+
+// `raw` reads the field as the research wrote it; `from` its plain value, whichever format it is in.
+const finding = (key, label, dataKey, numeric = false) =>
+  ({ key, label, dataKey, numeric, raw: (d) => d[dataKey], from: (d) => findingValue(d[dataKey]) });
+
 export const WEB_FINDING_FIELDS = [
-  { key: "globalEmployees", label: "Employees (global)", from: (d) => d.employeesGlobal, numeric: true },
-  { key: "swissEmployees", label: "Employees (local)", from: (d) => d.employeesLocal, numeric: true },
-  { key: "globalRevenue", label: "Revenue (global)", from: (d) => d.revenueGlobal, numeric: true },
-  { key: "swissRevenue", label: "Revenue (local)", from: (d) => d.revenueLocal, numeric: true },
-  { key: "revenueCurrency", label: "Revenue currency", from: (d) => d.revenueCurrency },
-  { key: "globalHqCity", label: "Global HQ city", from: (d) => d.hqCity },
-  { key: "globalHqCountry", label: "Global HQ country", from: (d) => d.hqCountry },
-  { key: "zefixOfficialName", label: "Registry official name", from: (d) => d.registryName },
-  { key: "zefixUid", label: "Registry ID", from: (d) => d.registryId },
-  { key: "zefixAddress", label: "Registry address", from: (d) => d.registryAddress },
+  finding("globalEmployees", "Employees (global)", "employeesGlobal", true),
+  finding("swissEmployees", "Employees (local)", "employeesLocal", true),
+  finding("globalRevenue", "Revenue (global)", "revenueGlobal", true),
+  finding("swissRevenue", "Revenue (local)", "revenueLocal", true),
+  finding("revenueCurrency", "Revenue currency", "revenueCurrency"),
+  finding("globalHqCity", "Global HQ city", "hqCity"),
+  finding("globalHqCountry", "Global HQ country", "hqCountry"),
+  finding("zefixOfficialName", "Registry official name", "registryName"),
+  finding("zefixUid", "Registry ID", "registryId"),
+  finding("zefixAddress", "Registry address", "registryAddress"),
 ];
+
+// true when a research answer uses the per-field format for any of its facts.
+export function isPerFieldResearch(data) {
+  if (!data) return false;
+  return WEB_FINDING_FIELDS.some((f) => isCitedValue(f.raw(data))) || ["website", "isPublic", "summary"].some((k) => isCitedValue(data[k]));
+}
+
+// Does this research stand behind `current` as the value of `key`, and with which source? Returns
+// { cited, link } or null. Per-field answer: only when its value for the field agrees with `current`, cited
+// only with a url of its own. Pre-1.2.1 answer: the old rule (cited when the research had any source).
+export function webCitationFor(data, sources, key, current) {
+  if (!data) return null;
+  const f = WEB_FINDING_FIELDS.find((x) => x.key === key);
+  const raw = f ? f.raw(data) : undefined;
+  if (isCitedValue(raw)) {
+    if (!valuesAgree(f, findingValue(raw), current)) return null;
+    const link = findingUrl(raw);
+    return { cited: Boolean(link), link };
+  }
+  if (isPerFieldResearch(data)) return null;
+  return Array.isArray(sources) && sources.length > 0 ? { cited: true, link: null } : null;
+}
+
+function valuesAgree(f, found, current) {
+  if (isBlankFinding(found) || isBlankFinding(current)) return false;
+  if (f.numeric) {
+    const a = parseLooseNumber(current);
+    const b = parseLooseNumber(found);
+    return a !== null && b !== null && Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1) <= SAME_CURRENCY_TOLERANCE;
+  }
+  return String(current).trim().toLowerCase() === String(found).trim().toLowerCase();
+}
 
 // Build step 5: the fields a research CONFIRMS - it found a value, the account has one, and the two agree
 // (the same test that keeps a matching value from ever becoming a finding). A value that agrees is never
@@ -85,7 +141,7 @@ export function computeFindingProposals(company, overrides, data, money = null) 
       const currencyKey = MONEY_FIELDS[f.key];
       if (currencyKey && money?.targetCurrency) {
         const mine = normalizeMoney(current, effective[currencyKey] || effective.revenueCurrency, money.targetCurrency, money.rates);
-        const theirs = normalizeMoney(found, data[currencyKey] || data.revenueCurrency, money.targetCurrency, money.rates);
+        const theirs = normalizeMoney(found, findingValue(data[currencyKey]) || findingValue(data.revenueCurrency), money.targetCurrency, money.rates);
         if (mine.amount !== null && theirs.amount !== null) {
           a = mine.amount;
           b = theirs.amount;

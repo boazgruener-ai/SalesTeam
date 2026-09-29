@@ -600,6 +600,21 @@ from **Advanced tools** before the wizard uses them, so their real cost is measu
 | **6** | Wizard: initiative stages, included companies, targets with the estimate, Finish kicks both lanes; stop rule (8); coverage lines | the full onboarding | a full onboarding in a clean profile, 100 accounts |
 | **7** | Settings offer for existing installs (3.12); Help, store listing and website wording; release notes; **1.2.1** | — | store package |
 
+**As built (step 1, 1.2.0.4):** a new pure module, `company-identity.js`, holds `normalizeCompanyName`
+(moved out of `storage.js`, which re-exports it), `websiteDomain`, `webCompanyId` ("W-<domain>" or
+"W-<normalised name>") and the exclusion matcher: `isCompanyRowExcluded` now takes
+`buildExclusionMatcher(exclusions)` and matches slug, name or domain (Discovery's card check too). The
+wizard's Exclusions step shows LinkedIn pages only, so it carries name/domain entries through a save
+untouched. `web-research-apply.js` reads both answer formats (`findingValue`, `findingUrl`) and decides
+per field with `webCitationFor`: a value is cited only with a url of its own, and only when it agrees
+with the value in place; a research stored before 1.2.1 keeps the old rule. Every place that stamped
+`cited` from the research's whole source list now uses it (override stamping, the confirm pass,
+`deriveProvenance` via `facts.webCitations`). For `webUsable`, the identity test is a website (with or
+without `https://`) or an `http(s)` primary source url; a website comes from the row, an edit, or a
+research that cited it. Measured on the 2026-09-29 backup: of 551 live accounts, 11 are not scannable
+and one of them (Swiss Air-Rescue Rega, P3) becomes Usable via the web; nothing else changes, and every
+stored research is in the old format, so no provenance changes. `MIN_READY_TO_SCAN` stays 5 until step 4.
+
 ---
 
 ## 12. Decisions — all agreed 2026-09-28
