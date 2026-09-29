@@ -2750,6 +2750,7 @@ function scheduleReadinessRefresh() {
 }
 
 function renderReadinessPie() {
+  if (readinessByCompanyId.size === 0) return; // not assessed yet (the table is drawn first) - no "0 ready" flash
   const counts = countReadiness([...readinessByCompanyId.values()]);
   const slices = READINESS_STATES
     .filter((s) => counts[s] > 0 || s === "ready")
@@ -2871,9 +2872,13 @@ async function loadWorkbook() {
   contactsTableScrollTopEl.hidden = !hasContacts;
   contactsStatsSectionEl.hidden = !hasContacts;
   if (hasData) {
-    await refreshReadiness();
+    // The table first, readiness right after (1.2.0.2): readiness joins every account with its contacts and
+    // the decision queue, and waiting for it kept the whole page empty for seconds.
     renderTable();
     renderAccountsStats();
+    await refreshReadiness();
+    renderReadinessPie();
+    if (!listViewEl.hidden) renderTable();
   }
   if (hasContacts) {
     renderContactsTable();
@@ -5047,6 +5052,14 @@ function bulkAccountPriority(company) {
 }
 
 // The accounts the dialog's current choices would research, with the topics each one needs.
+// "Skip accounts researched recently" (1.2.0.2): only a FULL research (not one limited to a few topics, as the
+// pipeline often runs) within the last 90 days counts. Skipping every account ever researched left nothing to
+// run, and "at most N" then re-researched the same first N accounts on every run.
+const BULK_SKIP_DAYS = 90;
+function isRecentFullResearch(research) {
+  return Boolean(research && !research.topics && research.at && Date.now() - research.at < BULK_SKIP_DAYS * 86400000);
+}
+
 function bulkSelection() {
   const dlg = document.getElementById("bulk-research-dialog");
   const priorities = new Set([...dlg.querySelectorAll(".bulk-priority:checked")].map((c) => c.value));
@@ -5058,7 +5071,7 @@ function bulkSelection() {
     const key = normalizeCompanyName(company.company);
     if (!key || webResearchRunning.has(key)) continue;
     if (!priorities.has(bulkAccountPriority(company))) continue;
-    if (skipDone && accountExtras[key]?.webResearch) continue;
+    if (skipDone && isRecentFullResearch(accountExtras[key]?.webResearch)) continue;
     const effective = { ...company, ...(accountExtras[key]?.overrides || {}) };
     if (onlyMissing) {
       const needed = topics.filter((t) => BULK_TOPICS[t].missing(effective, company));

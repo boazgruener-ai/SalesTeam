@@ -4,35 +4,13 @@
 import { askConfirm } from "./confirm-dialog.js";
 import { BULK_STATE_KEY, getRunningBatch } from "./batch-jobs.js";
 import { initPipelineStatus } from "./pipeline-status.js";
+import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 
 const STALE_MS = 180000;
-let bannerEl = null;
 let onChange = null;
 
 function usd(n) {
   return n < 0.005 ? "less than $0.01" : `$${n.toFixed(2)}`;
-}
-
-function ensureBanner() {
-  if (bannerEl) return bannerEl;
-  bannerEl = document.createElement("div");
-  bannerEl.id = "batch-status-banner";
-  bannerEl.setAttribute("role", "status");
-  bannerEl.style.cssText = "position:sticky;top:0;z-index:2147483000;display:none;gap:12px;align-items:center;justify-content:space-between;" +
-    "background:#eef4fb;border-bottom:2px solid #0a66c2;color:#1a1a1a;padding:6px 16px;font:13px system-ui,sans-serif;";
-  const text = document.createElement("span");
-  text.id = "batch-status-text";
-  const stop = document.createElement("button");
-  stop.id = "batch-status-stop";
-  stop.type = "button";
-  stop.textContent = "Stop";
-  stop.addEventListener("click", () => {
-    stop.disabled = true;
-    chrome.runtime.sendMessage({ type: "BULK_WEB_RESEARCH_STOP" }).catch(() => {});
-  });
-  bannerEl.append(text, stop);
-  document.body.prepend(bannerEl);
-  return bannerEl;
 }
 
 function bannerText(s) {
@@ -42,22 +20,43 @@ function bannerText(s) {
     "You can keep using SalesTeam.";
 }
 
-function resultText(s) {
-  const completed = s.done - s.failed;
-  const notStarted = s.total - s.done;
+// Why a run stopped early, in plain words ("" when it simply finished).
+function stopReasonText(s) {
   const budgetText = s.budget > 0 ? usd(s.budget) : "";
-  const why = s.stoppedReason === "budget" ? `Stopped because the cost reached your limit of ${budgetText}.`
+  return s.stoppedReason === "budget" ? `Stopped because the cost reached your limit of ${budgetText}.`
     : s.stoppedReason === "user" ? "Stopped by you."
     : s.stoppedReason === "interrupted" ? "It was interrupted (the browser or the extension was restarted). What was already saved is kept."
     : s.stoppedReason === "credit" ? "Stopped because your Anthropic API credit balance is empty. Add credits in the Anthropic Console under Plans & Billing, then start the research again - everything found so far is saved."
     : s.stoppedReason === "limit" ? `Stopped because you reached the spending limit set on your Anthropic API account. This is a cap you configure in the Console - not your credit balance, which still has money in it. Raise it under Settings > Limits, or wait for it to reset, then start the research again; everything found so far is saved.${s.lastError ? `\n\n${s.lastError}` : ""}`
     : s.stoppedReason === "rate_limit" ? `Paused because Anthropic kept answering "too many requests", even after waiting in between. Start the research again later for the accounts not yet done - everything found so far is saved.`
     : s.stoppedReason === "errors" ? `Stopped because of errors${s.lastError ? `: ${s.lastError}` : "."}` : "";
+}
+
+// A run that an error stopped keeps a red bar until the user closes it (the pop-up alone was easy to miss).
+const ERROR_REASONS = new Set(["credit", "limit", "rate_limit", "errors", "interrupted"]);
+const ERROR_BAR_HOURS = 24;
+
+function resultText(s) {
+  const completed = s.done - s.failed;
+  const notStarted = s.total - s.done;
+  const why = stopReasonText(s);
   return `Web research finished.\n\n${completed} of ${s.total} account${s.total === 1 ? "" : "s"} researched` +
     `${s.failed ? `, ${s.failed} failed` : ""}${notStarted > 0 ? `, ${notStarted} not started` : ""}.\n` +
     `${s.initiatives} initiative${s.initiatives === 1 ? "" : "s"} added, ${s.filled} empty field${s.filled === 1 ? "" : "s"} filled in.\n` +
     (s.toReview > 0 ? `${s.toReview} account${s.toReview === 1 ? " has" : "s have"} findings that differ from your data - open them in Target Accounts and use "Review findings…".\n` : "") +
     `Estimated cost: about ${usd(s.spent)} (see Settings > Billing).` + (why ? `\n\n${why}` : "");
+}
+
+let stopping = false;
+function stopRun() {
+  stopping = true;
+  chrome.runtime.sendMessage({ type: "BULK_WEB_RESEARCH_STOP" }).catch(() => {});
+  chrome.storage.local.get(BULK_STATE_KEY).then((d) => render(d[BULK_STATE_KEY] || null));
+}
+async function closeErrorBar() {
+  const fresh = (await chrome.storage.local.get(BULK_STATE_KEY))[BULK_STATE_KEY];
+  if (fresh) await chrome.storage.local.set({ [BULK_STATE_KEY]: { ...fresh, barClosed: true } });
+  clearStatusMessage("bulk");
 }
 
 let announcing = false;
@@ -69,12 +68,21 @@ async function render(state) {
   }
   const running = !!state && state.status === "running";
   if (running) {
-    const banner = ensureBanner();
-    banner.style.display = "flex";
-    banner.querySelector("#batch-status-text").textContent = bannerText(state);
-    banner.querySelector("#batch-status-stop").disabled = false;
-  } else if (bannerEl) {
-    bannerEl.style.display = "none";
+    setStatusMessage("bulk", {
+      text: bannerText(state),
+      action: { label: stopping ? "Stopping…" : "Stop", disabled: stopping, onClick: stopRun },
+    });
+  } else if (state && state.status === "done" && ERROR_REASONS.has(state.stoppedReason) && !state.barClosed &&
+      Date.now() - (state.finishedAt || 0) < ERROR_BAR_HOURS * 3600000) {
+    stopping = false;
+    setStatusMessage("bulk", {
+      tone: "error",
+      text: `Web research stopped: ${stopReasonText(state).split("\n")[0]}`,
+      action: { label: "Close", onClick: closeErrorBar },
+    });
+  } else {
+    stopping = false;
+    clearStatusMessage("bulk");
   }
   if (onChange) onChange(state);
   if (state && state.status === "done" && !state.acknowledged && document.visibilityState === "visible" && !announcing) {
