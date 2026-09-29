@@ -197,7 +197,8 @@ document.getElementById("pipeline-run-start-btn").addEventListener("click", asyn
 });
 
 // 1.2.1 build step 2: the web lane, started by hand to measure its cost and time per account (web-lane.js).
-document.getElementById("nav-web-lane-btn").addEventListener("click", async () => {
+document.getElementById("nav-web-lane-btn").addEventListener("click", () => openWebLaneDialog());
+async function openWebLaneDialog() {
   const candidatesEl = document.getElementById("web-lane-candidates");
   document.getElementById("web-lane-status").textContent = "";
   document.getElementById("web-lane-start-btn").disabled = false;
@@ -212,7 +213,7 @@ document.getElementById("nav-web-lane-btn").addEventListener("click", async () =
   } catch (err) {
     candidatesEl.textContent = `Could not count them: ${err.message}`;
   }
-});
+}
 document.getElementById("web-lane-close-btn").addEventListener("click", () => document.getElementById("web-lane-dialog").close());
 document.getElementById("web-lane-start-btn").addEventListener("click", async () => {
   const startBtn = document.getElementById("web-lane-start-btn");
@@ -6466,6 +6467,7 @@ const ACTION_DIALOG_IDS = {
   prioritize: "prioritize-companies-dialog",
   "discover-contacts": "discover-contacts-dialog",
   "find-duplicates": "find-duplicates-dialog",
+  "web-lane": "web-lane-dialog",
 };
 function openActionFromHash() {
   const action = new URLSearchParams(location.hash.slice(1)).get("action");
@@ -6491,6 +6493,7 @@ function openActionFromHash() {
   if (action === "discover-contacts") showView("contactsList");
   if (action === "export-hubspot") refreshHubspotExportSummary();
   if (action === "import-hubspot") { document.getElementById("hubspot-import-status").hidden = true; }
+  if (action === "web-lane") { openWebLaneDialog(); return; }
   if (action === "find-duplicates") { renderFindDuplicates().then(() => document.getElementById(dialogId).showModal()); return; }
   if (action === "import-accounts") { renderImportColumnsHelp(); document.getElementById("import-help-status").textContent = ""; }
   document.getElementById(dialogId).showModal();
