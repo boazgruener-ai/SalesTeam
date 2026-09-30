@@ -655,6 +655,14 @@ profiles gets only the profile search. The 30-day skip now applies to the main r
 separately (`webProfileSearchAt`). Every account writes one Activity Log line (time, cost, searches, pages read,
 rounds, cut off, profiles found), and the dialog shows the last run account by account, to find the cause of the
 slow private-company researches before changing anything there.
+The list showed the cause: 13 of 20 researches **hung** until the cut-off (about US$0.037, nothing found) on the
+dynamic-filtering tool versions (20260209), while the rest finished in about 20 s; the lane now uses the basic
+versions first. **Second measurement (1.2.0.7, 2026-09-30, 20 accounts): no hangs**, US$1.98 in all - publicly
+traded (9): about US$0.135 and 26 s each, 66 contacts added; the rest (11, mostly a profile search only): about
+US$0.070 and 9 s each. Profile search: **38 of 104 people** found on LinkedIn from search results (was 2 of 42),
+and Ready went from 136 to 144 without a LinkedIn visit. Planning figures for 9 and step 4: about US$0.10 per
+account for the web lane with profiles, and about a third of the people get their profile from the web - the rest
+still need one LinkedIn search each.
 
 ---
 
