@@ -228,7 +228,7 @@ function companyPageUrl(slug) {
 // (not also on a name/url, which the resolve module needs because it can
 // legitimately have a search attempt and a fallback attempt overlapping in
 // theory) is sufficient here.
-function navigateAndWait(tabId, url) {
+function navigateAndWait(tabId, url, quiet = false) {
   return new Promise((resolve) => {
     let settled = false;
     const timeout = setTimeout(() => {
@@ -247,7 +247,8 @@ function navigateAndWait(tabId, url) {
       }
     }
     chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tabId, { url, active: true }).catch(() => {});
+    // quiet: the tab lives in its own unfocused window and is never brought to the front (web-discovery.js).
+    chrome.tabs.update(tabId, quiet ? { url } : { url, active: true }).catch(() => {});
     recordLinkedinTouch().catch(() => {});
   });
 }
@@ -277,7 +278,7 @@ function waitForMessage(type, timeoutMs) {
 async function fetchSearchPage(tab, url) {
   await chrome.storage.local.set({ companyDiscoveryActive: true, companyDiscoveryLocationCheckActive: false });
   const resultPromise = waitForMessage("COMPANY_DISCOVERY_PAGE_RESULT", PAGE_RESULT_TIMEOUT_MS);
-  const { navCompleted } = await navigateAndWait(tab.id, url);
+  const { navCompleted } = await navigateAndWait(tab.id, url, tab.quiet);
   const message = await resultPromise;
   // receivedMessage distinguishes "the content script ran and genuinely
   // found zero cards" from "no message ever arrived at all" (extension not
@@ -309,7 +310,7 @@ async function fetchSearchPage(tab, url) {
 async function fetchLocationFallback(tab, slug) {
   await chrome.storage.local.set({ companyDiscoveryActive: false, companyDiscoveryLocationCheckActive: true });
   const resultPromise = waitForMessage("COMPANY_DISCOVERY_LOCATION_RESULT", PAGE_RESULT_TIMEOUT_MS);
-  const { navCompleted } = await navigateAndWait(tab.id, companyPageUrl(slug));
+  const { navCompleted } = await navigateAndWait(tab.id, companyPageUrl(slug), tab.quiet);
   const message = await resultPromise;
   return {
     navCompleted,
@@ -336,7 +337,7 @@ export function estimateDiscoveryMinutes(maxCompanies) {
 // Returns a summary of this call's own activity - the authoritative running
 // totals live in the queue state itself (getDiscoveryQueueState), since a
 // multi-day run is expected to call this more than once.
-async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort } = {}) {
+async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort, quiet = false } = {}) {
   const state = await getDiscoveryQueueState();
   if (state.status !== "discovering_companies") {
     return { ranAnything: false, reason: `queue status is "${state.status}", not "discovering_companies"` };
@@ -442,12 +443,19 @@ async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort } = {}) {
 
   try {
     chrome.power.requestKeepAwake("system");
-    tab = await chrome.tabs.create({ url: "about:blank", active: true });
+    // quiet (web-discovery.js): a small window that never takes focus, as the automatic pipeline uses, so the
+    // user can keep working; otherwise the old behaviour, a tab in front.
+    if (quiet) {
+      const win = await chrome.windows.create({ url: "about:blank", focused: false, width: 560, height: 640, type: "normal" });
+      tab = { ...win.tabs[0], quiet: true, windowId: win.id };
+    } else {
+      tab = await chrome.tabs.create({ url: "about:blank", active: true });
+    }
     // Same cold-start warm-up as company-resolve-extraction.js's
     // runCompanyIdResolution - a fresh tab's very first navigation risks
     // missing the timeout window before the content script is reliably
     // running.
-    await navigateAndWait(tab.id, "https://www.linkedin.com/feed/");
+    await navigateAndWait(tab.id, "https://www.linkedin.com/feed/", tab.quiet);
 
     // Outer loop: one search unit (a country x keyword-search-language pair,
     // see resolveTargetCountries) at a time, not one combined multi-country
@@ -677,7 +685,8 @@ async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort } = {}) {
     await chrome.storage.local
       .remove(["companyDiscoveryActive", "companyDiscoveryLocationCheckActive"])
       .catch(() => {});
-    if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
+    if (tab && tab.quiet) await chrome.windows.remove(tab.windowId).catch(() => {});
+    else if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
   }
 
   return {

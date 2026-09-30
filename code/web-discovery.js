@@ -178,6 +178,7 @@ async function linkedinPart({ universe, targets, state, save, stopped }) {
       await startDiscoveryQueue({ ...universe, ...contactProfile, sizeBuckets, maxCompanies: staged + band.count });
       const summary = await runCompanyDiscoveryPhaseLocked({
         shouldAbort: stopped,
+        quiet: true,
         onProgress: ({ country, page }) => { state.phase = `Searching LinkedIn - ${band.label} companies, ${country}, page ${page}`; save(); },
       });
       const found = (await getDiscoveredCompanies()).length - staged;
