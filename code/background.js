@@ -993,8 +993,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message?.type === "WEB_LANE_STOP") {
     sendResponse(stopWebLane());
   } else if (message?.type === "WEB_DISCOVERY_START") {
-    // 1.2.1 build step 3: find new accounts - LinkedIn first, then the web (web-discovery.js).
-    startWebDiscovery({ target: message.target, budget: message.budget, useLinkedin: message.useLinkedin !== false }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));
+    // 1.2.1 build step 3: find new accounts - the web first, LinkedIn optional (web-discovery.js).
+    startWebDiscovery({ target: message.target, budget: message.budget, useLinkedin: message.useLinkedin === true }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   } else if (message?.type === "WEB_DISCOVERY_STOP") {
     sendResponse(stopWebDiscovery());

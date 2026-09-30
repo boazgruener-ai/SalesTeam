@@ -1,16 +1,17 @@
 // Account discovery for onboarding (1.2.1, ONBOARDING_RESEARCH_DESIGN.md section 4 as revised 2026-09-30):
-// LINKEDIN FIRST, the web as the complement.
+// THE WEB FIRST, LinkedIn optional (D11 as revised the same day).
 //
-// 1. LinkedIn: the existing company Discovery (company-discovery-extraction.js), one search per ticked size band,
-//    each asked for its band's share of the target (D9). A company found this way arrives with its LinkedIn page
-//    and id, so the pipeline has no lookup to make for it - fewer visits in all than finding it on the web.
-//    Results merge the usual way (autoMergeDiscoveryResults: a name-only match waits in the decision queue).
-// 2. The web: listing pages read with web fetch (discovery-filter.js decides what is kept), ONLY for what LinkedIn
-//    did not deliver - the rest of the target, countries without a confirmed LinkedIn id, or everything when the
-//    LinkedIn part could not run (daily limit, LinkedIn busy). Rows found this way become "Web" accounts.
+// 1. The web: listing pages read with web fetch (discovery-filter.js decides what is kept), then a fit search when
+//    they run short. Rows found this way become "Web" accounts; the pipeline looks each up on LinkedIn later.
+// 2. LinkedIn, only when the user ticks it: the existing company Discovery (company-discovery-extraction.js), one
+//    search per size band, in a small unfocused window, for LINKEDIN_SHARE of the target plus what the web fell
+//    short of. LinkedIn's free company search does not hold its location filter (it leads with Microsoft, Google
+//    even with Switzerland ticked) and needs the country name as a keyword, so it finds mostly companies with the
+//    country in their name - local branches of international groups, which listings tend to miss. Merged the usual
+//    way (autoMergeDiscoveryResults: a name-only match waits in the decision queue).
 //
-// Build step 3: started by hand from Advanced tools > "Find new accounts (new)", to MEASURE both parts: LinkedIn
-// pages and visits per account found, web cost per listing, rows kept after filtering. From step 6 the wizard's
+// Build step 3: started by hand from Advanced tools > "Find new accounts (new)", to MEASURE: web cost per listing,
+// rows kept after filtering, and (optionally) LinkedIn pages per account found. From step 6 the wizard's
 // Finish starts it. Progress and the result are kept under WEB_DISCOVERY_STATE_KEY (batch-status.js shows them).
 import {
   getAnthropicApiKey, getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig,
@@ -36,17 +37,20 @@ const POOL_FACTOR = 1.5;
 const MAX_LISTINGS_PER_COUNTRY = 5;
 const MAX_ROWS_PER_LISTING = 100;
 const RATE_LIMIT_WAIT_MS = 60000;
+// The optional LinkedIn search's share of the target (local branches of international groups).
+const LINKEDIN_SHARE = 0.2;
 // How long to wait for the automatic LinkedIn work to finish its account and free LinkedIn.
 const LINKEDIN_FREE_WAIT_MS = 4 * 60000;
 
 let runner = null;
 
-export async function startWebDiscovery({ target, budget, useLinkedin = true }) {
+export async function startWebDiscovery({ target, budget, useLinkedin = false }) {
   if (runner) throw new Error("Finding new accounts is already running.");
   const universe = await getTargetUniverseConfig();
   const countries = orderedCountries(universe);
   if (countries.length === 0) throw new Error("Pick your target countries first (Setup wizard > Location) - new accounts are looked for there.");
   const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+  if (!apiKey && !useLinkedin) throw new Error("Add your Anthropic API key first (Settings > Anthropic API Key) - the web search runs on your own key.");
   const t = Math.max(1, Math.round(Number(target) || 10));
   const state = {
     status: "running", target: t, wanted: discoveryWanted(t), countries, budget: Number(budget) || 0, spent: 0, hasKey: Boolean(apiKey),
@@ -91,32 +95,32 @@ async function run({ apiKey, universe, state, save, signal, useLinkedin, stop })
   const addedIds = [];
   try {
     const bands = SIZE_PRIORITY_BUCKETS;
-    const targets = bandTargets(universe.sizeBuckets, bands, state.wanted);
-
-    // ---- 1. LinkedIn ----
     const linkedinCountries = state.countries.filter((c) => geoUrnForCountry(c));
-    if (useLinkedin && linkedinCountries.length > 0) {
-      const li = await linkedinPart({ universe, targets, state, save, stopped });
-      addedKeys.push(...li.keys);
-      addedIds.push(...li.companyIds);
-    }
-    if (stopped() && state.stoppedReason === "user") return;
+    const withLinkedin = useLinkedin && linkedinCountries.length > 0;
+    // D11 revised: the web finds the accounts; the optional LinkedIn search only adds local branches of
+    // international groups (what listings rank under their group headquarters), a fixed share of the target.
+    const linkedinShare = withLinkedin ? Math.max(1, Math.round(state.wanted * LINKEDIN_SHARE)) : 0;
 
-    // ---- 2. The web, for what LinkedIn did not deliver ----
-    const noLinkedinCountries = state.countries.filter((c) => !geoUrnForCountry(c));
-    const linkedinRan = Boolean(state.linkedin && state.linkedin.ran);
-    const webCountries = linkedinRan ? [...noLinkedinCountries, ...state.countries.filter((c) => geoUrnForCountry(c))] : state.countries;
-    const remainder = Math.max(0, state.wanted - addedKeys.length);
-    // A country LinkedIn cannot search gets at least its share of the target, even when LinkedIn filled the rest.
-    const noLinkedinShare = linkedinRan && noLinkedinCountries.length ? Math.ceil((state.wanted * noLinkedinCountries.length) / state.countries.length) : 0;
-    state.webWanted = Math.max(remainder, noLinkedinShare);
+    // ---- 1. The web ----
+    state.webWanted = state.wanted - linkedinShare;
     if (state.webWanted > 0) {
       if (!apiKey) {
         state.webSkipped = "no Anthropic API key (Settings > Anthropic API Key)";
       } else {
-        const web = await webPart({ apiKey, universe, bands, state, save, signal, stop, countries: webCountries, wanted: state.webWanted });
+        const web = await webPart({ apiKey, universe, bands, state, save, signal, stop, countries: state.countries, wanted: state.webWanted });
         addedKeys.push(...web.keys);
         addedIds.push(...web.companyIds);
+      }
+    }
+    if (stopped() && state.stoppedReason === "user") return;
+
+    // ---- 2. LinkedIn (optional): its share, plus what the web fell short of ----
+    if (withLinkedin && !stopped()) {
+      const liWanted = Math.max(0, state.wanted - addedKeys.length);
+      if (liWanted > 0) {
+        const li = await linkedinPart({ universe, targets: bandTargets(universe.sizeBuckets, bands, liWanted), state, save, stopped });
+        addedKeys.push(...li.keys);
+        addedIds.push(...li.companyIds);
       }
     }
   } catch (err) {
