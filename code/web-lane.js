@@ -281,9 +281,9 @@ export function measureText(s) {
   const completed = s.done - s.failed;
   const line = (label, g) => g
     ? `${label}: ${g.accounts} account${g.accounts === 1 ? "" : "s"}, about US$${g.usdEach.toFixed(3)} and ${Math.round(g.secondsEach)} s each ` +
-      `(${g.searchesEach.toFixed(1)} searches, ${g.fetchesEach.toFixed(1)} pages read); ${g.contacts} contacts added (${g.profiles} with a LinkedIn profile), ` +
+      `(${g.searchesEach.toFixed(1)} searches, ${g.fetchesEach.toFixed(1)} pages read); ${g.contacts} people added from company websites and reports, ` +
       `${g.initiatives} initiatives, ${g.filled} empty fields filled, ${g.pages} LinkedIn company pages found; ` +
-      `profile search: ${g.profileFound} of ${g.profileAsked} people found on LinkedIn` +
+      `LinkedIn profiles found from web search results for ${g.profileFound + g.profiles} of ${g.profileAsked + g.profiles} people without one (the rest: a LinkedIn name search later)` +
       (g.cutOff ? `; ${g.cutOff} cut off at the 4-minute limit` : "") + (g.noData ? `; ${g.noData} without a data line` : "")
     : null;
   return [
