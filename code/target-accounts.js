@@ -13,7 +13,7 @@
 // populates both in one action. Also owns the confidence threshold and the
 // experimental Resolve LinkedIn Company IDs action (6.16), both likewise
 // moved here from Settings the same day.
-import { webLaneCandidates } from "./web-lane.js";
+import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
@@ -203,6 +203,7 @@ async function openWebLaneDialog() {
   document.getElementById("web-lane-status").textContent = "";
   document.getElementById("web-lane-start-btn").disabled = false;
   candidatesEl.textContent = "Counting the accounts that need it…";
+  renderWebLaneLastRun().catch(() => {});
   document.getElementById("web-lane-dialog").showModal();
   try {
     const list = await webLaneCandidates();
@@ -213,6 +214,22 @@ async function openWebLaneDialog() {
   } catch (err) {
     candidatesEl.textContent = `Could not count them: ${err.message}`;
   }
+}
+// The last run, account by account (what the lane stored), for the measurement of build step 2.
+async function renderWebLaneLastRun() {
+  const last = (await chrome.storage.local.get(WEB_LANE_STATE_KEY))[WEB_LANE_STATE_KEY];
+  const box = document.getElementById("web-lane-last");
+  const results = (last && last.results) || [];
+  box.hidden = results.length === 0;
+  if (box.hidden) return;
+  document.getElementById("web-lane-last-summary").textContent =
+    `${last.finishedAt ? new Date(last.finishedAt).toLocaleString() : "Running now"}\n${measureText(last)}`;
+  const list = document.getElementById("web-lane-last-list");
+  list.replaceChildren(...results.map((r) => {
+    const li = document.createElement("li");
+    li.textContent = r.error ? `${r.company}: failed - ${r.error}` : accountLine(r).replace(/^Web research \(new\) - /, "");
+    return li;
+  }));
 }
 document.getElementById("web-lane-close-btn").addEventListener("click", () => document.getElementById("web-lane-dialog").close());
 document.getElementById("web-lane-start-btn").addEventListener("click", async () => {

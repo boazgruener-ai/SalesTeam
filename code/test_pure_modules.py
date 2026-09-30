@@ -1442,6 +1442,31 @@ def test_extras_merge(ctx):
     check("an unchanged list compares by value, not identity", ctx.eval("JSON.stringify(m6)"), '{"l":["a","b"]}')
 
 
+def test_profile_search_matching(ctx):
+    """1.2.0.7 (D10): LinkedIn profiles read off web search results - name AND company in the title, one profile only."""
+    ctx.eval(r"""
+    var PR = [
+      { url: "https://ch.linkedin.com/in/anna-muster-12ab", title: "Anna Muster - Chief Financial Officer - Glencore | LinkedIn" },
+      { url: "https://www.linkedin.com/in/peter-beispiel", title: "Peter Beispiel – Head of IT – Other AG | LinkedIn" },
+      { url: "https://www.linkedin.com/in/eva-probe-1", title: "Eva Probe - Glencore | LinkedIn" },
+      { url: "https://www.linkedin.com/in/eva-probe-2", title: "Dr. Eva Probe - Data Lead at Glencore | LinkedIn" },
+      { url: "https://www.glencore.com/management", title: "Hans Müller - Glencore management" },
+      { url: "https://www.linkedin.com/in/hans-mueller-x", title: "Hans Mueller - Glencore International | LinkedIn" },
+    ];
+    var PP = [{ fullName: "Anna Muster" }, { fullName: "Peter Beispiel" }, { fullName: "Eva Probe" }, { fullName: "Dr. Hans Müller" }, { fullName: "Nobody Here" }];
+    """)
+    check("name and company in the title: found; another company: not; two profiles: not; umlaut spelling: found",
+          ctx.eval("JSON.stringify(profilesFromSearchResults(PR, PP, 'Glencore'))"),
+          '[{"fullName":"Anna Muster","url":"https://www.linkedin.com/in/anna-muster-12ab/"},'
+          '{"fullName":"Dr. Hans Müller","url":"https://www.linkedin.com/in/hans-mueller-x/"}]')
+    check("the name is the title's first part", ctx.eval("profileTitleName('Anna Muster - CFO - Glencore | LinkedIn')"), "Anna Muster")
+    check("a distinctive word of the company name is enough", ctx.eval("titleNamesCompany('Jo Doe - Kuehne+Nagel | LinkedIn', 'Kühne + Nagel')"), True)
+    check("generic words alone do not identify a company", ctx.eval("titleNamesCompany('Jo Doe - Swiss Group | LinkedIn', 'Swiss Group AG')"), False)
+    check("people without a profile make 'profiles' a lane topic",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, { initiatives: 1, relevantContacts: 3, hasSummary: true, contactsWithoutProfile: 2 }, null, NOW))"),
+          '["profiles"]')
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1471,6 +1496,7 @@ def main():
     test_web_usable(ctx)
     test_user_retry_first(ctx)
     test_web_lane_step2(ctx)
+    test_profile_search_matching(ctx)
 
     print()
     for f in _failures:

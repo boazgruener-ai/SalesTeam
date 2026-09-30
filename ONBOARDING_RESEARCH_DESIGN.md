@@ -641,6 +641,21 @@ research counts as the account's full research (`webFullResearchAt`). When a run
 Activity Log give cost, time, searches and pages read per account, traded and private apart. Web fetch has no
 per-use fee: the pages read are billed as input tokens, which the measurement includes.
 
+**First measurement (1.2.0.6, 2026-09-29/30, 24 real accounts):** about US$0.09 per private company and US$0.19
+for the one publicly traded company (below the design's estimate); 42 named people added from the web; but only
+**2 of 42** came with a LinkedIn profile link, and private companies took **about 204 s each** (the traded one
+20 s), close to the 4-minute cut-off. The second run stopped at 19 of 20 on the user's own Anthropic Console
+monthly limit (not a fault). **1.2.0.7:** a separate **profile search** after each research (Haiku 4.5, at most 2
+web searches, about US$0.01-0.02): the model only runs `site:linkedin.com/in "<company>" "<name>" OR ...`, and code
+decides (`profilesFromSearchResults`, pipeline-plan.js): a result counts only when its title names the person
+(first and last name, umlauts and titles folded) AND a distinctive word of the company, and exactly one profile
+matches. It covers up to 6 people per account without a profile - new web contacts and those already known
+(343 accounts on the backup have some) - so `missingWebTopics` gains a `profiles` topic; an account missing only
+profiles gets only the profile search. The 30-day skip now applies to the main research and the profile search
+separately (`webProfileSearchAt`). Every account writes one Activity Log line (time, cost, searches, pages read,
+rounds, cut off, profiles found), and the dialog shows the last run account by account, to find the cause of the
+slow private-company researches before changing anything there.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29)

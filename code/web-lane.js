@@ -11,10 +11,10 @@
 import {
   getAccountViews, getTargetAccountsWorkbook, getTargetAccountExtras, getReadinessConfig, getAnthropicApiKey,
   getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig, applyWebLaneResearch,
-  appendActivityLog, normalizeCompanyName,
+  appendActivityLog, normalizeCompanyName, setContactLinkedinProfile, contactKeyFor, saveTargetAccountExtra,
 } from "./storage.js";
-import { researchAccountForLane, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
-import { missingWebTopics, webLaneOrder, isPubliclyTraded, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
+import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
+import { missingWebTopics, webLaneOrder, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
 import { researchIsPublic, findingValue } from "./web-research-apply.js";
 import { applicableProvenance, employeesField } from "./readiness.js";
 import { BULK_STATE_KEY } from "./batch-jobs.js";
@@ -46,15 +46,22 @@ export async function webLaneCandidates({ now = Date.now(), targets = DEFAULT_CO
     if (view.deleted || view.excluded) continue;
     const extra = extras[view.key] || {};
     const research = extra.webResearch || null;
-    if (research && research.by === "lane" && now - (research.at || 0) < LANE_RETRY_DAYS * DAY_MS) continue;
     const summaryFrom = (r) => Boolean(r && ((!r.topics && r.text) || findingValue(r.data && r.data.summary)));
     const initiatives = initiativesById.get(view.companyId) || [];
     const relevant = (view.contacts || []).filter((c) => c.relevant);
-    const topics = missingWebTopics(view, cfg, { initiatives: initiatives.length, relevantContacts: relevant.length, hasSummary: summaryFrom(research) || summaryFrom(extra.webResearchPrevious) }, targets, now);
+    const withoutProfile = relevant.filter((c) => !/linkedin\.com\/in\//i.test(c.linkedinUrl || "")).length;
+    let topics = missingWebTopics(view, cfg, {
+      initiatives: initiatives.length, relevantContacts: relevant.length, contactsWithoutProfile: withoutProfile,
+      hasSummary: summaryFrom(research) || summaryFrom(extra.webResearchPrevious),
+    }, targets, now);
+    // What the lane asked in the last 30 days is not asked again: the main research and the profile search apart.
+    const recent = (at) => Boolean(at) && now - at < LANE_RETRY_DAYS * DAY_MS;
+    if (research && research.by === "lane" && recent(research.at)) topics = topics.filter((t) => t === "profiles");
+    if (recent(extra.webProfileSearchAt)) topics = topics.filter((t) => t !== "profiles");
     if (topics.length === 0) continue;
     const row = rows.get(view.key) || {};
     out.push({
-      key: view.key, company: view.company, priority: view.salesTeamPriority, order: view.universeOrder,
+      key: view.key, companyId: view.companyId, company: view.company, priority: view.salesTeamPriority, order: view.universeOrder,
       isPublic: isPubliclyTraded(extra.overrides?.companyType ?? row.companyType, researchIsPublic(research && research.data)),
       topics, known: knownFacts(view, initiatives, relevant), companyRow: row, website: view.website || null,
     });
@@ -157,23 +164,48 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
         let requeued = false;
         try {
           const company = { ...item.companyRow, company: item.company, website: item.website };
-          const result = await researchAccountForLane(company, {
-            known: item.known,
-            topicWords: item.topics.map((t) => WEB_LANE_TOPICS[t]),
-            industryNames: item.topics.includes("industry") ? industryNames : null,
-          }, settings, { signal: own.signal });
+          const mainTopics = item.topics.filter((t) => t !== "profiles");
+          // 1. The research of what is missing - skipped when only profiles are missing.
+          let result = null;
+          if (mainTopics.length > 0) {
+            result = await researchAccountForLane(company, {
+              known: item.known,
+              topicWords: mainTopics.map((t) => WEB_LANE_TOPICS[t]),
+              industryNames: mainTopics.includes("industry") ? industryNames : null,
+            }, settings, { signal: own.signal });
+            state.spent += result.costUsd || 0;
+          }
+          let applied = null;
+          if (result) await (saveChain = saveChain.then(async () => { applied = await applyWebLaneResearch(item.key, result, { topics: mainTopics }); }));
+          // 2. D10 (1.2.0.7): LinkedIn profiles of the people still without one, from web search results.
+          let profile = null;
+          const people = await peopleWithoutProfile(item.companyId);
+          if (people.length > 0 && !isStopping()) {
+            const found = await searchLinkedinProfiles(item.company, people, settings, { signal: own.signal });
+            state.spent += found.costUsd || 0;
+            const matches = profilesFromSearchResults(found.results, people, item.company);
+            let saved = 0;
+            await (saveChain = saveChain.then(async () => {
+              for (const m of matches) if ((await setContactLinkedinProfile(contactKeyFor(item.company, m.fullName), m.url)) !== undefined) saved++;
+              await saveTargetAccountExtra(item.key, { webProfileSearchAt: Date.now() });
+            }));
+            profile = { asked: people.length, found: saved, costUsd: found.costUsd || 0, seconds: Math.round(found.ms / 1000), searches: found.searches };
+          }
           consecutiveFailures = 0;
           rateLimitStreak = 0;
-          state.spent += result.costUsd || 0;
-          await (saveChain = saveChain.then(async () => {
-            const applied = await applyWebLaneResearch(item.key, result, { topics: item.topics });
-            state.results.push({
-              key: item.key, company: item.company, isPublic: item.isPublic ?? researchIsPublic(result.data), topics: item.topics,
-              costUsd: result.costUsd || 0, seconds: Math.round((result.ms || 0) / 1000), searches: result.searches, fetches: result.fetches,
-              inputTokens: result.usage?.input_tokens || 0, outputTokens: result.usage?.output_tokens || 0, stopped: result.stopped || null,
-              ...(applied || {}),
-            });
-          }));
+          const rec = {
+            key: item.key, company: item.company, isPublic: item.isPublic ?? researchIsPublic(result && result.data), topics: item.topics,
+            costUsd: (result ? result.costUsd || 0 : 0) + (profile ? profile.costUsd : 0),
+            seconds: Math.round(((result && result.ms) || 0) / 1000) + (profile ? profile.seconds : 0),
+            researchSeconds: Math.round(((result && result.ms) || 0) / 1000),
+            searches: result ? result.searches : 0, fetches: result ? result.fetches : 0, turns: result ? result.turns : 0,
+            inputTokens: result?.usage?.input_tokens || 0, outputTokens: result?.usage?.output_tokens || 0,
+            stopped: (result && result.stopped) || null, dataLine: Boolean(result && result.data),
+            ...(applied || {}),
+            profileAsked: profile ? profile.asked : 0, profileFound: profile ? profile.found : 0,
+          };
+          state.results.push(rec);
+          appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: accountLine(rec) }).catch(() => {});
         } catch (err) {
           if (isRateLimited(err) && !isStopping()) {
             state.lastError = err.message;
@@ -193,6 +225,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
           state.failed++;
           state.lastError = err.message;
           state.results.push({ key: item.key, company: item.company, isPublic: item.isPublic, topics: item.topics, error: String(err.message || err).slice(0, 200) });
+          appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: `Web research (new) - ${item.company}: failed - ${String(err.message || err).slice(0, 200)}` }).catch(() => {});
           consecutiveFailures++;
           const blocked = apiBlockedReason(err);
           if (blocked) stop(blocked);
@@ -236,6 +269,8 @@ export function measureLane(results) {
       searchesEach: sum("searches") / list.length, fetchesEach: sum("fetches") / list.length,
       contacts: sum("contacts"), profiles: sum("profiles"), initiatives: sum("initiatives"), filled: sum("filled"),
       pages: list.filter((r) => r.linkedinPage).length,
+      profileAsked: sum("profileAsked"), profileFound: sum("profileFound"),
+      cutOff: list.filter((r) => r.stopped === "timeout").length, noData: list.filter((r) => r.searches + r.fetches > 0 && !r.dataLine && r.dataLine !== undefined).length,
     };
   };
   return { all: group(ok), traded: group(ok.filter((r) => r.isPublic === true)), other: group(ok.filter((r) => r.isPublic !== true)) };
@@ -247,7 +282,9 @@ export function measureText(s) {
   const line = (label, g) => g
     ? `${label}: ${g.accounts} account${g.accounts === 1 ? "" : "s"}, about US$${g.usdEach.toFixed(3)} and ${Math.round(g.secondsEach)} s each ` +
       `(${g.searchesEach.toFixed(1)} searches, ${g.fetchesEach.toFixed(1)} pages read); ${g.contacts} contacts added (${g.profiles} with a LinkedIn profile), ` +
-      `${g.initiatives} initiatives, ${g.filled} empty fields filled, ${g.pages} LinkedIn company pages found`
+      `${g.initiatives} initiatives, ${g.filled} empty fields filled, ${g.pages} LinkedIn company pages found; ` +
+      `profile search: ${g.profileFound} of ${g.profileAsked} people found on LinkedIn` +
+      (g.cutOff ? `; ${g.cutOff} cut off at the 4-minute limit` : "") + (g.noData ? `; ${g.noData} without a data line` : "")
     : null;
   return [
     `${completed} of ${s.total} accounts researched${s.failed ? `, ${s.failed} failed` : ""}, about US$${(s.spent || 0).toFixed(2)} in all` +
@@ -255,4 +292,29 @@ export function measureText(s) {
     line("Publicly traded", m.traded),
     line("Private and other", m.other),
   ].filter(Boolean).join("\n");
+}
+
+// The people at this company without a LinkedIn profile, best first (a known seniority, then a job title),
+// at most 6 - two searches cover about that many names.
+async function peopleWithoutProfile(companyId) {
+  if (!companyId) return [];
+  const wb = await getTargetAccountsWorkbook();
+  return (wb.contacts || [])
+    .filter((c) => c.companyId === companyId && c.fullName && !/linkedin\.com\/in\//i.test(c.lastVerified2 || ""))
+    .sort((a, b) => (b.seniorityLevel || b.seniority ? 1 : 0) - (a.seniorityLevel || a.seniority ? 1 : 0) || (b.jobTitle ? 1 : 0) - (a.jobTitle ? 1 : 0))
+    .slice(0, 6)
+    .map((c) => ({ fullName: c.fullName, title: c.jobTitle || null }));
+}
+
+// One Activity Log line per account, so a run can be read account by account.
+export function accountLine(r) {
+  const bits = [`${r.seconds} s`, `about US$${(r.costUsd || 0).toFixed(3)}`];
+  if (r.searches || r.fetches) bits.push(`${r.searches} searches, ${r.fetches} pages read${r.turns > 1 ? `, ${r.turns} rounds` : ""}`);
+  if (r.stopped === "timeout") bits.push("CUT OFF at 4 minutes");
+  if (r.dataLine === false && r.searches + r.fetches > 0) bits.push("no data line in the answer"); // older records have no dataLine
+  if (r.contacts) bits.push(`${r.contacts} contacts added`);
+  if (r.initiatives) bits.push(`${r.initiatives} initiatives`);
+  if (r.filled) bits.push(`${r.filled} fields filled`);
+  if (r.profileAsked) bits.push(`profiles: ${r.profileFound} of ${r.profileAsked} found`);
+  return `Web research (new) - ${r.company} [${(r.topics || []).join(", ")}]: ${bits.join("; ")}`;
 }

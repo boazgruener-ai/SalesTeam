@@ -1761,6 +1761,7 @@ export async function researchAccountForLane(company, { known, topicWords, indus
   let text = "";
   let searches = 0;
   let fetches = 0;
+  let turns = 0;
   let model = AGENT_MODEL;
   const usageTotal = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   try {
@@ -1790,6 +1791,7 @@ export async function researchAccountForLane(company, { known, topicWords, indus
         }
         throw err;
       }
+      turns++;
       model = data.model || model;
       for (const k of Object.keys(usageTotal)) usageTotal[k] += data.usage?.[k] || 0;
       text = "";
@@ -1831,5 +1833,54 @@ export async function researchAccountForLane(company, { known, topicWords, indus
   }
   let finalText = briefing || "[No briefing was written.]";
   if (stopped) finalText += stopped === "user" ? "\n\n[Stopped early - incomplete.]" : "\n\n[Stopped after 4 minutes - incomplete.]";
-  return { text: finalText, data, sources: [...sources.values()], searches, fetches, model, stopped, costUsd, ms: Date.now() - started, usage: usageTotal };
+  return { text: finalText, data, sources: [...sources.values()], searches, fetches, turns, model, stopped, costUsd, ms: Date.now() - started, usage: usageTotal };
+}
+
+// D10, 1.2.0.7: finds LinkedIn profiles of known people through web search results - no LinkedIn page is
+// visited. The model only runs the searches (the cheapest model, at most 2); which result belongs to whom is
+// decided by code (pipeline-plan.js profilesFromSearchResults), never by the model.
+// people: [{ fullName, title }]. Returns { results: [{ url, title }], searches, costUsd, ms }.
+export async function searchLinkedinProfiles(companyName, people, settings, { signal } = {}) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
+  const started = Date.now();
+  const names = people.map((p) => `- ${p.fullName}${p.title ? ` (${p.title})` : ""}`).join("\n");
+  const messages = [{
+    role: "user",
+    content: `Find the LinkedIn profiles of these people, who work at ${companyName}:\n${names}\n\n` +
+      `Use web search restricted to LinkedIn profiles, for example: site:linkedin.com/in "${companyName}" "First Last" OR "First Last". ` +
+      "Put several names in one search. Use at most 2 searches, then reply with the single word: done",
+  }];
+  const results = new Map();
+  let searches = 0;
+  let model = DRAFT_MODEL;
+  const usageTotal = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  try {
+    for (let turn = 0; turn < 3; turn++) {
+      const data = await streamWebResearch(apiKey, {
+        model: DRAFT_MODEL,
+        max_tokens: 400,
+        tools: [{ type: WEB_SEARCH_TOOL_BASIC, name: "web_search", max_uses: 2 }],
+        messages,
+      }, signal, (name) => { if (name === "web_search") searches++; });
+      model = data.model || model;
+      for (const k of Object.keys(usageTotal)) usageTotal[k] += data.usage?.[k] || 0;
+      for (const block of data.content || []) {
+        if (block.type !== "web_search_tool_result") continue;
+        if (Array.isArray(block.content)) {
+          for (const r of block.content) if (r.url && !results.has(r.url)) results.set(r.url, { url: r.url, title: r.title || "" });
+        } else if (block.content && ["unavailable", "too_many_requests"].includes(block.content.error_code)) {
+          const err = new Error(`The web search service reported "${block.content.error_code}". Try again in a few minutes.`);
+          err.rateLimited = true;
+          throw err;
+        }
+      }
+      if (data.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: data.content }); continue; }
+      break;
+    }
+  } finally {
+    await recordApiUsage("webResearch", "LinkedIn profile search (web lane)", model, { ...usageTotal, searches });
+  }
+  const costUsd = estimateCostUsd(model, { ...usageTotal, searches }).totalUsd;
+  return { results: [...results.values()], searches, costUsd, ms: Date.now() - started };
 }

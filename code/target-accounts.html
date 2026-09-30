@@ -60,6 +60,11 @@
     <p id="web-lane-candidates" class="page-subtitle"></p>
     <p><label>Accounts to research: <input type="number" id="web-lane-limit" min="1" max="500" value="20" style="width:5em"></label></p>
     <p><label>Stop when the cost reaches US$ <input type="number" id="web-lane-budget" min="0" step="0.5" value="5" style="width:5em"></label></p>
+    <details id="web-lane-last" hidden>
+      <summary>Details of the last run</summary>
+      <p id="web-lane-last-summary" class="page-subtitle" style="white-space:pre-line"></p>
+      <ol id="web-lane-last-list" class="page-subtitle" style="max-height:16em;overflow:auto"></ol>
+    </details>
     <p id="web-lane-status" class="page-subtitle" role="status"></p>
     <div class="merge-discovered-dialog-actions">
       <button type="button" id="web-lane-start-btn">Start</button>
