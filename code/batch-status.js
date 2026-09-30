@@ -190,9 +190,7 @@ async function renderDiscovery(state) {
     if (fresh && !fresh.acknowledged) {
       await chrome.storage.local.set({ [WEB_DISCOVERY_STATE_KEY]: { ...fresh, acknowledged: true } });
       const why = fresh.stoppedReason === "user" ? "" : stopReasonText(fresh);
-      const text = ["Finding new accounts finished.", discoveryText(fresh), why, "The same summary is in the Activity Log."].filter(Boolean).join("
-
-");
+      const text = ["Finding new accounts finished.", discoveryText(fresh), why, "The same summary is in the Activity Log."].filter(Boolean).join("\n\n");
       await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
     }
     discoveryAnnouncing = false;
