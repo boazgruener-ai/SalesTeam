@@ -1888,3 +1888,183 @@ export async function searchLinkedinProfiles(companyName, people, settings, { si
   const costUsd = estimateCostUsd(model, { ...usageTotal, searches }).totalUsd;
   return { results: [...results.values()], searches, costUsd, ms: Date.now() - started };
 }
+
+// ---------------------------------------------------------------------------
+// 1.2.1 Web Discovery (ONBOARDING_RESEARCH_DESIGN.md 4.1): finds listing pages for a target country, reads their
+// rows with web fetch, and - when the listings run short - a fit search. The model only reports what the pages
+// say; which rows are kept and in what order is decided by code (discovery-filter.js).
+const DISCOVERY_TIME_LIMIT_MS = 240000;
+
+// One call with server-side web tools, the lane's way (basic tool versions first, thinking off, pause_turn
+// continued). Returns { text, sources, searches, fetches, turns, model, stopped, costUsd, ms }.
+async function discoveryCall({ system, user, fetchUses, fetchTokens, searchUses, maxTokens, label }, settings, { signal } = {}) {
+  const apiKey = sanitizeApiKey(settings.apiKey || "");
+  if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
+  const started = Date.now();
+  const controller = new AbortController();
+  let stopped = null;
+  const timer = setTimeout(() => { stopped = stopped || "timeout"; controller.abort(); }, DISCOVERY_TIME_LIMIT_MS);
+  const onUserStop = () => { stopped = stopped || "user"; controller.abort(); };
+  if (signal) {
+    if (signal.aborted) onUserStop();
+    else signal.addEventListener("abort", onUserStop, { once: true });
+  }
+  const messages = [{ role: "user", content: user }];
+  let current = false;
+  let triedCurrent = false;
+  let sendThinkingOff = true;
+  const sources = new Map();
+  let text = "";
+  let searches = 0;
+  let fetches = 0;
+  let turns = 0;
+  let model = AGENT_MODEL;
+  const usageTotal = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  try {
+    for (let turn = 0; turn < 5; turn++) {
+      const tools = [];
+      if (fetchUses) tools.push({ type: current ? WEB_FETCH_TOOL_CURRENT : WEB_FETCH_TOOL_BASIC, name: "web_fetch", max_uses: fetchUses, max_content_tokens: fetchTokens || 30000 });
+      if (searchUses) tools.push({ type: current ? WEB_SEARCH_TOOL_CURRENT : WEB_SEARCH_TOOL_BASIC, name: "web_search", max_uses: searchUses });
+      let data;
+      try {
+        data = await streamWebResearch(apiKey, {
+          model: AGENT_MODEL, max_tokens: maxTokens || 4000, system, tools, messages,
+          ...(sendThinkingOff ? { thinking: { type: "disabled" } } : {}),
+        }, controller.signal, (name) => {
+          if (name === "web_search") searches++;
+          else if (name === "web_fetch") fetches++;
+        });
+      } catch (err) {
+        if (err.status === 400 && sendThinkingOff && /thinking/i.test(err.body || "")) { sendThinkingOff = false; turn--; continue; }
+        if (err.status === 400 && !current && !triedCurrent && /web_(fetch|search)|tool/i.test(err.body || "")) { current = true; triedCurrent = true; turn--; continue; }
+        if (err.status === 400 && /web.?(search|fetch)/i.test(err.body || "")) {
+          throw new Error(`${err.message} - if web search or web fetch is not switched on for your Anthropic account, ask its owner to enable it in the Anthropic Console settings, then try again.`);
+        }
+        throw err;
+      }
+      turns++;
+      model = data.model || model;
+      for (const k of Object.keys(usageTotal)) usageTotal[k] += data.usage?.[k] || 0;
+      for (const block of data.content || []) {
+        if (block.type === "web_search_tool_result") {
+          if (Array.isArray(block.content)) {
+            for (const r of block.content) if (r.url && !sources.has(r.url)) sources.set(r.url, { url: r.url, title: r.title || r.url });
+          } else if (block.content && ["unavailable", "too_many_requests"].includes(block.content.error_code)) {
+            const err = new Error(`The web search service reported "${block.content.error_code}". Try again in a few minutes.`);
+            err.rateLimited = true;
+            throw err;
+          }
+        } else if (block.type === "web_fetch_tool_result") {
+          const c = block.content || {};
+          if (c.url && !sources.has(c.url)) sources.set(c.url, { url: c.url, title: (c.content && c.content.title) || c.url });
+          if (c.error_code === "too_many_requests") {
+            const err = new Error("The web fetch service reported \"too_many_requests\". Try again in a few minutes.");
+            err.rateLimited = true;
+            throw err;
+          }
+        } else if (block.type === "text") {
+          text += block.text;
+        }
+      }
+      if (data.stop_reason === "aborted") break;
+      if (data.stop_reason === "pause_turn") { messages.push({ role: "assistant", content: data.content }); continue; }
+      break;
+    }
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onUserStop);
+    await recordApiUsage("webResearch", label, model, { ...usageTotal, searches });
+  }
+  const costUsd = estimateCostUsd(model, { ...usageTotal, searches }).totalUsd;
+  return { text, sources: [...sources.values()], searches, fetches, turns, model, stopped, costUsd, ms: Date.now() - started };
+}
+
+// The JSON after the last "DATA:" - which, for a list of rows, may run over several lines.
+function discoveryData(text) {
+  const idx = String(text || "").lastIndexOf("DATA:");
+  if (idx < 0) return null;
+  const raw = text.slice(idx + 5).trim().replace(/^```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+  try { return JSON.parse(raw); } catch { /* try the outermost braces */ }
+  const a = raw.indexOf("{");
+  const b = raw.lastIndexOf("}");
+  if (a >= 0 && b > a) { try { return JSON.parse(raw.slice(a, b + 1)); } catch { /* none */ } }
+  return null;
+}
+
+// ctx: { country, bandsText ("Large (501-1,000 employees), Medium (201-500)"), largest (bool), industryNames: [..],
+// wanted }. Returns { listings: [{ url, what, rows, hasSize }], ...call measures }.
+export async function findDiscoveryListings(ctx, settings, { signal } = {}) {
+  const industries = (ctx.industryNames || []).length ? ` in these industries: ${ctx.industryNames.join("; ")}` : "";
+  const system =
+    "You find LISTING pages on the web: pages that list many companies with facts per company - rankings of companies by " +
+    "employees or revenue, industry rankings, business directories that show company size, member lists of industry " +
+    "associations, lists of hospitals or public bodies. Prefer pages that give, per company, its name and its number of " +
+    "employees (and ideally its website), that are plain web pages anyone can open (not behind a login or paywall, not a " +
+    "picture), and that are recent. Never invent a URL: give only pages your searches returned." +
+    "\nReply with at most two short lines, then as the very last line DATA: followed by ONE line of JSON: " +
+    "{\"listings\":[{\"url\":string,\"what\":\"what it lists, in a few words\",\"rows\":number|null,\"hasSize\":true|false}]} " +
+    "- at most 5 listings, the most useful first.";
+  const sizeAsk = ctx.largest
+    ? `the largest companies in ${ctx.country} (by employees)`
+    : `companies in ${ctx.country} of this size: ${ctx.bandsText} - NOT a ranking of the very largest companies, but lists where companies of that size appear (by industry, by region, directories)`;
+  const user = `Find listing pages of ${sizeAsk}${industries}. About ${ctx.wanted} companies are needed in all.`;
+  const call = await discoveryCall({ system, user, searchUses: 3, maxTokens: 1500, label: "Web Discovery - find listings" }, settings, { signal });
+  const data = discoveryData(call.text);
+  const known = new Set(call.sources.map((s) => s.url));
+  const listings = (Array.isArray(data && data.listings) ? data.listings : [])
+    .filter((l) => l && /^https?:\/\//i.test(String(l.url || "")))
+    .map((l) => ({ url: String(l.url).trim(), what: String(l.what || "").slice(0, 200), rows: Number(l.rows) || null, hasSize: l.hasSize === true, fromSearch: known.has(String(l.url).trim()) }))
+    .slice(0, 5);
+  return { ...call, listings };
+}
+
+const discoveryRowKeys = (industryNames, extra = "") =>
+  "{\"name\":string,\"website\":string|null (only when the page gives it),\"hqCountry\":string|null,\"employees\":number|null," +
+  "\"revenue\":number|null,\"currency\":\"ISO code\"|null,\"year\":number|null,\"industry\":string|null," +
+  (industryNames && industryNames.length
+    ? "\"industryMatch\":one of [" + industryNames.map((n) => JSON.stringify(n)).join(", ") + "] when the company clearly belongs to it, \"none\" when it clearly belongs to none of them, null when unsure,"
+    : "") +
+  "\"isPublic\":true|false|null (publicly traded),\"rank\":number|null" + extra + "}";
+
+// Reads one listing page with web fetch (a second page when the listing continues). ctx: { country, industryNames,
+// maxRows }. Returns { rows: [raw row], ...call measures }.
+export async function readDiscoveryListing(listing, ctx, settings, { signal } = {}) {
+  const system =
+    "You read a listing page and copy its rows. Open the page with web fetch; if the list continues on a next page and " +
+    "fewer rows than asked were found, open that next page too. Copy only what the page states - never add a company, a " +
+    "number or a website the page does not give. Numbers as plain numbers (no units, no separators; \"1.2 bn\" becomes " +
+    "1200000000)." +
+    "\nReply with ONE short line saying what the page lists, then as the very last part DATA: followed by JSON: " +
+    "{\"rows\":[" + discoveryRowKeys(ctx.industryNames) + ", ...]} - in the page's own order, keeping its rank.";
+  const user = `Listing page: ${listing.url}\n${listing.what ? `It lists: ${listing.what}\n` : ""}` +
+    `Target market: ${ctx.country}. Copy at most ${ctx.maxRows} rows.`;
+  const call = await discoveryCall({
+    system, user, fetchUses: 2, fetchTokens: 30000, maxTokens: Math.min(20000, 1000 + ctx.maxRows * 90), label: "Web Discovery - read a listing",
+  }, settings, { signal });
+  const data = discoveryData(call.text);
+  const rows = Array.isArray(data && data.rows) ? data.rows.filter((r) => r && r.name) : [];
+  return { ...call, rows };
+}
+
+// Design 4.3's third call, when the listings run short: a search for companies that fit the seller (Master Prompt
+// section 25 - subsidiaries, regional headquarters, public bodies, companies with relevant initiatives). Every row
+// carries the page that named it. ctx: { country, bandsText, industryNames, maxRows, avoid: [names] }.
+export async function fitSearchDiscovery(ctx, settings, { signal } = {}) {
+  const system =
+    "You find companies that fit a B2B seller, in a given market, with web search. Look for companies of the given size, " +
+    "local subsidiaries and regional headquarters of international groups, public bodies and institutions, and companies " +
+    "with recent initiatives that match what the seller offers. Name only companies a search result names, each with the " +
+    "page that names it." +
+    companyContextBlock(settings.companyContext) +
+    idealCustomerProfileBlock(settings.idealCustomerProfile) +
+    "\nReply with ONE short line, then as the very last part DATA: followed by JSON: {\"rows\":[" +
+    discoveryRowKeys(ctx.industryNames, ",\"sourceUrl\":string") + ", ...]}";
+  const user = `Market: ${ctx.country}. Size: ${ctx.bandsText}.` +
+    `${(ctx.industryNames || []).length ? ` Industries: ${ctx.industryNames.join("; ")}.` : ""}` +
+    ` Find up to ${ctx.maxRows} companies.` +
+    `${(ctx.avoid || []).length ? ` Already known (do not list): ${ctx.avoid.slice(0, 80).join(", ")}.` : ""}`;
+  const call = await discoveryCall({ system, user, searchUses: 3, maxTokens: Math.min(12000, 1000 + ctx.maxRows * 110), label: "Web Discovery - fit search" }, settings, { signal });
+  const data = discoveryData(call.text);
+  const rows = Array.isArray(data && data.rows) ? data.rows.filter((r) => r && r.name && r.sourceUrl) : [];
+  return { ...call, rows };
+}

@@ -72,6 +72,40 @@
     </div>
   </dialog>
 
+  <dialog id="web-discovery-dialog">
+    <h3>Find new accounts (new)</h3>
+    <p>
+      The new account discovery of SalesTeam 1.2.1, using the countries, sizes and industries of your Setup wizard.
+      <strong>LinkedIn first:</strong> one LinkedIn company search per company size you target, visible in a browser tab
+      and counted against your daily LinkedIn limit. Companies found there come with their LinkedIn page already.
+      <strong>Then the web</strong>, only for what LinkedIn did not deliver: it reads listing pages (rankings, directories)
+      and adds the best companies as accounts marked <strong>Web</strong>. Companies you already have, removed or excluded
+      are left out.
+    </p>
+    <p>
+      The automatic LinkedIn work steps aside while it runs. The web part costs money on your own Anthropic API key.
+      When it finishes, it reports what each part found and cost. Stop adds nothing from the web part; the cost limit
+      adds what was found by then.
+    </p>
+    <p id="web-discovery-setup" class="page-subtitle"></p>
+    <p><label>New accounts to find: <input type="number" id="web-discovery-target" min="1" max="300" value="10" style="width:5em"></label>
+      <span class="page-subtitle">(it looks for 15% more, since some will lack evidence)</span></p>
+    <p><label><input type="checkbox" id="web-discovery-linkedin" checked> Search LinkedIn first (untick to measure the web part alone)</label></p>
+    <p><label>Stop when the web cost reaches US$ <input type="number" id="web-discovery-budget" min="0" step="0.5" value="3" style="width:5em"></label></p>
+    <details id="web-discovery-last" hidden>
+      <summary>Details of the last run</summary>
+      <p id="web-discovery-last-summary" class="page-subtitle" style="white-space:pre-line"></p>
+      <ol id="web-discovery-last-list" class="page-subtitle" style="max-height:16em;overflow:auto"></ol>
+      <p id="web-discovery-linkedin-found" class="page-subtitle"></p>
+      <p><button type="button" id="web-discovery-undo-btn">Remove the accounts the last run added</button></p>
+    </details>
+    <p id="web-discovery-status" class="page-subtitle" role="status"></p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="web-discovery-start-btn">Start</button>
+      <button type="button" id="web-discovery-close-btn">Cancel</button>
+    </div>
+  </dialog>
+
   <dialog id="find-duplicates-dialog">
     <h3>Find &amp; Merge Duplicates</h3>
     <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
@@ -238,6 +272,7 @@
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
         <button id="nav-run-pipeline-btn" type="button" class="nav-item" title="Data pipeline (1.2, manual start): work through the accounts that most need it - re-check LinkedIn, read sizes, find known contacts' profiles, discover contacts">Run pipeline now…</button>
         <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
+        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="1.2.1 test: find new target accounts that match your Setup wizard answers - LinkedIn company search first, then listing pages on the web for the rest">Find new accounts (new)…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>

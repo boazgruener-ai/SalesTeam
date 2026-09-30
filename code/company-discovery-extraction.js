@@ -706,3 +706,9 @@ async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort } = {}) {
 export function runCompanyDiscoveryPhase(...args) {
   return withBatch("Discovery of companies", () => runCompanyDiscoveryPhaseImpl(...args));
 }
+
+// For a caller that already holds the batch lock across several searches (web-discovery.js: one search per
+// size band, without letting the automatic pipeline take LinkedIn back in between).
+export function runCompanyDiscoveryPhaseLocked(...args) {
+  return runCompanyDiscoveryPhaseImpl(...args);
+}

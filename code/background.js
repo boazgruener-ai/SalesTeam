@@ -43,6 +43,7 @@ import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guar
 import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
 import { startWebLane, stopWebLane } from "./web-lane.js";
+import { startWebDiscovery, stopWebDiscovery } from "./web-discovery.js";
 import { startPipelineRun, stopPipelineRun, kickPipeline, pausePipelineForUser, clearUserJobHold } from "./pipeline-runner.js";
 import { setPipelinePausedDay } from "./pipeline-automation.js";
 import { rescoreDerivedPriorities } from "./auto-score.js";
@@ -991,6 +992,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   } else if (message?.type === "WEB_LANE_STOP") {
     sendResponse(stopWebLane());
+  } else if (message?.type === "WEB_DISCOVERY_START") {
+    // 1.2.1 build step 3: find new accounts - LinkedIn first, then the web (web-discovery.js).
+    startWebDiscovery({ target: message.target, budget: message.budget, useLinkedin: message.useLinkedin !== false }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  } else if (message?.type === "WEB_DISCOVERY_STOP") {
+    sendResponse(stopWebDiscovery());
   } else if (message?.type === "PIPELINE_RUN") {
     // 1.2 data pipeline, build step 2: started by hand from Advanced tools (pipeline-runner.js).
     startPipelineRun({ limit: message.limit }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));

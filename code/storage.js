@@ -5,7 +5,7 @@ import { assessAccount, isScannable, deriveProvenance, applicableProvenance, pro
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
-import { normalizeCompanyName, buildExclusionMatcher, matchesExclusion, websiteDomain } from "./company-identity.js";
+import { normalizeCompanyName, buildExclusionMatcher, matchesExclusion, websiteDomain, webCompanyId } from "./company-identity.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
@@ -5120,6 +5120,101 @@ export async function applyWebLaneResearch(key, result, { topics = null } = {}) 
     }
   }
   return out;
+}
+
+// ---- 1.2.1 Web Discovery (ONBOARDING_RESEARCH_DESIGN.md 4.4): companies found on listing pages become "Web" rows ----
+
+const LAST_WEB_DISCOVERY_ADD_KEY = "lastWebDiscoveryAdd";
+
+// Every workbook row as the discovery filter needs it (discovery-filter.js buildKnownCompanies): removed ones too.
+export async function getDiscoveryKnownAccounts() {
+  const [workbook, extras, map] = await Promise.all([getTargetAccountsWorkbook(), getTargetAccountExtras(), getTargetAccounts()]);
+  return (workbook.companies || []).filter((r) => r && r.company).map((r) => {
+    const key = normalizeCompanyName(r.company);
+    const ov = extras[key]?.overrides || {};
+    return {
+      company: r.company, website: ov.website || r.website || null,
+      linkedinCompanyId: r.linkedinCompanyId || map[key]?.linkedinCompanyId || null, deleted: Boolean(extras[key]?.deletedAt),
+    };
+  });
+}
+
+// rows: chosen discovery rows (discovery-filter.js cleanListingRow shape). A row whose name or website became an
+// account since the filter ran is skipped. Silent tier (1.2.0 R6.2.1): the caller writes one Activity Log line;
+// undoLastWebDiscovery removes them again (soft delete; the caller records them with saveLastDiscoveryAdd). Returns { added: [{ key, companyId, company }], skipped }.
+export async function addWebDiscoveredCompanies(rows, { runAt = Date.now() } = {}) { return withAccountWriteLock(() => addWebDiscoveredCompaniesUnlocked(...arguments)); }
+async function addWebDiscoveredCompaniesUnlocked(rows, { runAt = Date.now() } = {}) {
+  const workbook = await getTargetAccountsWorkbook();
+  const extras = await getTargetAccountExtras();
+  const names = new Set();
+  const domains = new Set();
+  const ids = new Set();
+  let maxOrder = 0;
+  for (const r of workbook.companies || []) {
+    if (!r || !r.company) continue;
+    const key = normalizeCompanyName(r.company);
+    names.add(key);
+    const d = websiteDomain(extras[key]?.overrides?.website || r.website || "");
+    if (d) domains.add(d);
+    if (r.companyId) ids.add(r.companyId);
+    if (Number(r.universeOrder) > maxOrder) maxOrder = Number(r.universeOrder);
+  }
+  const newRows = [];
+  const added = [];
+  let skipped = 0;
+  for (const row of rows || []) {
+    const key = normalizeCompanyName(row.name || "");
+    const domain = websiteDomain(row.website || "");
+    const companyId = webCompanyId(row.website, row.name);
+    if (!key || !companyId || names.has(key) || (domain && domains.has(domain)) || ids.has(companyId)) { skipped++; continue; }
+    names.add(key);
+    if (domain) domains.add(domain);
+    ids.add(companyId);
+    newRows.push({
+      companyId, company: row.name, website: row.website || null,
+      globalHqCountry: row.hqCountry || null,
+      globalEmployees: row.employees ?? null,
+      globalRevenue: row.revenue ?? null, revenueCurrency: row.revenue != null ? row.currency || null : null,
+      industry: row.industry || null,
+      companyType: row.isPublic === true ? "Publicly traded" : row.isPublic === false ? "Private" : null,
+      primarySourceUrl: row.sourceUrl || null,
+      researchStatus: "Found on the web",
+      source: "Web",
+      universeOrder: ++maxOrder,
+      webDiscoveredAt: runAt,
+    });
+    added.push({ key, companyId, company: row.name });
+  }
+  if (newRows.length === 0) return { added, skipped };
+  await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, companies: [...(workbook.companies || []), ...newRows] } });
+  return { added, skipped };
+}
+
+// What the last "Find new accounts" run added, LinkedIn and web parts together: { at, keys, companyIds }.
+export async function saveLastDiscoveryAdd(record) {
+  await chrome.storage.local.set({ [LAST_WEB_DISCOVERY_ADD_KEY]: record });
+}
+
+export async function getLastWebDiscoveryAdd() {
+  return (await chrome.storage.local.get(LAST_WEB_DISCOVERY_ADD_KEY))[LAST_WEB_DISCOVERY_ADD_KEY] || null;
+}
+
+// Removes (soft delete, like Remove Account) the accounts the last "Find new accounts" run added and that are still there.
+export async function undoLastWebDiscovery() { return withAccountWriteLock(() => undoLastWebDiscoveryUnlocked()); }
+async function undoLastWebDiscoveryUnlocked() {
+  const last = await getLastWebDiscoveryAdd();
+  if (!last) return 0;
+  const extras = await getTargetAccountExtras();
+  const at = Date.now();
+  let removed = 0;
+  for (const key of last.keys || []) {
+    if (extras[key]?.deletedAt) continue;
+    extras[key] = { ...emptyExtra(), ...(extras[key] || {}), deletedAt: at };
+    removed++;
+  }
+  await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
+  await chrome.storage.local.remove(LAST_WEB_DISCOVERY_ADD_KEY);
+  return removed;
 }
 
 // ---- Writes made by the 1.2 data pipeline (build step 2, DATA_PIPELINE_DESIGN.md 5.5 and T1-T4) ----

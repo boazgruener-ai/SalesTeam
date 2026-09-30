@@ -303,6 +303,12 @@ Setup.
 
 ## 4. Web Discovery
 
+> **Revised 2026-09-30 (D11): LinkedIn first, the web as the complement.** Onboarding finds new accounts with the
+> existing LinkedIn company search first - one search per ticked size band, each asked for its band's share of the
+> target - and uses the web listings below only for what LinkedIn did not deliver: the rest of the target, countries
+> without a confirmed LinkedIn id, or everything when LinkedIn cannot be used (daily limit, busy). Sections 4.1-4.4
+> describe that web part; the LinkedIn part is in "As built (step 3)" in section 11.
+
 ### 4.1 Two calls per target country — `web-discovery.js` (background)
 
 1. **Find listings.** A call with `web_search` (`max_uses: 3`) asks for listing pages that match the
@@ -594,7 +600,7 @@ from **Advanced tools** before the wizard uses them, so their real cost is measu
 | **0** | Write lock in `storage.js` (2.2); 429 back-off in bulk research (5.6) | nothing | bulk research of 20 accounts, no lost write; a forced 429 resumes |
 | **1** | Per-field provenance format (5.3), `webUsable` (6), "Web" row source (4.4), exclusions by name/domain (3.9), the pure modules' tests | Usable count includes web-only accounts | `test_pure_modules.py`; existing accounts unchanged |
 | **2** | Web lane with web fetch, `missingWebTopics`, contacts from the web; Advanced > *Research accounts on the web (new)* | nothing new in normal use | **measure** cost and time per account on 20 real accounts, traded and private |
-| **3** | Web Discovery from listings; Advanced > *Find accounts on the web* | new accounts appear as "Web" | **measure** listing cost, rows kept after filtering, share found on LinkedIn |
+| **3** | Account discovery, LinkedIn first (D11), then web listings; Advanced > *Find new accounts (new)* | new accounts appear as "Discovered" (LinkedIn) and "Web" | **measure** LinkedIn pages and visits per account found; web cost per listing, rows kept after filtering, share of web accounts found on LinkedIn |
 | **4** | LinkedIn after web (7): ranking rule, one profile search + People page; first 10 Ready first and the Scanner at 10 (7.3, D7) | fewer People-page visits | touches per account vs. section 9; time to 10 Ready; touches per Leads scan (D7) |
 | **5** | Wizard: About you, seller research, progress screen, proposals on the existing steps, `proposal-ui.js` | the new wizard start | a clean profile with 3 real company websites |
 | **6** | Wizard: initiative stages, included companies, targets with the estimate, Finish kicks both lanes; stop rule (8); coverage lines | the full onboarding | a full onboarding in a clean profile, 100 accounts |
@@ -664,9 +670,33 @@ and Ready went from 136 to 144 without a LinkedIn visit. Planning figures for 9 
 account for the web lane with profiles, and about a third of the people get their profile from the web - the rest
 still need one LinkedIn search each.
 
+**As built (step 3, 1.2.0.8) - LinkedIn first (D11).** Advanced tools > *Find new accounts (new)…* (all four pages)
+asks for a target (default 10), a web cost cap, and whether to search LinkedIn first. `web-discovery.js` (background):
+
+1. **LinkedIn.** The automatic pipeline is asked to step aside (as for any job of the user's); then, under one batch
+   lock, the existing company Discovery (`company-discovery-extraction.js`) runs once per ticked size band with that
+   band's share of `target x 1.15` (`bandTargets`: split by band priority, largest remainder). It keeps its proven
+   rules: the country name as a keyword (a facet-only search leads with Microsoft, Google, Meta - confirmed live
+   2026-09-15 and again by Boaz on 2026-09-30), headquarters confirmed in a target country, exclusions, aliases,
+   accounts already held. The results merge the usual way (`autoMergeDiscoveryResults`; a name-only match waits in
+   the decision queue); only the company part is used - contacts stay the pipeline's job. Cost: no money; about one
+   result page per 10 companies plus one company-page visit for each card without an id or location (about 40% in
+   the 2026-09-15 test) - a visit that also does the account's LinkedIn lookup, which a web-found account needs later.
+2. **The web**, only for the remainder (and at least their share for countries without a confirmed LinkedIn id): up
+   to five listing pages per country found with `web_search`, each read with `web_fetch` (30,000 tokens a page, a
+   second page if the list continues); rows filtered by `discovery-filter.js` (pure, tested): seller, exclusions,
+   removed, existing, listed twice, then size band, industry (the call maps a stated industry onto the wizard's names;
+   only a clear "none" drops the row) and excluded organisation types. When the listings run short, the fit search.
+   `chooseDiscoveryRows`: included companies first, then per band by pre-score, centre of the band, listing rank;
+   rows without a headcount last. Added as "Web" rows (`addWebDiscoveredCompanies`, under the write lock).
+
+Every added account is scored at once (`rescoreDerivedPriorities`). One undo for the whole run (*Remove the accounts
+the last run added*, a soft delete). The dialog's last-run details list each LinkedIn band and each listing, and how
+many of the added accounts the LinkedIn work has found since. Not yet measured: waiting for Boaz's run on 10.
+
 ---
 
-## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29)
+## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
 
 Boaz agreed to every recommendation below.
 
@@ -682,12 +712,14 @@ Boaz agreed to every recommendation below.
 | **D8** | Use touches left under the 60 at night (e.g. 01:00–05:00) for extra LinkedIn work? | **No change.** The pipeline already resumes whenever it is under 60 in the rolling 24 hours, day or night, while Chrome and a SalesTeam page are open. Night adds no capacity (a touch at 03:00 counts until 03:00 next day). Not added: a background timer without a page open, or keeping the computer awake at night (1.2.0 D4 stands; unseen 03:00 activity would contradict "visible in your browser") |
 | **D9** | Discovery for medium or small companies instead of the largest | **Size-band listings, the target split by band priority, centre of each band first** (4.3). Bands stay the wizard's S/M/L/XL/XXL, shown with their ranges on the Size step. Boaz's proposal, adapted 2026-09-28 |
 | **D10** | The LinkedIn ceiling of 60 makes Ready slow (about 5 visits per account: company page, People page, one search per contact) | **The web lane collects LinkedIn links from search results** - the company page and each named person's profile - at no LinkedIn visit. A profile link found that way **counts towards Ready** (the contact's verified date is the day the web showed it); LinkedIn is visited only to confirm the company page and for what the web did not find. Expected: about 1-2 visits per account instead of about 5. The ceiling stays 60. Boaz's choice, 2026-09-29 |
+| **D11** | Find new accounts on the web (listings) or with the LinkedIn company search? | **LinkedIn first, the web as the complement.** One LinkedIn company search per size band costs no money, matches the size bands exactly, and each company arrives with its LinkedIn page - a web-found company needs a LinkedIn visit later anyway. The web covers what LinkedIn cannot: local branches of foreign groups (LinkedIn filters by headquarters), industries without a confirmed LinkedIn id, and the rest of the target when LinkedIn is at its limit. Boaz's proposal, 2026-09-30 |
 
 ---
 
 ## 13. Not in this design
 
 - Salesforce import (later item, decided).
-- LinkedIn Discovery started by the pipeline (postponed, decided).
+- LinkedIn Discovery started by the pipeline on its own (postponed, decided). Onboarding's own account discovery does
+  use it, LinkedIn first (D11, 2026-09-30).
 - The initiative-stage ranking as a weight in priority scoring (requirements, open question 7).
 - Team use (1.2.2).

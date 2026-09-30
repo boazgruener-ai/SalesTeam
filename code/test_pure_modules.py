@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1467,6 +1467,67 @@ def test_profile_search_matching(ctx):
           '["profiles"]')
 
 
+def test_discovery_filter(ctx):
+    """1.2.1 step 3: discovery-filter.js - band split, centre of the band, row filter and choice (design 4.2-4.3, D9)."""
+    ctx.eval("""
+      var BANDS = [
+        { key: "S", label: "Small", min: 0, max: 200 }, { key: "M", label: "Medium", min: 201, max: 500 },
+        { key: "L", label: "Large", min: 501, max: 1000 }, { key: "XL", label: "Extra Large", min: 1001, max: 5000 },
+        { key: "XXL", label: "Extra Extra Large", min: 5001, max: Infinity } ];
+    """)
+    check("wanted: 10 + 15% = 12", ctx.eval("discoveryWanted(10)"), 12)
+    check("wanted: 100 + 15% = 115", ctx.eval("discoveryWanted(100)"), 115)
+    check("centre: Large ~708", ctx.eval("bandCentre(BANDS[2])"), 708)
+    check("centre: Medium ~317", ctx.eval("bandCentre(BANDS[1])"), 317)
+    check("centre: Small (open below) 100", ctx.eval("bandCentre(BANDS[0])"), 100)
+    check("centre: XXL (open above) 10000", ctx.eval("bandCentre(BANDS[4])"), 10000)
+    check("band split: Large High + Medium Medium, 100 -> 60/40",
+          ctx.eval("JSON.stringify(bandTargets({ L: { checked: true, priority: 3 }, M: { checked: true, priority: 2 } }, BANDS, 100).map(b => [b.key, b.count]))"),
+          '[["L",60],["M",40]]')
+    check("band split adds up (12 over three equal bands)",
+          ctx.eval("bandTargets({ S: { checked: true, priority: 2 }, M: { checked: true, priority: 2 }, L: { checked: true, priority: 2 } }, BANDS, 12).reduce((a, b) => a + b.count, 0)"), 12)
+    check("largest: only XL/XXL ticked", ctx.eval("targetsLargest({ XL: { checked: true }, XXL: { checked: true } }, BANDS)"), True)
+    check("largest: Medium ticked is not", ctx.eval("targetsLargest({ M: { checked: true }, XXL: { checked: true } }, BANDS)"), False)
+    check("clean row: loose numbers and domain",
+          ctx.eval("var r = cleanListingRow({ name: ' Acme  AG ', website: 'https://www.acme.ch/de', employees: '1,200', currency: 'chf' }, 'https://list'); [r.name, r.domain, r.employees, r.currency, r.sourceUrl].join('|')"),
+          "Acme AG|acme.ch|1200|CHF|https://list")
+    ctx.eval("""
+      var CTX = {
+        seller: { website: 'https://seller.com' },
+        exclusions: buildExclusionMatcher([{ name: 'Rival AG' }, { domain: 'enemy.ch' }]),
+        known: buildKnownCompanies([{ company: 'Nestle SA', website: 'nestle.com' }, { company: 'Gone AG', deleted: true }]),
+        sizeBuckets: { M: { checked: true }, L: { checked: true } }, bands: BANDS,
+        industryNames: ['Banking'], excludedOrgTypes: ['Government Administration'] };
+      var ROWS = [
+        { name: 'Seller Inc', website: 'seller.com' }, { name: 'Rival', website: null }, { name: 'X', website: 'enemy.ch' },
+        { name: 'Gone', website: null }, { name: 'Nestle', website: null }, { name: 'Other', website: 'https://nestle.com' },
+        { name: 'Tiny GmbH', employees: 50 }, { name: 'Bank A', employees: 700, industryMatch: 'Banking' },
+        { name: 'Bakery B', employees: 300, industryMatch: 'none' }, { name: 'Canton C', employees: 400, industry: 'Government Administration' },
+        { name: 'Unknown size D' }, { name: 'Bank A AG', employees: 650 }, { name: '' } ].map(r => cleanListingRow(r, 'https://l'));
+      var F = filterListingRows(ROWS, CTX);
+    """)
+    check("filter: kept rows", ctx.eval("F.kept.map(r => r.name).join(',')"), "Bank A,Unknown size D")
+    check("filter: reasons in order",
+          ctx.eval("F.dropped.map(d => d.reason).join(',')"),
+          "seller,excluded,excluded,removed,existing,existing,size,industry,orgType,duplicate,noName")
+    check("filter: a second call drops what the first kept", ctx.eval("filterListingRows([cleanListingRow({ name: 'Bank A' })], CTX).dropped[0].reason"), "duplicate")
+    check("filter: no size targeting keeps every size",
+          ctx.eval("filterListingRows([cleanListingRow({ name: 'Huge', employees: 90000 })], { bands: BANDS, sizeBuckets: {}, known: buildKnownCompanies([]) }).kept.length"), 1)
+    ctx.eval("""
+      var T = bandTargets({ L: { checked: true, priority: 3 }, M: { checked: true, priority: 2 } }, BANDS, 5);
+      var P = [ { name: 'L-edge', employees: 990, preScore: 50 }, { name: 'L-centre', employees: 700, preScore: 50 },
+        { name: 'L-strong-edge', employees: 510, preScore: 70 }, { name: 'M-centre', employees: 320, preScore: 50 },
+        { name: 'M-edge', employees: 210, preScore: 50 }, { name: 'M-far', employees: 499, preScore: 50 },
+        { name: 'NoSize', employees: null, preScore: 90 }, { name: 'Included', employees: null, preScore: 0, included: true } ];
+    """)
+    check("choose: bands L 3, M 2", ctx.eval("JSON.stringify(T.map(b => [b.key, b.count]))"), '[["L",3],["M",2]]')
+    check("choose: included first, fit before centre, then centre; no-size last",
+          ctx.eval("chooseDiscoveryRows(P, T, 5).map(r => r.name).join(',')"),
+          "Included,L-strong-edge,L-centre,M-centre,M-edge")
+    check("choose: rows without a headcount fill what is left",
+          ctx.eval("chooseDiscoveryRows(P.filter(r => r.name !== 'Included'), T, 8).map(r => r.name).slice(-1)[0]"), "NoSize")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1497,6 +1558,7 @@ def main():
     test_user_retry_first(ctx)
     test_web_lane_step2(ctx)
     test_profile_search_matching(ctx)
+    test_discovery_filter(ctx)
 
     print()
     for f in _failures:
