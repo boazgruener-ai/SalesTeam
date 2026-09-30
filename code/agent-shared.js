@@ -1755,7 +1755,11 @@ export async function researchAccountForLane(company, { known, topicWords, indus
   }
   const messages = [{ role: "user", content: laneUserMessage(company, known, topicWords, settings.targetCountries) }];
   const system = buildLaneSystemPrompt({ ...settings, industryNames });
-  let current = true; // the dynamic-filtering tool versions first; the basic ones if the model refuses them
+  // The BASIC tool versions first (1.2.0.7): with the dynamic-filtering ones (20260209) most researches hung until the
+  // 4-minute cut-off (first measurement, 2026-09-30: 13 of 20 cut off, ~US$0.037 spent, nothing found), while the bulk
+  // research on the basic versions takes ~18 s. The newer versions only if the basic ones are refused.
+  let current = false;
+  let triedCurrent = false;
   let sendThinkingOff = true;
   const sources = new Map();
   let text = "";
@@ -1785,7 +1789,7 @@ export async function researchAccountForLane(company, { known, topicWords, indus
         });
       } catch (err) {
         if (err.status === 400 && sendThinkingOff && /thinking/i.test(err.body || "")) { sendThinkingOff = false; turn--; continue; }
-        if (err.status === 400 && current && /web_(fetch|search)|tool/i.test(err.body || "")) { current = false; turn--; continue; }
+        if (err.status === 400 && !current && !triedCurrent && /web_(fetch|search)|tool/i.test(err.body || "")) { current = true; triedCurrent = true; turn--; continue; }
         if (err.status === 400 && /web.?(search|fetch)/i.test(err.body || "")) {
           throw new Error(`${err.message} - if web search or web fetch is not switched on for your Anthropic account, ask its owner to enable it in the Anthropic Console settings, then try again.`);
         }

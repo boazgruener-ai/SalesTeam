@@ -277,7 +277,7 @@ export function measureLane(results) {
 }
 
 export function measureText(s) {
-  const m = s.measure || measureLane(s.results);
+  const m = measureLane(s.results); // recomputed: a run stored by an older build lacks newer fields
   const completed = s.done - s.failed;
   const line = (label, g) => g
     ? `${label}: ${g.accounts} account${g.accounts === 1 ? "" : "s"}, about US$${g.usdEach.toFixed(3)} and ${Math.round(g.secondsEach)} s each ` +
