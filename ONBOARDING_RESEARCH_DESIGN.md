@@ -926,6 +926,14 @@ dropped offers come back without a new research. 9 new checks (487).
 **1.2.0.28 (Boaz, 2026-10-01):** on step 15 of 15 he looked for Finish Setup - it is on the page after Next and Confirm.
 On the last step the button now reads *"Next: review and finish"*.
 
+**1.2.0.29 (Boaz, 2026-10-01) - Target contacts.** On a first setup the proposed titles sat ticked above an empty
+*Exact titles* box and read as "nothing proposed". Now, on a first setup, the proposed titles and keywords go straight
+into their boxes when the step opens, like every other step's proposal; the tick lists stay for a setup completed
+before, where a proposal must not replace what is saved (1.2.0.21). And a title's translation in brackets is dropped
+(`titleWithoutBrackets`): *"Mitglied der Geschäftsleitung (Member of Executive Board)"* would have been searched with
+the brackets and matched nobody. A stored research with bracketed titles is mapped again when the wizard opens. Things
+you can offer is unchanged (asked only for Target contacts). 4 new checks (491).
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

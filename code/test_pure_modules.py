@@ -1756,6 +1756,14 @@ def test_same_brand_domain(ctx):
     check("short brand refused", e("isOnDomain('https://ab-group.ch/x', 'ab.ch')"), False)
     check("subdomain still works", e("isOnDomain('https://blog.acme.ch/x', 'acme.ch')"), True)
 
+def test_title_brackets(ctx):
+    """1.2.0.29: a translation in brackets is not part of a title."""
+    e = lambda x: ctx.eval(x)
+    check("brackets: translation dropped", e("titleWithoutBrackets('Mitglied der Geschäftsleitung (Member of Executive Board)')"), "Mitglied der Geschäftsleitung")
+    check("brackets: square", e("titleWithoutBrackets('Head of IT [CIO]')"), "Head of IT")
+    check("brackets: none", e("titleWithoutBrackets('Director Marketing')"), "Director Marketing")
+    check("brackets: mapped proposal", e("buildSetupProposals({buyerTitles:[{title:'CEO'},{title:'Leiter IT (Head of IT)'}]}, {}, ['contacts']).contacts.exactTitles.join('|')"), "CEO|Leiter IT")
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1791,6 +1799,7 @@ def main():
     test_setup_proposals(ctx)
     test_targets_and_estimate(ctx)
     test_same_brand_domain(ctx)
+    test_title_brackets(ctx)
 
     print()
     for f in _failures:

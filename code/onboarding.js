@@ -2295,6 +2295,17 @@ function mountStepChecklists(step, p, accepted) {
   } else if (step === "contacts") {
     // Same as offers (Boaz, 2026-10-01): the two boxes are the lists, ticked proposals move into them on Save.
     const tickNew = !completedBefore && !accepted;
+    // 1.2.0.29 (Boaz): on a first setup a list of ticked titles above an empty box read as "nothing proposed" - the
+    // proposals go straight into the boxes, like every other step's proposal. The tick lists stay for a setup
+    // completed before, where a proposal must not replace what is saved.
+    if (tickNew) {
+      el("contacts-exact-titles-input").value = mergeChecklistWithLines([], [...textareaLines("contacts-exact-titles-input"), ...p.exactTitles]).join("\n");
+      el("contacts-title-keywords-input").value = mergeChecklistWithLines([], [...textareaLines("contacts-title-keywords-input"), ...p.keywords]).join("\n");
+      el("contacts-titles-checklist").hidden = true;
+      el("contacts-keywords-checklist").hidden = true;
+      checklists[step] = { titles: null, keywords: null };
+      return;
+    }
     const open = (keys, lines) => {
       const inBox = initiallyTicked(keys, lines, true);
       return keys.filter((_, i) => !inBox[i]).map((text) => ({ text, checked: tickNew }));
@@ -2556,6 +2567,14 @@ async function init() {
     const again = buildSetupProposals(setupResearch.raw, proposalCtx(), ["value-add-offers"])["value-add-offers"];
     if (again && again.found) {
       setupResearch = { ...setupResearch, proposals: { ...setupResearch.proposals, "value-add-offers": again } };
+      await saveSetupResearch(setupResearch);
+    }
+  }
+  // 1.2.0.29: titles with a translation in brackets are mapped again without it (local, free).
+  if (setupResearch.raw && (setupResearch.proposals?.contacts?.exactTitles || []).some((t) => /[([]/.test(t))) {
+    const again = buildSetupProposals(setupResearch.raw, proposalCtx(), ["contacts"]).contacts;
+    if (again) {
+      setupResearch = { ...setupResearch, proposals: { ...setupResearch.proposals, contacts: again } };
       await saveSetupResearch(setupResearch);
     }
   }

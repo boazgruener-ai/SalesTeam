@@ -295,11 +295,17 @@ export function titleKeywords(titles) {
     .slice(0, MAX_KEYWORDS).map(([w]) => display.get(w));
 }
 
+// 1.2.0.29 (Boaz): "Mitglied der Geschäftsleitung (Member of Executive Board)" would be searched as written, brackets
+// and all, and match nobody - a translation or explanation in brackets is not part of the title.
+export function titleWithoutBrackets(title) {
+  return String(title || "").replace(/\s*[(\[][^()\[\]]*[)\]]/g, "").replace(/\s{2,}/g, " ").trim();
+}
+
 function mapContacts(items) {
   const exactTitles = [];
   const sources = [];
   for (const it of list(items)) {
-    const title = cleanText(it.title, 100);
+    const title = titleWithoutBrackets(cleanText(it.title, 100));
     if (!title || exactTitles.some((t) => fold(t) === fold(title))) continue;
     exactTitles.push(title);
     if (webUrlOrNull(it.url)) sources.push(it.url);
