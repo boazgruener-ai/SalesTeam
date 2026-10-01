@@ -2010,6 +2010,7 @@ function proposalNotes(step, p) {
       proposalLine(p.value);
       break;
     case "value-add-offers":
+      notes.push("These can go into a message to a lead as a small give-away - a report, an eBook, a webinar - that gives them a reason to reply. Tick the ones the AI may offer when it drafts a message.");
       if (p.dropped) {
         notes.push(`${p.dropped} more found without a page of their own on ${sellerSite() || "the website"} - left out, since the AI may only offer what has a real page.`);
       }

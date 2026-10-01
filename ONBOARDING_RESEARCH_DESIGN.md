@@ -827,6 +827,10 @@ companies were missing. Retitled *"Organization types other than companies"*, wi
 always included, and each type has a hover tip on what it covers (e.g. *Civic and Social Organizations*: associations,
 federations, chambers, clubs).
 
+**1.2.0.19 (Boaz, 2026-10-01):** Things you can offer is titled *"What can you offer a lead to start a conversation?"*,
+and its proposal box says what the items are for (a give-away in a message to a lead, a reason to reply). Checklist
+items are no longer struck through when unticked - the text stays normal and a ticked item is bold.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

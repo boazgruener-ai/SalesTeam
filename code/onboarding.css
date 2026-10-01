@@ -786,7 +786,7 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 .proposal-checklist { margin: 8px 0 12px; max-width: 900px; }
 .proposal-checklist-title { margin: 0 0 4px; font-weight: 600; font-size: 13px; }
 .proposal-checklist-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
-.proposal-checklist-row.priority-item-unchecked .proposal-checklist-text { color: var(--gray-light); text-decoration: line-through; }
+.proposal-checklist-row:not(.priority-item-unchecked) .proposal-checklist-text { font-weight: 600; }
 .proposal-checklist-text { flex: 1 1 auto; min-width: 160px; }
 .proposal-checklist-rank { width: 22px; color: var(--gray); font-size: 12px; text-align: right; }
 .proposal-checklist-label { color: var(--gray); font-size: 12px; white-space: nowrap; }
