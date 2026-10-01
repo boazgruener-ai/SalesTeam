@@ -14,7 +14,7 @@ import {
   appendActivityLog, normalizeCompanyName, setContactLinkedinProfile, contactKeyFor, saveTargetAccountExtra,
   SENIORITY_LEVELS,
 } from "./storage.js";
-import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
+import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason, LANE_CONTACTS_MODEL } from "./agent-shared.js";
 import { missingWebTopics, webLaneOrder, onlyContactMissing, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
 import { researchIsPublic, findingValue } from "./web-research-apply.js";
 import { applicableProvenance, employeesField, assessAccount } from "./readiness.js";
@@ -202,6 +202,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
               known: item.known,
               topicWords: mainTopics.map((t) => WEB_LANE_TOPICS[t]),
               industryNames: mainTopics.includes("industry") ? industryNames : null,
+              model: mainTopics.every((t) => t === "contacts") ? LANE_CONTACTS_MODEL : undefined,
             }, settings, { signal: own.signal });
             state.spent += result.costUsd || 0;
           }
@@ -231,6 +232,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
             searches: result ? result.searches : 0, fetches: result ? result.fetches : 0, turns: result ? result.turns : 0,
             inputTokens: result?.usage?.input_tokens || 0, outputTokens: result?.usage?.output_tokens || 0,
             stopped: (result && result.stopped) || null, dataLine: Boolean(result && result.data),
+            model: (result && result.model) || null,
             ...(applied || {}),
             profileAsked: profile ? profile.asked : 0, profileFound: profile ? profile.found : 0,
           };
@@ -349,6 +351,7 @@ async function peopleWithoutProfile(companyId) {
 // One Activity Log line per account, so a run can be read account by account.
 export function accountLine(r) {
   const bits = [`${r.seconds} s`, `about US$${(r.costUsd || 0).toFixed(3)}`];
+  if (/haiku/i.test(r.model || "")) bits.push("Haiku");   // 1.2.0.14: contacts-only researches, to compare with Sonnet
   if (r.searches || r.fetches) bits.push(`${r.searches} searches, ${r.fetches} pages read${r.turns > 1 ? `, ${r.turns} rounds` : ""}`);
   if (r.stopped === "timeout") bits.push("CUT OFF at 4 minutes");
   if (r.dataLine === false && r.searches + r.fetches > 0) bits.push("no data line in the answer"); // older records have no dataLine

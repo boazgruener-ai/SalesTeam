@@ -756,6 +756,12 @@ in the prompt and enforced when the people are added.
 **1.2.0.13 (Boaz):** the web lane first takes the accounts it can make Ready on its own - LinkedIn company verified,
 a verified relevant contact the only thing missing (`onlyContactMissing`, `webLaneOrder`'s `readyByWeb`) - then
 traded, priority and listing order as before.
+**Second automatic run (1.2.0.13, 2026-10-01, 20 accounts):** US$4.10, about US$0.205 per account; 72 people
+added (the cap works), profiles from search results for 38 of 83 (46%); **Ready 147 -> 158** - about US$0.37 per
+Ready account, no LinkedIn visit. The cap hardly moved the cost: it is the research reading search results and
+pages (input), not the people. **1.2.0.14 (Boaz):** a research that asks only for contacts runs on **Haiku 4.5**
+(`LANE_CONTACTS_MODEL`, half Sonnet 5's token price; searches unchanged at US$0.01) - expected about US$0.11-0.12 per
+account; the Activity Log line says "Haiku", to compare people and profiles found with the Sonnet runs.
 
 ---
 

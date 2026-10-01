@@ -17,6 +17,9 @@ export const DRAFT_MODEL = "claude-haiku-4-5-20251001";
 // approach advice (or reacting in character) is a genuine reasoning task,
 // unlike a short templated draft, so it's worth the extra cost/latency.
 export const AGENT_MODEL = "claude-sonnet-5";
+// 1.2.0.14 (Boaz, 2026-10-01): a web lane research that asks only for contacts runs on Haiku 4.5 - half Sonnet 5's
+// token price. Most lane researches are contacts-only now; Sonnet stays for facts, initiatives and summaries.
+export const LANE_CONTACTS_MODEL = "claude-haiku-4-5-20251001";
 
 // A plain fetch() has no timeout at all - a stalled connection or a slow
 // response from Anthropic's own infrastructure can hang indefinitely with
@@ -1745,7 +1748,7 @@ function laneUserMessage(company, known, topicWords, targetCountries) {
 
 // Returns { text, data, sources, searches, fetches, model, stopped, costUsd, ms, usage }. Throws like researchAccountOnWeb.
 // `company` carries the effective values (overrides applied) and its `website`.
-export async function researchAccountForLane(company, { known, topicWords, industryNames }, settings, { signal } = {}) {
+export async function researchAccountForLane(company, { known, topicWords, industryNames, model: askedModel }, settings, { signal } = {}) {
   const apiKey = sanitizeApiKey(settings.apiKey || "");
   if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
   const started = Date.now();
@@ -1770,12 +1773,12 @@ export async function researchAccountForLane(company, { known, topicWords, indus
   let searches = 0;
   let fetches = 0;
   let turns = 0;
-  let model = AGENT_MODEL;
+  let model = askedModel || AGENT_MODEL;
   const usageTotal = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   try {
     for (let turn = 0; turn < 5; turn++) {
       const body = {
-        model: AGENT_MODEL,
+        model: askedModel || AGENT_MODEL,
         max_tokens: 4000,
         system,
         tools: [
