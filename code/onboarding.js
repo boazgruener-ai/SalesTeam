@@ -213,7 +213,9 @@ function updateNavBar(step, index) {
     el("nav-exit-btn").hidden = false;
     el("nav-save-exit-btn").hidden = false;
     el("nav-save-btn").hidden = false;
-    el("nav-next-btn").hidden = false;
+    // Change Settings ends at the last setting: there is no Setup complete step after it.
+    el("nav-next-btn").hidden = settingsMode && index >= STEP_ORDER.length - 2;
+    el("nav-back-btn").textContent = settingsMode ? "Previous" : "Back";
   }
   for (const btn of el("wizard-step-list").children) {
     btn.classList.toggle("wizard-step-list-active", btn.dataset.step === step);
@@ -287,6 +289,8 @@ function showSettingsHome() {
   currentStepIndex = STEP_ORDER.length - 1; // the "finish" slot: nothing to persist when leaving it
   el("wizard-nav-bar").hidden = false;
   el("nav-save-btn").hidden = true;
+  el("nav-back-btn").hidden = true;
+  el("nav-next-btn").hidden = true;
   let hint = el("change-settings-hint");
   if (!hint) {
     hint = document.createElement("p");
@@ -297,12 +301,32 @@ function showSettingsHome() {
   hint.hidden = false;
 }
 
+// Change Settings (Boaz, 2026-10-01): Previous / Next beside Save. Each saves the open setting first - a list of
+// settings has no Confirm screen - and does not move on while the setting has an error.
+async function saveOpenSettingThenShow(index) {
+  const step = STEP_ORDER[currentStepIndex];
+  clearStepError(step);
+  const { valid, error } = STEP_VALIDATORS[step]();
+  if (!valid) {
+    showStepError(step, error);
+    return;
+  }
+  await persistStep(step);
+  showStep(index);
+}
+
 el("nav-back-btn").addEventListener("click", () => {
-  if (currentStepIndex > 0) showStep(currentStepIndex - 1);
+  if (currentStepIndex <= 0) return;
+  if (settingsMode) saveOpenSettingThenShow(currentStepIndex - 1);
+  else showStep(currentStepIndex - 1);
 });
 
 el("nav-next-btn").addEventListener("click", () => {
   const step = STEP_ORDER[currentStepIndex];
+  if (settingsMode) {
+    if (currentStepIndex < STEP_ORDER.length - 2) saveOpenSettingThenShow(currentStepIndex + 1);
+    return;
+  }
   clearStepError(step);
   const { valid, error } = STEP_VALIDATORS[step]();
   if (!valid) {
@@ -341,6 +365,7 @@ el("nav-save-btn").addEventListener("click", async () => {
     return;
   }
   await persistStep(step);
+  if (step === "value-add-offers" && checklists[step]) renderProposalForStep(step);
   status.textContent = "Saved ✓";
   setTimeout(() => { if (status.textContent === "Saved ✓") status.textContent = ""; }, 2500);
 });
@@ -2030,13 +2055,21 @@ function mountStepChecklists(step, p, accepted) {
   const ticks = (keys, saved) => initiallyTicked(keys, saved, completedBefore || accepted);
   const remaining = (keys, lines) => mergeChecklistWithLines(keys.map((text) => ({ text, checked: false })), lines);
   if (step === "value-add-offers") {
+    // The box below the checklist is the list of offers (Boaz, 2026-10-01: ticking and saving should move an item
+    // there). The checklist shows only proposals not in it yet - ticked on a first setup until the step is accepted.
     const lines = textareaLines("value-add-offers-input");
     const texts = p.items.map(offerLine);
-    const t = ticks(texts, lines);
+    const inBox = initiallyTicked(texts, lines, true);
+    const open = p.items.map((item, i) => ({ text: texts[i], sourceUrl: item.url })).filter((_, i) => !inBox[i]);
+    const tickNew = !completedBefore && !accepted;
     checklists[step] = mountChecklist(el("value-add-offers-checklist"),
-      p.items.map((item, i) => ({ text: texts[i], checked: t[i], sourceUrl: item.url })),
-      { title: "Found on the website - tick the ones the AI may offer", addPlaceholder: "Add another offer", onChange: scheduleAutoSave });
-    el("value-add-offers-input").value = remaining(texts, lines).join("\n");
+      open.map((item) => ({ ...item, checked: tickNew })),
+      {
+        title: open.length
+          ? "Found on the website - tick the ones the AI may offer, then Save: they move to the list below"
+          : "Every offer found on the website is in the list below.",
+        addPlaceholder: "Add another offer", onChange: scheduleAutoSave,
+      });
   } else if (step === "contacts") {
     const titleLines = textareaLines("contacts-exact-titles-input");
     const keywordLines = textareaLines("contacts-title-keywords-input");
@@ -2072,6 +2105,7 @@ function renderProposalForStep(step) {
   if (step === "about" && !(p && p.found && p.outputLanguage !== el("about-language-select").value)) p = undefined;
   const accepted = !!setupResearch.accepted?.[step];
   if (p && p.found && step !== "about" && !completedBefore && !accepted && !appliedThisVisit.has(step)) applyProposal(step, p);
+  if (step === "value-add-offers") foldOffersIntoList();
   if (p) appliedThisVisit.add(step);
   mountStepChecklists(step, p, accepted);
   renderProposalBanner(slot, {
@@ -2120,10 +2154,19 @@ async function markProposalAccepted(step) {
   await saveSetupResearch(setupResearch);
 }
 
+// The list below first, then the ticked proposals, de-duplicated.
 function currentValueAddOffers() {
   const lines = textareaLines("value-add-offers-input");
   const list = checklists["value-add-offers"];
-  return list ? mergeChecklistWithLines(list.getItems(), lines) : lines;
+  if (!list) return lines;
+  return mergeChecklistWithLines([], [...lines, ...list.getItems().filter((i) => i.checked).map((i) => i.text)]);
+}
+
+// Moves the ticked proposals into the list below; the checklist is mounted again with what is left.
+function foldOffersIntoList() {
+  if (!checklists["value-add-offers"]) return;
+  el("value-add-offers-input").value = currentValueAddOffers().join("\n");
+  delete checklists["value-add-offers"];
 }
 
 // ---------------------------------------------------------------------

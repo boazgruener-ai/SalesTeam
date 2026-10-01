@@ -756,8 +756,6 @@ textarea {
 #nav-save-status { margin: 0 6px; font-size: 12px; }
 
 /* Change Settings mode (onboarding.html?mode=settings): a plain list of settings, no step workflow. */
-body.settings-mode #nav-back-btn,
-body.settings-mode #nav-next-btn,
 body.settings-mode #nav-save-exit-btn,
 body.settings-mode #nav-exit-btn,
 body.settings-mode #step-progress,

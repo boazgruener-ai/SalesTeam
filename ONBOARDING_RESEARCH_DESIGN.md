@@ -831,6 +831,11 @@ federations, chambers, clubs).
 and its proposal box says what the items are for (a give-away in a message to a lead, a reason to reply). Checklist
 items are no longer struck through when unticked - the text stays normal and a ticked item is bold.
 
+**1.2.0.20 (Boaz, 2026-10-01):** ticking offers and pressing Save left them in the checklist, so the save looked as if
+it had not worked. The box below is now the list of offers: Save (and coming back to the step) moves the ticked
+proposals into it, and the checklist keeps only the proposals not taken yet. Change Settings has **Previous** and
+**Next** beside Save again; each saves the open setting first and stays put while it has an error.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
