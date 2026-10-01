@@ -798,3 +798,7 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 #research-lines li:last-child { color: var(--ink); font-weight: 600; }
 #research-cost { font-size: 13px; color: var(--gray); }
 #about-research-box button { margin-top: 6px; }
+
+/* Hover tip on each organization type (1.2.0.18). */
+.organization-type-row[title] { cursor: help; }
+.organization-type-tip { color: var(--blue); font-size: 12px; }

@@ -713,6 +713,17 @@ function renderIndustryPriorityRows(selected) {
 // needing a synthetic id). Defaults to "yes" (a fully normal candidate)
 // when nothing is saved for that industry yet - never an opinionated
 // built-in exclusion.
+// What each LinkedIn organization type covers - the hover tip on the Industry step (Boaz, 2026-10-01: "International
+// Affairs", "Research Services" and "Civic and Social Organizations" are not clear without one).
+const ORGANIZATION_TYPE_TIPS = {
+  "Non-profit Organizations": "Charities, foundations, NGOs and other organizations that do not work for profit, e.g. aid organizations and environmental foundations.",
+  "Government Administration": "Public administrations at every level - federal, cantonal or state, and city - including ministries, offices and public agencies.",
+  "International Affairs": "International and intergovernmental organizations and diplomatic bodies, e.g. United Nations agencies and other international organizations.",
+  "Higher Education": "Universities, universities of applied sciences, colleges and business schools.",
+  "Research Services": "Research institutes and laboratories, publicly funded or private, contract research organizations and think tanks.",
+  "Civic and Social Organizations": "Associations and federations - industry and trade associations, professional bodies, chambers, clubs and other member organizations.",
+};
+
 function renderOrganizationTypeRows(eligibility) {
   const wrap = el("organization-type-wrap");
   wrap.innerHTML = "";
@@ -723,6 +734,14 @@ function renderOrganizationTypeRows(eligibility) {
     const name = document.createElement("span");
     name.className = "organization-type-name";
     name.textContent = industry;
+    if (ORGANIZATION_TYPE_TIPS[industry]) {
+      row.title = ORGANIZATION_TYPE_TIPS[industry];
+      const tip = document.createElement("span");
+      tip.className = "organization-type-tip";
+      tip.textContent = "ⓘ";
+      tip.setAttribute("aria-label", ORGANIZATION_TYPE_TIPS[industry]);
+      name.append(" ", tip);
+    }
     const choices = document.createElement("div");
     choices.className = "organization-type-choices";
     for (const [value, text] of [["yes", "Yes"], ["review", "Review"], ["no", "No"]]) {

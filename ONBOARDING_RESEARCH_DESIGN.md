@@ -822,6 +822,11 @@ United Kingdom; `.com`/`.eu` say nothing), then the company's countries, and nam
 note (*"Countries where only the group works, not ticked: ..."*). The website's country alone is not a finding: with
 no country in the answer the step still says "Nothing found". 7 new checks (445).
 
+**1.2.0.18 (Boaz, 2026-10-01):** the Industry step's organization types read as if private and publicly traded
+companies were missing. Retitled *"Organization types other than companies"*, with the first line saying companies are
+always included, and each type has a hover tip on what it covers (e.g. *Civic and Social Organizations*: associations,
+federations, chambers, clubs).
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
