@@ -287,7 +287,7 @@ add_bullets(doc, [
     "company-count hint. A stored negativeTopics array from before this change is backfilled on next read, "
     "never reset. Recruiter/Staffing Headline Filter and AI/Cloud Vendor Blocklist are unaffected - genuinely "
     "different mechanisms, not backed by any wizard list.",
-    "A fifth such filter, Other Excluded Companies (1.2.0.27, 2026-10-01) - companies excluded under the "
+    "A fifth such filter, Other Excluded Companies (1.2.0.28, 2026-10-01) - companies excluded under the "
     "wizard's Other category had no lead filter, so a keyword-scan post from one of them still came through as a "
     "lead. Now every excluded company is filtered, whatever its category: builtin-other-exclusions (sourceList "
     "others -> category other), on by default and added to existing installs by the same backfill. The wizard's "
@@ -2864,7 +2864,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.27."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.28."
 )
 
 for section in doc.sections:

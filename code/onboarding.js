@@ -225,6 +225,8 @@ function updateNavBar(step, index) {
     el("nav-save-btn").hidden = false;
     // Change Settings ends at the last setting: there is no Setup complete step after it.
     el("nav-next-btn").hidden = settingsMode && index >= STEP_ORDER.length - 2;
+    // Boaz, 2026-10-01: on the last step "Next" did not say that Finish Setup comes after it.
+    el("nav-next-btn").textContent = !settingsMode && index === STEP_ORDER.length - 2 ? "Next: review and finish" : "Next";
     el("nav-back-btn").textContent = settingsMode ? "Previous" : "Back";
   }
   for (const btn of el("wizard-step-list").children) {

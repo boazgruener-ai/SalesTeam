@@ -923,6 +923,9 @@ or one is a hyphen-part of the other (timetoact / timetoact-group), at least 4 l
 refused. A research stored before is mapped again from its saved answer when the wizard opens (local, free), so its
 dropped offers come back without a new research. 9 new checks (487).
 
+**1.2.0.28 (Boaz, 2026-10-01):** on step 15 of 15 he looked for Finish Setup - it is on the page after Next and Confirm.
+On the last step the button now reads *"Next: review and finish"*.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
