@@ -808,6 +808,12 @@ step and saves through Next; unticking removes, rank order is kept; on a complet
 proposal; the progress screen streams a (simulated) answer to Location; Stop ends on Try again / Continue. **Not yet
 run against the real API** - that is Boaz's check: a clean profile with 3 real company websites.
 
+**1.2.0.16 (Boaz, 2026-10-01):** on a setup completed before, nothing led to About you - he looked for the company
+and website in Settings > User Profile (name, title, email), and the wizard opened on the last step reached. Now the
+User Profile card says where the company and website are set, with **Open About you** (Change Settings opened on that
+one setting, `onboarding.html?mode=settings&step=about`), and Setup opens on About you for an install that has never
+filled it in (no company, no website, no research).
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

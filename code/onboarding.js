@@ -2263,12 +2263,17 @@ async function init() {
     el("page-subtitle-change").hidden = false;
     el("linkedin-use-note").hidden = true; // the note belongs to the first-time setup, not to Change Settings
     el("change-back-to-menu-link").hidden = false;
-    showSettingsHome();
+    const askedStep = new URLSearchParams(location.search).get("step");
+    if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
+    else showSettingsHome();
     return;
   }
   const savedStepIndex = await getOnboardingProgressStepIndex();
   furthestStepIndex = 0;
-  showStep(Math.min(Math.max(savedStepIndex, 0), STEP_ORDER.length - 1));
+  // About you came with 1.2.1: a setup saved before it never saw the step, so it opens there first.
+  const aboutNeverFilled = !el("about-company-input").value.trim() && !el("about-website-input").value.trim()
+    && setupResearch.status === "none";
+  showStep(aboutNeverFilled ? 0 : Math.min(Math.max(savedStepIndex, 0), STEP_ORDER.length - 1));
 }
 
 // The page stays hidden until init() has chosen what to show, so the default first step never flashes on screen

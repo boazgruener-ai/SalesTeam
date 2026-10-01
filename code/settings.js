@@ -713,6 +713,13 @@ function routeSettings() {
     openChangeSettingsInline();
     return;
   }
+  // Change Settings opened straight on one setting (the User Profile card's "Open About you", 1.2.0.16).
+  if (location.hash === "#change-settings-about") {
+    showEmbeddedPage("onboarding.html?mode=settings&step=about", "Change Settings");
+    document.querySelectorAll("#app-nav .nav-item.active").forEach((e) => e.classList.remove("active"));
+    document.getElementById("nav-change-settings")?.classList.add("active");
+    return;
+  }
   // A Settings card can only be seen when no other page is displayed over this page's content area. Clicking a
   // Settings menu item while (say) the Accounts Dashboard is shown used to change the hash and select the card
   // behind that page - so "nothing happened" until a browser refresh cleared the embedded page.
@@ -727,6 +734,10 @@ function routeSettings() {
 }
 
 window.addEventListener("hashchange", routeSettings);
+document.getElementById("profile-open-about-you-btn")?.addEventListener("click", () => {
+  if (location.hash === "#change-settings-about") routeSettings();
+  else location.hash = "#change-settings-about";
+});
 // Re-clicking the item that is already selected does not change the hash (so no hashchange fires) - route on the
 // click itself as well, so it still brings the card back to the front.
 document.querySelectorAll('#app-nav a.nav-item[href^="#"]').forEach((link) => {
