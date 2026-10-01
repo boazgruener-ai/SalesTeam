@@ -763,6 +763,51 @@ pages (input), not the people. **1.2.0.14 (Boaz):** a research that asks only fo
 (`LANE_CONTACTS_MODEL`, half Sonnet 5's token price; searches unchanged at US$0.01) - expected about US$0.11-0.12 per
 account; the Activity Log line says "Haiku", to compare people and profiles found with the Sonnet runs.
 
+**As built (step 5, 1.2.0.15) - the wizard proposes.** Branch `feature/onboarding-step5` (off step 4).
+
+- **About you** is the new step 1 (13 numbered steps): your name (`userProfile.name`), your company's name (new key
+  `sellerCompanyName`, now also the seller Web Discovery leaves out), the website (`companyWebsite`, moved here from
+  What you sell), the Anthropic API key (shown only while none is saved) and the output language (the Settings one).
+  A box offers *"Research my company (about US$0.30)"*; Next without it gives today's wizard (R4.3).
+- **The research** (`researchSeller`, agent-shared.js): Sonnet 5 through the lane's call helper (basic tool versions
+  first, thinking off), web fetch 6 x 8,000 tokens, web search 3, one `DATA:` answer with a URL on every item (3.3).
+  Two additions to the answer: `idealCustomer` (the Ideal customer draft) and a `sector` per customer industry,
+  picked from the wizard's closed list of 11 GICS sectors - the wizard's industries are sectors, so exact-name
+  matching alone would almost never tick one. Texts come in the output language, keys and country names in English.
+  It runs in the wizard page (not the background): a heartbeat marks a research whose page was closed as interrupted.
+- **The progress screen** (3.6) lists each page read and each search as it happens (`onToolInput`, new in
+  `streamWebResearch`), the cost so far, Stop and Skip research; on the answer it goes on to Location. Failed,
+  stopped or cut off: Try again or Continue without research. **Deviation:** Stop keeps nothing from the call that
+  was stopped - the answer arrives as one `DATA:` line at the end, so a stopped call has none (proposals of an earlier
+  research stay).
+- **`setup-proposals.js`** (pure, 37 checks): countries (picker names, aliases, local names, ISO codes, DACH /
+  Benelux / Nordics; "Europe" is too broad - dropped and named in the note), size bands (stated numbers, else size
+  words; a band counts only when the range really overlaps it), industries (only the wizard's sector names; every
+  industry the wizard has no exact name for goes to the Ideal customer text), organisation types (set to Yes),
+  titles (de-duplicated, at most 10), keywords (only words that recur across the titles), seniority (incl. "CTO"),
+  resources (only pages on the seller's own domain or a subdomain), exclusions (name + website or source page, the
+  seller never itself, de-duplicated across the three lists).
+- **`proposal-ui.js`**: the banner (*"Proposed from acme.ch/about, ... - keep it, change it or clear it. Next accepts
+  what is on screen."*, or *"Nothing found on acme.ch for this..."*), Research again with a hint (only that step's
+  answer keys, fewer uses, about US$0.10), and the checklist (checkbox, editable text, rank up/down, Add). Used for
+  offers, exact titles (ranked), keywords and exclusions; ticked items come first, then the lines typed in the box.
+- **First setup vs completed before (R4.5):** on a first setup a step's proposal is put into the form when the step
+  opens, once per visit; on a setup completed before, it is shown beside the current setting (*"Research proposal
+  ... the current setting stays as it is unless you use the proposal"*, with the proposal's values) and taken only
+  with **Use proposal**; checklist items start unticked unless already saved. A proposal counts as accepted when the
+  step is saved (`setupResearch.accepted`), after which its ticks show what is saved. About you shows a proposal
+  only when the website's language differs from the output language (*"Use German"*).
+- Exclusions found by the research are stored by name and domain with `source: "research"` and `sourceUrl`.
+- Every research writes one Activity Log line (cost, time, pages read, searches, steps with a proposal) - the
+  measurement that replaces the US$0.30 estimate.
+- Not in this step (step 6/7): initiative stages, included companies, targets, Finish kicking both lanes, the
+  Settings offer for existing installs (3.12).
+
+Checked outside Chrome with a stand-in for `chrome.storage`: the wizard loads; a finished research pre-fills every
+step and saves through Next; unticking removes, rank order is kept; on a completed setup nothing changes until Use
+proposal; the progress screen streams a (simulated) answer to Location; Stop ends on Try again / Continue. **Not yet
+run against the real API** - that is Boaz's check: a clean profile with 3 real company websites.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

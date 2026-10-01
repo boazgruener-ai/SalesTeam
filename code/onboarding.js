@@ -43,7 +43,16 @@ import {
   getTopics,
   getTargetAccountsWorkbook,
   SENIORITY_LEVELS,
+  getUserProfile, saveUserProfile, getOutputLanguage, saveOutputLanguage,
+  getAnthropicApiKey, saveAnthropicApiKey, getSellerCompanyName, saveSellerCompanyName,
+  getSetupResearch, saveSetupResearch, getOnboardingCompletedAt, appendActivityLog,
 } from "./storage.js";
+import { researchSeller, SELLER_RESEARCH_ESTIMATE_USD, sanitizeApiKey } from "./agent-shared.js";
+import {
+  buildSetupProposals, PROPOSAL_STEP_KEYS, stepsRebuiltBy, initiallyTicked, mergeChecklistWithLines, offerLine, sourceLabel,
+} from "./setup-proposals.js";
+import { renderProposalBanner, mountChecklist } from "./proposal-ui.js";
+import { normalizeCompanyName, websiteDomain } from "./company-identity.js";
 import { startAutoBackup } from "./backup-restore.js";
 import { mountLocationPicker } from "./location-picker.js";
 import { AI_FIELD_ALIASES } from "./xlsx-lite.js";
@@ -55,11 +64,11 @@ import { getDiscoveryQueueState, resetDiscoveryQueue } from "./discovery-queue.j
 const PRIORITY_LABELS = { 1: "Low", 2: "Medium", 3: "High" };
 
 const STEP_ORDER = [
-  "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
+  "about", "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
   "icp", "contacts", "exclusions", "aliases", "finish",
 ];
 const STEP_TITLES = {
-  location: "Location", size: "Size", industry: "Industry", priority: "Discovery Prioritization",
+  about: "About you", location: "Location", size: "Size", industry: "Industry", priority: "Discovery Prioritization",
   "leads-prioritization": "Leads Prioritization",
   "company-context": "What you sell", "value-add-offers": "Things you can offer",
   icp: "Ideal customer", contacts: "Target contacts",
@@ -249,7 +258,10 @@ function showStep(index) {
     if (sectionEl) sectionEl.hidden = s !== step;
   }
   el("confirm-view").hidden = true;
+  el("enter-research").hidden = true;
   el("step-progress").textContent = step === "finish" ? "" : `Step ${index + 1} of ${STEP_ORDER.length - 1}`;
+  if (step === "about") renderAboutResearchBox();
+  renderProposalForStep(step);
   if (step === "location") renderLocationPriorityRows();
   if (step === "finish") renderFinishSummary();
   updateNavBar(step, index);
@@ -814,8 +826,13 @@ function syncPostRulesFromDom() {
 }
 
 function validateContactsStep() {
-  const exactTitles = el("contacts-exact-titles-input").value.split("\n").map((l) => l.trim()).filter(Boolean);
-  const titleKeywords = el("contacts-title-keywords-input").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  let exactTitles = el("contacts-exact-titles-input").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  let titleKeywords = el("contacts-title-keywords-input").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  // Proposed titles and keywords (1.2.1): the ticked ones first, in their rank order, then the lines typed below.
+  if (checklists.contacts) {
+    exactTitles = mergeChecklistWithLines(checklists.contacts.titles.getItems(), exactTitles);
+    if (checklists.contacts.keywords) titleKeywords = mergeChecklistWithLines(checklists.contacts.keywords.getItems(), titleKeywords);
+  }
   if (exactTitles.length === 0 && titleKeywords.length === 0) {
     return { valid: false, error: "Enter at least one exact title or title keyword." };
   }
@@ -850,7 +867,21 @@ function validateExclusionsStep() {
   // 3.9) are not shown there, so they are carried over untouched - and a listed slug keeps any name/domain
   // stored with it.
   const bySlug = new Map(companyExclusions.filter((e) => e.slug).map((e) => [`${e.category}|${e.slug}`, e]));
-  const withoutSlug = companyExclusions.filter((e) => !e.slug);
+  let withoutSlug = companyExclusions.filter((e) => !e.slug);
+  // The research's proposals (1.2.1): every proposed company is decided by its checkbox - ticked ones are kept by
+  // name and website, unticked ones dropped; other name/website entries are carried as before.
+  const list = checklists.exclusions;
+  if (list) {
+    const proposed = new Set((setupResearch.proposals?.exclusions?.items || []).map(exclusionKey));
+    const items = list.getItems();
+    for (const i of items) if (i.meta) proposed.add(exclusionKey({ category: i.meta.category, name: i.text }));
+    withoutSlug = [
+      ...withoutSlug.filter((e) => !proposed.has(exclusionKey(e))),
+      ...items.filter((i) => i.checked).map((i) => (i.meta
+        ? { name: i.text, ...(i.meta.domain ? { domain: i.meta.domain } : {}), category: i.meta.category, source: "research", ...(i.meta.sourceUrl ? { sourceUrl: i.meta.sourceUrl } : {}) }
+        : { name: i.text, category: "other", source: "user" })),
+    ].filter((e, idx, all) => all.findIndex((x) => exclusionKey(x) === exclusionKey(e)) === idx);
+  }
   companyExclusions = [
     ...EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
       parseCompetitorLines(el(inputId).value).map((slug) => ({ ...(bySlug.get(`${category}|${slug}`) || {}), slug, category }))
@@ -860,12 +891,21 @@ function validateExclusionsStep() {
   return { valid: true };
 }
 
+function validateAboutStep() {
+  const website = el("about-website-input").value.trim();
+  if (website && !websiteDomain(website)) {
+    return { valid: false, error: "The website does not look like a web address (for example https://yourcompany.com)." };
+  }
+  return { valid: true };
+}
+
 function validateAliasesStep() {
   companyAliases = parseAliasLines(el("aliases-input").value);
   return { valid: true };
 }
 
 const STEP_VALIDATORS = {
+  about: validateAboutStep,
   location: validateLocationStep,
   size: validateSizeStep,
   industry: validateIndustryStep,
@@ -938,7 +978,18 @@ async function offerRescoreIfRulesChanged() {
 }
 
 async function persistStep(step) {
+  await markProposalAccepted(step);
   switch (step) {
+    case "about": {
+      const profile = await getUserProfile();
+      await saveUserProfile({ ...profile, name: el("about-name-input").value.trim() });
+      await saveSellerCompanyName(el("about-company-input").value);
+      await saveCompanyWebsite(el("about-website-input").value.trim());
+      await saveOutputLanguage(el("about-language-select").value);
+      const key = sanitizeApiKey(el("about-api-key-input").value || "");
+      if (!el("about-api-key-wrap").hidden && key) await saveAnthropicApiKey(key);
+      break;
+    }
     case "location":
     case "size":
       await saveTargetUniverseConfig(targetUniverseConfig);
@@ -961,12 +1012,9 @@ async function persistStep(step) {
       break;
     case "company-context":
       await saveCompanyContext(el("company-context-input").value);
-      await saveCompanyWebsite(el("company-website-input").value);
       break;
     case "value-add-offers":
-      await saveValueAddOffers(
-        el("value-add-offers-input").value.split("\n").map((l) => l.trim()).filter(Boolean)
-      );
+      await saveValueAddOffers(currentValueAddOffers());
       break;
     case "icp":
       await saveIdealCustomerProfile(el("icp-input").value);
@@ -1005,6 +1053,16 @@ function appendPara(container, ...segments) {
 function renderSummaryInto(step, container) {
   container.innerHTML = "";
   switch (step) {
+    case "about": {
+      const name = el("about-name-input").value.trim();
+      const company = el("about-company-input").value.trim();
+      const website = el("about-website-input").value.trim();
+      appendPara(container, "You: ", { strong: name || "(no name)" }, company ? ", selling for " : "", company ? { strong: company } : "",
+        website ? ` (${website})` : "", ".");
+      const language = el("about-language-select");
+      appendPara(container, "SalesTeam writes in ", { strong: language.options[language.selectedIndex]?.text || language.value }, ".");
+      break;
+    }
     case "location": {
       const c = targetUniverseConfig;
       const where = c.locationMode === "continent"
@@ -1081,7 +1139,7 @@ function renderSummaryInto(step, container) {
       break;
     }
     case "value-add-offers": {
-      const offers = el("value-add-offers-input").value.split("\n").map((l) => l.trim()).filter(Boolean);
+      const offers = currentValueAddOffers();
       if (offers.length) appendPara(container, `${offers.length} offer${offers.length === 1 ? "" : "s"}: `, { strong: offers.join(", ") }, ".");
       else appendPara(container, "(left blank)");
       break;
@@ -1638,6 +1696,415 @@ el("finish-btn").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------------
+// Onboarding research (1.2.1, ONBOARDING_RESEARCH_DESIGN.md 3.1-3.6). About you offers one research of the seller's
+// website; setup-proposals.js maps its answer onto the wizard's options, and each step that follows shows what it
+// proposes. Nothing reaches a setting until the step's own save runs (Next, Save, or the user editing the step).
+
+// A setup completed before (R4.5): proposals sit beside the current setting and are taken only with "Use proposal".
+let completedBefore = false;
+let setupResearch = { status: "none", proposals: {}, accepted: {} };
+// Steps whose proposal was put into the form during this visit - not again when the user comes back with Back.
+const appliedThisVisit = new Set();
+// The proposal checklists, mounted once per visit and step (re-mounted after Research again or Use proposal).
+const checklists = {};
+let researchController = null;
+let researchSkipRequested = false;
+
+const RESEARCHED_STEPS_TEXT = "Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude";
+const RESEARCH_AGAIN_COST_TEXT = "about US$0.10";
+
+const usd = (n) => `US$${(Number(n) || 0).toFixed(2)}`;
+
+function sellerSite() {
+  return websiteDomain(el("about-website-input").value) || websiteDomain(setupResearch.seller?.website) || "";
+}
+
+function proposalCtx() {
+  return {
+    countries: ALL_COUNTRIES, sizeBuckets: SIZE_PRIORITY_BUCKETS, industries: CONFIRMED_INDUSTRIES,
+    orgTypes: Object.keys(EXCLUDABLE_INDUSTRIES),
+    sellerName: el("about-company-input").value.trim(), sellerWebsite: el("about-website-input").value.trim(),
+  };
+}
+
+function textareaLines(id) {
+  return el(id).value.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+function languageLabel(value) {
+  const option = [...el("about-language-select").options].find((o) => o.value === value);
+  return option ? option.textContent.replace(/\s*\(.*\)$/, "") : value;
+}
+
+function renderAboutResearchBox() {
+  const site = sellerSite();
+  el("about-research-error").hidden = true;
+  if (setupResearch.status === "done") {
+    const when = setupResearch.at ? new Date(setupResearch.at).toLocaleDateString() : "";
+    el("about-research-text").textContent =
+      `Researched ${site || "your company's website"}${when ? ` on ${when}` : ""} for ${usd(setupResearch.costUsd)}. ` +
+      "The next steps show what it proposes.";
+    el("about-research-btn").textContent = `Research my company again (about ${usd(SELLER_RESEARCH_ESTIMATE_USD)})`;
+    return;
+  }
+  const before = {
+    failed: "The last research did not finish. ",
+    stopped: "The last research was stopped before its answer was in. ",
+  }[setupResearch.status] || "";
+  el("about-research-text").textContent =
+    `${before}SalesTeam can read ${site || "your company's website"} and propose answers for ${RESEARCHED_STEPS_TEXT}. ` +
+    "Or press Next and fill them in yourself.";
+  el("about-research-btn").textContent = `Research my company (about ${usd(SELLER_RESEARCH_ESTIMATE_USD)})`;
+}
+
+el("about-research-btn").addEventListener("click", async () => {
+  const errorEl = el("about-research-error");
+  errorEl.hidden = true;
+  const fail = (message) => { errorEl.textContent = message; errorEl.hidden = false; };
+  const { valid, error } = validateAboutStep();
+  if (!valid) return fail(error);
+  if (!websiteDomain(el("about-website-input").value)) return fail("Enter your company's website first.");
+  await persistStep("about");
+  if (!(await getAnthropicApiKey())) return fail("Add your Anthropic API key above first - the research runs on it.");
+  el("about-api-key-wrap").hidden = true;
+  await runSellerResearch();
+});
+
+// ---- The progress screen (design 3.6) ----
+
+function showResearchScreen(seller) {
+  for (const s of STEP_ORDER) {
+    const sectionEl = el(`enter-${s}`);
+    if (sectionEl) sectionEl.hidden = true;
+  }
+  el("confirm-view").hidden = true;
+  el("wizard-nav-bar").hidden = true;
+  el("step-progress").textContent = "";
+  el("enter-research").hidden = false;
+  el("research-intro").textContent =
+    `SalesTeam is reading ${sourceLabel(seller.website)} to propose answers for the next steps. This takes one to two ` +
+    "minutes; the setup goes on by itself when the answer is in.";
+  el("research-lines").innerHTML = "";
+  el("research-cost").textContent = "";
+  el("research-error").hidden = true;
+  addResearchLine(null, "Starting the research…");
+  setResearchButtons(true);
+}
+
+function setResearchButtons(running) {
+  el("research-stop-btn").hidden = !running;
+  el("research-skip-btn").hidden = !running;
+  el("research-retry-btn").hidden = running;
+  el("research-continue-btn").hidden = running;
+}
+
+function addResearchLine(toolName, input) {
+  let text;
+  if (toolName === "web_fetch") text = `Reading ${sourceLabel(input?.url || "a page")}…`;
+  else if (toolName === "web_search") text = `Searching: ${input?.query || "…"}`;
+  else text = String(input || "");
+  if (!text) return;
+  const li = document.createElement("li");
+  li.textContent = text;
+  el("research-lines").append(li);
+}
+
+function showResearchEnded(message) {
+  el("research-error").textContent = message;
+  el("research-error").hidden = false;
+  setResearchButtons(false);
+}
+
+function continueAfterResearch() {
+  el("enter-research").hidden = true;
+  showStep(STEP_ORDER.indexOf("location"));
+}
+
+async function logSetupResearch(label) {
+  try {
+    await appendActivityLog({ actor: "user", action: "setup_research", label });
+  } catch { /* the log is for measuring only */ }
+}
+
+function researchMeasures(result) {
+  return `${usd(result.costUsd)}, ${Math.round((result.ms || 0) / 1000)} s, ${result.fetches || 0} pages read, ` +
+    `${result.searches || 0} searches`;
+}
+
+async function runSellerResearch() {
+  const seller = { name: el("about-company-input").value.trim(), website: el("about-website-input").value.trim() };
+  showResearchScreen(seller);
+  researchSkipRequested = false;
+  researchController = new AbortController();
+  const startedAt = Date.now();
+  setupResearch = { ...setupResearch, status: "running", at: startedAt, heartbeatAt: startedAt, seller, error: null };
+  await saveSetupResearch(setupResearch);
+  // A heartbeat, so a page closed mid-research is recognised as interrupted when the wizard opens again (init).
+  const heartbeat = setInterval(() => {
+    setupResearch.heartbeatAt = Date.now();
+    saveSetupResearch(setupResearch).catch(() => {});
+  }, 15000);
+  let result = null;
+  let failure = null;
+  try {
+    result = await researchSeller(
+      seller,
+      { sectors: CONFIRMED_INDUSTRIES, outputLanguage: el("about-language-select").value },
+      { apiKey: await getAnthropicApiKey() },
+      {
+        signal: researchController.signal,
+        onTool: addResearchLine,
+        onCost: (cost) => { el("research-cost").textContent = `Cost so far: about ${usd(cost)}`; },
+      },
+    );
+  } catch (err) {
+    failure = err;
+  } finally {
+    clearInterval(heartbeat);
+    researchController = null;
+  }
+  const site = sourceLabel(seller.website);
+
+  if (result && result.data) {
+    const proposals = buildSetupProposals(result.data, proposalCtx());
+    setupResearch = {
+      status: "done", at: startedAt, costUsd: result.costUsd, model: result.model, ms: result.ms,
+      searches: result.searches, fetches: result.fetches, seller, raw: result.data, briefing: result.briefing,
+      proposals, accepted: {},
+    };
+    await saveSetupResearch(setupResearch);
+    appliedThisVisit.clear();
+    for (const key of Object.keys(checklists)) delete checklists[key];
+    const found = Object.entries(proposals).filter(([, p]) => p.found).map(([step]) => STEP_TITLES[step]);
+    await logSetupResearch(`Setup research of ${site}: ${researchMeasures(result)}; proposals for ${found.length} steps` +
+      `${found.length ? ` (${found.join(", ")})` : ""}`);
+    continueAfterResearch();
+    return;
+  }
+
+  if (researchSkipRequested) {
+    setupResearch = { ...setupResearch, status: "skipped" };
+    await saveSetupResearch(setupResearch);
+    if (result) await logSetupResearch(`Setup research of ${site} skipped: ${researchMeasures(result)}`);
+    continueAfterResearch();
+    return;
+  }
+
+  let message;
+  let status = "failed";
+  if (failure) message = `The research could not be done: ${failure.message || failure}`;
+  else if (result.stopped === "user") { status = "stopped"; message = "Stopped before the answer was in, so there is nothing to propose."; }
+  else if (result.stopped === "timeout") message = "The research was cut off after 4 minutes, before its answer was in.";
+  else message = "The research did not return a usable answer.";
+  setupResearch = { ...setupResearch, status, error: message };
+  await saveSetupResearch(setupResearch);
+  if (result) await logSetupResearch(`Setup research of ${site} ended without an answer (${status}): ${researchMeasures(result)}`);
+  showResearchEnded(`${message} Try again, or continue and fill in the steps yourself.`);
+}
+
+el("research-stop-btn").addEventListener("click", () => { researchController?.abort(); });
+el("research-skip-btn").addEventListener("click", () => {
+  researchSkipRequested = true;
+  researchController?.abort();
+});
+el("research-retry-btn").addEventListener("click", () => { runSellerResearch(); });
+el("research-continue-btn").addEventListener("click", continueAfterResearch);
+
+// ---- Proposals on the steps (design 3.5) ----
+
+function setRowTicks(wrapId, keys) {
+  for (const row of el(wrapId).querySelectorAll(".priority-item-row")) {
+    const checked = keys.has(row.dataset.key);
+    row.querySelector('input[type="checkbox"]').checked = checked;
+    const select = row.querySelector(".priority-item-select");
+    if (select) select.disabled = !checked;
+    row.classList.toggle("priority-item-unchecked", !checked);
+  }
+}
+
+// Puts a step's proposal into the form. On a first setup this happens when the step opens; on a setup completed
+// before, only with "Use proposal" (tickAll: the proposal's list items are ticked too).
+function applyProposal(step, p, { tickAll = false } = {}) {
+  switch (step) {
+    case "about":
+      if (p.outputLanguage) el("about-language-select").value = p.outputLanguage;
+      break;
+    case "location":
+      if (!p.value.length) break;
+      locationPicker.setValue({ mode: "country", continents: [], countries: p.value });
+      renderLocationModeVisibility();
+      refreshLocationPriorityRows();
+      break;
+    case "size":
+      if (p.value.length) setRowTicks("size-buckets-wrap", new Set(p.value));
+      break;
+    case "industry":
+      if (p.value.length) setRowTicks("industry-checkbox-wrap", new Set(p.value));
+      for (const type of p.orgTypes || []) {
+        const radio = [...el("organization-type-wrap").querySelectorAll("input[type=radio]")].find((r) => r.name === type && r.value === "yes");
+        if (radio) radio.checked = true;
+      }
+      break;
+    case "company-context":
+      if (p.value) el("company-context-input").value = p.value;
+      break;
+    case "icp":
+      if (p.value) el("icp-input").value = p.value;
+      break;
+    case "contacts":
+      if (p.seniority?.length) setRowTicks("seniority-checkbox-wrap", new Set(p.seniority));
+      break;
+  }
+  if (tickAll) {
+    const c = checklists[step];
+    for (const list of c && c.getItems ? [c] : Object.values(c || {})) list?.setAllChecked(true);
+  }
+}
+
+function proposalNotes(step, p) {
+  if (!p) return [];
+  const notes = [];
+  const proposalLine = (text) => { if (completedBefore && text) notes.push(`Proposal: ${text}`); };
+  switch (step) {
+    case "about":
+      notes.push(`The website is in ${languageLabel(p.outputLanguage)}. SalesTeam can write in ${languageLabel(p.outputLanguage)} too.`);
+      break;
+    case "location":
+      proposalLine(p.value.join(", "));
+      if (p.dropped?.length) notes.push(`Also named, but not a country in the list here: ${p.dropped.join(", ")}.`);
+      break;
+    case "size":
+      proposalLine(p.value.map((k) => SIZE_PRIORITY_BUCKETS.find((b) => b.key === k)?.label || k).join(", "));
+      if (p.texts?.length) notes.push(`The website says: ${p.texts.join("; ")}.`);
+      break;
+    case "industry":
+      proposalLine(p.value.join(", "));
+      if (p.unmapped?.length) {
+        notes.push(`Named on the website but not in the list here (added to the Ideal customer text instead): ${p.unmapped.join(", ")}.`);
+      }
+      if (p.orgTypes?.length) notes.push(`Also sells to: ${p.orgTypes.join(", ")} - set to Yes below.`);
+      break;
+    case "company-context":
+    case "icp":
+      proposalLine(p.value);
+      break;
+    case "value-add-offers":
+      if (p.dropped) {
+        notes.push(`${p.dropped} more found without a page of their own on ${sellerSite() || "the website"} - left out, since the AI may only offer what has a real page.`);
+      }
+      break;
+    case "exclusions":
+      if (p.items?.length) notes.push("Matched by name and website - no LinkedIn page is needed for these.");
+      break;
+  }
+  return notes;
+}
+
+const exclusionKey = (e) => `${e.category}|${normalizeCompanyName(e.name || "")}`;
+
+function mountStepChecklists(step, p, accepted) {
+  if (!p || !p.found || checklists[step]) return;
+  // R4.5: on a setup completed before, or once this step was accepted, the ticks show what is saved.
+  const ticks = (keys, saved) => initiallyTicked(keys, saved, completedBefore || accepted);
+  const remaining = (keys, lines) => mergeChecklistWithLines(keys.map((text) => ({ text, checked: false })), lines);
+  if (step === "value-add-offers") {
+    const lines = textareaLines("value-add-offers-input");
+    const texts = p.items.map(offerLine);
+    const t = ticks(texts, lines);
+    checklists[step] = mountChecklist(el("value-add-offers-checklist"),
+      p.items.map((item, i) => ({ text: texts[i], checked: t[i], sourceUrl: item.url })),
+      { title: "Found on the website - tick the ones the AI may offer", addPlaceholder: "Add another offer", onChange: scheduleAutoSave });
+    el("value-add-offers-input").value = remaining(texts, lines).join("\n");
+  } else if (step === "contacts") {
+    const titleLines = textareaLines("contacts-exact-titles-input");
+    const keywordLines = textareaLines("contacts-title-keywords-input");
+    const tt = ticks(p.exactTitles, titleLines);
+    const kt = ticks(p.keywords, keywordLines);
+    checklists[step] = {
+      titles: mountChecklist(el("contacts-titles-checklist"), p.exactTitles.map((text, i) => ({ text, checked: tt[i] })),
+        { title: "Proposed exact titles - most important first", rankable: true, addPlaceholder: "Add a title", onChange: scheduleAutoSave }),
+      keywords: p.keywords.length
+        ? mountChecklist(el("contacts-keywords-checklist"), p.keywords.map((text, i) => ({ text, checked: kt[i] })),
+          { title: "Proposed title keywords", addPlaceholder: "Add a keyword", onChange: scheduleAutoSave })
+        : null,
+    };
+    el("contacts-exact-titles-input").value = remaining(p.exactTitles, titleLines).join("\n");
+    el("contacts-title-keywords-input").value = remaining(p.keywords, keywordLines).join("\n");
+  } else if (step === "exclusions") {
+    const keys = p.items.map(exclusionKey);
+    const t = ticks(keys, companyExclusions.filter((e) => !e.slug).map(exclusionKey));
+    checklists[step] = mountChecklist(el("exclusions-checklist"),
+      p.items.map((item, i) => ({
+        text: item.name, checked: t[i], sourceUrl: item.sourceUrl, meta: item,
+        label: `${EXCLUSION_CATEGORY_LABELS[item.category] || item.category}${item.domain ? ` · ${item.domain}` : ""}`,
+      })),
+      { title: "Found by the research - tick the ones to exclude", addPlaceholder: "Add a company by name (excluded as Other)", onChange: scheduleAutoSave });
+  }
+}
+
+function renderProposalForStep(step) {
+  const slot = el(`proposal-${step}`);
+  if (!slot) return;
+  let p = setupResearch.proposals?.[step];
+  // About you shows a proposal only when it would change something: the website's language.
+  if (step === "about" && !(p && p.found && p.outputLanguage !== el("about-language-select").value)) p = undefined;
+  const accepted = !!setupResearch.accepted?.[step];
+  if (p && p.found && step !== "about" && !completedBefore && !accepted && !appliedThisVisit.has(step)) applyProposal(step, p);
+  if (p) appliedThisVisit.add(step);
+  mountStepChecklists(step, p, accepted);
+  renderProposalBanner(slot, {
+    proposal: p, site: sellerSite(), completedBefore: completedBefore || step === "about", accepted,
+    notes: proposalNotes(step, p),
+    onUse: p && p.found
+      ? () => { applyProposal(step, p, { tickAll: true }); scheduleAutoSave(); if (step === "about") renderProposalForStep(step); }
+      : null,
+    useLabel: step === "about" && p ? `Use ${languageLabel(p.outputLanguage)}` : "Use proposal",
+    onResearchAgain: step === "about" ? null : (hint) => researchStepAgain(step, hint),
+    againCostText: RESEARCH_AGAIN_COST_TEXT,
+  });
+}
+
+// R4.4: re-runs only this step's part of the research, with the user's hint. The step's proposal is replaced; on a
+// first setup it is put into the form again.
+async function researchStepAgain(step, hint) {
+  const apiKey = await getAnthropicApiKey();
+  if (!apiKey) throw new Error("add your Anthropic API key on the first step (About you) first");
+  const seller = { name: el("about-company-input").value.trim(), website: el("about-website-input").value.trim() };
+  if (!websiteDomain(seller.website)) throw new Error("enter your company's website on the first step (About you) first");
+  const result = await researchSeller(seller, {
+    only: PROPOSAL_STEP_KEYS[step], hint, sectors: CONFIRMED_INDUSTRIES, outputLanguage: el("about-language-select").value,
+  }, { apiKey });
+  await logSetupResearch(`Setup research again (${STEP_TITLES[step]}${hint ? `, hint "${hint.slice(0, 80)}"` : ""}): ${researchMeasures(result)}`);
+  if (!result.data) throw new Error(result.stopped === "timeout" ? "it was cut off after 4 minutes" : "no usable answer came back");
+  const raw = { ...(setupResearch.raw || {}), ...result.data };
+  const rebuilt = buildSetupProposals(raw, proposalCtx(), stepsRebuiltBy(step));
+  const accepted = { ...(setupResearch.accepted || {}) };
+  // Only this step is proposed afresh; another step rebuilt with it (the Ideal customer note) keeps its acceptance.
+  delete accepted[step];
+  appliedThisVisit.delete(step);
+  delete checklists[step];
+  setupResearch = {
+    ...setupResearch, status: setupResearch.status === "done" ? "done" : setupResearch.status, raw,
+    proposals: { ...(setupResearch.proposals || {}), ...rebuilt }, accepted,
+    costUsd: (setupResearch.costUsd || 0) + (result.costUsd || 0),
+  };
+  await saveSetupResearch(setupResearch);
+  renderProposalForStep(step);
+}
+
+async function markProposalAccepted(step) {
+  if (!setupResearch.proposals?.[step] || setupResearch.accepted?.[step]) return;
+  setupResearch = { ...setupResearch, accepted: { ...(setupResearch.accepted || {}), [step]: Date.now() } };
+  await saveSetupResearch(setupResearch);
+}
+
+function currentValueAddOffers() {
+  const lines = textareaLines("value-add-offers-input");
+  const list = checklists["value-add-offers"];
+  return list ? mergeChecklistWithLines(list.getItems(), lines) : lines;
+}
+
+// ---------------------------------------------------------------------
 
 async function init() {
   el("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
@@ -1754,7 +2221,18 @@ async function init() {
   populatePostRuleColumnOptions();
   renderPostPrioritizationRules();
   el("company-context-input").value = await getCompanyContext();
-  el("company-website-input").value = await getCompanyWebsite();
+  el("about-name-input").value = (await getUserProfile()).name || "";
+  el("about-company-input").value = await getSellerCompanyName();
+  el("about-website-input").value = await getCompanyWebsite();
+  el("about-language-select").value = await getOutputLanguage();
+  el("about-api-key-wrap").hidden = !!(await getAnthropicApiKey());
+  completedBefore = !!(await getOnboardingCompletedAt());
+  setupResearch = await getSetupResearch();
+  if (setupResearch.status === "running" && Date.now() - (setupResearch.heartbeatAt || setupResearch.at || 0) > 60000) {
+    // The page was closed or reloaded while the research ran: nothing came in.
+    setupResearch = { ...setupResearch, status: "failed", error: "The research was interrupted (the page was closed or reloaded)." };
+    await saveSetupResearch(setupResearch);
+  }
   el("value-add-offers-input").value = (await getValueAddOffers()).join("\n");
   el("icp-input").value = await getIdealCustomerProfile();
   el("contacts-exact-titles-input").value = targetContactProfile.exactTitles.join("\n");

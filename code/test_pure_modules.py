@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1584,6 +1584,91 @@ def test_linkedin_after_web(ctx):
           ctx.eval("webLaneOrder([{ key: 'a', isPublic: true, priority: 'P1' }, { key: 'b', isPublic: false, priority: 'P3', readyByWeb: true }]).map(function (e) { return e.key; }).join(',')"), "b,a")
 
 
+def test_setup_proposals(ctx):
+    """1.2.1 step 5: setup-proposals.js - the seller research's answer mapped onto the wizard's own options (design 3.4)."""
+    ctx.eval("""
+      var SP_CTX = {
+        countries: ["Austria", "Germany", "Switzerland", "United Kingdom", "United States", "France", "Netherlands", "Belgium", "Luxembourg"],
+        sizeBuckets: [
+          { key: "S", label: "Small", min: 0, max: 200 }, { key: "M", label: "Medium", min: 201, max: 500 },
+          { key: "L", label: "Large", min: 501, max: 1000 }, { key: "XL", label: "Extra Large", min: 1001, max: 5000 },
+          { key: "XXL", label: "Extra Extra Large", min: 5001, max: Infinity } ],
+        industries: ["Energy", "Financials", "Health Care", "Industrials", "Information Technology"],
+        orgTypes: ["Non-profit Organizations", "Government Administration", "Higher Education"],
+        sellerName: "Acme AG", sellerWebsite: "https://www.acme.ch",
+      };
+      var SP_RAW = {
+        summary: { text: "Acme builds   data platforms.", url: "https://acme.ch/about" },
+        idealCustomer: { text: "Mid-sized manufacturers.", url: "https://acme.ch/customers" },
+        sellsToCountries: [{ name: "Schweiz", url: "https://acme.ch/de" }, { name: "DACH", url: "https://acme.ch/offices" },
+                           { name: "Atlantis", url: "https://acme.ch/x" }, { name: "UK", url: "https://acme.ch/uk" }],
+        customerSizes: [{ text: "companies with 200-1,000 employees", url: "https://acme.ch/customers" }],
+        customerIndustries: [{ name: "Banking", sector: "Financials", url: "https://acme.ch/banks" },
+                             { name: "Medical devices", sector: "Health Care", url: "https://acme.ch/medtech" },
+                             { name: "Quantum basket weaving", sector: "Basketry", url: "https://acme.ch/q" },
+                             { name: "Energy", sector: null, url: "https://acme.ch/energy" }],
+        organizationTypes: [{ name: "Public sector", url: "https://acme.ch/public" }, { name: "Space pirates", url: "https://acme.ch/p" }],
+        buyerTitles: [{ title: "Chief Data Officer", url: "https://acme.ch/c" }, { title: "Head of Data Platform", url: "https://acme.ch/c" },
+                      { title: "CTO", url: "https://acme.ch/c" }, { title: "Head of Data Engineering", url: "https://acme.ch/c" },
+                      { title: "chief data officer", url: "https://acme.ch/c" }],
+        resources: [{ title: "Data maturity report", url: "https://acme.ch/report" },
+                    { title: "Webinar on shop.acme.ch", url: "https://shop.acme.ch/webinar" },
+                    { title: "Gartner quadrant", url: "https://gartner.com/acme" },
+                    { title: "No link at all" }],
+        competitors: [{ name: "Rival AG", website: "rival.ch", url: "https://acme.ch/compare" },
+                      { name: "Ghost GmbH", website: null, url: null },
+                      { name: "Acme", website: "acme.ch", url: "https://acme.ch" }],
+        customers: [{ name: "Rival AG", website: "https://www.rival.ch", url: "https://acme.ch/c" },
+                    { name: "Big Bank", website: null, url: "https://acme.ch/case/bigbank" }],
+        partners: [{ name: "Cloudco", website: "https://cloudco.com", url: null }],
+        siteLanguage: "de-CH",
+      };
+      var SP = buildSetupProposals(SP_RAW, SP_CTX);
+    """)
+    j = lambda e: ctx.eval("JSON.stringify(%s)" % e)
+    check("countries: local name, region, alias; Atlantis dropped", j("SP.location.value"), '["Switzerland","Germany","Austria","United Kingdom"]')
+    check("countries: the dropped name is listed", j("SP.location.dropped"), '["Atlantis"]')
+    check("country: ISO code", j("mapCountryName('US', SP_CTX.countries)"), '["United States"]')
+    check("country: Benelux", j("mapCountryName('Benelux', SP_CTX.countries)"), '["Belgium","Netherlands","Luxembourg"]')
+    check("country: Europe is too broad", j("mapCountryName('Europe', SP_CTX.countries)"), '[]')
+    check("country: not in the picker -> nothing", j("mapCountryName('Japan', SP_CTX.countries)"), '[]')
+    check("size: 200-1,000 -> M, L (only touches Small at 200)", j("SP.size.value"), '["M","L"]')
+    check("size: 500+", j("sizeBandsForStatement({ text: 'over 500 employees' }, SP_CTX.sizeBuckets)"), '["L","XL","XXL"]')
+    check("size: up to 200", j("sizeBandsForStatement({ text: 'up to 200 staff' }, SP_CTX.sizeBuckets)"), '["S"]')
+    check("size: numbers given as fields", j("sizeBandsForStatement({ minEmployees: 1000, maxEmployees: null }, SP_CTX.sizeBuckets)"), '["XL","XXL"]')
+    check("size: SMEs", j("sizeBandsForStatement({ text: 'SMEs' }, SP_CTX.sizeBuckets)"), '["S","M"]')
+    check("size: large enterprises", j("sizeBandsForStatement({ text: 'large enterprises' }, SP_CTX.sizeBuckets)"), '["L","XL","XXL"]')
+    check("size: 10k+", j("sizeBandsForStatement({ text: '10k+ employees' }, SP_CTX.sizeBuckets)"), '["XXL"]')
+    check("size: no size words -> nothing", j("sizeBandsForStatement({ text: 'innovative companies' }, SP_CTX.sizeBuckets)"), '[]')
+    check("industries: sector names only from the wizard's list", j("SP.industry.value"), '["Financials","Health Care","Energy"]')
+    check("industries: a made-up sector is never ticked", ctx.eval("SP.industry.value.indexOf('Basketry')"), -1)
+    check("industries: not exact names go to the Ideal customer note", j("SP.industry.unmapped"), '["Banking","Medical devices","Quantum basket weaving"]')
+    check("org types: public sector -> Government Administration, nonsense dropped", j("SP.industry.orgTypes"), '["Government Administration"]')
+    check("icp: draft plus the industries the wizard cannot tick", ctx.eval("SP.icp.value"),
+          "Mid-sized manufacturers.\n\nCustomer industries: Banking, Medical devices, Quantum basket weaving.")
+    check("what you sell: text tidied", ctx.eval("SP['company-context'].value"), "Acme builds data platforms.")
+    check("what you sell: source", j("SP['company-context'].sources"), '["https://acme.ch/about"]')
+    check("titles: de-duplicated case-insensitively", j("SP.contacts.exactTitles"), '["Chief Data Officer","Head of Data Platform","CTO","Head of Data Engineering"]')
+    check("keywords: words that recur, no seniority words", j("SP.contacts.keywords"), '["Data"]')
+    check("seniority: C-level (CTO too) and Head", j("SP.contacts.seniority"), '["cLevel","head"]')
+    check("seniority: 'cargo' is not C-level", ctx.eval("seniorityOfTitle('Head of cargo')"), "head")
+    check("resources: own domain and subdomain only", j("SP['value-add-offers'].items.map(r => r.url)"), '["https://acme.ch/report","https://shop.acme.ch/webinar"]')
+    check("resources: third-party and unlinked dropped", ctx.eval("SP['value-add-offers'].dropped"), 2)
+    check("offer line", ctx.eval("offerLine({ text: 'Data maturity report', url: 'https://acme.ch/report' })"), "Data maturity report - https://acme.ch/report")
+    check("exclusions: no website/source dropped, seller dropped, listed twice dropped",
+          j("SP.exclusions.items.map(e => e.category + ':' + e.name + ':' + (e.domain || ''))"),
+          '["competitor:Rival AG:rival.ch","customer:Big Bank:","partner:Cloudco:cloudco.com"]')
+    check("about: site language -> output language", ctx.eval("SP.about.outputLanguage"), "german")
+    check("about: Italian site -> no proposal", ctx.eval("outputLanguageForSite('it')"), None)
+    check("only: one step rebuilt", j("Object.keys(buildSetupProposals(SP_RAW, SP_CTX, ['size']))"), '["size"]')
+    check("nothing found: empty answer", j("Object.values(buildSetupProposals({}, SP_CTX)).map(p => p.found)"), '[false,false,false,false,false,false,false,false,false]')
+    check("source label", ctx.eval("sourceLabel('https://www.acme.ch/about/')"), "acme.ch/about")
+    check("ticked: first setup, all", j("initiallyTicked(['a', 'b'], [], false)"), '[true,true]')
+    check("ticked: completed before, only those saved", j("initiallyTicked(['a', 'B'], ['b'], true)"), '[false,true]')
+    check("merge: ticked first, unticked removed even from the free lines, de-duplicated",
+          j("mergeChecklistWithLines([{ text: 'CDO', checked: true }, { text: 'CTO', checked: false }], ['cto', 'COO', 'cdo'])"), '["CDO","COO"]')
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1616,6 +1701,7 @@ def main():
     test_profile_search_matching(ctx)
     test_discovery_filter(ctx)
     test_linkedin_after_web(ctx)
+    test_setup_proposals(ctx)
 
     print()
     for f in _failures:
