@@ -2548,6 +2548,15 @@ async function init() {
     setupResearch = { ...setupResearch, status: "failed", error: "The research was interrupted (the page was closed or reloaded)." };
     await saveSetupResearch(setupResearch);
   }
+  // 1.2.0.27: offers on a sibling domain of the same brand now count - a research stored before is mapped again from
+  // its saved answer (local, free), so its dropped offers come back without a new research.
+  if (setupResearch.raw && setupResearch.proposals?.["value-add-offers"] && !setupResearch.proposals["value-add-offers"].found) {
+    const again = buildSetupProposals(setupResearch.raw, proposalCtx(), ["value-add-offers"])["value-add-offers"];
+    if (again && again.found) {
+      setupResearch = { ...setupResearch, proposals: { ...setupResearch.proposals, "value-add-offers": again } };
+      await saveSetupResearch(setupResearch);
+    }
+  }
   el("value-add-offers-input").value = (await getValueAddOffers()).join("\n");
   el("icp-input").value = await getIdealCustomerProfile();
   el("contacts-exact-titles-input").value = targetContactProfile.exactTitles.join("\n");

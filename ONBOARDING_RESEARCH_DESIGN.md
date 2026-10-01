@@ -915,6 +915,14 @@ web research is off (*"... so SalesTeam does not build the list towards these nu
 target there otherwise did nothing, silently. (A setup completed before has no Finish button - Change Settings saves
 each setting on its own; the full onboarding is tested in a clean profile.)
 
+**1.2.0.27 (Boaz, 2026-10-01, clean profile):** Things you can offer said *"Nothing found on timetoact.ch"* and *"16
+more found without a page of their own"*: the website typed was timetoact.ch, but its pages live on the group's
+timetoact-group.ch, so every resource failed the own-domain test. `isOnDomain` (setup-proposals.js) now also accepts a
+**sibling domain of the same brand** (`sameBrandDomain`): the name parts before the ending are equal (acme.ch / acme.de)
+or one is a hyphen-part of the other (timetoact / timetoact-group), at least 4 letters; any other domain is still
+refused. A research stored before is mapped again from its saved answer when the wizard opens (local, free), so its
+dropped offers come back without a new research. 9 new checks (487).
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

@@ -1743,6 +1743,19 @@ def test_targets_and_estimate(ctx):
     check("suggestedBudget minimum", v("suggestedBudget(0.4)"), 5)
 
 
+def test_same_brand_domain(ctx):
+    """1.2.0.27: offers on a sibling domain of the same brand (timetoact.ch -> timetoact-group.ch) are kept."""
+    e = lambda x: ctx.eval(x)
+    check("brand label: plain", e("brandLabel('www.timetoact.ch')"), "timetoact")
+    check("brand label: co.uk", e("brandLabel('acme-group.co.uk')"), "acme-group")
+    check("sibling: -group domain", e("isOnDomain('https://www.timetoact-group.ch/en/whitepaper', 'timetoact.ch')"), True)
+    check("sibling: other country ending", e("isOnDomain('https://acme.de/report', 'acme.ch')"), True)
+    check("sibling: reverse", e("isOnDomain('https://www.timetoact.ch/x', 'timetoact-group.ch')"), True)
+    check("other company refused", e("isOnDomain('https://www.gartner.com/report', 'timetoact.ch')"), False)
+    check("partial word refused", e("isOnDomain('https://acmecorp.com/x', 'acme.ch')"), False)
+    check("short brand refused", e("isOnDomain('https://ab-group.ch/x', 'ab.ch')"), False)
+    check("subdomain still works", e("isOnDomain('https://blog.acme.ch/x', 'acme.ch')"), True)
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1777,6 +1790,7 @@ def main():
     test_linkedin_after_web(ctx)
     test_setup_proposals(ctx)
     test_targets_and_estimate(ctx)
+    test_same_brand_domain(ctx)
 
     print()
     for f in _failures:
