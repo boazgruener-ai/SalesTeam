@@ -220,11 +220,15 @@ async function discoverForTargets(web, { now = Date.now(), fromSetup = false } =
     await chrome.storage.local.set({ [AUTO_DISCOVERY_KEY]: { accountsTarget: targets.accounts, at: now, enough: true } });
     return { started: false, reason: "enough_accounts", status };
   }
+  // The run is marked done for this target only when it ends (stopped by the user included): a run cut off by an
+  // extension reload leaves no mark, so the next kick starts it again for what is still owed.
   const res = await startWebDiscovery({
     target: status.accountsOwed, budget: webBudgetLeft(web), auto: true, quiet: !fromSetup,
-    onDone: () => startLaneForTargets().catch(() => {}),
+    onDone: async (state) => {
+      await chrome.storage.local.set({ [AUTO_DISCOVERY_KEY]: { accountsTarget: targets.accounts, at: Date.now() } }).catch(() => {});
+      if (state.stoppedReason !== "user") await startLaneForTargets().catch(() => {});
+    },
   });
-  if (res && res.ok) await chrome.storage.local.set({ [AUTO_DISCOVERY_KEY]: { accountsTarget: targets.accounts, at: now } });
   return { started: Boolean(res && res.ok), owed: status.accountsOwed };
 }
 

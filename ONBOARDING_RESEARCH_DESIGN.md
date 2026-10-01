@@ -894,6 +894,9 @@ now in the form below and saved - no need to press Save. Change it if you like, 
 itself a moment later); on About you, *"German is now your output language and saved"*. **Companies to include** could
 read as "list all your target customers here": it now says SalesTeam builds the target list itself from the setup's
 criteria, and this step is only for companies wanted in the list whether or not the research finds them.
+Also in 1.2.0.23: an automatic Web Discovery is marked done for its target (`autoDiscoveryLast`) when it **ends**, not
+when it starts - a run cut off by an extension reload is started again by the next kick for what is still owed
+(before, it would have waited a week).
 
 ---
 

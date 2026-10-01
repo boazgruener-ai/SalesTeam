@@ -75,7 +75,7 @@ export async function startWebDiscovery({ target, budget, useLinkedin = false, a
   };
   run({ apiKey, universe, state, save, signal: controller.signal, useLinkedin, stop: (r) => runner?.stop(r) })
     .catch(() => {})
-    .finally(() => { if (onDone && state.stoppedReason !== "user") onDone(state); });
+    .finally(() => { if (onDone) onDone(state); });
   return { ok: true, wanted: state.wanted, countries };
 }
 
