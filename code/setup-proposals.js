@@ -97,17 +97,35 @@ export function mapCountryName(name, pickerCountries) {
   return [];
 }
 
-function mapCountries(items, pickerCountries) {
+// The country of a website's country-code domain ("acme.ch" -> Switzerland, "acme.co.uk" -> United Kingdom), when
+// the picker has it. A generic domain (.com, .eu, .io...) says nothing about the country.
+export function websiteCountry(website, pickerCountries) {
+  const domain = websiteDomain(website);
+  if (!domain) return null;
+  const tld = domain.split(".").pop().toUpperCase();
+  if (tld.length !== 2 || tld === "EU") return null;
+  const hits = mapCountryName(tld === "UK" ? "United Kingdom" : tld, pickerCountries);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// Group sites (2026-10-01, TIMETOACT: a Swiss company whose site lists the whole group's countries): only the
+// countries where the named company itself sells are ticked, the website's own country first; countries where only
+// its group works are named in the note.
+function mapCountries(items, pickerCountries, sellerWebsite) {
   const value = [];
+  const group = [];
   const dropped = [];
   const sources = [];
+  const own = websiteCountry(sellerWebsite, pickerCountries);
+  if (own) value.push(own);
   for (const it of list(items)) {
     const hits = mapCountryName(it.name, pickerCountries);
     if (!hits.length) { if (cleanText(it.name, 80)) dropped.push(cleanText(it.name, 80)); continue; }
-    for (const h of hits) if (!value.includes(h)) value.push(h);
-    if (webUrlOrNull(it.url)) sources.push(it.url);
+    const target = String(it.scope || "").toLowerCase() === "group" ? group : value;
+    for (const h of hits) if (!target.includes(h)) target.push(h);
+    if (target === value && webUrlOrNull(it.url)) sources.push(it.url);
   }
-  return { value, dropped: [...new Set(dropped)], sources };
+  return { value, group: group.filter((g) => !value.includes(g)), dropped: [...new Set(dropped)], sources, own };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -356,8 +374,13 @@ export function buildSetupProposals(raw, ctx, only) {
     out.about = { outputLanguage, found: !!outputLanguage, sources: [] };
   }
   if (want("location")) {
-    const m = mapCountries(r.sellsToCountries, c.countries);
-    out.location = { value: m.value, dropped: m.dropped, sources: uniqueSources(m.sources), found: m.value.length > 0 };
+    const m = mapCountries(r.sellsToCountries, c.countries, c.sellerWebsite);
+    // The website's own country alone is no research finding: "found" needs the answer to have named a country.
+    const named = m.value.length > (m.own ? 1 : 0) || list(r.sellsToCountries).some((it) => mapCountryName(it.name, c.countries).includes(m.own));
+    out.location = {
+      value: m.value, group: m.group, websiteCountry: m.own, dropped: m.dropped, sources: uniqueSources(m.sources),
+      found: m.value.length > 0 && (named || m.group.length > 0),
+    };
   }
   if (want("size")) {
     const m = mapSizes(r.customerSizes, c.sizeBuckets);

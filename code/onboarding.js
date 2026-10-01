@@ -1971,6 +1971,8 @@ function proposalNotes(step, p) {
       break;
     case "location":
       proposalLine(p.value.join(", "));
+      if (p.websiteCountry) notes.push(`${sellerSite() || "The website"} is a website of ${p.websiteCountry}, so ${p.websiteCountry} comes first.`);
+      if (p.group?.length) notes.push(`Countries where only the group works, not ticked: ${p.group.join(", ")}. Add any of them yourself if you sell there too.`);
       if (p.dropped?.length) notes.push(`Also named, but not a country in the list here: ${p.dropped.join(", ")}.`);
       break;
     case "size":

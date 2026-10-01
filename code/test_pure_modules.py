@@ -1626,12 +1626,25 @@ def test_setup_proposals(ctx):
       var SP = buildSetupProposals(SP_RAW, SP_CTX);
     """)
     j = lambda e: ctx.eval("JSON.stringify(%s)" % e)
-    check("countries: local name, region, alias; Atlantis dropped", j("SP.location.value"), '["Switzerland","Germany","Austria","United Kingdom"]')
+    check("countries: website country first, local name, region, alias; Atlantis dropped", j("SP.location.value"), '["Switzerland","Germany","Austria","United Kingdom"]')
     check("countries: the dropped name is listed", j("SP.location.dropped"), '["Atlantis"]')
     check("country: ISO code", j("mapCountryName('US', SP_CTX.countries)"), '["United States"]')
     check("country: Benelux", j("mapCountryName('Benelux', SP_CTX.countries)"), '["Belgium","Netherlands","Luxembourg"]')
     check("country: Europe is too broad", j("mapCountryName('Europe', SP_CTX.countries)"), '[]')
     check("country: not in the picker -> nothing", j("mapCountryName('Japan', SP_CTX.countries)"), '[]')
+    check("website country: .ch", ctx.eval("websiteCountry('https://www.timetoact-group.ch/ueber-uns', SP_CTX.countries)"), "Switzerland")
+    check("website country: .co.uk", ctx.eval("websiteCountry('acme.co.uk', SP_CTX.countries)"), "United Kingdom")
+    check("website country: .com says nothing", ctx.eval("websiteCountry('acme.com', SP_CTX.countries)"), None)
+    ctx.eval("""var SP_GROUP = buildSetupProposals({ sellsToCountries: [
+        { name: "Germany", scope: "group", url: "https://g.ch/a" }, { name: "Switzerland", scope: "company", url: "https://g.ch/a" },
+        { name: "Austria", scope: "group", url: "https://g.ch/a" }, { name: "Netherlands", url: "https://g.ch/b" } ] },
+        Object.assign({}, SP_CTX, { sellerWebsite: "https://www.g.ch" }), ["location"]).location;""")
+    check("group site: own country first, company countries ticked, group ones not", j("SP_GROUP.value"), '["Switzerland","Netherlands"]')
+    check("group site: group countries named for the note", j("SP_GROUP.group"), '["Germany","Austria"]')
+    check("group site: only group countries -> still the website's country",
+          j("buildSetupProposals({ sellsToCountries: [{ name: 'Germany', scope: 'group', url: 'https://g.ch' }] }, Object.assign({}, SP_CTX, { sellerWebsite: 'g.ch' }), ['location']).location.value"), '["Switzerland"]')
+    check("website country alone is not a finding",
+          ctx.eval("buildSetupProposals({}, Object.assign({}, SP_CTX, { sellerWebsite: 'g.ch' }), ['location']).location.found"), False)
     check("size: 200-1,000 -> M, L (only touches Small at 200)", j("SP.size.value"), '["M","L"]')
     check("size: 500+", j("sizeBandsForStatement({ text: 'over 500 employees' }, SP_CTX.sizeBuckets)"), '["L","XL","XXL"]')
     check("size: up to 200", j("sizeBandsForStatement({ text: 'up to 200 staff' }, SP_CTX.sizeBuckets)"), '["S"]')

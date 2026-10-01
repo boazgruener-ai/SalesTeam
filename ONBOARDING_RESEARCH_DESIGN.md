@@ -814,6 +814,14 @@ User Profile card says where the company and website are set, with **Open About 
 one setting, `onboarding.html?mode=settings&step=about`), and Setup opens on About you for an install that has never
 filled it in (no company, no website, no research).
 
+**1.2.0.17 (Boaz, 2026-10-01) - group websites.** The first real research (TIMETOACT, a Swiss company on the group's
+site `timetoact-group.ch`) proposed the whole group's seven countries; the team sells in Switzerland only. Now the
+research answers for the company named on About you, and marks each country `scope: "company"` or `"group"`;
+`setup-proposals.js` ticks the website's own country first (country-code domain: `.ch` -> Switzerland, `.co.uk` ->
+United Kingdom; `.com`/`.eu` say nothing), then the company's countries, and names the group-only countries in the
+note (*"Countries where only the group works, not ticked: ..."*). The website's country alone is not a finding: with
+no country in the answer the step still says "Nothing found". 7 new checks (445).
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

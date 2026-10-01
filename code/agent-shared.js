@@ -2090,7 +2090,7 @@ const SELLER_TEXT_LANGUAGES = { english: "English", german: "German (standard bu
 const SELLER_DATA_KEYS = {
   summary: "\"summary\":{\"text\":\"2-4 sentences: what the company sells and the problems it solves\",\"url\":string}",
   idealCustomer: "\"idealCustomer\":{\"text\":\"2-4 sentences: who buys it - their size, where they are, what they invest in, what makes them buy now\",\"url\":string}",
-  sellsToCountries: "\"sellsToCountries\":[{\"name\":\"a country, in English\",\"url\":string}] (offices, language versions of the site, where its customers and case studies are)",
+  sellsToCountries: "\"sellsToCountries\":[{\"name\":\"a country, in English\",\"scope\":\"company\" when the named company itself sells there (its own offices, its own customers and case studies) or \"group\" when only its parent group or sister companies do,\"url\":string}]",
   customerSizes: "\"customerSizes\":[{\"text\":\"the size of its customers, as the site puts it\",\"minEmployees\":number|null,\"maxEmployees\":number|null,\"url\":string}] (numbers only when the page states them)",
   customerIndustries: "\"customerIndustries\":[{\"name\":\"the industry, as the site names it\",\"sector\":one of [SECTORS] or null when unsure,\"url\":string}]",
   organizationTypes: "\"organizationTypes\":[{\"name\":string,\"url\":string}] (only when evident: public sector, hospitals, universities, non-profits...)",
@@ -2116,7 +2116,9 @@ export async function researchSeller(seller, opts, settings, { signal, onTool, o
     "customers / case studies / references, partners, resources or downloads, contact or locations. Use web search only " +
     "for what the site does not say (mainly competitors). Report only what a page states: every item carries the URL " +
     "of the page it came from, never invent a URL, a company, a resource or a number, and leave a list empty rather " +
-    "than guess." +
+    "than guess. Answer for the company named below: when its website also presents a parent group or sister " +
+    "companies, report only what applies to that company itself, and mark countries where only the group works as " +
+    "scope \"group\"." +
     ` Write the texts (summary, idealCustomer) in ${SELLER_TEXT_LANGUAGES[opts.outputLanguage] || "English"}; keep the` +
     " JSON keys exactly as given, and country names in English." +
     "\nReply with at most three short lines, then as the very last part DATA: followed by JSON: " + shape;
