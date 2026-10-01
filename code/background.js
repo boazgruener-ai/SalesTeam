@@ -44,7 +44,7 @@ import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
 import { startWebLane, stopWebLane } from "./web-lane.js";
 import { startWebDiscovery, stopWebDiscovery } from "./web-discovery.js";
-import { startPipelineRun, stopPipelineRun, kickPipeline, pausePipelineForUser, clearUserJobHold } from "./pipeline-runner.js";
+import { startPipelineRun, stopPipelineRun, kickPipeline, pausePipelineForUser, clearUserJobHold, startOnboardingBuild } from "./pipeline-runner.js";
 import { setPipelinePausedDay } from "./pipeline-automation.js";
 import { rescoreDerivedPriorities } from "./auto-score.js";
 import { localDay } from "./pipeline-plan.js";
@@ -1022,6 +1022,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   } else if (message?.type === "PIPELINE_STOP") {
     sendResponse(stopPipelineRun());
+  } else if (message?.type === "ONBOARDING_BUILD_START") {
+    // 1.2.1 step 6: the wizard's Finish - Web Discovery for the accounts owed, then the web lane; the pipeline is kicked.
+    startOnboardingBuild().then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
   } else if (message?.type === "PIPELINE_KICK") {
     // Build step 3: a page opened (or is open, every 10 minutes), an import finished, Setup was saved.
     kickPipeline(message.source || "page").then(sendResponse).catch((err) => sendResponse({ started: false, reason: err.message }));

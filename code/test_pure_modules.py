@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1682,6 +1682,65 @@ def test_setup_proposals(ctx):
           j("mergeChecklistWithLines([{ text: 'CDO', checked: true }, { text: 'CTO', checked: false }], ['cto', 'COO', 'cdo'])"), '["CDO","COO"]')
 
 
+def test_targets_and_estimate(ctx):
+    """1.2.1 step 6: targets, initiative stages, the stop rule (design 8) and the estimate (design 9)."""
+    j = lambda e: ctx.eval("JSON.stringify(%s)" % e)
+    import json
+    v = lambda e: json.loads(j(e))
+    # normalizeCompletionTargets: defaults, range, cap by max contacts per account
+    check("targets: empty -> defaults", v("normalizeCompletionTargets(null)"), {"accounts": 100, "contactsPerAccount": 3, "initiativesPerAccount": 1})
+    check("targets: clamped", v("normalizeCompletionTargets({accounts: 5, contactsPerAccount: 40, initiativesPerAccount: -1})"),
+          {"accounts": 10, "contactsPerAccount": 10, "initiativesPerAccount": 0})
+    check("targets: capped by max contacts", v("normalizeCompletionTargets({accounts: 250, contactsPerAccount: 5}, 2)")["contactsPerAccount"], 2)
+    check("targets: blank field -> default", v("normalizeCompletionTargets({accounts: ''})")["accounts"], 100)
+    # initiative stages
+    st = v("normalizeInitiativeStages([{id:'pilot', checked:true}, {id:'poc', checked:false}, {id:'bogus'}, 'pilot'])")
+    check("stages: user order first, all seven", [s["id"] for s in st][:2] + [len(st)], ["pilot", "poc", 7])
+    check("stages: unticked kept unticked", st[1]["checked"], False)
+    check("stages: missing ones added ticked", st[6]["checked"], True)
+    check("stage counts: unticked stage does not count", v("initiativeCounts('poc', [{id:'poc', checked:false}])"), False)
+    check("stage counts: no stage counts", v("initiativeCounts(null, [{id:'poc', checked:false}])"), True)
+    check("stage counts: ticked counts", v("initiativeCounts('scaling', [])"), True)
+    # targetsStatus
+    ctx.eval("""var TS_E = [
+      {state:'ready', relevantContacts:3, initiatives:1}, {state:'usable', relevantContacts:1, initiatives:2},
+      {state:'in_progress', relevantContacts:0, initiatives:0}, {state:'needs_decision', relevantContacts:5, initiatives:5},
+      {state:'lacking_evidence', relevantContacts:0, initiatives:0}];""")
+    ts = v("targetsStatus(TS_E, {accounts: 10, contactsPerAccount: 3, initiativesPerAccount: 1})")
+    check("status: only ready/usable/in_progress count", [ts["accounts"], ts["ready"], ts["usable"], ts["accountsOwed"]], [3, 1, 1, 7])
+    check("status: per-account coverage", [ts["contactsMet"], ts["initiativesMet"], ts["enrichOwed"]], [1, 2, 2])
+    check("status: discover while owed", ts["action"], "discover")
+    check("status: discovery not allowed -> enrich", v("targetsStatus(TS_E, {accounts: 10}, {discoveryAllowed:false}).action"), "enrich")
+    check("status: all met -> idle", v("targetsStatus([{state:'ready', relevantContacts:3, initiatives:1}], {accounts: 1}).action"), "idle")
+    check("status: lowering the target never asks to remove", v("targetsStatus(TS_E, {accounts: 1}).accountsOwed"), 0)
+    # discoveryMayRun
+    check("discovery: never run -> may", v("discoveryMayRun(null, 100, 0)"), True)
+    check("discovery: same target, a day later -> no", v("discoveryMayRun({accountsTarget:100, at:0}, 100, 86400000)"), False)
+    check("discovery: target raised -> may", v("discoveryMayRun({accountsTarget:100, at:0}, 150, 1000)"), True)
+    check("discovery: a week later -> may", v("discoveryMayRun({accountsTarget:100, at:0}, 100, 7*86400000)"), True)
+    # coverage lines
+    lines = v("coverageLines(targetsStatus(TS_E, {accounts: 10, contactsPerAccount: 3, initiativesPerAccount: 1}))")
+    check("coverage lines", lines, ["Accounts: 3 of 10 in the list.", "Contacts: 1 of 3 accounts have 3.", "Initiatives: 2 of 3 accounts have 1 relevant initiative."])
+    check("coverage: no initiative line at target 0", len(v("coverageLines(targetsStatus([], {accounts: 10, initiativesPerAccount: 0}))")), 2)
+    # onboardingEstimate - a clean install, 100 accounts
+    e = v("onboardingEstimate({accounts: 100})")
+    check("estimate: clean install discovers and builds all", [e["toDiscover"], e["toBuild"]], [100, 100])
+    check("estimate: money", [round(e["usdLow"], 2), round(e["usdHigh"], 2)], [14.0, 24.0])
+    check("estimate: LinkedIn 260 touches, ~4.3 days", [e["touches"], round(e["days"], 1)], [260, 4.3])
+    check("estimate: web lane 11 minutes", e["webMinutes"], 11)
+    check("estimate: budget rounded up to US$5", e["budgetUsd"], 25)
+    check("estimate: text", e["text"], "100 accounts: about 4-5 days of your daily LinkedIn limit and about US$14-24 on your Anthropic API key. "
+          "SalesTeam finds 100 new accounts on the web. Your accounts will be usable within the hour; the first Ready ones within the day.")
+    # an existing list: 550 accounts, 160 Ready -> nothing to discover, nothing to build for a 100 target
+    check("estimate: list already big enough", v("onboardingEstimate({accounts: 100, existing: 550, ready: 160})").get("toBuild"), 0)
+    e2 = v("onboardingEstimate({accounts: 300, existing: 250, ready: 100})")
+    check("estimate: existing list, part to build", [e2["toDiscover"], e2["toBuild"]], [50, 200])
+    # measured averages take over at 20 accounts
+    e3 = v("onboardingEstimate({accounts: 100, measured: {lane: {accounts: 20, usd: 3, seconds: 400}, discovery: {accounts: 19, usd: 10}}})")
+    check("estimate: measured lane used, discovery not yet", [round(e3["usdLow"], 2), e3["measured"]["lane"], e3["measured"]["discovery"]], [17.0, True, False])
+    check("suggestedBudget minimum", v("suggestedBudget(0.4)"), 5)
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1715,6 +1774,7 @@ def main():
     test_discovery_filter(ctx)
     test_linkedin_after_web(ctx)
     test_setup_proposals(ctx)
+    test_targets_and_estimate(ctx)
 
     print()
     for f in _failures:

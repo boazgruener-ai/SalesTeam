@@ -423,6 +423,97 @@ export function autoRunBlocker({ enabled, pausedDay, today, holdUntil, runningBa
 export const LANE_MAX_PEOPLE = 5;
 export const DEFAULT_COMPLETION_TARGETS = { accounts: 100, contactsPerAccount: 3, initiativesPerAccount: 1 };
 
+// ---- Targets and the stop rule (1.2.1 step 6, design 3.7, 3.10 and 8) ----
+
+// The Targets step's limits: [lowest, highest].
+export const TARGET_LIMITS = { accounts: [10, 2000], contactsPerAccount: [1, 10], initiativesPerAccount: [0, 5] };
+
+// The stored targets made whole and in range; contacts per account is capped by the Target contacts step's
+// "Maximum contacts per target account" (design 3.10).
+export function normalizeCompletionTargets(raw, maxContactsPerAccount) {
+  const out = {};
+  for (const [k, [lo, hi]] of Object.entries(TARGET_LIMITS)) {
+    const n = Math.round(Number(raw && raw[k]));
+    out[k] = Number.isFinite(n) && raw && raw[k] !== "" && raw[k] != null ? Math.min(hi, Math.max(lo, n)) : DEFAULT_COMPLETION_TARGETS[k];
+  }
+  const cap = Math.round(Number(maxContactsPerAccount));
+  if (Number.isFinite(cap) && cap >= 1) out.contactsPerAccount = Math.min(out.contactsPerAccount, cap);
+  return out;
+}
+
+// Design 3.7: the seven stages of the Master Prompt as a ranked list [{ id, checked }], in the user's order. Unknown
+// ids are dropped; a stage missing from what was saved is added at the end, ticked.
+export const INITIATIVE_STAGE_IDS = ["poc", "exploration", "pilot", "early_production", "scaling", "mature", "tech_native"];
+export const INITIATIVE_STAGE_LABELS = {
+  poc: "Proof of concept", exploration: "Exploration", pilot: "Pilot", early_production: "Early production",
+  scaling: "Scaling", mature: "Mature", tech_native: "Tech native",
+};
+export function normalizeInitiativeStages(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const s of Array.isArray(raw) ? raw : []) {
+    const id = typeof s === "string" ? s : s && s.id;
+    if (!INITIATIVE_STAGE_IDS.includes(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, checked: typeof s === "string" ? true : s.checked !== false });
+  }
+  for (const id of INITIATIVE_STAGE_IDS) if (!seen.has(id)) out.push({ id, checked: true });
+  return out;
+}
+
+// Does an initiative at this stage count towards the initiative target? One with no stage (imported before 1.2.1,
+// or the research could not tell) counts.
+export function initiativeCounts(stage, stages) {
+  if (!stage || !INITIATIVE_STAGE_IDS.includes(stage)) return true;
+  const s = normalizeInitiativeStages(stages).find((x) => x.id === stage);
+  return !s || s.checked;
+}
+
+// The accounts that count towards the accounts target: everything the pipeline is building, not the ones waiting
+// for a decision or lacking evidence.
+const TARGET_STATES = ["ready", "usable", "in_progress"];
+
+// Design 8 (R6.3): what is still owed. `entries`: [{ state, relevantContacts, initiatives }] for the live accounts
+// (initiatives already filtered by initiativeCounts). `discoveryAllowed`: discoveryMayRun's answer. `action`:
+// "discover" while accounts are owed and discovery may run, "enrich" while an account is below its own targets
+// (the web lane and the pipeline work those, each asking only for what is missing), else "idle".
+export function targetsStatus(entries, targets, { discoveryAllowed = true } = {}) {
+  const tg = { ...DEFAULT_COMPLETION_TARGETS, ...(targets || {}) };
+  const live = (entries || []).filter((e) => e && TARGET_STATES.includes(e.state));
+  const contactsMet = live.filter((e) => (e.relevantContacts || 0) >= tg.contactsPerAccount).length;
+  const initiativesMet = live.filter((e) => (e.initiatives || 0) >= tg.initiativesPerAccount).length;
+  const enrichOwed = live.filter((e) => (e.relevantContacts || 0) < tg.contactsPerAccount || (e.initiatives || 0) < tg.initiativesPerAccount).length;
+  const accountsOwed = Math.max(0, tg.accounts - live.length);
+  const action = accountsOwed > 0 && discoveryAllowed ? "discover" : enrichOwed > 0 ? "enrich" : "idle";
+  return {
+    targets: tg, accounts: live.length, ready: live.filter((e) => e.state === "ready").length,
+    usable: live.filter((e) => e.state === "usable").length, accountsOwed, contactsMet, initiativesMet, enrichOwed, action,
+  };
+}
+
+// An automatic Web Discovery runs once per accounts target: again only when the target is raised (R6.5), or a week
+// later when the list has fallen short again (accounts removed, merged or waiting for a decision). This bounds
+// the cost when the listings have nothing more to give. `last`: { accountsTarget, at } of the last automatic run.
+export const AUTO_DISCOVERY_REPEAT_MS = 7 * 24 * 3600 * 1000;
+export function discoveryMayRun(last, accountsTarget, now) {
+  if (!last || typeof last.at !== "number") return true;
+  if ((Number(accountsTarget) || 0) > (Number(last.accountsTarget) || 0)) return true;
+  return (typeof now === "number" ? now : Date.now()) - last.at >= AUTO_DISCOVERY_REPEAT_MS;
+}
+
+// R6.4: the targets as coverage lines under the Target Accounts pie.
+export function coverageLines(status) {
+  if (!status) return [];
+  const { targets: tg, accounts } = status;
+  const s = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const lines = [`Accounts: ${accounts} of ${tg.accounts} in the list${accounts >= tg.accounts ? " ✓" : ""}.`];
+  lines.push(`Contacts: ${status.contactsMet} of ${s(accounts, "account has", "accounts have")} ${tg.contactsPerAccount}.`);
+  if (tg.initiativesPerAccount > 0) {
+    lines.push(`Initiatives: ${status.initiativesMet} of ${s(accounts, "account has", "accounts have")} ${s(tg.initiativesPerAccount, "relevant initiative", "relevant initiatives")}.`);
+  }
+  return lines;
+}
+
 // Each topic in the words the research prompt uses.
 export const WEB_LANE_TOPICS = {
   headquarters: "headquarters (city and country of the group's global HQ)",

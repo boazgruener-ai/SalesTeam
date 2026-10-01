@@ -17,6 +17,11 @@ export function discoveryText(s) {
     `${s.added || 0} new account${s.added === 1 ? "" : "s"} added (target ${s.target}, looked for ${s.wanted} with the margin)` +
       `${s.stoppedReason ? ` - stopped: ${s.stoppedReason}` : ""}.`,
   ];
+  if (s.included) {
+    const i = s.included;
+    lines.push(`Companies you want included: ${i.added} added${i.alreadyIn ? `, ${i.alreadyIn} already in the list` : ""}` +
+      `${(i.excluded || []).length ? `; not added because they are also on your exclusion list: ${i.excluded.join(", ")}` : ""}.`);
+  }
   if (s.webSkipped) lines.push(`Web: not used - ${s.webSkipped}.`);
   else if (s.webWanted > 0) {
     const ok = (s.listings || []).filter((l) => !l.failed);

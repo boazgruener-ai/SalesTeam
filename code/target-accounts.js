@@ -90,9 +90,10 @@ import {
   exportLeads,
   importSettings,
   importLeads,
-  getAccountReadiness,
+  getAccountReadiness, getTargetsStatus,
 } from "./storage.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
+import { coverageLines } from "./pipeline-plan.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBeforeRestore } from "./backup-restore.js";
 import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
@@ -2874,10 +2875,13 @@ const READINESS_COLORS = {
 };
 let readinessByCompanyId = new Map();
 let readinessRefreshTimer = null;
+// 1.2.1 step 6 (R6.4): the user's targets as coverage lines under the pie.
+let targetsCoverage = [];
 
 async function refreshReadiness() {
   const rows = await getAccountReadiness();
   readinessByCompanyId = new Map(rows.map(({ view, assessment }) => [view.companyId, assessment]));
+  targetsCoverage = await getTargetsStatus({ readiness: rows }).then(coverageLines).catch(() => []);
 }
 
 function scheduleReadinessRefresh() {
@@ -2932,6 +2936,9 @@ function renderReadinessPie() {
   }
   const gapText = Object.entries(gaps).sort((a, b) => b[1] - a[1]).map(([label, n]) => `${label}: ${n}`).join(" · ");
   document.getElementById("pie-readiness-gaps").textContent = gapText ? `Still to do - ${gapText}` : "";
+  const coverageEl = document.getElementById("pie-targets-coverage");
+  coverageEl.textContent = targetsCoverage.length ? `Your targets - ${targetsCoverage.join(" ")}` : "";
+  coverageEl.hidden = targetsCoverage.length === 0;
 }
 
 function renderAccountsStats() {

@@ -12,10 +12,10 @@ import {
   getAccountViews, getTargetAccountsWorkbook, getTargetAccountExtras, getReadinessConfig, getAnthropicApiKey,
   getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig, applyWebLaneResearch,
   appendActivityLog, normalizeCompanyName, setContactLinkedinProfile, contactKeyFor, saveTargetAccountExtra,
-  SENIORITY_LEVELS,
+  SENIORITY_LEVELS, getCompletionTargets, getInitiativeStagePreference, addOnboardingMeasure,
 } from "./storage.js";
 import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason, LANE_CONTACTS_MODEL } from "./agent-shared.js";
-import { missingWebTopics, webLaneOrder, onlyContactMissing, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
+import { missingWebTopics, webLaneOrder, onlyContactMissing, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, initiativeCounts } from "./pipeline-plan.js";
 import { researchIsPublic, findingValue } from "./web-research-apply.js";
 import { applicableProvenance, employeesField, assessAccount } from "./readiness.js";
 import { BULK_STATE_KEY } from "./batch-jobs.js";
@@ -33,10 +33,14 @@ const DAY_MS = 86400000;
 let runner = null;
 
 // The accounts the lane would research now, best first: [{ key, company, isPublic, topics, known, companyRow, website }].
-export async function webLaneCandidates({ now = Date.now(), targets = DEFAULT_COMPLETION_TARGETS } = {}) {
-  const [views, workbook, extras, cfg] = await Promise.all([
+// The user's targets (wizard step "How big should your list be?") decide how many contacts and initiatives an
+// account still lacks; an initiative counts only at a stage the user ticked (design 3.7).
+export async function webLaneCandidates({ now = Date.now(), targets = null } = {}) {
+  const [views, workbook, extras, cfg, savedTargets, stages] = await Promise.all([
     getAccountViews({ persistDerived: false }), getTargetAccountsWorkbook(), getTargetAccountExtras(), getReadinessConfig(),
+    targets ? null : getCompletionTargets(), getInitiativeStagePreference(),
   ]);
+  targets = targets || savedTargets;
   const rows = new Map();
   for (const c of workbook.companies || []) if (c.company && !rows.has(normalizeCompanyName(c.company))) rows.set(normalizeCompanyName(c.company), c);
   const initiativesById = new Map();
@@ -50,7 +54,7 @@ export async function webLaneCandidates({ now = Date.now(), targets = DEFAULT_CO
     const extra = extras[view.key] || {};
     const research = extra.webResearch || null;
     const summaryFrom = (r) => Boolean(r && ((!r.topics && r.text) || findingValue(r.data && r.data.summary)));
-    const initiatives = initiativesById.get(view.companyId) || [];
+    const initiatives = (initiativesById.get(view.companyId) || []).filter((i) => initiativeCounts(i.stage, stages));
     const relevant = (view.contacts || []).filter((c) => c.relevant);
     const withoutProfile = relevant.filter((c) => !/linkedin\.com\/in\//i.test(c.linkedinUrl || "")).length;
     let topics = missingWebTopics(view, cfg, {
@@ -167,6 +171,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
       })(),
     };
     const industryNames = (cfg.industries || []).map((i) => (i && i.name) || "").filter(Boolean);
+    settings.initiativeStages = (await getInitiativeStagePreference()).filter((x) => x.checked).map((x) => x.id);
     let next = 0;
     let saveChain = Promise.resolve(); // one account's writes at a time
     let consecutiveFailures = 0;
@@ -237,6 +242,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
             profileAsked: profile ? profile.asked : 0, profileFound: profile ? profile.found : 0,
           };
           state.results.push(rec);
+          await addOnboardingMeasure("lane", { accounts: 1, usd: rec.costUsd, seconds: rec.seconds }).catch(() => {});
           if (auto && rec.costUsd > 0) await recordWebSpend(rec.costUsd).catch(() => {});
           appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: accountLine(rec) }).catch(() => {});
         } catch (err) {

@@ -25,16 +25,18 @@ import {
   getAccountViews, getReadinessConfig, savePipelineAccountState, applyResolvedCompanyIds, markLinkedinResolveAttempted,
   applyEmployeeCheck, setContactLinkedinProfile, appendActivityLog, settleSafeDuplicates,
   applyPipelineWebResearch, autoResolveWebFindings, getTargetAccountsWorkbook, normalizeCompanyName,
-  getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig,
+  getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig, getCompletionTargets, getTargetsStatus,
+  getOnboardingCompletedAt,
 } from "./storage.js";
 import { researchAccountOnWeb, apiBlockedReason } from "./agent-shared.js";
 import { pageNamesAgree, cleanPageName, isEmptyPageBand } from "./decision-rules.js";
 import { assessAccount, companyLinkSlug, countReadiness, MIN_READY_TO_SCAN } from "./readiness.js";
 import { WEB_LANE_STATE_KEY, startWebLane, isWebLaneRunning } from "./web-lane.js";
+import { startWebDiscovery, isWebDiscoveryRunning } from "./web-discovery.js";
 import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
   parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING, autoRunBlocker, USER_JOB_HOLD_MS,
-  isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS, READY_GOAL_KEY,
+  isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS, READY_GOAL_KEY, discoveryMayRun,
 } from "./pipeline-plan.js";
 import { resolveAccountOnTab } from "./company-resolve-extraction.js";
 import { armSizeRead, disarmSizeRead, readSizeOnTab } from "./company-size-extraction.js";
@@ -75,6 +77,8 @@ const LOG_REASONS = {
   user: "stopped by you",
 };
 const LAST_AUTO_BACKUP_KEY = "lastAutoBackupAt"; // backup-restore.js
+// 1.2.1 step 6 (design 8): the last automatic Web Discovery, { accountsTarget, at } - see discoveryMayRun.
+const AUTO_DISCOVERY_KEY = "autoDiscoveryLast";
 
 let runner = null; // { stopRequested, pauseRequested, state }
 let kicking = false;
@@ -159,6 +163,8 @@ export async function kickPipeline(source) {
     const store = await chrome.storage.local.get([PIPELINE_HOLD_KEY, LAST_AUTO_BACKUP_KEY]);
     const [stats, runningBatch, web] = await Promise.all([getLinkedinTouchStats(), getRunningBatch(), webBudgetState()]);
     const now = Date.now();
+    // 1.2.1 step 6 (design 8): the stop rule's discovery. Web only, so it needs the web budget, not LinkedIn.
+    if (auto.pausedDay !== localDay(now) && !web.reason) await discoverForTargets(web, { now }).catch(() => {});
     let reason = autoRunBlocker({
       enabled: auto.enabled, pausedDay: auto.pausedDay, today: localDay(now), holdUntil: store[PIPELINE_HOLD_KEY] || 0,
       runningBatch, touches24h: stats.last24h, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now, webPossible: !web.reason,
@@ -190,6 +196,59 @@ export async function kickPipeline(source) {
   } finally {
     kicking = false;
   }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Targets (1.2.1 step 6, design 3.11 and 8)
+// ---------------------------------------------------------------------------------------------------
+
+const webBudgetLeft = (web) => Math.max(0, (Number(web.monthlyUsd) || 0) - (Number(web.spentUsd) || 0));
+
+// While the list is short of the accounts target, Web Discovery adds what is owed (once per target: again when it
+// is raised, or a week later). When it is done, the web lane researches what the new accounts lack. `fromSetup`:
+// the wizard's Finish - always runs when accounts are owed, and ends with the usual pop-up.
+async function discoverForTargets(web, { now = Date.now(), fromSetup = false } = {}) {
+  if (isWebDiscoveryRunning()) return { started: false, reason: "running" };
+  const targets = await getCompletionTargets();
+  const last = (await chrome.storage.local.get(AUTO_DISCOVERY_KEY))[AUTO_DISCOVERY_KEY] || null;
+  if (!fromSetup && !discoveryMayRun(last, targets.accounts, now)) return { started: false, reason: "done_for_target" };
+  // Never before the setup is finished: the targets and the countries are not settled until then.
+  if (!fromSetup && !(await getOnboardingCompletedAt())) return { started: false, reason: "setup_not_done" };
+  const status = await getTargetsStatus();
+  if (status.accountsOwed <= 0) {
+    // Checked for this target: the next check comes when the target is raised, or in a week.
+    await chrome.storage.local.set({ [AUTO_DISCOVERY_KEY]: { accountsTarget: targets.accounts, at: now, enough: true } });
+    return { started: false, reason: "enough_accounts", status };
+  }
+  const res = await startWebDiscovery({
+    target: status.accountsOwed, budget: webBudgetLeft(web), auto: true, quiet: !fromSetup,
+    onDone: () => startLaneForTargets().catch(() => {}),
+  });
+  if (res && res.ok) await chrome.storage.local.set({ [AUTO_DISCOVERY_KEY]: { accountsTarget: targets.accounts, at: now } });
+  return { started: Boolean(res && res.ok), owed: status.accountsOwed };
+}
+
+// The web lane for the accounts below their targets, up to the accounts target in one run, under the web budget.
+async function startLaneForTargets() {
+  if (isWebLaneRunning()) return { started: false, reason: "running" };
+  const auto = await getPipelineAutomation();
+  const web = await webBudgetState();
+  if (!auto.enabled || auto.pausedDay === localDay() || web.reason) return { started: false, reason: web.reason || "off" };
+  const targets = await getCompletionTargets();
+  const lane = await startWebLane({ limit: targets.accounts, budget: webBudgetLeft(web), auto: true }).catch((err) => ({ ok: false, error: err.message }));
+  return { started: Boolean(lane && lane.ok), error: lane && lane.error };
+}
+
+// The wizard's Finish (design 3.11, R3.4.1): Web Discovery for what is owed, then the web lane; the LinkedIn lane
+// is kicked as usual. With nothing to discover the web lane starts at once. The wizard itself never visits LinkedIn.
+export async function startOnboardingBuild() {
+  const auto = await getPipelineAutomation();
+  const web = await webBudgetState();
+  let discovery = { started: false, reason: auto.enabled ? web.reason || null : "off" };
+  if (auto.enabled && !web.reason) discovery = await discoverForTargets(web, { fromSetup: true }).catch((err) => ({ started: false, error: err.message }));
+  const lane = discovery.started ? { started: false, reason: "after_discovery" } : await startLaneForTargets().catch((err) => ({ started: false, error: err.message }));
+  const pipeline = await kickPipeline("setup_finished").catch(() => null);
+  return { ok: true, discovery, lane, pipeline };
 }
 
 // ---------------------------------------------------------------------------------------------------

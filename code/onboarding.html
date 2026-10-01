@@ -346,6 +346,31 @@
       <p id="contacts-error" class="step-error" hidden>Enter at least one exact title or title keyword.</p>
     </section>
 
+    <!-- 1.2.1 step 6 (design 3.7): Initiative stages -->
+    <section id="enter-initiative-stages" class="wizard-step" hidden>
+      <h2>Which initiatives matter to you?</h2>
+      <p class="step-intro">
+        SalesTeam looks for each account's recent initiatives and projects - a reason to get in touch. Tick the
+        stages where what you sell helps, and put the most important first with the arrows. Initiatives at an
+        unticked stage are left out, and only the ticked ones count towards your initiatives target.
+      </p>
+      <div id="initiative-stages-list" class="priority-item-list"></div>
+      <p class="step-error" hidden></p>
+    </section>
+
+    <!-- 1.2.1 step 6 (design 3.8): Companies you want included -->
+    <section id="enter-included" class="wizard-step" hidden>
+      <h2>Any companies you want in your list? (optional)</h2>
+      <p class="step-intro">
+        Companies you already have in mind. SalesTeam adds them first, whatever their size or industry, and
+        researches them like every other account. One company per line: its name, and its website after a
+        comma if you know it (for example <em>Acme AG, https://www.acme.ch</em>).
+      </p>
+      <textarea id="included-input" placeholder="Acme AG, https://www.acme.ch"></textarea>
+      <div id="included-parsed-list"></div>
+      <p class="step-error" hidden></p>
+    </section>
+
     <!-- Step 9: Companies to exclude (optional) - unified 2026-09-17 from 4
          separate steps (Competitors/Recruiters/Existing customers/Existing
          partners) into one, backed by storage.js's single companyExclusions
@@ -401,6 +426,25 @@
       <div id="aliases-parsed-list"></div>
     </section>
 
+    <!-- 1.2.1 step 6 (design 3.10): How big should your list be? -->
+    <section id="enter-targets" class="wizard-step" hidden>
+      <h2>How big should your list be?</h2>
+      <p class="step-intro">
+        SalesTeam builds your account list up to these numbers and then stops: it finds new accounts on the web,
+        researches them, and checks them on LinkedIn within your daily limit. You can raise the numbers later;
+        lowering them never removes an account.
+      </p>
+      <label for="targets-accounts-input">Accounts</label>
+      <input type="number" id="targets-accounts-input" min="10" max="2000" step="10" />
+      <label for="targets-contacts-input">Contacts per account</label>
+      <input type="number" id="targets-contacts-input" min="1" max="10" />
+      <p class="field-hint" id="targets-contacts-hint"></p>
+      <label for="targets-initiatives-input">Relevant initiatives per account</label>
+      <input type="number" id="targets-initiatives-input" min="0" max="5" />
+      <p class="targets-estimate" id="targets-estimate"></p>
+      <p class="step-error" hidden></p>
+    </section>
+
     <!-- Shared confirm view (content built per-step by onboarding.js) -->
     <section id="confirm-view" class="wizard-step" hidden>
       <h2>Confirm</h2>
@@ -417,7 +461,9 @@
       <div id="finish-summary"></div>
       <p class="field-hint">
         Your targeting profile is saved. You can revisit any of this any time from Settings' "Edit Setup". This
-        takes you back to Settings once saved.
+        takes you back to Settings once saved. With automatic preparation on, <strong>Finish Setup</strong> starts
+        building your account list at once: new accounts from the web first, then their research, then the
+        LinkedIn checks within your daily limit.
       </p>
       <!-- 1.2 data pipeline, build step 3 (DATA_PIPELINE_DESIGN.md 10.1, U5): the consent. Off unless ticked. -->
       <div id="finish-automation" style="border:1px solid #c9d7e8;border-radius:8px;padding:10px 14px;margin:12px 0;">
@@ -435,6 +481,7 @@
         <p class="field-hint">
           <label for="finish-web-budget">Monthly budget US$</label>
           <input type="number" id="finish-web-budget" min="0" step="1" style="width: 80px" />
+          <span id="finish-web-budget-note"></span>
         </p>
       </div>
       <div class="wizard-buttons">

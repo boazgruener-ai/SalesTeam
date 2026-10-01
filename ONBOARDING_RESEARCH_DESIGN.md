@@ -844,6 +844,50 @@ box keeps the order of its lines) - a deviation from R3.1.5's ranked titles, by 
 for all 9 steps - in line with the US$0.30 estimate, which stays until more researches are measured. Boaz went through
 every step on 1.2.0.21: no further comments. **Step 5 DONE.**
 
+**As built (step 6, 1.2.0.22) - the full onboarding.** Branch `feature/onboarding-step6` (off step 5). The wizard
+now has 15 numbered steps, in the order of 3.1.
+
+- **Initiative stages** (step 11, `initiativeStagePreference`): the seven stages as a ranked checklist - tick, and
+  move up/down with arrows, each with a one-line tip. At least one must stay ticked. The web lane's prompt names the
+  ticked stages in the user's order and asks it to leave out the others (only when they differ from all seven in
+  the default order), and an initiative counts towards the target only at a ticked stage; one with no stage
+  (imported before 1.2.1) still counts (`initiativeCounts`).
+- **Companies to include** (step 12, `includedCompanies`): one per line, *"Name, https://website"*, the name alone
+  or the website alone. Each line is shown as read; one that is also on the exclusion list is flagged in red and is
+  not added (the exclusion wins). Web Discovery adds them first, before any listing, with no web call and no size or
+  industry filter; they count towards the accounts it was asked for. The run's report says how many were added,
+  already in the list, or left out as excluded.
+- **How big should your list be?** (step 15, `completionTargets`): accounts (10-2000), contacts per account (1 to the
+  Target contacts step's maximum per account) and relevant initiatives per account (0-5); an out-of-range number is
+  an error on Next. Below the fields, the live estimate from **`onboarding-estimate.js`** (new pure module): it counts
+  the accounts still to find (target minus the live accounts) and still to build (target minus Ready). Its
+  defaults are the measured figures, not section 9's first guesses: discovery US$0.02 an account, research
+  US$0.12-0.22, 25 s an account over four workers, 2.6 LinkedIn touches an account at 60 a day. For 100 accounts on a
+  clean install: *"about 4-5 days of your daily LinkedIn limit and about US$14-24 on your Anthropic API key ... usable
+  within the hour"*. Once 20 accounts have gone through a lane on this install, its own average takes over (R8.3,
+  key `onboardingMeasures`, added to by the web lane per account and by Web Discovery per run).
+- **Finish:** the web budget is pre-filled from the estimate, rounded up to whole US$5, never lowered below what is
+  set, with a note of the estimate beside it. With automatic preparation ticked, Finish sends
+  `ONBOARDING_BUILD_START`: the background (`startOnboardingBuild`, pipeline-runner.js) runs Web Discovery for the
+  accounts owed and, when it ends, the web lane for up to the accounts target, both paid from the monthly web budget;
+  with nothing to discover the web lane starts at once. The LinkedIn pipeline is kicked as before. Discovery from
+  Finish ends with its usual pop-up.
+- **The stop rule (8):** `targetsStatus` (pipeline-plan.js, pure) counts Ready, Usable and In progress accounts
+  against the targets and returns `discover` / `enrich` / `idle`. On every automatic kick (after the setup is
+  finished, not paused, web budget available) the pipeline runs Web Discovery quietly for what is owed - **once per
+  accounts target** (`discoveryMayRun`, key `autoDiscoveryLast`): again only when the target is raised (R6.5) or a
+  week later. This bounds the cost when listings have nothing more to give; without it, accounts that wait for a
+  decision would make every kick look short. Enrichment needs nothing new: the web lane and the pipeline already
+  ask only for what an account lacks, now against the user's targets instead of the defaults.
+- **Coverage lines (R6.4):** under the Target Accounts pie - *"Your targets - Accounts: 87 of 100 in the list.
+  Contacts: 52 of 87 accounts have 3. Initiatives: 40 of 87 accounts have 1 relevant initiative."* (`coverageLines`).
+- The three new keys are in the settings backup.
+
+Checked: new pure-module checks for targets, stages, the stop rule and the estimate (477 in all); the wizard in the chrome.storage stand-in - the new steps, ranking
+and unticking, the exclusion flag, the contacts cap error, the live estimate at 100 and 250 accounts, the budget
+pre-fill (US$60 for 250), the confirm summaries, and Finish sending `ONBOARDING_BUILD_START`. **Not yet run in
+Chrome:** the full onboarding in a clean profile with 100 accounts - Boaz's check.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

@@ -2,7 +2,7 @@ import { geoUrnForCountry } from "./geo-urn-map.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
-import { LANE_MAX_PEOPLE } from "./pipeline-plan.js";
+import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages, initiativeCounts, targetsStatus } from "./pipeline-plan.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
@@ -255,6 +255,71 @@ export async function getSetupResearch() {
 
 export async function saveSetupResearch(research) {
   await chrome.storage.local.set({ [SETUP_RESEARCH_KEY]: research });
+}
+
+// 1.2.1 step 6 (design 3.10): how big the list should be - { accounts, contactsPerAccount, initiativesPerAccount }.
+// Contacts per account never exceeds the Target contacts step's maximum per account.
+const COMPLETION_TARGETS_KEY = "completionTargets";
+
+export async function getCompletionTargets() {
+  const data = await chrome.storage.local.get([COMPLETION_TARGETS_KEY, TARGET_CONTACT_PROFILE_KEY]);
+  return normalizeCompletionTargets(data[COMPLETION_TARGETS_KEY], data[TARGET_CONTACT_PROFILE_KEY]?.maxContactsPerAccount);
+}
+
+export async function saveCompletionTargets(targets) {
+  const profile = await getTargetContactProfile();
+  await chrome.storage.local.set({ [COMPLETION_TARGETS_KEY]: normalizeCompletionTargets(targets, profile.maxContactsPerAccount) });
+}
+
+// Design 3.7: the initiative stages the seller cares about, ranked: [{ id, checked }] (all seven, in order).
+const INITIATIVE_STAGE_PREFERENCE_KEY = "initiativeStagePreference";
+
+export async function getInitiativeStagePreference() {
+  const data = await chrome.storage.local.get(INITIATIVE_STAGE_PREFERENCE_KEY);
+  return normalizeInitiativeStages(data[INITIATIVE_STAGE_PREFERENCE_KEY]);
+}
+
+export async function saveInitiativeStagePreference(stages) {
+  await chrome.storage.local.set({ [INITIATIVE_STAGE_PREFERENCE_KEY]: normalizeInitiativeStages(stages) });
+}
+
+// Design 3.8: companies the user wants in the list whatever their size or industry - [{ name, website }]. Web
+// Discovery adds them first; an exclusion still wins.
+const INCLUDED_COMPANIES_KEY = "includedCompanies";
+
+export async function getIncludedCompanies() {
+  const data = await chrome.storage.local.get(INCLUDED_COMPANIES_KEY);
+  return Array.isArray(data[INCLUDED_COMPANIES_KEY]) ? data[INCLUDED_COMPANIES_KEY] : [];
+}
+
+export async function saveIncludedCompanies(companies) {
+  const seen = new Set();
+  const clean = [];
+  for (const c of companies || []) {
+    const name = String(c?.name || "").trim();
+    const website = String(c?.website || "").trim();
+    const key = normalizeCompanyName(name) || websiteDomain(website);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    clean.push({ name: name || websiteDomain(website), ...(website ? { website } : {}) });
+  }
+  await chrome.storage.local.set({ [INCLUDED_COMPANIES_KEY]: clean });
+}
+
+// R8.3: what the web lanes actually cost on this install, summed per account - the Targets step's estimate uses it
+// once 20 accounts have gone through a lane. { discovery: { accounts, usd }, lane: { accounts, usd, seconds } }.
+const ONBOARDING_MEASURES_KEY = "onboardingMeasures";
+
+export async function getOnboardingMeasures() {
+  const data = await chrome.storage.local.get(ONBOARDING_MEASURES_KEY);
+  return data[ONBOARDING_MEASURES_KEY] || { discovery: { accounts: 0, usd: 0 }, lane: { accounts: 0, usd: 0, seconds: 0 } };
+}
+
+export async function addOnboardingMeasure(lane, { accounts = 0, usd = 0, seconds = 0 }) {
+  const m = await getOnboardingMeasures();
+  const cur = m[lane] || { accounts: 0, usd: 0, seconds: 0 };
+  m[lane] = { accounts: cur.accounts + accounts, usd: cur.usd + usd, seconds: (cur.seconds || 0) + seconds };
+  await chrome.storage.local.set({ [ONBOARDING_MEASURES_KEY]: m });
 }
 
 // Deliberately separate from Company Context above - "what we offer" (the
@@ -5336,6 +5401,24 @@ async function setContactLinkedinProfileUnlocked(contactKey, profileUrl) {
   return previous;
 }
 
+// 1.2.1 step 6 (design 8, R6.3-R6.4): the list measured against the user's targets - the stop rule's input and the
+// coverage lines under the Target Accounts pie. `readiness`: getAccountReadiness()'s answer when the caller has it.
+export async function getTargetsStatus({ readiness = null, discoveryAllowed = true } = {}) {
+  const [rows, workbook, targets, stages] = await Promise.all([
+    readiness ? Promise.resolve(readiness) : getAccountReadiness(), getTargetAccountsWorkbook(), getCompletionTargets(), getInitiativeStagePreference(),
+  ]);
+  const initiatives = new Map();
+  for (const i of workbook.aiInitiatives || []) {
+    if (i.companyId && initiativeCounts(i.stage, stages)) initiatives.set(i.companyId, (initiatives.get(i.companyId) || 0) + 1);
+  }
+  const entries = rows.map(({ view, assessment }) => ({
+    state: assessment.state,
+    relevantContacts: (view.contacts || []).filter((c) => c.relevant).length,
+    initiatives: initiatives.get(view.companyId) || 0,
+  }));
+  return targetsStatus(entries, targets, { discoveryAllowed });
+}
+
 // The user's targeting settings in the shape readiness.js wants (design 3.1).
 export async function getReadinessConfig() {
   const [universe, contactProfile] = await Promise.all([getTargetUniverseConfig(), getTargetContactProfile()]);
@@ -6053,6 +6136,9 @@ function wizardSettingsBackupKeys() {
     COMPANY_WEBSITE_KEY,
     SELLER_COMPANY_NAME_KEY,
     SETUP_RESEARCH_KEY,
+    COMPLETION_TARGETS_KEY,
+    INITIATIVE_STAGE_PREFERENCE_KEY,
+    INCLUDED_COMPANIES_KEY,
     ONBOARDING_COMPLETED_AT_KEY,
     ONBOARDING_PROGRESS_STEP_KEY,
   ];

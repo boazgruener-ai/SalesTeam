@@ -1700,7 +1700,17 @@ const LANE_TIME_LIMIT_MS = 240000;
 
 const STAGE_WORDS = "poc (proof of concept), exploration, pilot, early_production, scaling, mature, tech_native";
 
-function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, industryNames, seniorityLabels }) {
+// Design 3.7: the stages the user ticked, in their order - the research is told which initiatives matter most and
+// to leave out the others. All seven ticked in the default order changes nothing.
+function stagePreferenceText(stages) {
+  const all = STAGE_WORDS.split(", ").map((w) => w.split(" ")[0]);
+  if (!Array.isArray(stages) || stages.length === 0) return "";
+  if (stages.length === all.length && stages.every((s, i) => s === all[i])) return "";
+  return "The seller cares about initiatives at these stages, most important first: " + stages.join(", ") +
+    (stages.length < all.length ? ". Leave out initiatives at any other stage" : "") + ".\n";
+}
+
+function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, industryNames, seniorityLabels, initiativeStages }) {
   const home = (targetCountries && targetCountries[0]) || "the seller's home market";
   const cited = "{\"value\":...,\"url\":\"the page that states it\",\"year\":YYYY|null}";
   return (
@@ -1713,6 +1723,7 @@ function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLan
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
     "\nInitiatives: only ones from about the last two years that could matter to the seller, each with its stage, one of: " + STAGE_WORDS + ".\n" +
+    stagePreferenceText(initiativeStages) +
     "Contacts: at most " + LANE_MAX_PEOPLE + " named people, the most senior first, " +
     (seniorityLabels && seniorityLabels.length
       ? "only at these levels: " + seniorityLabels.join(", ") + " "
