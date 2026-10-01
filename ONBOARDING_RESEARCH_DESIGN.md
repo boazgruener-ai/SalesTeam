@@ -699,7 +699,14 @@ branches of international groups.
 
 Every added account is scored at once (`rescoreDerivedPriorities`). One undo for the whole run (*Remove the accounts
 the last run added*, a soft delete). The dialog's last-run details list each listing (and LinkedIn band), and how
-many of the added accounts the LinkedIn work has found since. Web part not yet measured: waiting for Boaz's run on 10.
+many of the added accounts the LinkedIn work has found since.
+
+**Measured (1.2.0.8, 2026-09-30, web only, target 10 -> 12 wanted, Switzerland, sizes 501+):** 12 of 12 added for
+**US$0.28 in all - about US$0.02 per account** (one search for listings about US$0.14; three listings read, about
+US$0.05 each). 50 rows read, 23 kept after filtering (15 already an account, 6 listed twice, 6 outside the sizes);
+no fit search needed. The accounts are homegrown companies of the right size (Syngenta, Firmenich, Bell Food Group,
+Alpiq, Zurich Insurance Group, Raiffeisenbank…) - the opposite of the LinkedIn run's "X Switzerland" branches. Far
+below the design's estimate for discovery. Still to see: how many of them the pipeline finds on LinkedIn.
 
 ---
 
