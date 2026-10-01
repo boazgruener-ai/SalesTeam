@@ -55,6 +55,19 @@ export function jobGaveUp(pipeline, job) {
 }
 
 // Returns the new attempts list for a job that ran without closing its gap today.
+// 1.2.0.32 (Boaz, 2026-10-01): with LinkedIn logged out in this browser, every lookup lands on LinkedIn's login wall
+// and was counted as "not found" (15 of 15 in his clean-profile test). A page on one of these paths means: stop, ask
+// the user to log in, and count nothing against the account.
+export const LINKEDIN_LOGGED_OUT_KEY = "linkedinLoggedOutAt";
+// After a run stopped on the login wall, LinkedIn work waits this long before it tries again (one page visit).
+export const LINKEDIN_LOGGED_OUT_WAIT_MS = 30 * 60 * 1000;
+export function isLinkedinLoginWall(url) {
+  return /^https?:\/\/([a-z]{2,3}\.|www\.)?linkedin\.com\/(authwall|login|uas\/login|checkpoint|signup|m\/login)(?![a-z])/i.test(String(url || ""));
+}
+export function linkedinLoggedOutRecently(at, now) {
+  return Boolean(at) && (typeof now === "number" ? now : Date.now()) - at < LINKEDIN_LOGGED_OUT_WAIT_MS;
+}
+
 export function withFailedAttempt(pipeline, job, day) {
   const attempts = { ...((pipeline && pipeline.attempts) || {}) };
   const days = attempts[job] || [];

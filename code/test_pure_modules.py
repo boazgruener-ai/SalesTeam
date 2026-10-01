@@ -1764,6 +1764,26 @@ def test_title_brackets(ctx):
     check("brackets: none", e("titleWithoutBrackets('Director Marketing')"), "Director Marketing")
     check("brackets: mapped proposal", e("buildSetupProposals({buyerTitles:[{title:'CEO'},{title:'Leiter IT (Head of IT)'}]}, {}, ['contacts']).contacts.exactTitles.join('|')"), "CEO|Leiter IT")
 
+def test_login_wall(ctx):
+    """1.2.0.32: LinkedIn's login wall is recognised, so a logged-out browser stops the run instead of counting accounts as not found."""
+    e = lambda x: ctx.eval(x)
+    for url, want in [
+        ("https://www.linkedin.com/authwall?trk=gf&sessionRedirect=x", True),
+        ("https://www.linkedin.com/login?session_redirect=x", True),
+        ("https://www.linkedin.com/uas/login?x=1", True),
+        ("https://www.linkedin.com/checkpoint/lg/login", True),
+        ("https://ch.linkedin.com/signup/cold-join", True),
+        ("https://www.linkedin.com/search/results/companies/?keywords=Repower", False),
+        ("https://www.linkedin.com/company/repower/", False),
+        ("https://www.linkedin.com/company/loginsoft/", False),
+        ("", False),
+    ]:
+        check("login wall: " + url, e("isLinkedinLoginWall(%s)" % repr(url)), want)
+    check("logged out 10 min ago -> wait", e("linkedinLoggedOutRecently(1, 10*60000)"), True)
+    check("logged out 31 min ago -> try again", e("linkedinLoggedOutRecently(1, 31*60000+1)"), False)
+    check("never logged out", e("linkedinLoggedOutRecently(null, 5)"), False)
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1800,6 +1820,7 @@ def main():
     test_targets_and_estimate(ctx)
     test_same_brand_domain(ctx)
     test_title_brackets(ctx)
+    test_login_wall(ctx)
 
     print()
     for f in _failures:

@@ -943,6 +943,18 @@ ended up in Change Settings (no numbers, no Finish Setup). The progress label co
 drawn only when the Settings page opened, never while the wizard ran inside it; it now uses 15 and is redrawn whenever
 the wizard saves its progress or the setup is finished.
 
+**Clean-profile run (1.2.0.30, 2026-10-01, timetoact.ch, target 100):** Web Discovery added **100 accounts for US$0.63
+(about US$0.006 each)** - five companydata.com listings (25 rows each, about US$0.065 a listing) and one fit search; 158
+rows read, 32 outside the sizes, 26 listed twice. Within the first stretch 94 of the 100 were Usable (web only). But the
+LinkedIn lookups reported *"0 found, 15 looked up but not found"* - the test browser was **not logged in to LinkedIn**.
+
+**1.2.0.32 - LinkedIn logged out.** Every lookup landed on LinkedIn's login wall and was counted as "not found" (a
+failed day each). Now a page ending on the login wall (`isLinkedinLoginWall`: /authwall, /login, /uas/login,
+/checkpoint, /signup) stops the run (*"LinkedIn is not logged in in this browser - log in at linkedin.com"*), counts
+nothing against the account (no attempt mark, no failed day, last run day unchanged), and stores
+`linkedinLoggedOutAt`: for 30 minutes LinkedIn work counts as used up (web work goes on), then one page visit tries
+again. The top bar says so with the time it tries again. 12 new checks (503).
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
