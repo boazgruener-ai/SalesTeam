@@ -221,6 +221,11 @@ copy per page.
   builtin's edits are never touched). "Recruiter/Staffing Headline Filter" and "AI/Cloud Vendor Blocklist" are
   unaffected — genuinely different mechanisms (a person's own headline text; a fixed hardcoded vendor list),
   not backed by any wizard list, so left as regular fully-editable negative topics.
+- **A fifth such filter, Other Excluded Companies (1.2.0.25, 2026-10-01).** Companies excluded under the wizard's
+  *Other* category had no lead filter, so a keyword-scan post from one of them still came through as a lead. Now every
+  excluded company is filtered, whatever its category: `builtin-other-exclusions` (`sourceList: "others"` -> category
+  `other`), on by default and added to existing installs by the same backfill. The wizard's Exclusions step says so:
+  an excluded company never shows up in Target Accounts and is never scanned for leads.
 - **The Scanner tile's "Author title contains" filter is now wizard-list-backed too, same day** — its
   free-text textarea was a second, independently-maintained title list duplicating the Setup wizard's own
   Target Contacts profile (`targetContactProfile.exactTitles`/`titleKeywords`, 6.20 — also PRD 6.12's Phase 6
