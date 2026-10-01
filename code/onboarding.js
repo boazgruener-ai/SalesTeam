@@ -1111,6 +1111,12 @@ async function renderTargetsStep() {
   const basis = await loadEstimateBasis();
   out.textContent = currentEstimate(basis).text +
     (basis.existing ? ` Your list has ${basis.existing} account${basis.existing === 1 ? "" : "s"} now, ${basis.ready} of them Ready.` : "");
+  // Change Settings (Boaz, 2026-10-01): raising a target does nothing while the automation that builds the list is off.
+  if (settingsMode) {
+    const a = await getPipelineAutomation();
+    const off = !a.enabled ? "Automatic preparation is off" : !a.webEnabled ? "Automatic web research is off" : null;
+    if (off) out.textContent += ` ${off} (Settings > Automation), so SalesTeam does not build the list towards these numbers until you turn it on.`;
+  }
 }
 
 // R8.2: the web budget pre-filled from the estimate, rounded up - never lowered below what is already set.

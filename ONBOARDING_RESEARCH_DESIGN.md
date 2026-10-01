@@ -909,6 +909,12 @@ backfill), so an excluded company is never a lead whatever its category. The Exc
 company never shows up in your Target Accounts and is never scanned for leads: its people are not searched, and a post
 from it that a keyword scan finds is marked Irrelevant."*
 
+**1.2.0.26 (Boaz, 2026-10-01, on his main profile):** the Targets step said *"your list already has 100 Ready accounts"*
+with 121 Ready - it now gives the real count. In Change Settings it also says when automatic preparation or automatic
+web research is off (*"... so SalesTeam does not build the list towards these numbers until you turn it on"*): raising a
+target there otherwise did nothing, silently. (A setup completed before has no Finish button - Change Settings saves
+each setting on its own; the full onboarding is tested in a clean profile.)
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

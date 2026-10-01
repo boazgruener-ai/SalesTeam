@@ -25,7 +25,8 @@ export function onboardingEstimate({ accounts, existing = 0, ready = 0, measured
   const target = Math.max(0, Math.round(Number(accounts) || 0));
   const have = Math.max(0, Math.round(Number(existing) || 0));
   const toDiscover = Math.max(0, target - have);
-  const toBuild = Math.max(0, target - Math.min(target, Math.max(0, Math.round(Number(ready) || 0))));
+  const readyNow = Math.max(0, Math.round(Number(ready) || 0));
+  const toBuild = Math.max(0, target - Math.min(target, readyNow));
 
   const m = measured || {};
   const disc = m.discovery && m.discovery.accounts >= MEASURED_MIN_ACCOUNTS ? m.discovery.usd / m.discovery.accounts : d.discoveryUsdPerAccount;
@@ -42,7 +43,7 @@ export function onboardingEstimate({ accounts, existing = 0, ready = 0, measured
     accounts: target, toDiscover, toBuild, usdLow, usdHigh, webMinutes, touches, days,
     measured: { discovery: disc !== d.discoveryUsdPerAccount, lane: Boolean(laneMeasured) },
     budgetUsd: suggestedBudget(usdHigh),
-    text: estimateText({ target, toDiscover, toBuild, usdLow, usdHigh, webMinutes, days }),
+    text: estimateText({ target, toDiscover, toBuild, usdLow, usdHigh, webMinutes, days, ready: readyNow }),
   };
 }
 
@@ -72,8 +73,8 @@ function minutesText(min) {
   return `within about ${h} hours`;
 }
 
-export function estimateText({ target, toDiscover, toBuild, usdLow, usdHigh, webMinutes, days }) {
-  if (toBuild === 0 && toDiscover === 0) return `${target} accounts: your list already has ${target} Ready accounts - nothing more to build.`;
+export function estimateText({ target, toDiscover, toBuild, usdLow, usdHigh, webMinutes, days, ready = target }) {
+  if (toBuild === 0 && toDiscover === 0) return `${target} accounts: your list already has ${ready} Ready accounts - nothing more to build.`;
   const parts = [];
   const li = daysText(days);
   parts.push(`${target} accounts: ${li ? `${li} of your daily LinkedIn limit and ` : ""}${usdText(usdLow, usdHigh)} on your Anthropic API key.`);

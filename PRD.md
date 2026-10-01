@@ -221,7 +221,7 @@ copy per page.
   builtin's edits are never touched). "Recruiter/Staffing Headline Filter" and "AI/Cloud Vendor Blocklist" are
   unaffected — genuinely different mechanisms (a person's own headline text; a fixed hardcoded vendor list),
   not backed by any wizard list, so left as regular fully-editable negative topics.
-- **A fifth such filter, Other Excluded Companies (1.2.0.25, 2026-10-01).** Companies excluded under the wizard's
+- **A fifth such filter, Other Excluded Companies (1.2.0.26, 2026-10-01).** Companies excluded under the wizard's
   *Other* category had no lead filter, so a keyword-scan post from one of them still came through as a lead. Now every
   excluded company is filtered, whatever its category: `builtin-other-exclusions` (`sourceList: "others"` -> category
   `other`), on by default and added to existing installs by the same backfill. The wizard's Exclusions step says so:
@@ -3052,4 +3052,4 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.0.25**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.0.26**.

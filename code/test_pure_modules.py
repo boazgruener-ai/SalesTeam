@@ -1733,6 +1733,8 @@ def test_targets_and_estimate(ctx):
           "SalesTeam finds 100 new accounts on the web. Your accounts will be usable within the hour; the first Ready ones within the day.")
     # an existing list: 550 accounts, 160 Ready -> nothing to discover, nothing to build for a 100 target
     check("estimate: list already big enough", v("onboardingEstimate({accounts: 100, existing: 550, ready: 160})").get("toBuild"), 0)
+    check("estimate: says the real Ready count (Boaz, 2026-10-01)", v("onboardingEstimate({accounts: 100, existing: 541, ready: 121})")["text"],
+          "100 accounts: your list already has 121 Ready accounts - nothing more to build.")
     e2 = v("onboardingEstimate({accounts: 300, existing: 250, ready: 100})")
     check("estimate: existing list, part to build", [e2["toDiscover"], e2["toBuild"]], [50, 200])
     # measured averages take over at 20 accounts
