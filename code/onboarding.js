@@ -365,7 +365,7 @@ el("nav-save-btn").addEventListener("click", async () => {
     return;
   }
   await persistStep(step);
-  if (step === "value-add-offers" && checklists[step]) renderProposalForStep(step);
+  if ((step === "value-add-offers" || step === "contacts") && checklists[step]) renderProposalForStep(step);
   status.textContent = "Saved ✓";
   setTimeout(() => { if (status.textContent === "Saved ✓") status.textContent = ""; }, 2500);
 });
@@ -872,10 +872,10 @@ function syncPostRulesFromDom() {
 function validateContactsStep() {
   let exactTitles = el("contacts-exact-titles-input").value.split("\n").map((l) => l.trim()).filter(Boolean);
   let titleKeywords = el("contacts-title-keywords-input").value.split("\n").map((l) => l.trim()).filter(Boolean);
-  // Proposed titles and keywords (1.2.1): the ticked ones first, in their rank order, then the lines typed below.
+  // Proposed titles and keywords (1.2.1): the box's lines, then the ticked proposals.
   if (checklists.contacts) {
-    exactTitles = mergeChecklistWithLines(checklists.contacts.titles.getItems(), exactTitles);
-    if (checklists.contacts.keywords) titleKeywords = mergeChecklistWithLines(checklists.contacts.keywords.getItems(), titleKeywords);
+    exactTitles = boxThenTicked(exactTitles, checklists.contacts.titles);
+    if (checklists.contacts.keywords) titleKeywords = boxThenTicked(titleKeywords, checklists.contacts.keywords);
   }
   if (exactTitles.length === 0 && titleKeywords.length === 0) {
     return { valid: false, error: "Enter at least one exact title or title keyword." };
@@ -2053,7 +2053,6 @@ function mountStepChecklists(step, p, accepted) {
   if (!p || !p.found || checklists[step]) return;
   // R4.5: on a setup completed before, or once this step was accepted, the ticks show what is saved.
   const ticks = (keys, saved) => initiallyTicked(keys, saved, completedBefore || accepted);
-  const remaining = (keys, lines) => mergeChecklistWithLines(keys.map((text) => ({ text, checked: false })), lines);
   if (step === "value-add-offers") {
     // The box below the checklist is the list of offers (Boaz, 2026-10-01: ticking and saving should move an item
     // there). The checklist shows only proposals not in it yet - ticked on a first setup until the step is accepted.
@@ -2071,20 +2070,26 @@ function mountStepChecklists(step, p, accepted) {
         addPlaceholder: "Add another offer", onChange: scheduleAutoSave,
       });
   } else if (step === "contacts") {
-    const titleLines = textareaLines("contacts-exact-titles-input");
-    const keywordLines = textareaLines("contacts-title-keywords-input");
-    const tt = ticks(p.exactTitles, titleLines);
-    const kt = ticks(p.keywords, keywordLines);
+    // Same as offers (Boaz, 2026-10-01): the two boxes are the lists, ticked proposals move into them on Save.
+    const tickNew = !completedBefore && !accepted;
+    const open = (keys, lines) => {
+      const inBox = initiallyTicked(keys, lines, true);
+      return keys.filter((_, i) => !inBox[i]).map((text) => ({ text, checked: tickNew }));
+    };
+    const titles = open(p.exactTitles, textareaLines("contacts-exact-titles-input"));
+    const keywords = open(p.keywords, textareaLines("contacts-title-keywords-input"));
     checklists[step] = {
-      titles: mountChecklist(el("contacts-titles-checklist"), p.exactTitles.map((text, i) => ({ text, checked: tt[i] })),
-        { title: "Proposed exact titles - most important first", rankable: true, addPlaceholder: "Add a title", onChange: scheduleAutoSave }),
+      titles: mountChecklist(el("contacts-titles-checklist"), titles, {
+        title: titles.length ? "Proposed exact titles - tick the ones to search for, then Save: they move to the box below" : "Every proposed title is in the box below.",
+        addPlaceholder: "Add a title", onChange: scheduleAutoSave,
+      }),
       keywords: p.keywords.length
-        ? mountChecklist(el("contacts-keywords-checklist"), p.keywords.map((text, i) => ({ text, checked: kt[i] })),
-          { title: "Proposed title keywords", addPlaceholder: "Add a keyword", onChange: scheduleAutoSave })
+        ? mountChecklist(el("contacts-keywords-checklist"), keywords, {
+          title: keywords.length ? "Proposed title keywords - tick, then Save: they move to the box below" : "Every proposed keyword is in the box below.",
+          addPlaceholder: "Add a keyword", onChange: scheduleAutoSave,
+        })
         : null,
     };
-    el("contacts-exact-titles-input").value = remaining(p.exactTitles, titleLines).join("\n");
-    el("contacts-title-keywords-input").value = remaining(p.keywords, keywordLines).join("\n");
   } else if (step === "exclusions") {
     const keys = p.items.map(exclusionKey);
     const t = ticks(keys, companyExclusions.filter((e) => !e.slug).map(exclusionKey));
@@ -2105,7 +2110,7 @@ function renderProposalForStep(step) {
   if (step === "about" && !(p && p.found && p.outputLanguage !== el("about-language-select").value)) p = undefined;
   const accepted = !!setupResearch.accepted?.[step];
   if (p && p.found && step !== "about" && !completedBefore && !accepted && !appliedThisVisit.has(step)) applyProposal(step, p);
-  if (step === "value-add-offers") foldOffersIntoList();
+  foldProposalsIntoBoxes(step);
   if (p) appliedThisVisit.add(step);
   mountStepChecklists(step, p, accepted);
   renderProposalBanner(slot, {
@@ -2154,19 +2159,30 @@ async function markProposalAccepted(step) {
   await saveSetupResearch(setupResearch);
 }
 
-// The list below first, then the ticked proposals, de-duplicated.
-function currentValueAddOffers() {
-  const lines = textareaLines("value-add-offers-input");
-  const list = checklists["value-add-offers"];
+// A box's lines first, then the ticked proposals of its checklist, de-duplicated.
+function boxThenTicked(lines, list) {
   if (!list) return lines;
   return mergeChecklistWithLines([], [...lines, ...list.getItems().filter((i) => i.checked).map((i) => i.text)]);
 }
 
-// Moves the ticked proposals into the list below; the checklist is mounted again with what is left.
-function foldOffersIntoList() {
-  if (!checklists["value-add-offers"]) return;
-  el("value-add-offers-input").value = currentValueAddOffers().join("\n");
-  delete checklists["value-add-offers"];
+function currentValueAddOffers() {
+  return boxThenTicked(textareaLines("value-add-offers-input"), checklists["value-add-offers"]);
+}
+
+// Offers, titles and keywords: moves the ticked proposals into the box below; the checklists are mounted again with
+// what is left.
+function foldProposalsIntoBoxes(step) {
+  const c = checklists[step];
+  if (!c) return;
+  if (step === "value-add-offers") {
+    el("value-add-offers-input").value = currentValueAddOffers().join("\n");
+  } else if (step === "contacts") {
+    el("contacts-exact-titles-input").value = boxThenTicked(textareaLines("contacts-exact-titles-input"), c.titles).join("\n");
+    el("contacts-title-keywords-input").value = boxThenTicked(textareaLines("contacts-title-keywords-input"), c.keywords).join("\n");
+  } else {
+    return;
+  }
+  delete checklists[step];
 }
 
 // ---------------------------------------------------------------------

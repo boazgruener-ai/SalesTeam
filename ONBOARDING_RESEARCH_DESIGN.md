@@ -836,6 +836,10 @@ it had not worked. The box below is now the list of offers: Save (and coming bac
 proposals into it, and the checklist keeps only the proposals not taken yet. Change Settings has **Previous** and
 **Next** beside Save again; each saves the open setting first and stays put while it has an error.
 
+**1.2.0.21 (Boaz, 2026-10-01):** Target contacts works the same way: proposed titles and keywords not yet in their box
+are listed above it, and Save moves the ticked ones into the box. The up/down rank of proposed titles is dropped (a
+box keeps the order of its lines) - a deviation from R3.1.5's ranked titles, by Boaz's choice.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
