@@ -955,6 +955,11 @@ nothing against the account (no attempt mark, no failed day, last run day unchan
 `linkedinLoggedOutAt`: for 30 minutes LinkedIn work counts as used up (web work goes on), then one page visit tries
 again. The top bar says so with the time it tries again. 12 new checks (503).
 
+**1.2.0.33 (Boaz, 2026-10-01) - the two "Back to menu" links.** The one on the Setup complete page ran Finish Setup
+without saying so; it now reads *"Finish Setup and back to menu"*. The one at the top belongs to Change Settings, but a
+style rule (`display: inline-block`) overrode its `hidden` attribute, so it also showed during the first setup; it is
+hidden there now (`.wizard-back-link[hidden]`). The first setup leaves with *Exit to menu* or *Save & Exit*.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

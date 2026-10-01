@@ -762,6 +762,8 @@ body.settings-mode #step-progress,
 body.settings-mode #wizard-main-menu-link { display: none !important; }
 .wizard-back-link { display: inline-block; margin-left: 12px; font-size: 13px; color: var(--blue, #0a66c2); text-decoration: none; }
 .wizard-back-link:hover { text-decoration: underline; }
+/* 1.2.0.33: display above overrode the hidden attribute, so Change Settings' Back to menu showed in the first setup too. */
+.wizard-back-link[hidden] { display: none; }
 #change-back-to-menu-link { margin: 0 12px 8px 0; }
 #change-settings-hint { padding: 18px 4px; color: var(--ink); font-size: 14px; }
 
