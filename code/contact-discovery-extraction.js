@@ -41,6 +41,7 @@ import {
   expandSeniorityLevelKeywords,
   SENIORITY_LEVEL_KEYWORDS,
   CHIEF_OFFICER_RE,
+  getCompletionTargets,
 } from "./storage.js";
 import { getDiscoveryQueueState, checkpointContactPhase, completeDiscoveryQueue } from "./discovery-queue.js";
 import { recordLinkedinTouch } from "./linkedin-touch-log.js";
@@ -380,6 +381,8 @@ function classifyCandidateSeniority(candidate, companyName, seniorityLevels) {
 // stoppedByTouchBudget: true (with whatever candidates were already
 // gathered from completed chunks) rather than discarding a company's
 // partial progress just because a later chunk couldn't run.
+// nav.enough(candidates): optional - true once the candidates found so far are enough, and the remaining
+// keyword chunks are not searched. nav.firstChunkRetriesOnly: retry an empty result on the first chunk only.
 async function fetchContactCandidatesForCompany(tab, slug, companyLabel, keywordChunks, pageDebugSamples, maxPageDebugSamples, nav = {}) {
   const bySlug = new Map();
   let stoppedByTouchBudget = false;
@@ -388,7 +391,8 @@ async function fetchContactCandidatesForCompany(tab, slug, companyLabel, keyword
     const url = buildPeopleSearchUrl(slug, keywordChunks[i].expression);
     let { navCompleted, receivedMessage, results, insightsLoadError, caughtError } = await fetchContactCandidates(tab, url, nav);
     // Same zero-result retry as elsewhere in this file - see runContactDiscoveryPhase's own comment.
-    for (let retryCount = 0; retryCount < 2 && results.length === 0 && receivedMessage && !caughtError; retryCount++) {
+    const maxRetries = nav.firstChunkRetriesOnly ? (i === 0 ? 1 : 0) : 2;
+    for (let retryCount = 0; retryCount < maxRetries && results.length === 0 && receivedMessage && !caughtError; retryCount++) {
       await sleep(randomDelay());
       const retry = await fetchContactCandidates(tab, url, nav);
       ({ navCompleted, receivedMessage, results, insightsLoadError, caughtError } = retry);
@@ -402,6 +406,7 @@ async function fetchContactCandidatesForCompany(tab, slug, companyLabel, keyword
     for (const r of results) {
       if (!bySlug.has(r.slug)) bySlug.set(r.slug, r);
     }
+    if (nav.enough && nav.enough(Array.from(bySlug.values()))) break;
     if (i < keywordChunks.length - 1) await sleep(randomDelay());
   }
   return { candidates: Array.from(bySlug.values()), stoppedByTouchBudget };
@@ -661,15 +666,26 @@ export async function searchCompanyPeopleByName(tab, slug, companyName, keywords
 
 // Title-based discovery for one account - the loop body of runContactDiscoveryForExistingCompanies.
 // company: { key, company, companyId, slug, contactCount }. Returns { ranAnything, received, added, touches }.
-export async function discoverContactsForAccount(tab, company, { activate = false } = {}) {
+// untilTarget: the pipeline's call - stop at the account's target contacts (below). The manual tool searches every chunk.
+export async function discoverContactsForAccount(tab, company, { activate = false, untilTarget = false } = {}) {
   const profile = withSeniorityKeywords(await getTargetContactProfile());
   const maxContactsPerAccount = profile.maxContactsPerAccount || DEFAULT_MAX_CONTACTS_PER_ACCOUNT;
   const { chunks: keywordChunks } = buildKeywordExpressionChunks(profile);
   if (keywordChunks.length === 0) return { ranAnything: false, reason: "no target-contact titles/keywords configured (Contacts step)", added: 0, touches: 0 };
   const pageDebugSamples = [];
+  // 1.2.1 (Boaz's clean-profile run, 2026-10-01): one keyword chunk is one People-page visit, and an empty one
+  // was tried three times - about 10 visits per account against the 0.5 the estimate assumed. The search now
+  // stops once the account has its target number of contacts at a Setup seniority level (at least one, which
+  // is what Ready needs), and only the first chunk is retried. Chunks run in Setup order, exact titles first.
+  const targets = await getCompletionTargets().catch(() => null);
+  const need = Math.max(1, Math.min(maxContactsPerAccount, Number(targets?.contactsPerAccount) || 1) - (company.contactCount || 0));
+  const levels = profile.seniorityLevels || [];
+  const counts = (c) => classifyCandidate(c, company.company, profile)
+    && (levels.length === 0 || classifyCandidateSeniority(c, company.company, levels));
   try {
     const { candidates: results, stoppedByTouchBudget } =
-      await fetchContactCandidatesForCompany(tab, company.slug, company.company, keywordChunks, pageDebugSamples, keywordChunks.length * 3, { activate });
+      await fetchContactCandidatesForCompany(tab, company.slug, company.company, keywordChunks, pageDebugSamples, keywordChunks.length * 3,
+        untilTarget ? { activate, firstChunkRetriesOnly: true, enough: (found) => found.filter(counts).length >= need } : { activate });
     const touches = pageDebugSamples.length;
     const received = pageDebugSamples.some((p) => p.receivedMessage && !p.caughtError);
     const classified = [];

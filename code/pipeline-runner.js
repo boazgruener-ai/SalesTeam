@@ -771,7 +771,7 @@ async function doContacts(tab, view) {
   if (!slug) return "Contact discovery needs the company's LinkedIn page";
   const res = await discoverContactsForAccount(tab, {
     key: view.key, company: view.company, companyId: view.companyId, slug, contactCount: (view.contacts || []).length,
-  });
+  }, { untilTarget: true });
   if (!res.ranAnything) return "Contact discovery skipped: no contact titles are set in Setup";
   if (!res.received) return "Contact discovery: the page did not answer";
   return res.added > 0 ? `${res.added} contact${res.added === 1 ? "" : "s"} found` : "No matching contacts found";
