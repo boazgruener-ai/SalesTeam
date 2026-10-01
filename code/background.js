@@ -38,7 +38,7 @@ import {
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
-import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease } from "./linkedin-touch-log.js";
+import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease, countTouchesSince } from "./linkedin-touch-log.js";
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
 import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
@@ -973,11 +973,29 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
   }
 }
 
+// 1.2.1 step 4 (onboarding design 7.3, D7): the LinkedIn page visits one Leads scan takes, to check that the 39
+// the pipeline's ceiling of 60 leaves free are enough. The scan holds the batch lock, so no pipeline visit is
+// counted in.
+async function logScanTouches(startedAt) {
+  const touches = await countTouchesSince(startedAt);
+  const minutes = Math.max(1, Math.round((Date.now() - startedAt) / 60000));
+  appendActivityLog({
+    actor: "extension",
+    action: "scan_touches",
+    label: `Leads scan: ${touches} LinkedIn page visit${touches === 1 ? "" : "s"} in ${minutes} min`,
+    newValue: { touches, minutes },
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "SCAN_ALL") {
     // one batch process at a time: the page checks first (and explains); this is the safety net
     acquireBatch("Scanner (searching LinkedIn for posts and jobs)").then((release) => {
-      scanAllTopics({ reapplyToExisting: Boolean(message.reapplyToExisting) }).finally(release);
+      const startedAt = Date.now();
+      scanAllTopics({ reapplyToExisting: Boolean(message.reapplyToExisting) }).finally(() => {
+        release();
+        logScanTouches(startedAt).catch(() => {});
+      });
     }).catch((err) => {
       if (err instanceof BatchBusyError) chrome.runtime.sendMessage({ type: "SCAN_ERROR", message: err.message }).catch(() => {});
     });

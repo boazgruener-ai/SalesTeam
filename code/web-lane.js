@@ -99,6 +99,9 @@ export async function startWebLane({ limit, budget }) {
   if (items.length === 0) throw new Error("No account needs web research right now - every account already has what the lane looks for.");
   const state = {
     status: "running", total: items.length, candidates: all.length, done: 0, failed: 0, spent: 0, runningKeys: [], stoppedReason: null,
+    // 1.2.1 step 4 (design 7.1): the accounts this run still has to research, queued or running. The pipeline
+    // leaves them to the lane until it is done with them (pipeline-plan.js heldForWebLane).
+    pendingKeys: items.map((item) => item.key),
     budget: Number(budget) || 0, startedAt: Date.now(), heartbeatAt: Date.now(), pausedUntil: null, finishedAt: null,
     acknowledged: false, lastError: null, results: [],
   };
@@ -233,7 +236,10 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
         } finally {
           controllers.delete(item.key);
           state.runningKeys = state.runningKeys.filter((k) => k !== item.key);
-          if (!requeued) state.done++;
+          if (!requeued) {
+            state.done++;
+            state.pendingKeys = state.pendingKeys.filter((k) => k !== item.key);
+          }
           await save();
         }
       }
@@ -248,6 +254,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
     state.status = "done";
     state.pausedUntil = null;
     state.runningKeys = [];
+    state.pendingKeys = [];
     state.finishedAt = Date.now();
     state.measure = measureLane(state.results);
     await save();

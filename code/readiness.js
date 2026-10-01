@@ -19,7 +19,9 @@
 //   importedAt,                                   // when the workbook was imported (fallback date, D6)
 // }
 
-export const MIN_READY_TO_SCAN = 5;
+// 1.2.1 step 4 (onboarding design 7.3, D7): 10, was 5. A Leads scan over fewer accounts rarely finds posts by
+// the target titles, so until 10 are Ready the pipeline works only towards Ready (rankCandidates readyGoal).
+export const MIN_READY_TO_SCAN = 10;
 
 const DAY_MS = 86400000;
 // Freshness windows (R5.2, D5): identity, HQ country and industry rarely change; headcount and people do.

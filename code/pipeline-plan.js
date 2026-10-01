@@ -116,13 +116,26 @@ function hasProfile(c) {
   return /linkedin\.com\/in\//i.test(c.linkedinUrl || "");
 }
 
+// Most senior first (storage.js SENIORITY_LEVELS order); a contact without a known level goes last.
+const SENIORITY_ORDER = ["board", "cLevel", "vp", "head", "director", "manager"];
+function seniorityRank(c) {
+  const i = SENIORITY_ORDER.indexOf(c.level);
+  return i < 0 ? SENIORITY_ORDER.length : i;
+}
+
 // The next known contact to look up by name: a relevant one with no LinkedIn profile first, then one
 // whose profile check is out of date. Contacts already searched are skipped, so each attempt tries a
 // different person, and the job ends once every candidate has been searched.
+// 1.2.1 step 4 (design 7.2): the most senior one first - one verified contact is enough for Ready, and the
+// most senior is the one worth having.
 export function profileContactToTry(view, pipeline, now) {
   const t = typeof now === "number" ? now : Date.now();
   const tried = new Set(((pipeline && pipeline.profileTried) || []).map((n) => nameTokens(n).join(" ")));
-  const relevant = (view.contacts || []).filter((c) => c.relevant && nameTokens(c.fullName).length >= 2 && !tried.has(nameTokens(c.fullName).join(" ")));
+  const relevant = (view.contacts || [])
+    .filter((c) => c.relevant && nameTokens(c.fullName).length >= 2 && !tried.has(nameTokens(c.fullName).join(" ")))
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => seniorityRank(a.c) - seniorityRank(b.c) || a.i - b.i)
+    .map((x) => x.c);
   const missing = relevant.filter((c) => !hasProfile(c));
   if (missing.length > 0) return missing[0];
   const stale = relevant.filter((c) => hasProfile(c) && !(toEpochMs(c.verifiedAt) && t - toEpochMs(c.verifiedAt) <= FRESHNESS_DAYS.contact * ONE_DAY_MS));
@@ -240,6 +253,7 @@ export function monthKey(ms) {
 // Ordered job ids for one account, from its readiness assessment. `pipeline` is its per-account state.
 // `opts.linkedin` (default true): LinkedIn jobs may run - false once the day's visits are used up (W1).
 // `opts.web` (default false): the web budget allows a research now.
+// `opts.profileSearches` (default 0): names already searched on LinkedIn for this account in this pass.
 export function jobsNeeded(view, assessment, pipeline, now, opts) {
   const o = opts || {};
   const jobs = [];
@@ -258,8 +272,12 @@ export function jobsNeeded(view, assessment, pipeline, now, opts) {
   const contactGap = gap(assessment, "contact");
   if (contactGap && (slug || jobs.includes("resolve"))) {
     const known = contactGap.reason !== "absent" ? profileContactToTry(view, pipeline, now) : null;
-    if (known) jobs.push("profile");
-    else if (!jobGaveUp(pipeline, "contacts")) jobs.push("contacts");
+    // D2 (design 7.2): one name search for the most senior known contact; if that does not make the account
+    // Ready, one People-page visit rather than a name search per contact - it usually gives in one touch
+    // what three name searches would. Once the People page has given up, the names are searched again.
+    const contactsLeft = !jobGaveUp(pipeline, "contacts");
+    if (known && (!(o.profileSearches > 0) || !contactsLeft)) jobs.push("profile");
+    else if (contactsLeft) jobs.push("contacts");
   }
   const linkedinJobs = o.linkedin === false ? [] : jobs;
   const plan = o.web ? webPlan(view, assessment, p, now, jobs) : null;
@@ -298,27 +316,75 @@ export function userRetryFirst(entry) {
   return Boolean(entry.view.userIdentityEdit && entry.jobs.includes("resolve") && !(tried && tried.length));
 }
 
+// 1.2.1 step 4 (design 7.1): an account the web lane has queued or is researching is not offered to the
+// pipeline until the lane is done with it - LinkedIn would otherwise search the People page for contacts
+// the website is about to name. `hold` = { keys: [...], since } from a web lane run in progress; the caller
+// passes none when the lane is not running (stopped on the budget, the key or a 429). A run older than a
+// day holds nothing: the accounts have waited long enough.
+export function heldForWebLane(view, hold, now) {
+  if (!hold || !view || !Array.isArray(hold.keys)) return false;
+  const t = typeof now === "number" ? now : Date.now();
+  if (!(hold.since > 0) || t - hold.since > ONE_DAY_MS) return false;
+  return hold.keys.includes(view.key);
+}
+
+// Design 7.3 (D7): the gaps the LinkedIn jobs (and the local re-score that follows them) can close. An
+// account with any other gap - an HQ country or industry that only the web can verify - does not become
+// Ready from LinkedIn visits alone.
+const LINKEDIN_CLOSABLE = new Set(["linkedinCompanyId", "employees", "contact", "salesTeamPriority"]);
+export function readyByLinkedin(assessment) {
+  return (assessment.missing || []).every((m) => LINKEDIN_CLOSABLE.has(m.field));
+}
+
+// `opts.webLaneHold`: see heldForWebLane. `opts.readyGoal` (D7): fewer than MIN_READY_TO_SCAN accounts are
+// Ready, so the pipeline works only towards Ready - accounts LinkedIn alone can bring there first, fewest
+// touches first, ahead of priority; the jobs themselves already stop at Ready (a contact gap ends with one
+// verified contact). Once the goal is met the normal order returns.
 export function rankCandidates(entries, now, contactChunks, opts) {
   const today = localDay(now);
   const level = (p) => priorityLevel(p) || 3;
+  const o = opts || {};
   return (entries || [])
     .filter((e) => e && e.view && !e.view.deleted && !e.view.excluded)
     .filter((e) => !(e.pipeline && e.pipeline.lastRunDay === today))
+    .filter((e) => !heldForWebLane(e.view, o.webLaneHold, now))
     .map((e) => {
       const jobs = jobsNeeded(e.view, e.assessment, e.pipeline, now, opts);
       // Depth only: nothing to do but a full research that closes no gap.
       const depthOnly = jobs.length === 1 && jobs[0] === "web_full" &&
         !(webPlan(e.view, e.assessment, e.pipeline, now, jobsNeeded(e.view, e.assessment, e.pipeline, now)) || {}).early;
-      return { ...e, jobs, depthOnly, touches: estimateTouches(jobs, e.view, contactChunks) };
+      const towardsReady = Boolean(o.readyGoal) && e.assessment.state !== "ready" && jobs.some(isLinkedinJob) && readyByLinkedin(e.assessment);
+      return { ...e, jobs, depthOnly, towardsReady, touches: estimateTouches(jobs, e.view, contactChunks) };
     })
     .filter((e) => e.jobs.length > 0)
     .sort((a, b) =>
       Number(userRetryFirst(b)) - Number(userRetryFirst(a)) ||
+      Number(b.towardsReady) - Number(a.towardsReady) ||
+      (a.towardsReady && b.towardsReady ? a.touches - b.touches : 0) ||
       Number(a.depthOnly) - Number(b.depthOnly) ||
       level(a.view.salesTeamPriority) - level(b.view.salesTeamPriority) ||
       a.touches - b.touches ||
       String((a.pipeline && a.pipeline.lastRunDay) || "").localeCompare(String((b.pipeline && b.pipeline.lastRunDay) || ""))
     );
+}
+
+// What the Scanner's gate says while fewer than MIN_READY_TO_SCAN accounts are Ready (design 7.3): about how
+// long the rest takes. Planning figure until step 4's measurement replaces it: 13-15 accounts and 30-35
+// touches for the first 10, "about an hour" - so about 6 minutes per Ready account still to come, at least 5.
+export const MINUTES_PER_READY_ESTIMATE = 6;
+// Storage key of the measurement of the way to the first MIN_READY_TO_SCAN Ready accounts (pipeline-runner.js
+// trackReadyGoal): { startedAt, readyAtStart, ready, accounts, touches, workMs, readyMade, reachedAt }.
+export const READY_GOAL_KEY = "pipelineReadyGoal";
+// Minutes per Ready account as measured so far, or null until 3 have been made.
+export function measuredMinutesPerReady(goal) {
+  if (!goal || !(goal.readyMade >= 3) || !(goal.workMs > 0)) return null;
+  return goal.workMs / goal.readyMade / 60000;
+}
+export function readyEtaMinutes(ready, goal, minutesPerReady) {
+  const left = Math.max(0, (Number(goal) || 0) - (Number(ready) || 0));
+  if (left === 0) return 0;
+  const per = Number(minutesPerReady) > 0 ? Number(minutesPerReady) : MINUTES_PER_READY_ESTIMATE;
+  return Math.max(5, Math.round((left * per) / 5) * 5);
 }
 
 // ---------------------------------------------------------------------------------------------------

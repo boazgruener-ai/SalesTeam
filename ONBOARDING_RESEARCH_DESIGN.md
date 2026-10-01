@@ -708,6 +708,34 @@ no fit search needed. The accounts are homegrown companies of the right size (Sy
 Alpiq, Zurich Insurance Group, Raiffeisenbank…) - the opposite of the LinkedIn run's "X Switzerland" branches. Far
 below the design's estimate for discovery. Still to see: how many of them the pipeline finds on LinkedIn.
 
+**As built (step 4, 1.2.0.9) - LinkedIn after the web.** All in the existing pipeline (`pipeline-plan.js`,
+`pipeline-runner.js`); nothing new on screen except the Scanner's gate.
+
+- **7.1, the web lane goes first:** a web lane run now records the accounts it still has to research
+  (`pendingKeys`, queued or running). `heldForWebLane` keeps them out of `rankCandidates` while the run is
+  alive; a run that has stopped (budget, key, 429), whose record is more than 2 minutes old (a reload), or that
+  started more than a day ago holds nothing.
+- **7.2 / D2, one name search, then the People page:** account views now carry each contact's seniority level
+  (`level`) and `source`; `profileContactToTry` takes the **most senior** relevant contact without a profile
+  first. After one name search in a pass, `jobsNeeded` offers the People page (`contacts`) instead of a second
+  name search; only once the People page has given up (two failed days) are further names searched (up to 3 a
+  day, as before). Resolve already uses the LinkedIn company link the web found (D10), and size already rides on
+  the resolve visit or is skipped when the web gave a cited count.
+- **7.3 / D7, the first 10 Ready:** `MIN_READY_TO_SCAN` is **10**. While fewer accounts are Ready,
+  `rankCandidates` (`readyGoal`) puts first the accounts whose remaining gaps LinkedIn can close (id, employees,
+  contact, priority - `readyByLinkedin`), fewest estimated touches first, ahead of priority; an account that also
+  needs the web for its HQ or industry waits. The jobs already stop at Ready (a contact gap closes with one
+  verified contact), so nothing above Ready is done for an account before the goal is met. The Scanner's gate
+  says *"6 of 10 accounts Ready, about 25 minutes to go"* while automatic preparation is on
+  (`readyEtaMinutes`: 6 minutes per Ready account to come until 3 have been measured, then the measured pace).
+- **Measurements:** every *Pipeline:* Activity Log line ends with the account's LinkedIn page visits and "now
+  Ready"; the first run that finds fewer than 10 Ready starts `pipelineReadyGoal` (accounts, visits, pipeline
+  work time), and reaching 10 writes one line - *"First 10 accounts Ready (from N): X min after the pipeline
+  started, Y min of pipeline work, Z LinkedIn page visits on W accounts"*. Every Leads scan writes *"Leads
+  scan: N LinkedIn page visits in M min"* (D7: are 39 free touches enough?). Measured once per install, so on
+  an install that already has 10 Ready only the per-account and per-scan lines apply; time to 10 Ready needs
+  the small test target (Boaz's end goal, 10 accounts).
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

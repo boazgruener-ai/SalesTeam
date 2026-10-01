@@ -4858,19 +4858,22 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     // there is nothing to match against, so any contact counts rather than none.
     const discoveryAt = extra.contactDiscoveryAttemptedAt || importedAt;
     const selectedLevelIds = new Set(seniorityLevels.map((l) => (typeof l === "string" ? l : l.id)));
-    const isRelevant = (ct) => {
-      if (seniorityLevels.length === 0) return true;
-      if (ct.seniorityLevel) return true;   // Discovered: already matched against these levels
+    // The level itself (1.2.1 step 4, design 7.2): the pipeline looks up the most senior contact first.
+    const levelOf = (ct) => {
+      if (ct.seniorityLevel) return ct.seniorityLevel;   // Discovered: already matched against these levels
       if (ct.seniority != null && String(ct.seniority).trim() !== "") {
         const levelId = seniorityLevelFromLabel(ct.seniority);
-        return Boolean(levelId && selectedLevelIds.has(levelId));
+        return levelId && selectedLevelIds.has(levelId) ? levelId : null;
       }
-      return Boolean(classifyJobTitleSeniority(ct.jobTitle, seniorityLevels));
+      const level = classifyJobTitleSeniority(ct.jobTitle, seniorityLevels);
+      return level ? level.id : null;
     };
     view.contacts = (contactsByCompanyId.get(row.companyId) || []).map((ct) => ({
       contactKey: contactKeyFor(ct.company, ct.fullName),
       fullName: ct.fullName,
-      relevant: isRelevant(ct),
+      relevant: seniorityLevels.length === 0 || Boolean(levelOf(ct)),
+      level: levelOf(ct),
+      source: ct.source || null,
       linkedinUrl: ct.lastVerified2 || null,
       verifiedAt: toEpochMs(ct.lastVerified) || (ct.source === "Discovered" ? discoveryAt : null),
     }));
