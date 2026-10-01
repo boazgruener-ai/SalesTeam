@@ -519,7 +519,8 @@ export function coverageLines(status) {
   if (!status) return [];
   const { targets: tg, accounts } = status;
   const s = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-  const lines = [`Accounts: ${accounts} of ${tg.accounts} in the list${accounts >= tg.accounts ? " ✓" : ""}.`];
+  // "108 of 100" read as a mistake (Boaz, 2026-10-01): discovery adds whole listings, so the list can pass the target.
+  const lines = [accounts >= tg.accounts ? `Accounts: ${accounts} in the list, target ${tg.accounts} ✓.` : `Accounts: ${accounts} of ${tg.accounts} in the list.`];
   lines.push(`Contacts: ${status.contactsMet} of ${s(accounts, "account has", "accounts have")} ${tg.contactsPerAccount}.`);
   if (tg.initiativesPerAccount > 0) {
     lines.push(`Initiatives: ${status.initiativesMet} of ${s(accounts, "account has", "accounts have")} ${s(tg.initiativesPerAccount, "relevant initiative", "relevant initiatives")}.`);

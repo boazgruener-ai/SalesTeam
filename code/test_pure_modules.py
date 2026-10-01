@@ -1721,6 +1721,8 @@ def test_targets_and_estimate(ctx):
     # coverage lines
     lines = v("coverageLines(targetsStatus(TS_E, {accounts: 10, contactsPerAccount: 3, initiativesPerAccount: 1}))")
     check("coverage lines", lines, ["Accounts: 3 of 10 in the list.", "Contacts: 1 of 3 accounts have 3.", "Initiatives: 2 of 3 accounts have 1 relevant initiative."])
+    lines = v("coverageLines({ targets: { accounts: 100, contactsPerAccount: 3, initiativesPerAccount: 0 }, accounts: 108, contactsMet: 54 })")
+    check("coverage lines over target", lines[0], "Accounts: 108 in the list, target 100 ✓.")
     check("coverage: no initiative line at target 0", len(v("coverageLines(targetsStatus([], {accounts: 10, initiativesPerAccount: 0}))")), 2)
     # onboardingEstimate - a clean install, 100 accounts
     e = v("onboardingEstimate({accounts: 100})")
