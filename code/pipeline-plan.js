@@ -417,6 +417,10 @@ export function autoRunBlocker({ enabled, pausedDay, today, holdUntil, runningBa
 
 // Completion targets above Ready (design 3.10). The wizard's Targets step (build step 6) will let the user
 // set them; until then these defaults apply.
+// People per web lane research (Boaz, 2026-10-01): the first automatic run named 6-16 per account (US$0.22 an
+// account, twice the plan) when 3 relevant contacts are the target. The prompt asks for it, applyWebLaneResearch
+// enforces it.
+export const LANE_MAX_PEOPLE = 5;
 export const DEFAULT_COMPLETION_TARGETS = { accounts: 100, contactsPerAccount: 3, initiativesPerAccount: 1 };
 
 // Each topic in the words the research prompt uses.

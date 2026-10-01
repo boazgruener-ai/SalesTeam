@@ -747,6 +747,13 @@ research for the day too. No pop-up at the end, one Activity Log line (*"Automat
 says what the web side is doing: *"... resumes around 09:06 PM · web research goes on (3 of 20 accounts)"*, or
 *"· no account needs web research just now"*, *"· web research is off"*, *"· web research budget used up"*.
 
+**First automatic run (1.2.0.10, 2026-10-01, 20 accounts):** US$4.32, about **US$0.22 per account** - twice the
+planning figure (traded US$0.26 / 28 s, others US$0.18 / 21 s); about 165 people added (6-16 per account), LinkedIn
+profiles from search results for 46 of 117 (39%). Ready went from 146 to only 147: most of these accounts still need
+the LinkedIn re-check of their company id (391 accounts in all), which only LinkedIn can do. **1.2.0.12 (Boaz): at
+most 5 people per research** (`LANE_MAX_PEOPLE`), at the seniority levels chosen in Setup, most senior first - asked
+in the prompt and enforced when the people are added.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

@@ -12,6 +12,7 @@ import {
   getAccountViews, getTargetAccountsWorkbook, getTargetAccountExtras, getReadinessConfig, getAnthropicApiKey,
   getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig, applyWebLaneResearch,
   appendActivityLog, normalizeCompanyName, setContactLinkedinProfile, contactKeyFor, saveTargetAccountExtra,
+  SENIORITY_LEVELS,
 } from "./storage.js";
 import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
 import { missingWebTopics, webLaneOrder, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
@@ -158,6 +159,11 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
       idealCustomerProfile: await getIdealCustomerProfile(),
       outputLanguage: await getOutputLanguage(),
       targetCountries: universe?.countries || [],
+      // The levels chosen in Setup, most senior first, so the research names people who count towards Ready.
+      seniorityLabels: (() => {
+        const chosen = new Set(((cfg.seniorityLevels || [])).map((l) => (typeof l === "string" ? l : l && l.id)));
+        return SENIORITY_LEVELS.filter((l) => chosen.has(l.id)).map((l) => l.label);
+      })(),
     };
     const industryNames = (cfg.industries || []).map((i) => (i && i.name) || "").filter(Boolean);
     let next = 0;

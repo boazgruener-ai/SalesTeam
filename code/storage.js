@@ -2,6 +2,7 @@ import { geoUrnForCountry } from "./geo-urn-map.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
+import { LANE_MAX_PEOPLE } from "./pipeline-plan.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
@@ -5084,13 +5085,24 @@ export async function applyWebLaneResearch(key, result, { topics = null } = {}) 
     const known = new Map((workbook.contacts || []).filter((ct) => ct.companyId === company.companyId)
       .map((ct) => [contactKeyFor(company.company, ct.fullName), ct]));
     const rows = [];
-    for (const p of found) {
+    // At most LANE_MAX_PEOPLE new people per research, those at a chosen seniority level first, most senior first
+    // (the prompt asks for that too; 2026-10-01 a research named up to 16).
+    const rankOf = (p) => {
+      const level = classifyJobTitleSeniority(p.title, levels);
+      const i = level ? SENIORITY_LEVELS.findIndex((l) => l.id === level.id) : -1;
+      return i < 0 ? SENIORITY_LEVELS.length : i;
+    };
+    const ranked = found.map((p, i) => ({ p, i, r: rankOf(p) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.p);
+    let newPeople = 0;
+    for (const p of ranked) {
       const ctKey = contactKeyFor(company.company, p.fullName);
       const existing = known.get(ctKey);
       if (existing) {
         if (p.linkedinUrl && !existing.lastVerified2 && (await setContactLinkedinProfile(ctKey, p.linkedinUrl)) !== undefined) out.profiles++;
         continue;
       }
+      if (newPeople >= LANE_MAX_PEOPLE) continue;
+      newPeople++;
       const level = classifyJobTitleSeniority(p.title, levels);
       rows.push({
         contactId: `WEB-${company.companyId}-${ctKey.replace(/[^a-z0-9]+/gi, "-").slice(-40)}`,
