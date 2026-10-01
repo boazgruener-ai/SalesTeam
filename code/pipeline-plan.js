@@ -458,13 +458,25 @@ export function missingWebTopics(view, cfg, facts, targets, now) {
 // Design 5.1: publicly traded companies first (their reports answer the most at once, R7a.1), then by
 // priority (P1 first, none last), then by the order the account was listed in. `entries`:
 // [{ key, isPublic: true | false | null, priority: "P1".."P5" | null, order: number | null }].
+// 1.2.0.13 (Boaz, 2026-10-01): before all of that, accounts the web can make Ready on its own (`readyByWeb`: the
+// LinkedIn company is verified and a verified relevant contact is the only thing missing) - a profile found in
+// search results makes them Ready at once. The first automatic run researched 20 accounts and Ready rose by 1,
+// because most of them still needed the LinkedIn re-check of their company id.
 export function webLaneOrder(entries) {
   const lvl = (p) => { const m = /^P([1-5])$/.exec(p || ""); return m ? Number(m[1]) : 9; };
   return [...(entries || [])].sort((a, b) =>
+    (a.readyByWeb ? 0 : 1) - (b.readyByWeb ? 0 : 1) ||
     (a.isPublic === true ? 0 : 1) - (b.isPublic === true ? 0 : 1) ||
     lvl(a.priority) - lvl(b.priority) ||
     (a.order ?? Infinity) - (b.order ?? Infinity) ||
     String(a.key).localeCompare(String(b.key)));
+}
+
+// Is a verified contact the only thing between this account and Ready (webLaneOrder's readyByWeb)? `assessment`
+// from readiness.js assessAccount.
+export function onlyContactMissing(assessment) {
+  const missing = (assessment && assessment.missing) || [];
+  return Boolean(assessment && assessment.scannable) && missing.length > 0 && missing.every((m) => m.field === "contact");
 }
 
 // "Public", "Listed", "SIX: NESN" ... -> true; "Private", "Cooperative", "State-owned" ... -> false; else null.

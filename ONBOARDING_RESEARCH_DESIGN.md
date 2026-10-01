@@ -753,6 +753,9 @@ profiles from search results for 46 of 117 (39%). Ready went from 146 to only 14
 the LinkedIn re-check of their company id (391 accounts in all), which only LinkedIn can do. **1.2.0.12 (Boaz): at
 most 5 people per research** (`LANE_MAX_PEOPLE`), at the seniority levels chosen in Setup, most senior first - asked
 in the prompt and enforced when the people are added.
+**1.2.0.13 (Boaz):** the web lane first takes the accounts it can make Ready on its own - LinkedIn company verified,
+a verified relevant contact the only thing missing (`onlyContactMissing`, `webLaneOrder`'s `readyByWeb`) - then
+traded, priority and listing order as before.
 
 ---
 

@@ -1574,6 +1574,15 @@ def test_linkedin_after_web(ctx):
     check("measured pace only after 3 Ready", ctx.eval("measuredMinutesPerReady({ readyMade: 2, workMs: 600000 })"), None)
     check("measured pace", ctx.eval("measuredMinutesPerReady({ readyMade: 4, workMs: 4 * 300000 })"), 5)
 
+    # 1.2.0.13: the web lane first takes the accounts it can make Ready on its own
+    check("only a contact missing: the web can make it Ready",
+          ctx.eval("onlyContactMissing(assessAccount(readyView({ contacts: [NOPROF('Anna Muster')] }), CFG, NOW))"), True)
+    check("a LinkedIn re-check missing too: not by the web alone",
+          ctx.eval("onlyContactMissing(assessAccount(Object.assign(readyView({ contacts: [] }), { provenance: Object.assign({}, readyView().provenance, { linkedinCompanyId: { src: 'linkedin', at: NOW, link: null, v: '1234' } }) }), CFG, NOW))"), False)
+    check("a Ready account is not a candidate", ctx.eval("onlyContactMissing(assessAccount(readyView(), CFG, NOW))"), False)
+    check("lane order: ready-by-web first, ahead of traded and priority",
+          ctx.eval("webLaneOrder([{ key: 'a', isPublic: true, priority: 'P1' }, { key: 'b', isPublic: false, priority: 'P3', readyByWeb: true }]).map(function (e) { return e.key; }).join(',')"), "b,a")
+
 
 def main():
     ctx = MiniRacer()

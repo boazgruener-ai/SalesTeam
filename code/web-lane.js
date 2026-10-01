@@ -15,9 +15,9 @@ import {
   SENIORITY_LEVELS,
 } from "./storage.js";
 import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
-import { missingWebTopics, webLaneOrder, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
+import { missingWebTopics, webLaneOrder, onlyContactMissing, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
 import { researchIsPublic, findingValue } from "./web-research-apply.js";
-import { applicableProvenance, employeesField } from "./readiness.js";
+import { applicableProvenance, employeesField, assessAccount } from "./readiness.js";
 import { BULK_STATE_KEY } from "./batch-jobs.js";
 import { isRateLimited, backoffDelayMs, MAX_RATE_LIMITS_IN_A_ROW } from "./rate-limit.js";
 import { getPipelineAutomation, webBudgetState, recordWebSpend, setWebBlocked, apiKeyTail } from "./pipeline-automation.js";
@@ -67,6 +67,7 @@ export async function webLaneCandidates({ now = Date.now(), targets = DEFAULT_CO
       key: view.key, companyId: view.companyId, company: view.company, priority: view.salesTeamPriority, order: view.universeOrder,
       isPublic: isPubliclyTraded(extra.overrides?.companyType ?? row.companyType, researchIsPublic(research && research.data)),
       topics, known: knownFacts(view, initiatives, relevant), companyRow: row, website: view.website || null,
+      readyByWeb: onlyContactMissing(assessAccount(view, cfg, now)),
     });
   }
   const byKey = new Map(out.map((c) => [c.key, c]));
