@@ -840,6 +840,10 @@ proposals into it, and the checklist keeps only the proposals not taken yet. Cha
 are listed above it, and Save moves the ticked ones into the box. The up/down rank of proposed titles is dropped (a
 box keeps the order of its lines) - a deviation from R3.1.5's ranked titles, by Boaz's choice.
 
+**First real research (1.2.0.15, 2026-10-01, timetoact-group.ch):** US$0.34, 45 s, 5 pages read, 1 search, proposals
+for all 9 steps - in line with the US$0.30 estimate, which stays until more researches are measured. Boaz went through
+every step on 1.2.0.21: no further comments. **Step 5 DONE.**
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
