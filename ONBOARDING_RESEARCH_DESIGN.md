@@ -888,6 +888,13 @@ and unticking, the exclusion flag, the contacts cap error, the live estimate at 
 pre-fill (US$60 for 250), the confirm summaries, and Finish sending `ONBOARDING_BUILD_START`. **Not yet run in
 Chrome:** the full onboarding in a clean profile with 100 accounts - Boaz's check.
 
+**1.2.0.23 (Boaz, 2026-10-01, during the clean-profile test):** **Use proposal** gave no sign that anything
+happened, nor whether Save was still needed. The button now turns into *"Used ✓"* with a green line: *"The proposal is
+now in the form below and saved - no need to press Save. Change it if you like, or go on with Next."* (the step saves
+itself a moment later); on About you, *"German is now your output language and saved"*. **Companies to include** could
+read as "list all your target customers here": it now says SalesTeam builds the target list itself from the setup's
+criteria, and this step is only for companies wanted in the list whether or not the research finds them.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

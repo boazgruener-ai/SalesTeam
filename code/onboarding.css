@@ -829,3 +829,4 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
   font-size: 13px;
   line-height: 1.5;
 }
+.proposal-used-status { color: var(--good); font-weight: 600; font-size: 12.5px; align-self: center; }

@@ -2329,7 +2329,20 @@ function renderProposalForStep(step) {
     proposal: p, site: sellerSite(), completedBefore: completedBefore || step === "about", accepted,
     notes: proposalNotes(step, p),
     onUse: p && p.found
-      ? () => { applyProposal(step, p, { tickAll: true }); scheduleAutoSave(); if (step === "about") renderProposalForStep(step); }
+      ? () => {
+        applyProposal(step, p, { tickAll: true });
+        scheduleAutoSave();
+        if (step === "about") {
+          // The language now matches, so About you's proposal box goes away - leave a line saying what happened.
+          renderProposalForStep(step);
+          slot.hidden = false;
+          slot.innerHTML = "";
+          const done = document.createElement("p");
+          done.className = "proposal-used-status";
+          done.textContent = `${languageLabel(p.outputLanguage)} is now your output language and saved - no need to press Save.`;
+          slot.append(done);
+        }
+      }
       : null,
     useLabel: step === "about" && p ? `Use ${languageLabel(p.outputLanguage)}` : "Use proposal",
     onResearchAgain: step === "about" ? null : (hint) => researchStepAgain(step, hint),
