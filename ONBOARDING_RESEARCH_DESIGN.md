@@ -934,6 +934,10 @@ before, where a proposal must not replace what is saved (1.2.0.21). And a title'
 the brackets and matched nobody. A stored research with bracketed titles is mapped again when the wizard opens. Things
 you can offer is unchanged (asked only for Target contacts). 4 new checks (491).
 
+**1.2.0.30 (Boaz, 2026-10-01):** Things you can offer works the same way: on a first setup the offers found go straight
+into the list box (no tick list), and the proposal box says *"They are in the list below: remove any the AI should not
+offer"*. A setup completed before keeps the tick list.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

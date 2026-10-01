@@ -2255,7 +2255,10 @@ function proposalNotes(step, p) {
       proposalLine(p.value);
       break;
     case "value-add-offers":
-      notes.push("These can go into a message to a lead as a small give-away - a report, an eBook, a webinar - that gives them a reason to reply. Tick the ones the AI may offer when it drafts a message.");
+      notes.push("These can go into a message to a lead as a small give-away - a report, an eBook, a webinar - that gives them a reason to reply. " +
+        (completedBefore || setupResearch.accepted?.[step]
+          ? "Tick the ones the AI may offer when it drafts a message."
+          : "They are in the list below: remove any the AI should not offer when it drafts a message."));
       if (p.dropped) {
         notes.push(`${p.dropped} more found without a page of their own on ${sellerSite() || "the website"} - left out, since the AI may only offer what has a real page.`);
       }
@@ -2281,6 +2284,13 @@ function mountStepChecklists(step, p, accepted) {
     // there). The checklist shows only proposals not in it yet - ticked on a first setup until the step is accepted.
     const lines = textareaLines("value-add-offers-input");
     const texts = p.items.map(offerLine);
+    // 1.2.0.30 (Boaz): on a first setup the offers go straight into the box, like Target contacts (1.2.0.29).
+    if (!completedBefore && !accepted) {
+      el("value-add-offers-input").value = mergeChecklistWithLines([], [...lines, ...texts]).join("\n");
+      el("value-add-offers-checklist").hidden = true;
+      checklists[step] = null;
+      return;
+    }
     const inBox = initiallyTicked(texts, lines, true);
     const open = p.items.map((item, i) => ({ text: texts[i], sourceUrl: item.url })).filter((_, i) => !inBox[i]);
     const tickNew = !completedBefore && !accepted;
