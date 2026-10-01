@@ -2859,7 +2859,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.10."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.11."
 )
 
 for section in doc.sections:

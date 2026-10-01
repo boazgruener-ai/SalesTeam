@@ -2692,8 +2692,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   // Readiness reads all of these (design 3.5). A workbook change already reloads everything above;
   // the rest only need the assessment redone.
+  // decisionTakenAt (decisions-dot.js): a decision taken on the Decisions page - some of them (keep two accounts
+  // apart, a name-only match) write none of the other keys, and the pie kept showing the item.
   if ("targetAccounts" in changes || "targetAccountExtras" in changes || "targetContactExtras" in changes ||
-      "targetContactProfile" in changes || "targetUniverseConfig" in changes) {
+      "targetContactProfile" in changes || "targetUniverseConfig" in changes || "decisionTakenAt" in changes) {
     scheduleReadinessRefresh();
   }
 });
