@@ -938,6 +938,11 @@ you can offer is unchanged (asked only for Target contacts). 4 new checks (491).
 into the list box (no tick list), and the proposal box says *"They are in the list below: remove any the AI should not
 offer"*. A setup completed before keeps the tick list.
 
+**1.2.0.31 (Boaz, 2026-10-01):** the Settings menu said *"Onboarding Setup (not started)"* while he was on step 10, and he
+ended up in Change Settings (no numbers, no Finish Setup). The progress label counted 11 steps (15 since step 6) and was
+drawn only when the Settings page opened, never while the wizard ran inside it; it now uses 15 and is redrawn whenever
+the wizard saves its progress or the setup is finished.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
