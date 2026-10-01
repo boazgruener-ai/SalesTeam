@@ -898,6 +898,11 @@ Also in 1.2.0.23: an automatic Web Discovery is marked done for its target (`aut
 when it starts - a run cut off by an extension reload is started again by the next kick for what is still owed
 (before, it would have waited a week).
 
+**1.2.0.24 (Boaz, 2026-10-01):** the Exclusions step's proposal box says what excluding does: *"An excluded company
+never shows up in your Target Accounts, and its people are never searched for leads. A post from a competitor,
+recruiter, customer or partner that a keyword scan finds is marked Irrelevant."* (Companies excluded as *Other* have no
+such post filter - a keyword-scan post from one of them still comes through; raised with Boaz.)
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
