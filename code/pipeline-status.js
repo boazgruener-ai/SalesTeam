@@ -13,6 +13,7 @@ import { getRunningBatch } from "./batch-jobs.js";
 import { timeBelowCeiling } from "./linkedin-touch-log.js";
 import { localDay, PIPELINE_TOUCH_CEILING } from "./pipeline-plan.js";
 import { getOnboardingCompletedAt } from "./storage.js";
+import { WEB_LANE_STATE_KEY } from "./web-lane.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, claimConsentQuestion, CONSENT_TITLE, CONSENT_TEXT,
   PIPELINE_AUTOMATION_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_KICK_EVERY_MS,
@@ -152,6 +153,19 @@ function timeLabel(ms) {
   return d.toDateString() === new Date().toDateString() ? time : `tomorrow ${time}`;
 }
 
+// 1.2.0.10: while the LinkedIn visits are used up, what the web side is doing - Boaz could not tell (2026-10-01).
+async function webSideText() {
+  const lane = (await chrome.storage.local.get(WEB_LANE_STATE_KEY))[WEB_LANE_STATE_KEY];
+  if (lane && lane.status === "running" && Date.now() - (lane.heartbeatAt || 0) <= STALE_MS) {
+    return `web research goes on (${lane.done} of ${lane.total} accounts)`;
+  }
+  const w = await webBudgetState();
+  if (w.reason === "off") return "web research is off";
+  if (w.reason === "used_up" || w.reason === "zero") return "web research budget used up";
+  if (w.reason) return "web research paused";
+  return "no account needs web research just now";
+}
+
 // The one line under the Pipeline status pie (design 10.2, U3) and in Settings > Automation.
 export async function pipelineStatusLine() {
   const auto = await getPipelineAutomation();
@@ -169,7 +183,7 @@ export async function pipelineStatusLine() {
   }
   if ((store[PIPELINE_HOLD_KEY] || 0) > Date.now()) return "Paused while you start a job of your own";
   const release = await timeBelowCeiling(PIPELINE_TOUCH_CEILING);
-  if (release) return `LinkedIn limit for automation reached · resumes around ${timeLabel(release)}`;
+  if (release) return `LinkedIn limit for automation reached · resumes around ${timeLabel(release)} · ${await webSideText()}`;
   const idle = store[PIPELINE_IDLE_KEY];
   if (idle && idle.reason === "nothing_left") return "All accounts processed for today. Your daily LinkedIn limit is now free for scanning.";
   if (idle && idle.reason === "no_backup") return "Waiting for today's backup before starting. It is made while a SalesTeam page is open.";
@@ -214,7 +228,7 @@ export function watchWebStatusLine(el) {
 export function watchPipelineStatusLine(el) {
   if (!el) return;
   const paint = async () => { try { el.textContent = await pipelineStatusLine(); } catch { /* leave the last text */ } };
-  const keys = [PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_AUTOMATION_KEY, "activeBatchJob"];
+  const keys = [PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_AUTOMATION_KEY, "activeBatchJob", WEB_LANE_STATE_KEY];
   chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && keys.some((k) => changes[k])) paint(); });
   setInterval(paint, 60000);
   paint();
@@ -229,7 +243,7 @@ export async function initPipelineStatus() {
   setInterval(async () => { const s = await read(); if (s && s.status === "running") render(s); }, 15000);
   // The waiting text depends on more than the run record (the automation switch, a hold, a job of the user's,
   // the LinkedIn visits freeing up), so it is repainted when those change and once a minute.
-  const waitKeys = [PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_AUTOMATION_KEY, "activeBatchJob"];
+  const waitKeys = [PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_AUTOMATION_KEY, "activeBatchJob", WEB_LANE_STATE_KEY];
   chrome.storage.onChanged.addListener(async (changes, area) => {
     if (area === "local" && waitKeys.some((k) => changes[k])) paintBar(await read());
   });

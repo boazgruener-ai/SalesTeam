@@ -736,6 +736,17 @@ below the design's estimate for discovery. Still to see: how many of them the pi
   an install that already has 10 Ready only the per-account and per-scan lines apply; time to 10 Ready needs
   the small test target (Boaz's end goal, 10 accounts).
 
+**1.2.0.10 (Boaz, 2026-10-01) - the web goes on while LinkedIn waits.** With the pipeline's LinkedIn visits used up
+the top bar said only *"LinkedIn limit for automation reached"*, and nothing ran on the web: the pipeline's own web
+research (missing headcount or HQ, a full research once a year) had nothing left, and the web lane ran only by hand.
+Now (a part of step 6 brought forward): when a kick finds the LinkedIn limit reached and the pipeline idle, and the
+monthly web budget allows, it starts the **web lane automatically**, 20 accounts per run. Each account's cost counts
+against the monthly web budget; before every account the run checks that automatic preparation is on, not paused
+for today, and that the budget still allows; an empty credit balance or a Console limit blocks the pipeline's web
+research for the day too. No pop-up at the end, one Activity Log line (*"Automatic web research: ..."*). The bar
+says what the web side is doing: *"... resumes around 09:06 PM · web research goes on (3 of 20 accounts)"*, or
+*"· no account needs web research just now"*, *"· web research is off"*, *"· web research budget used up"*.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

@@ -30,7 +30,7 @@ import {
 import { researchAccountOnWeb, apiBlockedReason } from "./agent-shared.js";
 import { pageNamesAgree, cleanPageName, isEmptyPageBand } from "./decision-rules.js";
 import { assessAccount, companyLinkSlug, countReadiness, MIN_READY_TO_SCAN } from "./readiness.js";
-import { WEB_LANE_STATE_KEY } from "./web-lane.js";
+import { WEB_LANE_STATE_KEY, startWebLane, isWebLaneRunning } from "./web-lane.js";
 import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
   parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING, autoRunBlocker, USER_JOB_HOLD_MS,
@@ -47,6 +47,9 @@ import {
 } from "./pipeline-automation.js";
 
 export const PIPELINE_STATE_KEY = "pipelineState";
+// 1.2.0.10: accounts per automatic web lane run, started while the LinkedIn visits are used up. Each kick
+// (every 10 minutes while a page is open) can start the next one; the monthly web budget is the limit.
+const AUTO_WEB_LANE_ACCOUNTS = 20;
 // A web lane run whose record has not been saved for this long belongs to a worker that died (a reload).
 const WEB_LANE_STALE_MS = 2 * 60 * 1000;
 const RUN_LABEL = "Run pipeline now";
@@ -172,6 +175,13 @@ export async function kickPipeline(source) {
       // Kept only for the reasons the status line explains; hold and busy pass by themselves.
       if (["nothing_left", "no_backup", "budget"].includes(reason)) {
         await chrome.storage.local.set({ [PIPELINE_IDLE_KEY]: { reason, at: now } });
+      }
+      // 1.2.0.10 (Boaz, 2026-10-01): the LinkedIn visits are used up and the pipeline has no web research of its
+      // own to do, but the web budget allows more - the web lane carries on (contacts, profiles, initiatives).
+      if (reason === "budget" && !web.reason && stats.last24h >= PIPELINE_TOUCH_CEILING && !isWebLaneRunning()) {
+        const left = Math.max(0, (Number(web.monthlyUsd) || 0) - (Number(web.spentUsd) || 0));
+        const lane = await startWebLane({ limit: AUTO_WEB_LANE_ACCOUNTS, budget: left, auto: true }).catch(() => null);
+        if (lane && lane.ok) return { started: false, reason, webLane: true };
       }
       return { started: false, reason };
     }

@@ -19,6 +19,8 @@ import { researchIsPublic, findingValue } from "./web-research-apply.js";
 import { applicableProvenance, employeesField } from "./readiness.js";
 import { BULK_STATE_KEY } from "./batch-jobs.js";
 import { isRateLimited, backoffDelayMs, MAX_RATE_LIMITS_IN_A_ROW } from "./rate-limit.js";
+import { getPipelineAutomation, webBudgetState, recordWebSpend, setWebBlocked, apiKeyTail } from "./pipeline-automation.js";
+import { localDay } from "./pipeline-plan.js";
 
 export const WEB_LANE_STATE_KEY = "webLaneState";
 const WORKERS = 4;
@@ -88,7 +90,15 @@ function knownFacts(view, initiatives, relevantContacts) {
   return out;
 }
 
-export async function startWebLane({ limit, budget }) {
+export function isWebLaneRunning() {
+  return Boolean(runner);
+}
+
+// `auto` (1.2.0.10): started by the automatic pipeline while its LinkedIn visits are used up (pipeline-runner.js
+// kickPipeline). Such a run is paid from the monthly web budget like the pipeline's own research (each account's
+// cost is recorded there), stops when that budget, automatic preparation or today's pause says so, and ends
+// without a pop-up - its summary goes to the Activity Log only.
+export async function startWebLane({ limit, budget, auto = false }) {
   if (runner) throw new Error("The web research lane is already running.");
   const bulk = (await chrome.storage.local.get(BULK_STATE_KEY))[BULK_STATE_KEY];
   if (bulk && bulk.status === "running") throw new Error("A bulk web research is running - wait for it to finish, or stop it, first.");
@@ -103,7 +113,7 @@ export async function startWebLane({ limit, budget }) {
     // leaves them to the lane until it is done with them (pipeline-plan.js heldForWebLane).
     pendingKeys: items.map((item) => item.key),
     budget: Number(budget) || 0, startedAt: Date.now(), heartbeatAt: Date.now(), pausedUntil: null, finishedAt: null,
-    acknowledged: false, lastError: null, results: [],
+    auto: Boolean(auto), acknowledged: Boolean(auto), lastError: null, results: [],
   };
   const save = () => chrome.storage.local.set({ [WEB_LANE_STATE_KEY]: { ...state, heartbeatAt: Date.now() } }).catch(() => {});
   await save();
@@ -116,7 +126,7 @@ export async function startWebLane({ limit, budget }) {
       for (const c of controllers.values()) c.abort();
     },
   };
-  run(items, { apiKey, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r) }).catch(() => {});
+  run(items, { apiKey, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r), auto: Boolean(auto) }).catch(() => {});
   return { ok: true, total: items.length, candidates: all.length };
 }
 
@@ -125,7 +135,16 @@ export function stopWebLane() {
   return { ok: !!runner };
 }
 
-async function run(items, { apiKey, state, save, controllers, isStopping, stop }) {
+// An automatic run asks before every account whether it may still go on.
+async function autoStopReason() {
+  const a = await getPipelineAutomation();
+  if (!a.enabled) return "automation_off";
+  if (a.pausedDay === localDay()) return "paused_today";
+  const w = await webBudgetState();
+  return w.reason ? `web_${w.reason}` : null;
+}
+
+async function run(items, { apiKey, state, save, controllers, isStopping, stop, auto }) {
   let beat = 0;
   const keepAlive = setInterval(() => {
     chrome.storage.local.get("keepAlive").catch(() => {});
@@ -157,6 +176,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
         await waitOutPause();
         if (isStopping()) break;
         if (state.budget > 0 && state.spent >= state.budget) { stop("budget"); break; }
+        if (auto) { const why = await autoStopReason().catch(() => null); if (why) { stop(why); break; } }
         const item = retry.shift() || items[next++];
         if (!item) break;
         const own = new AbortController();
@@ -208,6 +228,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
             profileAsked: profile ? profile.asked : 0, profileFound: profile ? profile.found : 0,
           };
           state.results.push(rec);
+          if (auto && rec.costUsd > 0) await recordWebSpend(rec.costUsd).catch(() => {});
           appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: accountLine(rec) }).catch(() => {});
         } catch (err) {
           if (isRateLimited(err) && !isStopping()) {
@@ -231,6 +252,8 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
           appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: `Web research (new) - ${item.company}: failed - ${String(err.message || err).slice(0, 200)}` }).catch(() => {});
           consecutiveFailures++;
           const blocked = apiBlockedReason(err);
+          // An automatic run tells the pipeline too, so neither tries again today with this key (W6).
+          if (blocked && auto && (blocked === "credit" || blocked === "limit")) await setWebBlocked(blocked, apiKeyTail(apiKey)).catch(() => {});
           if (blocked) stop(blocked);
           else if (consecutiveFailures >= 3 || [401, 402, 403].includes(err.status)) stop("errors");
         } finally {
@@ -260,7 +283,10 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
     await save();
     runner = null;
     try {
-      await appendActivityLog({ actor: "user", action: "web_lane_finished", label: `Web research lane: ${measureText(state)}` });
+      await appendActivityLog({
+        actor: auto ? "extension" : "user", action: "web_lane_finished",
+        label: `${auto ? "Automatic web research" : "Web research lane"}: ${measureText(state)}${auto && state.stoppedReason ? ` (stopped: ${state.stoppedReason})` : ""}`,
+      });
     } catch { /* the log entry is a convenience */ }
   }
 }

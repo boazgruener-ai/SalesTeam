@@ -128,7 +128,7 @@ async function renderLane(state) {
   if (state && state.status === "running") {
     const waitSec = state.pausedUntil ? Math.max(0, Math.round((state.pausedUntil - Date.now()) / 1000)) : 0;
     setStatusMessage("lane", {
-      text: `Web research (new) in the background: ${state.done} of ${state.total} accounts done${state.failed ? `, ${state.failed} failed` : ""} - ${(state.spent || 0) < 0.005 ? "nothing spent yet" : `about ${usd(state.spent)} so far`}.` +
+      text: `${state.auto ? "Automatic web research (LinkedIn limit reached, so the web goes on)" : "Web research (new) in the background"}: ${state.done} of ${state.total} accounts done${state.failed ? `, ${state.failed} failed` : ""} - ${(state.spent || 0) < 0.005 ? "nothing spent yet" : `about ${usd(state.spent)} so far`}.` +
         `${waitSec > 0 ? ` Paused - Anthropic asked us to slow down; resuming in about ${waitSec} s.` : ""} You can keep using SalesTeam.`,
       action: {
         label: laneStopping ? "Stopping…" : "Stop", disabled: laneStopping,
