@@ -2435,6 +2435,19 @@ const DEFAULT_NEGATIVE_TOPICS = [
     matchField: "company",
     builtin: true,
   },
+  // 1.2.0.25 (Boaz, 2026-10-01): companies excluded as "Other" are filtered out of lead scans too, so an excluded
+  // company is never a lead whatever its category. Added to existing installs by the backfill in getNegativeTopics.
+  {
+    id: "builtin-other-exclusions",
+    name: "Other Excluded Companies",
+    sourceList: "others",
+    keywords: [],
+    andKeywords: [],
+    enabled: true,
+    appliesTo: "both",
+    matchField: "company",
+    builtin: true,
+  },
   {
     id: "builtin-ai-vendors",
     name: "AI/Cloud Vendor Blocklist",
@@ -2473,6 +2486,7 @@ const NEGATIVE_TOPIC_SOURCE_CATEGORY = {
   recruiters: "recruiter",
   customers: "customer",
   partners: "partner",
+  others: "other",
 };
 
 // Resolves against the unified companyExclusions list (2026-09-17) - the

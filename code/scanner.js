@@ -1072,6 +1072,7 @@ const NEGATIVE_TOPIC_SOURCE_LABELS = {
   recruiters: "Filter out recruiting companies, listed in the main settings",
   customers: "Filter out existing customers, listed in the main settings",
   partners: "Filter out existing partners, listed in the main settings",
+  others: "Filter out other excluded companies, listed in the main settings",
 };
 
 // Same card shape as renderTopicCards above (name, keywords, optional

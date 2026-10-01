@@ -2254,8 +2254,8 @@ function proposalNotes(step, p) {
       break;
     case "exclusions":
       // Boaz, 2026-10-01: say what excluding does.
-      notes.push("An excluded company never shows up in your Target Accounts, and its people are never searched for leads. " +
-        "A post from a competitor, recruiter, customer or partner that a keyword scan finds is marked Irrelevant.");
+      notes.push("An excluded company never shows up in your Target Accounts and is never scanned for leads: its people are " +
+        "not searched, and a post from it that a keyword scan finds is marked Irrelevant.");
       if (p.items?.length) notes.push("Matched by name and website - no LinkedIn page is needed for these.");
       break;
   }

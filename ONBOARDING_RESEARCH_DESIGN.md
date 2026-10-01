@@ -903,6 +903,12 @@ never shows up in your Target Accounts, and its people are never searched for le
 recruiter, customer or partner that a keyword scan finds is marked Irrelevant."* (Companies excluded as *Other* have no
 such post filter - a keyword-scan post from one of them still comes through; raised with Boaz.)
 
+**1.2.0.25 (Boaz, 2026-10-01):** a fifth built-in lead filter, *Other Excluded Companies* (`builtin-other-exclusions`,
+source list `others` -> category `other`, on by default, added to existing installs by the `getNegativeTopics`
+backfill), so an excluded company is never a lead whatever its category. The Exclusions note now says: *"An excluded
+company never shows up in your Target Accounts and is never scanned for leads: its people are not searched, and a post
+from it that a keyword scan finds is marked Irrelevant."*
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
