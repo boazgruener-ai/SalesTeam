@@ -170,7 +170,9 @@ logOnBlur(profileEmailInput, { action: "user_profile_changed", labelFor: () => "
 // still date-first since that's the more useful glance for anything not
 // imported today.
 editSetupBtn.addEventListener("click", () => {
-  location.hash = "#wizard"; // the wizard opens inside this page (see openWizardInline), menu still on the left
+  // A finished setup is changed one setting at a time in Change Settings; an unfinished one continues in the wizard,
+  // inside this page (see openWizardInline), menu still on the left.
+  location.hash = onboardingIsComplete ? "#change-settings" : "#wizard";
 });
 document.getElementById("nav-change-settings").addEventListener("click", () => {
   if (location.hash === "#change-settings") setTimeout(routeSettings, 0); // re-click on the open item still re-shows it
@@ -693,6 +695,8 @@ async function renderLinkedinTouchStat() {
 const SETTINGS_SECTION_IDS = [
   "setup-section", "automation-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
   "discovery-queue-section", "company-discovery-section", "contact-discovery-section",
+  // 1.2.0.49: these two were missing, so they showed under whichever card was open.
+  "revenue-currency-section", "web-findings-section",
 ];
 
 let onboardingIsComplete = false;
@@ -819,6 +823,12 @@ async function renderOnboardingProgress() {
   document.getElementById("onboarding-progress-label").textContent = label;
   document.getElementById("onboarding-progress-fill").style.width = `${pct}%`;
   document.getElementById("onboarding-progress-fill").classList.toggle("onboarding-progress-fill-done", Boolean(completedAt));
+  // 1.2.0.49 (Boaz): "Completed" above a "Continue Setup…" button and "Not completed yet." below it - the status line
+  // was set once at page load. Now both follow the real state.
+  editSetupBtn.textContent = completedAt ? "Change Settings…" : stepIndex > 0 ? "Continue Setup…" : "Start Setup…";
+  editSetupStatusEl.textContent = completedAt
+    ? `Setup finished on ${new Date(completedAt).toLocaleDateString()}. To change an answer, use Change Settings.`
+    : "";
 }
 
 async function init() {
@@ -830,10 +840,6 @@ async function init() {
   await renderLinkedinTouchStat();
   setInterval(renderLinkedinTouchStat, 30000);
 
-  const onboardingCompletedAt = await getOnboardingCompletedAt();
-  editSetupStatusEl.textContent = onboardingCompletedAt
-    ? `Last completed ${new Date(onboardingCompletedAt).toLocaleDateString()}.`
-    : "Not completed yet.";
   await renderOnboardingProgress();
   await renderSellerResearchOffer();
 

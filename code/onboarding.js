@@ -197,7 +197,17 @@ function leaveWizard() {
   afterSetupSaved().finally(leaveWizardNow);
 }
 
+// 1.2.0.49 (Boaz): Finish used to land on Settings' Setup card ("Completed", yet "Continue Setup…" below it). A
+// finished first setup goes to the Target Accounts Dashboard instead, where the list it just started is being built.
+let setupJustFinished = false;
+
 function leaveWizardNow() {
+  if (setupJustFinished && !settingsMode) {
+    const accountsUrl = chrome.runtime.getURL("target-accounts.html");
+    if (window.top !== window) window.top.location.href = accountsUrl;
+    else window.location.href = accountsUrl;
+    return;
+  }
   if (window.top !== window) {
     // Same page, just closes the embedded wizard (works whatever the page's query string). The PARENT is the Settings
     // page that hosts this frame - when Settings itself is embedded in another page (opened from the Posts or
@@ -2041,6 +2051,7 @@ el("finish-btn").addEventListener("click", async () => {
   if (el("finish-automation-checkbox").checked) chrome.runtime.sendMessage({ type: "ONBOARDING_BUILD_START" }).catch(() => {});
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
+  setupJustFinished = true;
   leaveWizard();
 });
 
