@@ -80,6 +80,16 @@ def check(path, parser):
             kind = "missing token" if node.is_missing else "parse error"
             problems.append((line, "%s near: %s" % (kind, snippet)))
             continue
+        # tree-sitter's grammar accepts a raw line break inside a "..." or '...' string; JavaScript does not
+        # (only a backslash right before it continues the line). 1.2.0.8 shipped such a string and every page
+        # importing batch-status.js went blank while this script said "parses cleanly".
+        if node.type == "string":
+            text = source[node.start_byte:node.end_byte]
+            for i, ch in enumerate(text):
+                if ch in (0x0A, 0x0D) and not (i > 0 and text[i - 1] == 0x5C):
+                    problems.append((node.start_point[0] + 1, "line break inside a string (unterminated string literal)"))
+                    break
+            continue
         stack.extend(node.children)
 
     seen = defaultdict(list)

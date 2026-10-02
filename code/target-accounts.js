@@ -13,6 +13,8 @@
 // populates both in one action. Also owns the confidence threshold and the
 // experimental Resolve LinkedIn Company IDs action (6.16), both likewise
 // moved here from Settings the same day.
+import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
+import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
 import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
@@ -27,6 +29,9 @@ import {
   applyResolvedCompanyIds,
   markLinkedinResolveAttempted,
   appendActivityLog,
+  getLastWebDiscoveryAdd,
+  getAccountViews,
+  undoLastWebDiscovery,
   getResults,
   normalizeCompanyName,
   getTargetAccountExtra,
@@ -193,6 +198,129 @@ document.getElementById("pipeline-run-start-btn").addEventListener("click", asyn
   if (res && res.ok) { document.getElementById("pipeline-run-dialog").close(); return; }
   startBtn.disabled = false;
   statusEl.textContent = (res && res.error) || "The pipeline could not start.";
+});
+
+// 1.2.1 build step 2: the web lane, started by hand to measure its cost and time per account (web-lane.js).
+document.getElementById("nav-web-lane-btn").addEventListener("click", () => openWebLaneDialog());
+async function openWebLaneDialog() {
+  const candidatesEl = document.getElementById("web-lane-candidates");
+  document.getElementById("web-lane-status").textContent = "";
+  document.getElementById("web-lane-start-btn").disabled = false;
+  candidatesEl.textContent = "Counting the accounts that need it…";
+  renderWebLaneLastRun().catch(() => {});
+  document.getElementById("web-lane-dialog").showModal();
+  try {
+    const list = await webLaneCandidates();
+    const traded = list.filter((c) => c.isPublic === true).length;
+    candidatesEl.textContent = list.length
+      ? `${list.length} account${list.length === 1 ? " needs" : "s need"} web research${traded ? ` (${traded} known to be publicly traded)` : ""}. First: ${list.slice(0, 5).map((c) => c.company).join(", ")}${list.length > 5 ? " …" : ""}`
+      : "No account needs web research right now.";
+  } catch (err) {
+    candidatesEl.textContent = `Could not count them: ${err.message}`;
+  }
+}
+// The last run, account by account (what the lane stored), for the measurement of build step 2.
+async function renderWebLaneLastRun() {
+  const last = (await chrome.storage.local.get(WEB_LANE_STATE_KEY))[WEB_LANE_STATE_KEY];
+  const box = document.getElementById("web-lane-last");
+  const results = (last && last.results) || [];
+  box.hidden = results.length === 0;
+  if (box.hidden) return;
+  document.getElementById("web-lane-last-summary").textContent =
+    `${last.finishedAt ? new Date(last.finishedAt).toLocaleString() : "Running now"}\n${measureText(last)}`;
+  const list = document.getElementById("web-lane-last-list");
+  list.replaceChildren(...results.map((r) => {
+    const li = document.createElement("li");
+    li.textContent = r.error ? `${r.company}: failed - ${r.error}` : accountLine(r).replace(/^Web research \(new\) - /, "");
+    return li;
+  }));
+}
+document.getElementById("web-lane-close-btn").addEventListener("click", () => document.getElementById("web-lane-dialog").close());
+document.getElementById("web-lane-start-btn").addEventListener("click", async () => {
+  const startBtn = document.getElementById("web-lane-start-btn");
+  const statusEl = document.getElementById("web-lane-status");
+  const limit = parseInt(document.getElementById("web-lane-limit").value, 10);
+  const budget = parseFloat(document.getElementById("web-lane-budget").value);
+  if (!Number.isFinite(limit) || limit < 1) { statusEl.textContent = "Enter a number of accounts, 1 or more."; return; }
+  startBtn.disabled = true;
+  statusEl.textContent = "Starting…";
+  const res = await chrome.runtime.sendMessage({ type: "WEB_LANE_START", limit, budget: Number.isFinite(budget) ? budget : 0 }).catch((err) => ({ ok: false, error: err.message }));
+  if (res && res.ok) { document.getElementById("web-lane-dialog").close(); return; }
+  startBtn.disabled = false;
+  statusEl.textContent = (res && res.error) || "The web research could not start.";
+});
+
+// 1.2.1 build step 3: Web Discovery, started by hand to measure listing cost and rows kept (web-discovery.js).
+document.getElementById("nav-web-discovery-btn").addEventListener("click", () => openWebDiscoveryDialog());
+async function openWebDiscoveryDialog() {
+  document.getElementById("web-discovery-status").textContent = "";
+  document.getElementById("web-discovery-start-btn").disabled = false;
+  const setupEl = document.getElementById("web-discovery-setup");
+  try {
+    const u = await getTargetUniverseConfig();
+    const sizes = SIZE_PRIORITY_BUCKETS.filter((b) => u.sizeBuckets?.[b.key]?.checked).map((b) => b.label);
+    const industries = (u.industries || []).map((i) => i && i.name).filter(Boolean);
+    setupEl.textContent = (u.countries || []).length
+      ? `From your setup - countries: ${u.countries.join(", ")}; sizes: ${sizes.length ? sizes.join(", ") : "any"}; industries: ${industries.length ? industries.join(", ") : "any"}.`
+      : "No target country is set yet - pick one in the Setup wizard's Location step first.";
+  } catch (err) {
+    setupEl.textContent = "";
+  }
+  renderWebDiscoveryLastRun().catch(() => {});
+  document.getElementById("web-discovery-dialog").showModal();
+}
+async function renderWebDiscoveryLastRun() {
+  const last = (await chrome.storage.local.get(WEB_DISCOVERY_STATE_KEY))[WEB_DISCOVERY_STATE_KEY];
+  const box = document.getElementById("web-discovery-last");
+  box.hidden = !last;
+  if (!last) return;
+  document.getElementById("web-discovery-last-summary").textContent =
+    `${last.finishedAt ? new Date(last.finishedAt).toLocaleString() : "Running now"}\n${discoveryText(last)}`;
+  const bandLines = ((last.linkedin && last.linkedin.bands) || []).map((b) => `LinkedIn, ${b.label}: ${b.found} found of ${b.wanted} wanted, ${b.pages} result page${b.pages === 1 ? "" : "s"}`);
+  document.getElementById("web-discovery-last-list").replaceChildren(...bandLines.map((t) => {
+    const li = document.createElement("li");
+    li.textContent = t;
+    return li;
+  }), ...(last.listings || []).map((l) => {
+    const li = document.createElement("li");
+    li.textContent = l.failed ? `${l.url}: could not be read`
+      : `${l.what || l.url} (${l.country}): ${l.rows} rows, ${l.kept} kept, about US$${(l.costUsd || 0).toFixed(3)}, ${l.seconds || 0} s${l.cutOff ? ", CUT OFF at 4 minutes" : ""} - ${l.url}`;
+    return li;
+  }));
+  // The third measure of step 3: how many of the accounts it added the LinkedIn work has found since.
+  const added = await getLastWebDiscoveryAdd();
+  const linkedinEl = document.getElementById("web-discovery-linkedin-found");
+  const undoBtn = document.getElementById("web-discovery-undo-btn");
+  undoBtn.hidden = !added;
+  if (!added) { linkedinEl.textContent = ""; return; }
+  const keys = new Set(added.keys || []);
+  const views = (await getAccountViews({ persistDerived: false })).filter((v) => keys.has(v.key) && !v.deleted);
+  const found = views.filter((v) => v.linkedinCompanyId).length;
+  const tried = views.filter((v) => !v.linkedinCompanyId && v.pipeline?.attempts?.resolve).length;
+  linkedinEl.textContent = `Of the ${views.length} accounts it added that are still there: ${found} found on LinkedIn so far, ${tried} looked up but not found yet, ${views.length - found - tried} not looked up yet.`;
+}
+document.getElementById("web-discovery-close-btn").addEventListener("click", () => document.getElementById("web-discovery-dialog").close());
+document.getElementById("web-discovery-undo-btn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("web-discovery-status");
+  const ok = await askConfirm("Remove the accounts the last Find new accounts run added? They are removed like Remove Account (their data stays in the backup).", { okLabel: "Remove them", cancelLabel: "Keep them" });
+  if (!ok) return;
+  const n = await undoLastWebDiscovery();
+  appendActivityLog({ actor: "user", action: "web_discovery_undone", label: `Removed the ${n} accounts the last Find new accounts run added` }).catch(() => {});
+  statusEl.textContent = `${n} account${n === 1 ? "" : "s"} removed.`;
+  renderWebDiscoveryLastRun().catch(() => {});
+});
+document.getElementById("web-discovery-start-btn").addEventListener("click", async () => {
+  const startBtn = document.getElementById("web-discovery-start-btn");
+  const statusEl = document.getElementById("web-discovery-status");
+  const target = parseInt(document.getElementById("web-discovery-target").value, 10);
+  const budget = parseFloat(document.getElementById("web-discovery-budget").value);
+  if (!Number.isFinite(target) || target < 1) { statusEl.textContent = "Enter a number of accounts, 1 or more."; return; }
+  startBtn.disabled = true;
+  statusEl.textContent = "Starting…";
+  const res = await chrome.runtime.sendMessage({ type: "WEB_DISCOVERY_START", target, budget: Number.isFinite(budget) ? budget : 0, useLinkedin: document.getElementById("web-discovery-linkedin").checked }).catch((err) => ({ ok: false, error: err.message }));
+  if (res && res.ok) { document.getElementById("web-discovery-dialog").close(); return; }
+  startBtn.disabled = false;
+  statusEl.textContent = (res && res.error) || "Finding new accounts could not start.";
 });
 
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", async () => {
@@ -6433,6 +6561,8 @@ const ACTION_DIALOG_IDS = {
   prioritize: "prioritize-companies-dialog",
   "discover-contacts": "discover-contacts-dialog",
   "find-duplicates": "find-duplicates-dialog",
+  "web-lane": "web-lane-dialog",
+  "web-discovery": "web-discovery-dialog",
 };
 function openActionFromHash() {
   const action = new URLSearchParams(location.hash.slice(1)).get("action");
@@ -6458,6 +6588,8 @@ function openActionFromHash() {
   if (action === "discover-contacts") showView("contactsList");
   if (action === "export-hubspot") refreshHubspotExportSummary();
   if (action === "import-hubspot") { document.getElementById("hubspot-import-status").hidden = true; }
+  if (action === "web-lane") { openWebLaneDialog(); return; }
+  if (action === "web-discovery") { openWebDiscoveryDialog(); return; }
   if (action === "find-duplicates") { renderFindDuplicates().then(() => document.getElementById(dialogId).showModal()); return; }
   if (action === "import-accounts") { renderImportColumnsHelp(); document.getElementById("import-help-status").textContent = ""; }
   document.getElementById(dialogId).showModal();

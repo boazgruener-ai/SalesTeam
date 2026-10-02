@@ -45,6 +45,70 @@
     </div>
   </dialog>
 
+  <dialog id="web-lane-dialog">
+    <h3>Research accounts on the web (new)</h3>
+    <p>
+      The new web research of SalesTeam 1.2.1. Each account is asked <strong>only for what it still lacks</strong>: HQ,
+      employees, industry (if your setup weighs it), initiatives, named senior people and a short summary. It reads the
+      company's own pages and reports first and searches only for the rest. People it finds are added as contacts, with
+      their LinkedIn profile when a web search lists one - no LinkedIn page is visited.
+    </p>
+    <p>
+      Publicly traded companies go first, then by priority. It runs in the background, beside the automatic LinkedIn work,
+      and costs money on your own Anthropic API key. When it finishes, it reports the cost and time per account.
+    </p>
+    <p id="web-lane-candidates" class="page-subtitle"></p>
+    <p><label>Accounts to research: <input type="number" id="web-lane-limit" min="1" max="500" value="20" style="width:5em"></label></p>
+    <p><label>Stop when the cost reaches US$ <input type="number" id="web-lane-budget" min="0" step="0.5" value="5" style="width:5em"></label></p>
+    <details id="web-lane-last" hidden>
+      <summary>Details of the last run</summary>
+      <p id="web-lane-last-summary" class="page-subtitle" style="white-space:pre-line"></p>
+      <ol id="web-lane-last-list" class="page-subtitle" style="max-height:16em;overflow:auto"></ol>
+    </details>
+    <p id="web-lane-status" class="page-subtitle" role="status"></p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="web-lane-start-btn">Start</button>
+      <button type="button" id="web-lane-close-btn">Cancel</button>
+    </div>
+  </dialog>
+
+  <dialog id="web-discovery-dialog">
+    <h3>Find new accounts (new)</h3>
+    <p>
+      The new account discovery of SalesTeam 1.2.1, using the countries, sizes and industries of your Setup wizard.
+      It looks for <strong>listing pages on the web</strong> (rankings, directories, industry lists), reads them, and adds
+      the best companies as accounts marked <strong>Web</strong>. Companies you already have, removed or excluded are left
+      out. The automatic LinkedIn work then looks each new account up on LinkedIn.
+    </p>
+    <p>
+      <strong>Optional - LinkedIn:</strong> tick the box below to also search LinkedIn for about a fifth of the target. LinkedIn's
+      free company search mostly finds <strong>local branches of international groups</strong> (e.g. "... Switzerland"),
+      which listing pages tend to miss. It runs in a small separate window, counts against your daily LinkedIn limit,
+      and the automatic LinkedIn work steps aside meanwhile.
+    </p>
+    <p>
+      The web search costs money on your own Anthropic API key. When it finishes, it reports what was found and what it
+      cost. Stop adds nothing from the web; the cost limit adds what was found by then.
+    </p>
+    <p id="web-discovery-setup" class="page-subtitle"></p>
+    <p><label>New accounts to find: <input type="number" id="web-discovery-target" min="1" max="300" value="10" style="width:5em"></label>
+      <span class="page-subtitle">(it looks for 15% more, since some will lack evidence)</span></p>
+    <p><label><input type="checkbox" id="web-discovery-linkedin"> Also search LinkedIn for local branches of international groups</label></p>
+    <p><label>Stop when the web cost reaches US$ <input type="number" id="web-discovery-budget" min="0" step="0.5" value="3" style="width:5em"></label></p>
+    <details id="web-discovery-last" hidden>
+      <summary>Details of the last run</summary>
+      <p id="web-discovery-last-summary" class="page-subtitle" style="white-space:pre-line"></p>
+      <ol id="web-discovery-last-list" class="page-subtitle" style="max-height:16em;overflow:auto"></ol>
+      <p id="web-discovery-linkedin-found" class="page-subtitle"></p>
+      <p><button type="button" id="web-discovery-undo-btn">Remove the accounts the last run added</button></p>
+    </details>
+    <p id="web-discovery-status" class="page-subtitle" role="status"></p>
+    <div class="merge-discovered-dialog-actions">
+      <button type="button" id="web-discovery-start-btn">Start</button>
+      <button type="button" id="web-discovery-close-btn">Cancel</button>
+    </div>
+  </dialog>
+
   <dialog id="find-duplicates-dialog">
     <h3>Find &amp; Merge Duplicates</h3>
     <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
@@ -210,6 +274,8 @@
         </div>
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
         <button id="nav-run-pipeline-btn" type="button" class="nav-item" title="Data pipeline (1.2, manual start): work through the accounts that most need it - re-check LinkedIn, read sizes, find known contacts' profiles, discover contacts">Run pipeline now…</button>
+        <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
+        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="1.2.1 test: find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts (new)…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>

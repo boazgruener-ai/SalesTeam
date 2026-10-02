@@ -61,6 +61,8 @@ export const WEB_FINDING_FIELDS = [
   finding("zefixOfficialName", "Registry official name", "registryName"),
   finding("zefixUid", "Registry ID", "registryId"),
   finding("zefixAddress", "Registry address", "registryAddress"),
+  // 1.2.1 web lane: asked for only when the user's setup weighs industry, and then as one of the setup's own names.
+  finding("industry", "Industry", "industry"),
 ];
 
 // true when a research answer uses the per-field format for any of its facts.
@@ -154,4 +156,62 @@ export function computeFindingProposals(company, overrides, data, money = null) 
     out.push({ key: f.key, label: f.label, found, current, state: "different" });
   }
   return out;
+}
+
+// ---- 1.2.1 web lane (ONBOARDING_RESEARCH_DESIGN.md 5.3-5.5): the parts of the answer that are lists ----
+
+const HTTP_URL_RE = /^https?:\/\/\S+$/i;
+const ROLE_NOT_NAME_RE = /^(the|our|a|an|its)\s|\b(ceo|cfo|cio|cto|coo|cdo|chief|head|officer|director|manager|board|team|department|n\/a|unknown)\b/i;
+const cleanUrl = (u) => (typeof u === "string" && HTTP_URL_RE.test(u.trim()) ? u.trim() : null);
+
+// "https://ch.linkedin.com/in/anna-muster-12ab/?trk=x" -> "https://www.linkedin.com/in/anna-muster-12ab/"; null for anything else.
+export function linkedinProfileUrl(url) {
+  const m = /^https?:\/\/([a-z]{2,3}\.|www\.)?linkedin\.com\/in\/([^/?#\s]+)/i.exec(String(url || "").trim());
+  return m ? `https://www.linkedin.com/in/${m[2]}/` : null;
+}
+
+// Same for a company page: "https://www.linkedin.com/company/<slug>/", or null.
+export function linkedinCompanyUrl(url) {
+  const m = /^https?:\/\/([a-z]{2,3}\.|www\.)?linkedin\.com\/company\/([^/?#\s]+)/i.exec(String(url || "").trim());
+  return m ? `https://www.linkedin.com/company/${m[2]}/` : null;
+}
+
+// Named people the research found on the company's own site or in a report: [{ fullName, title, sourceUrl }].
+// A person is kept only with a first AND last name and a source of their own (R7a.5) - "the CFO" alone, or a
+// name nobody cited, is not a contact.
+export function researchContacts(data) {
+  const out = [];
+  const seen = new Set();
+  for (const c of (data && Array.isArray(data.contacts) ? data.contacts : [])) {
+    const fullName = String((c && c.fullName) || "").replace(/\s+/g, " ").trim();
+    const sourceUrl = cleanUrl(c && c.sourceUrl);
+    if (!sourceUrl || fullName.split(" ").filter((w) => /[a-z]/i.test(w)).length < 2 || fullName.length > 80) continue;
+    // A role is not a name: "The CFO", "Head of Group IT".
+    if (ROLE_NOT_NAME_RE.test(fullName)) continue;
+    const k = fullName.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    // D10 (2026-09-29): the person's LinkedIn profile link as a web search listed it - no LinkedIn visit.
+    const profile = cleanUrl(c && c.linkedinUrl);
+    out.push({ fullName, title: String((c && c.title) || "").trim() || null, sourceUrl, linkedinUrl: linkedinProfileUrl(profile) });
+  }
+  return out;
+}
+
+export const INITIATIVE_STAGES = ["poc", "exploration", "pilot", "early_production", "scaling", "mature", "tech_native"];
+
+// Initiatives as addWebResearchInitiatives stores them, with the stage kept only when it is one of the seven.
+export function researchInitiatives(data) {
+  return (data && Array.isArray(data.initiatives) ? data.initiatives : [])
+    .filter((i) => i && String(i.name || "").trim())
+    .map((i) => ({
+      name: String(i.name).trim(), description: i.description || null, date: i.date || null, status: i.status || null,
+      stage: INITIATIVE_STAGES.includes(i.stage) ? i.stage : null, sourceUrl: cleanUrl(i.sourceUrl),
+    }));
+}
+
+// true / false when the research said (either format), else null.
+export function researchIsPublic(data) {
+  const v = data ? findingValue(data.isPublic) : null;
+  return v === true || v === false ? v : null;
 }

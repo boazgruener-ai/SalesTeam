@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1340,6 +1340,72 @@ def test_web_usable(ctx):
           ctx.eval("state(readyView({ linkedinCompanyId: null, linkedinLink: null }))"), "in_progress")
 
 
+def test_web_lane_step2(ctx):
+    """1.2.1 step 2 (design 5.1-5.5, D10): what the web lane asks for, in which order, and what it keeps."""
+    full = "{ initiatives: 1, relevantContacts: 3, hasSummary: true }"
+    check("nothing missing: no research at all (R7a.7)",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, %s, null, NOW))" % full), "[]")
+    check("the listed account typically needs initiatives, contacts and a summary",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, {}, null, NOW))"), '["initiatives","contacts","summary"]')
+    check("an HQ without a url is asked for again",
+          ctx.eval("var v = webView(); v.provenance.globalHqCountry = { src: 'web', at: NOW - DAY, cited: false, v: 'Switzerland' }; "
+                   "JSON.stringify(missingWebTopics(v, CFG, %s, null, NOW))" % full), '["headquarters"]')
+    check("missing employees are asked for",
+          ctx.eval("JSON.stringify(missingWebTopics(webView({ globalEmployees: null }), CFG, %s, null, NOW))" % full), '["employees"]')
+    check("industry only when the setup weighs it (CFG does not)",
+          ctx.eval("JSON.stringify(missingWebTopics(webView({ industry: null }), CFG, %s, null, NOW))" % full), "[]")
+    check("...and asked when it does",
+          ctx.eval("var c = JSON.parse(JSON.stringify(CFG)); c.industries = [{ name: 'Banking', priority: 3 }]; "
+                   "JSON.stringify(missingWebTopics(webView({ industry: null }), c, %s, null, NOW))" % full), '["industry"]')
+    check("two contacts are below the default target of 3",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, { initiatives: 1, relevantContacts: 2, hasSummary: true }, null, NOW))"), '["contacts"]')
+    check("a lower target is honoured",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, { initiatives: 1, relevantContacts: 2, hasSummary: true }, { contactsPerAccount: 2 }, NOW))"), "[]")
+    check("excluded: nothing", ctx.eval("missingWebTopics(webView({ excluded: true }), CFG, {}, null, NOW).length"), 0)
+
+    check("traded first, then priority, then listing order",
+          ctx.eval("webLaneOrder([{ key: 'a', isPublic: null, priority: 'P1', order: 1 }, { key: 'b', isPublic: true, priority: 'P3', order: 9 },"
+                   " { key: 'c', isPublic: false, priority: 'P1', order: 0 }, { key: 'd', isPublic: true, priority: 'P2', order: 5 },"
+                   " { key: 'e', isPublic: null, priority: null, order: 2 }]).map(function (e) { return e.key; }).join('')"), "dbcae")
+
+    for text, expected in [("Public", True), ("Publicly listed (SIX)", True), ("Listed", True), ("Private", False),
+                           ("Privately held", False), ("Unlisted", False), ("Cooperative", False), ("State-owned", False),
+                           ("Public body", False), ("National tourism organization / public-law corporation", False),
+                           ("Swiss company", None), ("Foundation", False), ("", None), ("Global company", None)]:
+        check("isPubliclyTraded(%r)" % text, ctx.eval("isPubliclyTraded(%r, null)" % text), expected)
+    check("the research's own answer wins", ctx.eval("isPubliclyTraded('Private', true)"), True)
+
+    check("profile link normalised", ctx.eval("linkedinProfileUrl('https://ch.linkedin.com/in/anna-muster-12ab/?trk=x')"),
+          "https://www.linkedin.com/in/anna-muster-12ab/")
+    check("a company page is not a profile", ctx.eval("linkedinProfileUrl('https://www.linkedin.com/company/acme/')"), None)
+    check("company page normalised", ctx.eval("linkedinCompanyUrl('https://linkedin.com/company/acme-ag/about/')"),
+          "https://www.linkedin.com/company/acme-ag/")
+    ctx.eval(r"""
+    var LANE_DATA = { contacts: [
+      { fullName: "Anna  Muster", title: "CIO", sourceUrl: "https://acme.ch/management", linkedinUrl: "https://ch.linkedin.com/in/anna-muster" },
+      { fullName: "anna muster", title: "CIO", sourceUrl: "https://acme.ch/management" },
+      { fullName: "The CFO", title: "CFO", sourceUrl: "https://acme.ch/management" },
+      { fullName: "Peter Beispiel", title: "CEO", sourceUrl: null },
+      { fullName: "Eva Probe", title: "Head of Data", sourceUrl: "https://acme.ch/ar.pdf", linkedinUrl: "https://example.com/eva" },
+    ], initiatives: [
+      { name: "AI claims triage", stage: "pilot", sourceUrl: "https://acme.ch/news/1" },
+      { name: "Cloud move", stage: "whatever", sourceUrl: "not a url" },
+      { name: "  " },
+    ], isPublic: { value: true, url: "https://six-group.com/acme" } };
+    """)
+    check("contacts need two names and a source of their own; duplicates dropped",
+          ctx.eval("researchContacts(LANE_DATA).map(function (c) { return c.fullName; }).join('|')"), "Anna Muster|Eva Probe")
+    check("...with the profile link a search listed (D10), and none for a non-LinkedIn link",
+          ctx.eval("researchContacts(LANE_DATA).map(function (c) { return c.linkedinUrl; }).join('|')"), "https://www.linkedin.com/in/anna-muster/|")
+    check("initiatives keep a known stage only, and a real url only",
+          ctx.eval("JSON.stringify(researchInitiatives(LANE_DATA).map(function (i) { return [i.name, i.stage, i.sourceUrl]; }))"),
+          '[["AI claims triage","pilot","https://acme.ch/news/1"],["Cloud move",null,null]]')
+    check("isPublic read from the per-field answer", ctx.eval("researchIsPublic(LANE_DATA)"), True)
+    check("an industry finding is proposed like any other field",
+          ctx.eval("JSON.stringify(computeFindingProposals({ company: 'Acme' }, {}, { industry: { value: 'Banking', url: 'https://acme.ch' } }).map(function (p) { return p.key + ':' + p.found; }))"),
+          '["industry:Banking"]')
+
+
 def test_user_retry_first(ctx):
     """2026-09-29: an account the user gave a new Alt. name or link is tried first, once."""
     ctx.eval(r"""
@@ -1376,6 +1442,92 @@ def test_extras_merge(ctx):
     check("an unchanged list compares by value, not identity", ctx.eval("JSON.stringify(m6)"), '{"l":["a","b"]}')
 
 
+def test_profile_search_matching(ctx):
+    """1.2.0.7 (D10): LinkedIn profiles read off web search results - name AND company in the title, one profile only."""
+    ctx.eval(r"""
+    var PR = [
+      { url: "https://ch.linkedin.com/in/anna-muster-12ab", title: "Anna Muster - Chief Financial Officer - Glencore | LinkedIn" },
+      { url: "https://www.linkedin.com/in/peter-beispiel", title: "Peter Beispiel – Head of IT – Other AG | LinkedIn" },
+      { url: "https://www.linkedin.com/in/eva-probe-1", title: "Eva Probe - Glencore | LinkedIn" },
+      { url: "https://www.linkedin.com/in/eva-probe-2", title: "Dr. Eva Probe - Data Lead at Glencore | LinkedIn" },
+      { url: "https://www.glencore.com/management", title: "Hans Müller - Glencore management" },
+      { url: "https://www.linkedin.com/in/hans-mueller-x", title: "Hans Mueller - Glencore International | LinkedIn" },
+    ];
+    var PP = [{ fullName: "Anna Muster" }, { fullName: "Peter Beispiel" }, { fullName: "Eva Probe" }, { fullName: "Dr. Hans Müller" }, { fullName: "Nobody Here" }];
+    """)
+    check("name and company in the title: found; another company: not; two profiles: not; umlaut spelling: found",
+          ctx.eval("JSON.stringify(profilesFromSearchResults(PR, PP, 'Glencore'))"),
+          '[{"fullName":"Anna Muster","url":"https://www.linkedin.com/in/anna-muster-12ab/"},'
+          '{"fullName":"Dr. Hans Müller","url":"https://www.linkedin.com/in/hans-mueller-x/"}]')
+    check("the name is the title's first part", ctx.eval("profileTitleName('Anna Muster - CFO - Glencore | LinkedIn')"), "Anna Muster")
+    check("a distinctive word of the company name is enough", ctx.eval("titleNamesCompany('Jo Doe - Kuehne+Nagel | LinkedIn', 'Kühne + Nagel')"), True)
+    check("generic words alone do not identify a company", ctx.eval("titleNamesCompany('Jo Doe - Swiss Group | LinkedIn', 'Swiss Group AG')"), False)
+    check("people without a profile make 'profiles' a lane topic",
+          ctx.eval("JSON.stringify(missingWebTopics(webView(), CFG, { initiatives: 1, relevantContacts: 3, hasSummary: true, contactsWithoutProfile: 2 }, null, NOW))"),
+          '["profiles"]')
+
+
+def test_discovery_filter(ctx):
+    """1.2.1 step 3: discovery-filter.js - band split, centre of the band, row filter and choice (design 4.2-4.3, D9)."""
+    ctx.eval("""
+      var BANDS = [
+        { key: "S", label: "Small", min: 0, max: 200 }, { key: "M", label: "Medium", min: 201, max: 500 },
+        { key: "L", label: "Large", min: 501, max: 1000 }, { key: "XL", label: "Extra Large", min: 1001, max: 5000 },
+        { key: "XXL", label: "Extra Extra Large", min: 5001, max: Infinity } ];
+    """)
+    check("wanted: 10 + 15% = 12", ctx.eval("discoveryWanted(10)"), 12)
+    check("wanted: 100 + 15% = 115", ctx.eval("discoveryWanted(100)"), 115)
+    check("centre: Large ~708", ctx.eval("bandCentre(BANDS[2])"), 708)
+    check("centre: Medium ~317", ctx.eval("bandCentre(BANDS[1])"), 317)
+    check("centre: Small (open below) 100", ctx.eval("bandCentre(BANDS[0])"), 100)
+    check("centre: XXL (open above) 10000", ctx.eval("bandCentre(BANDS[4])"), 10000)
+    check("band split: Large High + Medium Medium, 100 -> 60/40",
+          ctx.eval("JSON.stringify(bandTargets({ L: { checked: true, priority: 3 }, M: { checked: true, priority: 2 } }, BANDS, 100).map(b => [b.key, b.count]))"),
+          '[["L",60],["M",40]]')
+    check("band split adds up (12 over three equal bands)",
+          ctx.eval("bandTargets({ S: { checked: true, priority: 2 }, M: { checked: true, priority: 2 }, L: { checked: true, priority: 2 } }, BANDS, 12).reduce((a, b) => a + b.count, 0)"), 12)
+    check("largest: only XL/XXL ticked", ctx.eval("targetsLargest({ XL: { checked: true }, XXL: { checked: true } }, BANDS)"), True)
+    check("largest: Medium ticked is not", ctx.eval("targetsLargest({ M: { checked: true }, XXL: { checked: true } }, BANDS)"), False)
+    check("clean row: loose numbers and domain",
+          ctx.eval("var r = cleanListingRow({ name: ' Acme  AG ', website: 'https://www.acme.ch/de', employees: '1,200', currency: 'chf' }, 'https://list'); [r.name, r.domain, r.employees, r.currency, r.sourceUrl].join('|')"),
+          "Acme AG|acme.ch|1200|CHF|https://list")
+    ctx.eval("""
+      var CTX = {
+        seller: { website: 'https://seller.com' },
+        exclusions: buildExclusionMatcher([{ name: 'Rival AG' }, { domain: 'enemy.ch' }]),
+        known: buildKnownCompanies([{ company: 'Nestle SA', website: 'nestle.com' }, { company: 'Gone AG', deleted: true }]),
+        sizeBuckets: { M: { checked: true }, L: { checked: true } }, bands: BANDS,
+        industryNames: ['Banking'], excludedOrgTypes: ['Government Administration'] };
+      var ROWS = [
+        { name: 'Seller Inc', website: 'seller.com' }, { name: 'Rival', website: null }, { name: 'X', website: 'enemy.ch' },
+        { name: 'Gone', website: null }, { name: 'Nestle', website: null }, { name: 'Other', website: 'https://nestle.com' },
+        { name: 'Tiny GmbH', employees: 50 }, { name: 'Bank A', employees: 700, industryMatch: 'Banking' },
+        { name: 'Bakery B', employees: 300, industryMatch: 'none' }, { name: 'Canton C', employees: 400, industry: 'Government Administration' },
+        { name: 'Unknown size D' }, { name: 'Bank A AG', employees: 650 }, { name: '' } ].map(r => cleanListingRow(r, 'https://l'));
+      var F = filterListingRows(ROWS, CTX);
+    """)
+    check("filter: kept rows", ctx.eval("F.kept.map(r => r.name).join(',')"), "Bank A,Unknown size D")
+    check("filter: reasons in order",
+          ctx.eval("F.dropped.map(d => d.reason).join(',')"),
+          "seller,excluded,excluded,removed,existing,existing,size,industry,orgType,duplicate,noName")
+    check("filter: a second call drops what the first kept", ctx.eval("filterListingRows([cleanListingRow({ name: 'Bank A' })], CTX).dropped[0].reason"), "duplicate")
+    check("filter: no size targeting keeps every size",
+          ctx.eval("filterListingRows([cleanListingRow({ name: 'Huge', employees: 90000 })], { bands: BANDS, sizeBuckets: {}, known: buildKnownCompanies([]) }).kept.length"), 1)
+    ctx.eval("""
+      var T = bandTargets({ L: { checked: true, priority: 3 }, M: { checked: true, priority: 2 } }, BANDS, 5);
+      var P = [ { name: 'L-edge', employees: 990, preScore: 50 }, { name: 'L-centre', employees: 700, preScore: 50 },
+        { name: 'L-strong-edge', employees: 510, preScore: 70 }, { name: 'M-centre', employees: 320, preScore: 50 },
+        { name: 'M-edge', employees: 210, preScore: 50 }, { name: 'M-far', employees: 499, preScore: 50 },
+        { name: 'NoSize', employees: null, preScore: 90 }, { name: 'Included', employees: null, preScore: 0, included: true } ];
+    """)
+    check("choose: bands L 3, M 2", ctx.eval("JSON.stringify(T.map(b => [b.key, b.count]))"), '[["L",3],["M",2]]')
+    check("choose: included first, fit before centre, then centre; no-size last",
+          ctx.eval("chooseDiscoveryRows(P, T, 5).map(r => r.name).join(',')"),
+          "Included,L-strong-edge,L-centre,M-centre,M-edge")
+    check("choose: rows without a headcount fill what is left",
+          ctx.eval("chooseDiscoveryRows(P.filter(r => r.name !== 'Included'), T, 8).map(r => r.name).slice(-1)[0]"), "NoSize")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1404,6 +1556,9 @@ def main():
     test_per_field_research(ctx)
     test_web_usable(ctx)
     test_user_retry_first(ctx)
+    test_web_lane_step2(ctx)
+    test_profile_search_matching(ctx)
+    test_discovery_filter(ctx)
 
     print()
     for f in _failures:

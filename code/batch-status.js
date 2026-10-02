@@ -5,6 +5,8 @@ import { askConfirm } from "./confirm-dialog.js";
 import { BULK_STATE_KEY, getRunningBatch } from "./batch-jobs.js";
 import { initPipelineStatus } from "./pipeline-status.js";
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
+import { WEB_LANE_STATE_KEY, measureText } from "./web-lane.js";
+import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
 
 const STALE_MS = 180000;
 let onChange = null;
@@ -110,4 +112,97 @@ export async function initBatchStatus(changed) {
   // a stalled worker never writes again, so look at the heartbeat now and then
   setInterval(async () => { const s = await read(); if (s && s.status === "running") render(s); }, 5000);
   render(await read());
+  initWebLaneStatus();
+  initDiscoveryStatus();
+}
+
+// ---- 1.2.1 web lane (web-lane.js): its own line in the top bar, and its measurement when it finishes ----
+
+let laneStopping = false;
+let laneAnnouncing = false;
+async function renderLane(state) {
+  if (state && state.status === "running" && Date.now() - (state.heartbeatAt || 0) > STALE_MS) {
+    await chrome.storage.local.set({ [WEB_LANE_STATE_KEY]: { ...state, status: "done", stoppedReason: state.stoppedReason || "interrupted", runningKeys: [], finishedAt: Date.now() } });
+    return;
+  }
+  if (state && state.status === "running") {
+    const waitSec = state.pausedUntil ? Math.max(0, Math.round((state.pausedUntil - Date.now()) / 1000)) : 0;
+    setStatusMessage("lane", {
+      text: `Web research (new) in the background: ${state.done} of ${state.total} accounts done${state.failed ? `, ${state.failed} failed` : ""} - ${(state.spent || 0) < 0.005 ? "nothing spent yet" : `about ${usd(state.spent)} so far`}.` +
+        `${waitSec > 0 ? ` Paused - Anthropic asked us to slow down; resuming in about ${waitSec} s.` : ""} You can keep using SalesTeam.`,
+      action: {
+        label: laneStopping ? "Stopping…" : "Stop", disabled: laneStopping,
+        onClick: () => { laneStopping = true; chrome.runtime.sendMessage({ type: "WEB_LANE_STOP" }).catch(() => {}); renderLane(state); },
+      },
+    });
+    return;
+  }
+  laneStopping = false;
+  clearStatusMessage("lane");
+  if (state && state.status === "done" && !state.acknowledged && document.visibilityState === "visible" && !laneAnnouncing) {
+    laneAnnouncing = true;
+    const fresh = (await chrome.storage.local.get(WEB_LANE_STATE_KEY))[WEB_LANE_STATE_KEY];
+    if (fresh && !fresh.acknowledged) {
+      await chrome.storage.local.set({ [WEB_LANE_STATE_KEY]: { ...fresh, acknowledged: true } });
+      const why = stopReasonText(fresh);
+      const text = ["Web research (new) finished.", measureText(fresh), why, "The same summary is in the Activity Log."].filter(Boolean).join("\n\n");
+      await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
+    }
+    laneAnnouncing = false;
+  }
+}
+
+function initWebLaneStatus() {
+  const read = async () => (await chrome.storage.local.get(WEB_LANE_STATE_KEY))[WEB_LANE_STATE_KEY] || null;
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[WEB_LANE_STATE_KEY]) renderLane(changes[WEB_LANE_STATE_KEY].newValue || null);
+  });
+  document.addEventListener("visibilitychange", async () => { if (document.visibilityState === "visible") renderLane(await read()); });
+  setInterval(async () => { const s = await read(); if (s && s.status === "running") renderLane(s); }, 5000);
+  read().then(renderLane);
+}
+
+// ---- 1.2.1 "Find new accounts" (web-discovery.js): its own line in the top bar, and its report when it finishes ----
+
+let discoveryStopping = false;
+let discoveryAnnouncing = false;
+async function renderDiscovery(state) {
+  if (state && state.status === "running" && Date.now() - (state.heartbeatAt || 0) > STALE_MS) {
+    await chrome.storage.local.set({ [WEB_DISCOVERY_STATE_KEY]: { ...state, status: "done", stoppedReason: state.stoppedReason || "interrupted", finishedAt: Date.now() } });
+    return;
+  }
+  if (state && state.status === "running") {
+    setStatusMessage("discovery", {
+      text: `Finding new accounts: ${state.phase || "working"}` +
+        `${(state.spent || 0) >= 0.005 ? ` - about ${usd(state.spent)} spent on the web so far` : ""}. You can keep using SalesTeam.`,
+      action: {
+        label: discoveryStopping ? "Stopping…" : "Stop", disabled: discoveryStopping,
+        onClick: () => { discoveryStopping = true; chrome.runtime.sendMessage({ type: "WEB_DISCOVERY_STOP" }).catch(() => {}); renderDiscovery(state); },
+      },
+    });
+    return;
+  }
+  discoveryStopping = false;
+  clearStatusMessage("discovery");
+  if (state && state.status === "done" && !state.acknowledged && document.visibilityState === "visible" && !discoveryAnnouncing) {
+    discoveryAnnouncing = true;
+    const fresh = (await chrome.storage.local.get(WEB_DISCOVERY_STATE_KEY))[WEB_DISCOVERY_STATE_KEY];
+    if (fresh && !fresh.acknowledged) {
+      await chrome.storage.local.set({ [WEB_DISCOVERY_STATE_KEY]: { ...fresh, acknowledged: true } });
+      const why = fresh.stoppedReason === "user" ? "" : stopReasonText(fresh);
+      const text = ["Finding new accounts finished.", discoveryText(fresh), why, "The same summary is in the Activity Log."].filter(Boolean).join("\n\n");
+      await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
+    }
+    discoveryAnnouncing = false;
+  }
+}
+
+function initDiscoveryStatus() {
+  const read = async () => (await chrome.storage.local.get(WEB_DISCOVERY_STATE_KEY))[WEB_DISCOVERY_STATE_KEY] || null;
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[WEB_DISCOVERY_STATE_KEY]) renderDiscovery(changes[WEB_DISCOVERY_STATE_KEY].newValue || null);
+  });
+  document.addEventListener("visibilitychange", async () => { if (document.visibilityState === "visible") renderDiscovery(await read()); });
+  setInterval(async () => { const s = await read(); if (s && s.status === "running") renderDiscovery(s); }, 5000);
+  read().then(renderDiscovery);
 }

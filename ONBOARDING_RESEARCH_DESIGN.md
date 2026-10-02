@@ -303,6 +303,13 @@ Setup.
 
 ## 4. Web Discovery
 
+> **D11, 2026-09-30: the web first, LinkedIn optional.** Web listings (sections 4.1-4.4) find the accounts. The
+> LinkedIn company search is an option, off by default, for about a fifth of the target: it finds mostly local
+> branches of international groups, which listings tend to miss. It was tried first the same day ("LinkedIn first")
+> and dropped as the main source: LinkedIn's free company search does not hold its location filter, so it needs the
+> country name as a keyword and then returns mostly companies with the country in their name. Details in "As built
+> (step 3)", section 11.
+
 ### 4.1 Two calls per target country — `web-discovery.js` (background)
 
 1. **Find listings.** A call with `web_search` (`max_uses: 3`) asks for listing pages that match the
@@ -594,7 +601,7 @@ from **Advanced tools** before the wizard uses them, so their real cost is measu
 | **0** | Write lock in `storage.js` (2.2); 429 back-off in bulk research (5.6) | nothing | bulk research of 20 accounts, no lost write; a forced 429 resumes |
 | **1** | Per-field provenance format (5.3), `webUsable` (6), "Web" row source (4.4), exclusions by name/domain (3.9), the pure modules' tests | Usable count includes web-only accounts | `test_pure_modules.py`; existing accounts unchanged |
 | **2** | Web lane with web fetch, `missingWebTopics`, contacts from the web; Advanced > *Research accounts on the web (new)* | nothing new in normal use | **measure** cost and time per account on 20 real accounts, traded and private |
-| **3** | Web Discovery from listings; Advanced > *Find accounts on the web* | new accounts appear as "Web" | **measure** listing cost, rows kept after filtering, share found on LinkedIn |
+| **3** | Account discovery from web listings; optional LinkedIn search for local branches (D11); Advanced > *Find new accounts (new)* | new accounts appear as "Web" (and "Discovered" from LinkedIn) | **measure** web cost per listing, rows kept after filtering, share of web accounts found on LinkedIn |
 | **4** | LinkedIn after web (7): ranking rule, one profile search + People page; first 10 Ready first and the Scanner at 10 (7.3, D7) | fewer People-page visits | touches per account vs. section 9; time to 10 Ready; touches per Leads scan (D7) |
 | **5** | Wizard: About you, seller research, progress screen, proposals on the existing steps, `proposal-ui.js` | the new wizard start | a clean profile with 3 real company websites |
 | **6** | Wizard: initiative stages, included companies, targets with the estimate, Finish kicks both lanes; stop rule (8); coverage lines | the full onboarding | a full onboarding in a clean profile, 100 accounts |
@@ -620,9 +627,90 @@ the wizard is kept in `companyExclusionsLifted` and overrides the research workb
 import's backfill put them back); and an account the user gave an Alt. name or LinkedIn link is taken
 first by the pipeline until it has been tried once with it (`userRetryFirst`, pipeline-plan.js).
 
+**As built (step 2, 1.2.0.6):** `web-lane.js` (background, four workers, no batch lock; refuses to start while a
+bulk web research runs) is started from Advanced tools > *Research accounts on the web (new)…* with a number of
+accounts and a cost cap. `missingWebTopics` (pipeline-plan.js) asks for HQ and employees without a good fresh
+source, industry only when the setup weighs it, initiatives and relevant contacts below
+`DEFAULT_COMPLETION_TARGETS` (3 contacts, 1 initiative - the Targets step sets them in step 6), and a summary; an
+account with nothing missing is skipped, and one the lane researched in the last 30 days is not asked again.
+`webLaneOrder`: traded first, then priority, then listing order. On the 2026-09-29 backup, 519 of the accounts
+need something (515 of them contacts), and the workbook's Company Type says whether a company is listed for
+**none** of them ("Swiss company", "International company"), so the first lane pass runs in priority order; each
+research answers `isPublic`, which the measurement uses to split traded from private. The call
+(`researchAccountForLane`, agent-shared.js): `web_fetch_20260209` (4 uses, 10,000 tokens a page) and
+`web_search_20260209` (2 uses), falling back to the basic versions if refused; Sonnet 5; the facts already known
+go in with their sources. `applyWebLaneResearch` (storage.js) keeps the research before it as
+`webResearchPrevious`, stores initiatives with their `stage`, fills empty fields and runs the automatic resolve
+(shared with the 1.2.0 pipeline via `fillEmptyAndResolve`), adds named people as `source: "Web"` contact rows
+(a name needs two words, no role words, and a source url of its own), gives a known contact without a profile
+the one found, and fills an empty LinkedIn company link (D10). Industry became a web finding field. A lane
+research counts as the account's full research (`webFullResearchAt`). When a run ends, the pop-up and the
+Activity Log give cost, time, searches and pages read per account, traded and private apart. Web fetch has no
+per-use fee: the pages read are billed as input tokens, which the measurement includes.
+
+**First measurement (1.2.0.6, 2026-09-29/30, 24 real accounts):** about US$0.09 per private company and US$0.19
+for the one publicly traded company (below the design's estimate); 42 named people added from the web; but only
+**2 of 42** came with a LinkedIn profile link, and private companies took **about 204 s each** (the traded one
+20 s), close to the 4-minute cut-off. The second run stopped at 19 of 20 on the user's own Anthropic Console
+monthly limit (not a fault). **1.2.0.7:** a separate **profile search** after each research (Haiku 4.5, at most 2
+web searches, about US$0.01-0.02): the model only runs `site:linkedin.com/in "<company>" "<name>" OR ...`, and code
+decides (`profilesFromSearchResults`, pipeline-plan.js): a result counts only when its title names the person
+(first and last name, umlauts and titles folded) AND a distinctive word of the company, and exactly one profile
+matches. It covers up to 6 people per account without a profile - new web contacts and those already known
+(343 accounts on the backup have some) - so `missingWebTopics` gains a `profiles` topic; an account missing only
+profiles gets only the profile search. The 30-day skip now applies to the main research and the profile search
+separately (`webProfileSearchAt`). Every account writes one Activity Log line (time, cost, searches, pages read,
+rounds, cut off, profiles found), and the dialog shows the last run account by account, to find the cause of the
+slow private-company researches before changing anything there.
+The list showed the cause: 13 of 20 researches **hung** until the cut-off (about US$0.037, nothing found) on the
+dynamic-filtering tool versions (20260209), while the rest finished in about 20 s; the lane now uses the basic
+versions first. **Second measurement (1.2.0.7, 2026-09-30, 20 accounts): no hangs**, US$1.98 in all - publicly
+traded (9): about US$0.135 and 26 s each, 66 contacts added; the rest (11, mostly a profile search only): about
+US$0.070 and 9 s each. Profile search: **38 of 104 people** found on LinkedIn from search results (was 2 of 42),
+and Ready went from 136 to 144 without a LinkedIn visit. Planning figures for 9 and step 4: about US$0.10 per
+account for the web lane with profiles, and about a third of the people get their profile from the web - the rest
+still need one LinkedIn search each.
+
+**As built (step 3, 1.2.0.8) - the web first, LinkedIn optional (D11).** Advanced tools > *Find new accounts
+(new)…* (all four pages) asks for a target (default 10), a web cost cap, and whether to also search LinkedIn.
+`web-discovery.js` (background):
+
+1. **The web** finds the accounts: up to five listing pages per country found with `web_search`, each read with
+   `web_fetch` (30,000 tokens a page, a second page if the list continues); rows filtered by `discovery-filter.js`
+   (pure, tested): seller, exclusions, removed, existing, listed twice, then size band, industry (the call maps a
+   stated industry onto the wizard's names; only a clear "none" drops the row) and excluded organisation types. When
+   the listings run short, the fit search. `chooseDiscoveryRows`: included companies first, then per band
+   (`bandTargets`: `target x 1.15` split by band priority) by pre-score, centre of the band, listing rank; rows
+   without a headcount last. Added as "Web" rows (`addWebDiscoveredCompanies`, under the write lock); the pipeline
+   looks each up on LinkedIn later.
+2. **LinkedIn, only when ticked**, for about a fifth of the target plus what the web fell short of: the automatic
+   pipeline steps aside; under one batch lock the existing company Discovery (`company-discovery-extraction.js`)
+   runs once per size band, in a small unfocused window (as the pipeline's), with the country name as keyword and
+   headquarters confirmed in a target country; merged via `autoMergeDiscoveryResults` (a name-only match waits in
+   the decision queue).
+
+**Why LinkedIn is not the main source (2026-09-30).** A first run with LinkedIn first added 12 accounts from 5 result
+pages at no cost - but nearly all had the country in their name (Huawei Switzerland, Audi Switzerland, Škoda
+Switzerland…): LinkedIn's free company search does not hold its location filter (with Switzerland ticked and no
+keyword, or even the keyword "a", it leads with Microsoft, Google and other companies outside Switzerland), so the
+search needs the country name as a keyword, which matches company names. Other keywords (legal forms, cities) would
+give a biased, country-specific sample, not a complete list. Kept as the option for what it does find well: local
+branches of international groups.
+
+Every added account is scored at once (`rescoreDerivedPriorities`). One undo for the whole run (*Remove the accounts
+the last run added*, a soft delete). The dialog's last-run details list each listing (and LinkedIn band), and how
+many of the added accounts the LinkedIn work has found since.
+
+**Measured (1.2.0.8, 2026-09-30, web only, target 10 -> 12 wanted, Switzerland, sizes 501+):** 12 of 12 added for
+**US$0.28 in all - about US$0.02 per account** (one search for listings about US$0.14; three listings read, about
+US$0.05 each). 50 rows read, 23 kept after filtering (15 already an account, 6 listed twice, 6 outside the sizes);
+no fit search needed. The accounts are homegrown companies of the right size (Syngenta, Firmenich, Bell Food Group,
+Alpiq, Zurich Insurance Group, Raiffeisenbank…) - the opposite of the LinkedIn run's "X Switzerland" branches. Far
+below the design's estimate for discovery. Still to see: how many of them the pipeline finds on LinkedIn.
+
 ---
 
-## 12. Decisions — all agreed 2026-09-28
+## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)
 
 Boaz agreed to every recommendation below.
 
@@ -637,12 +725,15 @@ Boaz agreed to every recommendation below.
 | **D7** | Raise the pipeline's LinkedIn ceiling (e.g. 60 → 75) after onboarding to build faster? | **No** — the Scanner needs **10 Ready** (was 5, soft gate), and the pipeline goes for the first 10 Ready before anything else (7.3). The ceiling stays 60, guaranteeing at least 39 touches for scans; touches per scan are measured in step 4. Boaz's proposal, 2026-09-28 |
 | **D8** | Use touches left under the 60 at night (e.g. 01:00–05:00) for extra LinkedIn work? | **No change.** The pipeline already resumes whenever it is under 60 in the rolling 24 hours, day or night, while Chrome and a SalesTeam page are open. Night adds no capacity (a touch at 03:00 counts until 03:00 next day). Not added: a background timer without a page open, or keeping the computer awake at night (1.2.0 D4 stands; unseen 03:00 activity would contradict "visible in your browser") |
 | **D9** | Discovery for medium or small companies instead of the largest | **Size-band listings, the target split by band priority, centre of each band first** (4.3). Bands stay the wizard's S/M/L/XL/XXL, shown with their ranges on the Size step. Boaz's proposal, adapted 2026-09-28 |
+| **D10** | The LinkedIn ceiling of 60 makes Ready slow (about 5 visits per account: company page, People page, one search per contact) | **The web lane collects LinkedIn links from search results** - the company page and each named person's profile - at no LinkedIn visit. A profile link found that way **counts towards Ready** (the contact's verified date is the day the web showed it); LinkedIn is visited only to confirm the company page and for what the web did not find. Expected: about 1-2 visits per account instead of about 5. The ceiling stays 60. Boaz's choice, 2026-09-29 |
+| **D11** | Find new accounts on the web (listings) or with the LinkedIn company search? | **The web first, LinkedIn optional.** Web listings find the accounts; the LinkedIn company search is an option (off by default) for about a fifth of the target, because it finds mostly local branches of international groups. LinkedIn first was tried the same day and dropped: its free company search does not hold the location filter, and the country-name keyword it then needs matches company names, so the list is neither reliable nor complete. Boaz, 2026-09-30 |
 
 ---
 
 ## 13. Not in this design
 
 - Salesforce import (later item, decided).
-- LinkedIn Discovery started by the pipeline (postponed, decided).
+- LinkedIn Discovery started by the pipeline on its own (postponed, decided). Onboarding's own account discovery does
+  offer it as an option for local branches of international groups (D11, 2026-09-30).
 - The initiative-stage ranking as a weight in priority scoring (requirements, open question 7).
 - Team use (1.2.2).

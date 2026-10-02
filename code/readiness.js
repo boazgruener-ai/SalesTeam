@@ -231,7 +231,9 @@ function isFresh(at, days, now) {
   return typeof at === "number" && now - at <= days * DAY_MS;
 }
 
-// Returns null when the field is fine, otherwise { field, reason, detail }.
+// Returns null when the field is fine, otherwise { field, reason, detail }. Exported as fieldGap for the web
+// lane's missingWebTopics (pipeline-plan.js), which asks the same question field by field.
+export function fieldGap(view, field, now) { return checkField(view, field, typeof now === "number" ? now : Date.now()); }
 function checkField(view, field, now) {
   if (field === "salesTeamPriority") {
     return /^P[1-5]$/.test(view.salesTeamPriority || "") ? null : { field, reason: "absent" };

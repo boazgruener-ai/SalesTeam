@@ -42,6 +42,8 @@ import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease } from "
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
 import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
+import { startWebLane, stopWebLane } from "./web-lane.js";
+import { startWebDiscovery, stopWebDiscovery } from "./web-discovery.js";
 import { startPipelineRun, stopPipelineRun, kickPipeline, pausePipelineForUser, clearUserJobHold } from "./pipeline-runner.js";
 import { setPipelinePausedDay } from "./pipeline-automation.js";
 import { rescoreDerivedPriorities } from "./auto-score.js";
@@ -984,6 +986,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   } else if (message?.type === "BULK_WEB_RESEARCH_STOP") {
     sendResponse(stopBulkResearch());
+  } else if (message?.type === "WEB_LANE_START") {
+    // 1.2.1 build step 2: the web lane, started by hand from Advanced tools to measure it (web-lane.js).
+    startWebLane({ limit: message.limit, budget: message.budget }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  } else if (message?.type === "WEB_LANE_STOP") {
+    sendResponse(stopWebLane());
+  } else if (message?.type === "WEB_DISCOVERY_START") {
+    // 1.2.1 build step 3: find new accounts - the web first, LinkedIn optional (web-discovery.js).
+    startWebDiscovery({ target: message.target, budget: message.budget, useLinkedin: message.useLinkedin === true }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  } else if (message?.type === "WEB_DISCOVERY_STOP") {
+    sendResponse(stopWebDiscovery());
   } else if (message?.type === "PIPELINE_RUN") {
     // 1.2 data pipeline, build step 2: started by hand from Advanced tools (pipeline-runner.js).
     startPipelineRun({ limit: message.limit }).then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message }));

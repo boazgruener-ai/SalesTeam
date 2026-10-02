@@ -11,7 +11,8 @@
 //     profileTried: ["Anna Muster", ...],           // contacts already searched by name (T1)
 //     lastRunDay: "2026-09-25" }                    // the pipeline handles an account at most once a day
 
-import { companyLinkSlug, FRESHNESS_DAYS, toEpochMs } from "./readiness.js";
+import { companyLinkSlug, FRESHNESS_DAYS, toEpochMs, fieldGap, requiredFields } from "./readiness.js";
+import { normalizeCompanyName } from "./company-identity.js";
 
 // The pipeline stops well below the hard stop of the shared LinkedIn budget (99), leaving the rest to
 // the user's own scans (design 5.2). Designed as 75; lowered to 60 on 2026-09-25 (Boaz), after a single
@@ -342,4 +343,107 @@ export function autoRunBlocker({ enabled, pausedDay, today, holdUntil, runningBa
   if (touches24h >= PIPELINE_TOUCH_CEILING && !webPossible) return "budget";
   if (!lastBackupAt || now - lastBackupAt > AUTO_BACKUP_MAX_AGE_MS) return "no_backup";
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The web lane (1.2.1, ONBOARDING_RESEARCH_DESIGN.md 5.1-5.2)
+// ---------------------------------------------------------------------------------------------------
+
+// Completion targets above Ready (design 3.10). The wizard's Targets step (build step 6) will let the user
+// set them; until then these defaults apply.
+export const DEFAULT_COMPLETION_TARGETS = { accounts: 100, contactsPerAccount: 3, initiativesPerAccount: 1 };
+
+// Each topic in the words the research prompt uses.
+export const WEB_LANE_TOPICS = {
+  headquarters: "headquarters (city and country of the group's global HQ)",
+  employees: "number of employees (worldwide, and in the seller's home market)",
+  industry: "industry",
+  initiatives: "recent initiatives and projects that could matter to the seller",
+  contacts: "named senior people (management, leadership, heads of the relevant functions)",
+  summary: "a short summary of what the company does",
+};
+
+// R7a.7: the topics an account still lacks, so a research asks only for those - and none at all when the
+// list is empty. A field counts as covered when it has a value with a good, fresh source (the same test
+// readiness applies). Industry is asked only when the user's setup weighs it. `facts`:
+// { initiatives: n, relevantContacts: n, hasSummary: bool, contactsWithoutProfile: n } - what the view
+// does not carry. "profiles" is not a research topic: it is answered by the separate profile search.
+export function missingWebTopics(view, cfg, facts, targets, now) {
+  if (!view || view.deleted || view.excluded) return [];
+  const t = typeof now === "number" ? now : Date.now();
+  const f = facts || {};
+  const tg = { ...DEFAULT_COMPLETION_TARGETS, ...(targets || {}) };
+  const out = [];
+  if (fieldGap(view, "globalHqCountry", t)) out.push("headquarters");
+  if (fieldGap(view, "employees", t)) out.push("employees");
+  if (requiredFields(cfg).includes("industry") && fieldGap(view, "industry", t)) out.push("industry");
+  if ((f.initiatives || 0) < tg.initiativesPerAccount) out.push("initiatives");
+  if ((f.relevantContacts || 0) < tg.contactsPerAccount) out.push("contacts");
+  if (!f.hasSummary) out.push("summary");
+  // D10, 1.2.0.7: known people whose LinkedIn profile is still missing - a web search usually lists it.
+  if ((f.contactsWithoutProfile || 0) > 0) out.push("profiles");
+  return out;
+}
+
+// Design 5.1: publicly traded companies first (their reports answer the most at once, R7a.1), then by
+// priority (P1 first, none last), then by the order the account was listed in. `entries`:
+// [{ key, isPublic: true | false | null, priority: "P1".."P5" | null, order: number | null }].
+export function webLaneOrder(entries) {
+  const lvl = (p) => { const m = /^P([1-5])$/.exec(p || ""); return m ? Number(m[1]) : 9; };
+  return [...(entries || [])].sort((a, b) =>
+    (a.isPublic === true ? 0 : 1) - (b.isPublic === true ? 0 : 1) ||
+    lvl(a.priority) - lvl(b.priority) ||
+    (a.order ?? Infinity) - (b.order ?? Infinity) ||
+    String(a.key).localeCompare(String(b.key)));
+}
+
+// "Public", "Listed", "SIX: NESN" ... -> true; "Private", "Cooperative", "State-owned" ... -> false; else null.
+// Reads the workbook's Company Type column, or the research's own isPublic answer.
+export function isPubliclyTraded(companyType, researchIsPublic) {
+  if (researchIsPublic === true || researchIsPublic === false) return researchIsPublic;
+  const s = String(companyType || "").toLowerCase();
+  if (!s.trim()) return null;
+  // The "not traded" words first: "unlisted", "privately held" and "public body" all contain a "traded" word.
+  if (/\b(unlisted|not listed|private|privately|cooperative|co-operative|state[- ]owned|government|public[- ](body|sector|institution|authority|law)|non-?profit|foundation|association|family|organi[sz]ation)\b/.test(s)) return false;
+  if (/\b(public|publicly|listed|stock|exchange|six|nyse|nasdaq)\b/.test(s)) return true;
+  return null;
+}
+
+
+// ---- D10 profile search (1.2.0.7): LinkedIn profiles read off web search results, no LinkedIn visit ----
+
+// Words too common in company names to tell one company from another.
+const GENERIC_COMPANY_WORDS = new Set(["group", "holding", "holdings", "switzerland", "schweiz", "suisse", "svizzera", "swiss",
+  "international", "company", "bank", "insurance", "services", "solutions", "the", "and", "und", "et", "of", "de"]);
+
+// A search result's title is "Anna Muster - CFO - Glencore | LinkedIn": the person's name comes first.
+export function profileTitleName(title) {
+  return String(title || "").split(/\s+[-–—|]\s+/)[0].trim();
+}
+
+// Does the result title name the company? Any distinctive word of its name counts ("Kühne + Nagel" -> "kuhne"
+// or "nagel"). A company whose name is only generic words cannot be checked, and then nothing is accepted.
+export function titleNamesCompany(title, companyName) {
+  const words = nameTokens(normalizeCompanyName(companyName)).filter((w) => w.length >= 3 && !GENERIC_COMPANY_WORDS.has(w));
+  if (words.length === 0) return false;
+  const found = new Set(nameTokens(title));
+  return words.some((w) => found.has(w));
+}
+
+// results: [{ url, title }] from web searches; people: [{ fullName }]. Returns [{ fullName, url }] - a profile only
+// when the title names the person (first and last name) AND the company, and exactly one profile does
+// (pickProfileMatch: never guess between two).
+export function profilesFromSearchResults(results, people, companyName) {
+  const candidates = [];
+  for (const r of results || []) {
+    const m = /^https?:\/\/([a-z]{2,3}\.|www\.)?linkedin\.com\/in\/([^/?#\s]+)/i.exec(String((r && r.url) || ""));
+    if (!m) continue;
+    candidates.push({ slug: decodeURIComponent(m[2]).toLowerCase(), name: profileTitleName(r.title), conflict: !titleNamesCompany(r.title, companyName) });
+  }
+  const out = [];
+  for (const p of people || []) {
+    const pick = pickProfileMatch(candidates, p.fullName);
+    if (pick.status === "found") out.push({ fullName: p.fullName, url: profileUrlFromSlug(pick.candidate.slug) });
+  }
+  return out;
 }
