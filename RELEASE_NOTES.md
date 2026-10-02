@@ -13,7 +13,7 @@
 - **Three new Setup steps** - **Initiative stages** (which stages of a company's initiatives matter to you, ranked),
   **Companies to include** (companies you want in the list whatever the research finds) and **How big is your list**
   (accounts, contacts per account and initiatives per account to aim for, with a live estimate of the cost on your API key
-  and the days of your daily LinkedIn limit it takes). The Setup now has 15 steps; its progress in the menu updates as you
+  and the days of your daily LinkedIn limit it takes). The Setup now has 12 steps - the technical ones (Discovery and Leads Prioritization, Company aliases) moved to Change Settings > Advanced, and any technical detail inside a step sits behind an Advanced settings link; its progress in the menu updates as you
   go. The web budget on the last step is pre-filled from the estimate.
 - **Finish builds the list** - with automatic preparation and web research ticked, finishing the Setup adds the companies
   you named, then finds new companies matching your Location, Size and Industry answers in company listings on the public
@@ -44,6 +44,9 @@
 - **Leads Prioritization, clearer** - the step now has two parts, Posts and Job ads, each with its own explanation and
   rules. For job ads you pick how strong a Target Account must be (Very High, High, Medium or Low; High recommended)
   instead of a 0-100 number; accounts found on the web or LinkedIn now count, through SalesTeam's own Priority.
+- **Research findings, simply** - the Setup's last screen asks one question: decide automatically where it is safe and
+  ask only when it matters (recommended), or ask about every difference. The rules behind it are under Advanced
+  settings there, and in Settings > How to handle research findings.
 - **Leads Dashboard** - the Posts Dashboard is now the **Leads Dashboard**, and texts say "leads (posts)": what the
   scans find is a lead to look at, not yet a qualified sales lead.
 - **Faster and safer** - Target Accounts opens in about 2 seconds instead of about 17 on a large list; account writes from

@@ -251,6 +251,13 @@ function hideEmbeddedPage() {
 // Messages from the frame this page hosts (the wizard / Change Settings).
 window.addEventListener("message", (event) => {
   if (event.origin !== location.origin || !event.data) return;
+  // Change Settings' Advanced group: open one of this page's own cards (1.2.0.51).
+  if (event.data.type === "salesteam-open-settings-section" && SETTINGS_SECTION_IDS.includes(event.data.section)) {
+    hideEmbeddedPage();
+    if (location.hash === `#${event.data.section}`) routeSettings();
+    else location.hash = `#${event.data.section}`;
+    return;
+  }
   if (event.data.type === "salesteam-leave-settings") {
     // Change Settings' "Back to menu": when this page is itself shown inside another page (Posts, Accounts, Scanner),
     // close it and land back on that page - not on a Settings card the user never chose.
@@ -802,7 +809,7 @@ document.querySelectorAll('#app-nav a.nav-item[href^="#"]').forEach((link) => {
 // other cross-page reference in this codebase avoids importing one page's
 // script from another). Re-sync this number if a step is ever added there.
 // 15 since 1.2.1 step 6 (1.2.0.31: it still said 11).
-const ONBOARDING_TOTAL_STEPS = 15;
+const ONBOARDING_TOTAL_STEPS = 12; // 1.2.0.51: 3 technical steps moved to Change Settings > Advanced
 
 // 1.2.0.31 (Boaz): the wizard runs inside this page, so the menu's "(not started)" never changed while he went through
 // it - the progress is drawn again whenever the wizard saves how far it got, or that the setup is finished.
@@ -1111,7 +1118,13 @@ function fillWebFindingsForm(settings) {
 async function initWebFindingsArbitration() {
   if (!webFindingsEl("web-findings-rules")) return;
   buildWebFindingsRuleRows();
-  fillWebFindingsForm(await getWebFindingsArbitration());
+  const findingsSettings = await getWebFindingsArbitration();
+  fillWebFindingsForm(findingsSettings);
+  document.getElementById(findingsSettings.askEveryDifference ? "findings-mode-ask" : "findings-mode-auto").checked = true;
+  for (const id of ["findings-mode-auto", "findings-mode-ask"]) {
+    document.getElementById(id).addEventListener("change", () =>
+      saveWebFindingsArbitration({ askEveryDifference: document.getElementById("findings-mode-ask").checked }));
+  }
 
   for (const f of webFindingsNumberFields) {
     const el = webFindingsEl(f.id);

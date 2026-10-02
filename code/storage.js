@@ -5117,9 +5117,16 @@ function localDayString(ms) {
 // every settled finding is in the Activity Log, and a dismissed one is kept, so it can be taken back
 // from the account's Review findings dialog. Returns { accounts, applied, dismissed, review }.
 export async function autoResolveWebFindings({ onlyKeys = null } = {}) {
-  const [workbook, extras, config, settings, money] = await Promise.all([
+  const [workbook, extras, config, savedSettings, money] = await Promise.all([
     getTargetAccountsWorkbook(), getTargetAccountExtras(), getTargetUniverseConfig(), getWebFindingsArbitration(), getRevenueNormalization(),
   ]);
+  // 1.2.0.51: "Ask me about every difference" (Setup's Finish, Settings > How to handle research findings) - only
+  // empty fields are still filled, and a web value that cannot be right is still thrown away; every other rule that
+  // would decide for the user is off, so each real difference goes to Decisions.
+  const settings = savedSettings.askEveryDifference
+    ? Object.fromEntries(Object.entries(savedSettings).map(([k, v]) =>
+      [k, /^rule\d+/.test(k) && k !== "rule1EmptyApply" && k !== "rule2IllogicalReview" ? false : v]))
+    : savedSettings;
   const only = onlyKeys ? new Set(onlyKeys) : null;
   const moneySettings = revenueMoneySettings(money);
   const locationTier = (country) => resolveLocationPriority(country, config.locationPriorities);

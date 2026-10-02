@@ -869,3 +869,11 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 .confirm-offers-list { margin: 4px 0 8px; padding-left: 22px; }
 .confirm-offers-list li { margin: 3px 0; word-break: break-all; }
 .confirm-offers-list li strong { word-break: normal; }
+
+/* 1.2.0.51: Advanced settings, folded (the one pattern for technical settings), and Change Settings' Advanced group. */
+.advanced-settings { margin: 8px 0; }
+.advanced-settings > summary { cursor: pointer; color: var(--blue, #0a66c2); font-size: 13px; font-weight: 600; }
+.advanced-settings[open] > summary { margin-bottom: 6px; }
+#finish-findings { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3e8ef; }
+#finish-findings-rules .checkbox-label { display: block; margin: 4px 0; font-size: 13px; }
+.wizard-step-list-group { flex-basis: 100%; margin: 8px 0 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gray); }

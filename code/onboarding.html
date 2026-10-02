@@ -510,6 +510,25 @@
           <input type="number" id="finish-web-budget" min="0" step="1" style="width: 80px" />
           <span id="finish-web-budget-note"></span>
         </p>
+        <!-- 1.2.0.51 (Boaz): how research findings are handled - one plain choice, the rules folded away. -->
+        <div id="finish-findings">
+          <p class="field-hint"><strong>When web research finds a value that differs from what an account already has:</strong></p>
+          <label class="checkbox-label">
+            <input type="radio" name="finish-findings-mode" id="finish-findings-auto" value="auto" />
+            Decide automatically where it is safe, and ask me only when it matters (recommended)
+          </label>
+          <label class="checkbox-label">
+            <input type="radio" name="finish-findings-mode" id="finish-findings-ask" value="ask" />
+            Ask me about every difference (empty fields are still filled in)
+          </label>
+          <details class="advanced-settings">
+            <summary>Advanced settings</summary>
+            <p class="field-hint">The rules used to decide automatically. Each one can be switched off; its cases are
+              then put to you in Decisions. The same list is in Settings &gt; Change Settings &gt; Advanced &gt; How to
+              handle research findings.</p>
+            <div id="finish-findings-rules"></div>
+          </details>
+        </div>
       </div>
       <div class="wizard-buttons">
         <button type="button" id="finish-btn">Finish Setup</button>

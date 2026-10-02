@@ -38,6 +38,8 @@ import {
   savePrioritizationRuleOverride,
   getJobRulesMinConfidence,
   saveJobRulesMinConfidence,
+  getWebFindingsArbitration,
+  saveWebFindingsArbitration,
   CONFIDENCE_LEVELS,
   getPostPrioritizationRules,
   savePostPrioritizationRules,
@@ -53,6 +55,7 @@ import {
 import { INITIATIVE_STAGE_LABELS, normalizeInitiativeStages, normalizeCompletionTargets, TARGET_LIMITS } from "./pipeline-plan.js";
 import { onboardingEstimate } from "./onboarding-estimate.js";
 import { researchSeller, SELLER_RESEARCH_ESTIMATE_USD, sanitizeApiKey } from "./agent-shared.js";
+import { RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
 import {
   buildSetupProposals, PROPOSAL_STEP_KEYS, stepsRebuiltBy, initiallyTicked, mergeChecklistWithLines, offerLine, sourceLabel,
 } from "./setup-proposals.js";
@@ -68,10 +71,17 @@ import { getDiscoveryQueueState, resetDiscoveryQueue } from "./discovery-queue.j
 // same Low/Medium/High labels, same numeric values, everywhere it's used.
 const PRIORITY_LABELS = { 1: "Low", 2: "Medium", 3: "High" };
 
-const STEP_ORDER = [
+const ALL_STEPS = [
   "about", "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
-  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets", "finish",
+  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets",
 ];
+// 1.2.0.51 (Boaz): technical steps a new user need not decide are not in the first Setup (their defaults apply);
+// Change Settings lists them last, under "Advanced".
+const ADVANCED_STEPS = ["priority", "leads-prioritization", "aliases"];
+const BASIC_STEPS = ALL_STEPS.filter((s) => !ADVANCED_STEPS.includes(s));
+const STEP_ORDER = new URLSearchParams(location.search).get("mode") === "settings"
+  ? [...BASIC_STEPS, ...ADVANCED_STEPS, "finish"]
+  : [...BASIC_STEPS, "finish"];
 const STEP_TITLES = {
   about: "About you", location: "Location", size: "Size", industry: "Industry", priority: "Discovery Prioritization",
   "leads-prioritization": "Leads Prioritization",
@@ -259,6 +269,12 @@ function renderWizardStepList() {
   listEl.innerHTML = "";
   STEP_ORDER.forEach((step, index) => {
     if (step === "finish") return;
+    if (settingsMode && step === ADVANCED_STEPS[0]) {
+      const label = document.createElement("div");
+      label.className = "wizard-step-list-group";
+      label.textContent = "Advanced";
+      listEl.appendChild(label);
+    }
     const btn = document.createElement("button");
     btn.type = "button";
     btn.dataset.step = step;
@@ -273,6 +289,18 @@ function renderWizardStepList() {
     });
     listEl.appendChild(btn);
   });
+  if (settingsMode) appendAdvancedCardLinks(listEl);
+}
+
+// Change Settings' Advanced group also names the two advanced Settings cards; they open in the Settings page.
+function appendAdvancedCardLinks(listEl) {
+  for (const [section, title] of [["web-findings-section", "How to handle research findings"], ["revenue-currency-section", "Revenue & Currency"]]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = title;
+    btn.addEventListener("click", () => window.parent.postMessage({ type: "salesteam-open-settings-section", section }, location.origin));
+    listEl.appendChild(btn);
+  }
 }
 
 function showStep(index) {
@@ -280,7 +308,7 @@ function showStep(index) {
   if (hintEl) hintEl.hidden = true;
   currentStepIndex = index;
   const step = STEP_ORDER[index];
-  for (const s of STEP_ORDER) {
+  for (const s of [...ALL_STEPS, "finish"]) {
     const sectionEl = el(`enter-${s}`);
     if (sectionEl) sectionEl.hidden = s !== step;
   }
@@ -292,7 +320,7 @@ function showStep(index) {
   if (step === "location") renderLocationPriorityRows();
   if (step === "included") renderIncludedParsedList();
   if (step === "targets") renderTargetsStep();
-  if (step === "finish") { renderFinishSummary(); prefillBudgetFromEstimate(); }
+  if (step === "finish") { renderFinishSummary(); prefillBudgetFromEstimate(); renderFindingsChoice(); }
   updateNavBar(step, index);
 
   // Reported directly: a real completed run took "tens of minutes to
@@ -308,7 +336,7 @@ function showStep(index) {
 
 // Change Settings: nothing is open until a setting is picked from the list at the top.
 function showSettingsHome() {
-  for (const s of STEP_ORDER) {
+  for (const s of [...ALL_STEPS, "finish"]) {
     const sectionEl = el(`enter-${s}`);
     if (sectionEl) sectionEl.hidden = true;
   }
@@ -2022,6 +2050,28 @@ function renderFinishSummary() {
 // Auto-navigates to settings.html once saved (redesigned 2026-09-16) -
 // reported directly: the old "relabel to Setup saved and stop" left the
 // user stranded on the onboarding tab with no way back except closing it.
+// ---- 1.2.0.51: how research findings are handled (Finish) ----
+async function renderFindingsChoice() {
+  const settings = await getWebFindingsArbitration();
+  el(settings.askEveryDifference ? "finish-findings-ask" : "finish-findings-auto").checked = true;
+  const wrap = el("finish-findings-rules");
+  wrap.innerHTML = "";
+  for (const rule of ARBITRATION_RULES) {
+    const label = document.createElement("label");
+    label.className = "checkbox-label";
+    label.title = rule.detail;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = settings[rule.setting] !== false;
+    box.addEventListener("change", () => saveWebFindingsArbitration({ [rule.setting]: box.checked }));
+    label.append(box, document.createTextNode(` ${rule.label}`));
+    wrap.appendChild(label);
+  }
+}
+for (const id of ["finish-findings-auto", "finish-findings-ask"]) {
+  el(id).addEventListener("change", () => saveWebFindingsArbitration({ askEveryDifference: el("finish-findings-ask").checked }));
+}
+
 el("finish-back-to-menu-link").addEventListener("click", (event) => {
   event.preventDefault();
   el("finish-btn").click();
@@ -2223,7 +2273,7 @@ function stopResearchProgress() {
 }
 
 function showResearchScreen(seller) {
-  for (const s of STEP_ORDER) {
+  for (const s of [...ALL_STEPS, "finish"]) {
     const sectionEl = el(`enter-${s}`);
     if (sectionEl) sectionEl.hidden = true;
   }

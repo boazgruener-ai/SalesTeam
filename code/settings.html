@@ -129,7 +129,7 @@
         <button id="nav-extract-companies-profiles-btn" type="button" class="nav-item" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
         <button id="nav-prioritize-target-accounts-btn" type="button" class="nav-item" title="Score every eligible company's Priority (P1-P5)">Prioritize Companies…</button>
         <a href="#revenue-currency-section" class="nav-item" id="nav-revenue-currency-section" title="Clean-up and currency conversion for revenue and employee figures">Revenue &amp; Currency</a>
-        <a href="#web-findings-section" class="nav-item" id="nav-web-findings-section" title="The rules behind &quot;Resolve Web Findings Automatically…&quot; on the Target Accounts Dashboard">Web Findings &ndash; Automatic Arbitration</a>
+        <a href="#web-findings-section" class="nav-item" id="nav-web-findings-section" title="The rules behind &quot;Resolve Web Findings Automatically…&quot; on the Target Accounts Dashboard">How to handle research findings</a>
         <a href="#discovery-queue-section" class="nav-item" id="nav-discovery-queue-section">Discovery Queue (support)</a>
         <a href="#company-discovery-section" class="nav-item" id="nav-company-discovery-section">Company Discovery (support)</a>
         <a href="#contact-discovery-section" class="nav-item" id="nav-contact-discovery-section">Contact Discovery (support)</a>
@@ -161,9 +161,10 @@
     <section class="settings-card" id="setup-section">
       <h3>Setup</h3>
       <p class="field-hint">
-        The 15 Setup steps: who you are, which companies and people to look for (location, size, industry, target
+        The 12 Setup steps: who you are, which companies and people to look for (location, size, industry, target
         contacts), what you sell and can offer, companies to include or exclude, and how big your list should be.
-        Walked through once after installing; each answer can be changed later in Change Settings.
+        Walked through once after installing; each answer can be changed later in Change Settings, which also holds
+        the advanced settings (Discovery and Leads Prioritization, Company aliases).
       </p>
       <div id="onboarding-progress-wrap">
         <div id="onboarding-progress-label"></div>
@@ -498,7 +499,16 @@
     </section>
 
     <section class="settings-card" id="web-findings-section">
-      <h3>Web Findings &ndash; Automatic Arbitration</h3>
+      <h3>How to handle research findings</h3>
+      <!-- 1.2.0.51: the same plain choice as on the Setup's Finish screen. -->
+      <label class="checkbox-label">
+        <input type="radio" name="findings-mode" id="findings-mode-auto" value="auto" />
+        Decide automatically where it is safe, and ask me only when it matters (recommended)
+      </label>
+      <label class="checkbox-label">
+        <input type="radio" name="findings-mode" id="findings-mode-ask" value="ask" />
+        Ask me about every difference (empty fields are still filled in)
+      </label>
       <p class="field-hint">
         When a web research turns up a fact that disagrees with what an account already holds, most of the time it is
         not a mistake: two correct figures counted differently (84,146 employees or 150,000 &ndash; direct staff against
