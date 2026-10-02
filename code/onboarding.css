@@ -788,7 +788,8 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 .proposal-banner p { margin: 0 0 4px; }
 .proposal-banner a { color: var(--blue); }
 .proposal-banner-note { color: var(--gray); font-size: 12px; }
-.proposal-banner-actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+.proposal-banner-actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.proposal-again-intro { font-size: 13px; color: var(--ink); }
 .proposal-again-form { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .proposal-again-form[hidden], .proposal-slot[hidden] { display: none; }
 .proposal-again-hint { flex: 1 1 320px; min-width: 200px; }
