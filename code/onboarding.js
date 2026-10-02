@@ -927,32 +927,92 @@ const EXCLUSION_CATEGORY_INPUTS = EXCLUSION_CATEGORIES.map((category) => ({
   listId: `exclusions-${category}-parsed-list`,
 }));
 
-function validateExclusionsStep() {
-  // The textareas hold LinkedIn pages only. Entries named by company name or website instead (1.2.1, design
-  // 3.9) are not shown there, so they are carried over untouched - and a listed slug keeps any name/domain
-  // stored with it.
-  const bySlug = new Map(companyExclusions.filter((e) => e.slug).map((e) => [`${e.category}|${e.slug}`, e]));
-  let withoutSlug = companyExclusions.filter((e) => !e.slug);
-  // The research's proposals (1.2.1): every proposed company is decided by its checkbox - ticked ones are kept by
-  // name and website, unticked ones dropped; other name/website entries are carried as before.
-  const list = checklists.exclusions;
-  if (list) {
-    const proposed = new Set((setupResearch.proposals?.exclusions?.items || []).map(exclusionKey));
-    const items = list.getItems();
-    for (const i of items) if (i.meta) proposed.add(exclusionKey({ category: i.meta.category, name: i.text }));
-    withoutSlug = [
-      ...withoutSlug.filter((e) => !proposed.has(exclusionKey(e))),
-      ...items.filter((i) => i.checked).map((i) => (i.meta
-        ? { name: i.text, ...(i.meta.domain ? { domain: i.meta.domain } : {}), category: i.meta.category, source: "research", ...(i.meta.sourceUrl ? { sourceUrl: i.meta.sourceUrl } : {}) }
-        : { name: i.text, category: "other", source: "user" })),
-    ].filter((e, idx, all) => all.findIndex((x) => exclusionKey(x) === exclusionKey(e)) === idx);
+// 1.2.0.48 (Boaz): each category box is the full list of that category - one company per line, as its name, its
+// LinkedIn company page, or both ("Name - https://www.linkedin.com/company/x/"); a website instead of a LinkedIn page
+// is kept as the company's domain. The research's ticks write into the boxes as they change (syncExclusionTicks), so
+// what the boxes show is exactly what is saved.
+function parseExclusionLine(line) {
+  const t = String(line || "").trim();
+  if (!t) return null;
+  const m = t.match(/^(.*?)\s+-\s+(https?:\/\/\S+)$/);
+  let name = m ? m[1].trim() : "";
+  let url = m ? m[2] : "";
+  if (!m) {
+    if (/^https?:\/\//i.test(t) || /linkedin\.com\//i.test(t)) url = t;
+    else name = t;
   }
-  companyExclusions = [
-    ...EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
-      parseCompetitorLines(el(inputId).value).map((slug) => ({ ...(bySlug.get(`${category}|${slug}`) || {}), slug, category }))
-    ),
-    ...withoutSlug,
-  ];
+  if (!url) return { name };
+  const slug = parseLinkedinCompanySlug(url);
+  if (slug) return { name, slug };
+  if (/linkedin\.com/i.test(url)) return { name, bad: true, raw: t };
+  const domain = websiteDomain(url);
+  return domain ? { name, domain } : { name, bad: true, raw: t };
+}
+
+function formatExclusionLine(e) {
+  const link = e.slug ? `https://www.linkedin.com/company/${e.slug}/` : e.domain ? `https://${e.domain}` : "";
+  return e.name && link ? `${e.name} - ${link}` : e.name || link;
+}
+
+function exclusionBoxEntries(inputId) {
+  return el(inputId).value.split("\n").map(parseExclusionLine).filter(Boolean);
+}
+
+// Ticked research proposals are in their category's box; unticked ones are not. Runs on every tick change.
+function syncExclusionTicks() {
+  const list = checklists.exclusions;
+  if (!list) return;
+  const changedBoxes = new Set();
+  for (const item of list.getItems()) {
+    const category = item.meta?.category || "other";
+    const box = EXCLUSION_CATEGORY_INPUTS.find((c) => c.category === category);
+    if (!box) continue;
+    const key = normalizeCompanyName(item.text);
+    const lines = el(box.inputId).value.split("\n").map((l) => l.trim()).filter(Boolean);
+    const isThis = (l) => normalizeCompanyName(parseExclusionLine(l)?.name || "") === key;
+    const present = lines.some(isThis);
+    if (item.checked && !present) {
+      lines.push(formatExclusionLine({ name: item.text, domain: item.meta?.domain }));
+    } else if (!item.checked && present) {
+      lines.splice(0, lines.length, ...lines.filter((l) => !isThis(l)));
+    } else {
+      continue;
+    }
+    el(box.inputId).value = lines.join("\n");
+    changedBoxes.add(box);
+  }
+  for (const { inputId, listId } of changedBoxes) renderExclusionParsedList(inputId, listId);
+  if (changedBoxes.size) scheduleAutoSave();
+}
+
+function validateExclusionsStep() {
+  const byKey = new Map();
+  for (const e of companyExclusions) {
+    if (e.slug) byKey.set(`${e.category}|slug|${e.slug}`, e);
+    if (e.name) byKey.set(`${e.category}|name|${normalizeCompanyName(e.name)}`, e);
+  }
+  const proposedByKey = new Map((setupResearch.proposals?.exclusions?.items || [])
+    .map((item) => [`${item.category}|name|${normalizeCompanyName(item.name)}`, item]));
+  const fromBoxes = EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
+    exclusionBoxEntries(inputId).filter((e) => !e.bad).map((e) => {
+      const nameKey = e.name ? `${category}|name|${normalizeCompanyName(e.name)}` : null;
+      const prev = (e.slug && byKey.get(`${category}|slug|${e.slug}`)) || (nameKey && byKey.get(nameKey)) || {};
+      const proposed = nameKey ? proposedByKey.get(nameKey) : null;
+      const entry = {
+        ...prev,
+        ...(proposed ? { source: "research", ...(proposed.sourceUrl ? { sourceUrl: proposed.sourceUrl } : {}) } : {}),
+        category,
+        name: e.name || prev.name || undefined,
+        slug: e.slug || (e.name && !e.domain ? prev.slug : undefined) || undefined,
+        domain: e.domain || prev.domain || proposed?.domain || undefined,
+      };
+      for (const k of Object.keys(entry)) if (entry[k] === undefined || entry[k] === null || entry[k] === "") delete entry[k];
+      return entry;
+    }));
+  // An entry of a category this step has no box for is carried untouched.
+  const known = new Set(EXCLUSION_CATEGORY_INPUTS.map((c) => c.category));
+  companyExclusions = [...fromBoxes, ...companyExclusions.filter((e) => !known.has(e.category))]
+    .filter((e) => e.slug || e.name || e.domain);
   return { valid: true };
 }
 
@@ -1432,7 +1492,7 @@ function renderSummaryInto(step, container) {
     case "exclusions": {
       if (companyExclusions.length) {
         for (const category of EXCLUSION_CATEGORIES) {
-          const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.slug || e.name || e.domain).filter(Boolean);
+          const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.name || e.slug || e.domain).filter(Boolean);
           if (slugs.length) {
             appendPara(
               container, `Excluding ${slugs.length} ${EXCLUSION_CATEGORY_LABELS[category].toLowerCase()}${slugs.length === 1 ? "" : "s"}: `,
@@ -1859,14 +1919,15 @@ function parseAliasLines(rawValue) {
 }
 
 function renderExclusionParsedList(inputId, listId) {
-  const lines = el(inputId).value.split("\n").map((l) => l.trim()).filter(Boolean);
   const listEl = el(listId);
   listEl.innerHTML = "";
-  for (const line of lines) {
-    const slug = parseLinkedinCompanySlug(line);
+  for (const e of exclusionBoxEntries(inputId)) {
     const row = document.createElement("div");
-    row.className = slug ? "competitor-line-ok" : "competitor-line-bad";
-    row.textContent = slug ? `✓ ${slug}` : `✗ couldn't find a LinkedIn company page in "${line}"`;
+    row.className = e.bad ? "competitor-line-bad" : "competitor-line-ok";
+    if (e.bad) row.textContent = `✗ "${e.raw}" - a LinkedIn link must be a company page (linkedin.com/company/...)`;
+    else if (e.slug) row.textContent = `✓ ${e.name ? `${e.name} - ` : ""}LinkedIn page ${e.slug}`;
+    else if (e.domain) row.textContent = `✓ ${e.name ? `${e.name} - ` : ""}website ${e.domain}`;
+    else row.textContent = `✓ ${e.name} (matched by name; add its LinkedIn page for a surer match)`;
     listEl.appendChild(row);
   }
 }
@@ -2453,13 +2514,14 @@ function mountStepChecklists(step, p, accepted) {
     };
   } else if (step === "exclusions") {
     const keys = p.items.map(exclusionKey);
-    const t = ticks(keys, companyExclusions.filter((e) => !e.slug).map(exclusionKey));
+    const t = ticks(keys, companyExclusions.filter((e) => e.name).map(exclusionKey));
     checklists[step] = mountChecklist(el("exclusions-checklist"),
       p.items.map((item, i) => ({
         text: item.name, checked: t[i], sourceUrl: item.sourceUrl, meta: item,
         label: `${EXCLUSION_CATEGORY_LABELS[item.category] || item.category}${item.domain ? ` · ${item.domain}` : ""}`,
       })),
-      { title: "Found by the research - tick the ones to exclude", addPlaceholder: "Add a company by name (excluded as Other)", onChange: scheduleAutoSave });
+      { title: "Found by the research - tick the ones to exclude (they appear in the boxes below)", addPlaceholder: "Add a company by name (excluded as Other)", onChange: syncExclusionTicks });
+    syncExclusionTicks();
   }
 }
 
@@ -2787,8 +2849,7 @@ async function init() {
   el("contacts-max-per-account-input").value = targetContactProfile.maxContactsPerAccount ?? 10;
   renderSeniorityLevelPriorityRows(targetContactProfile.seniorityLevels || []);
   for (const { category, inputId, listId } of EXCLUSION_CATEGORY_INPUTS) {
-    const slugs = companyExclusions.filter((e) => e.category === category && e.slug).map((e) => e.slug);
-    el(inputId).value = slugs.map((slug) => `https://www.linkedin.com/company/${slug}/`).join("\n");
+    el(inputId).value = companyExclusions.filter((e) => e.category === category).map(formatExclusionLine).filter(Boolean).join("\n");
     renderExclusionParsedList(inputId, listId);
   }
   companyAliases = await getCompanyAliases();
