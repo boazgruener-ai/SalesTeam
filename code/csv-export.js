@@ -9,6 +9,16 @@ export function csvEscape(value) {
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+// For the files a user exports from a table (Boaz, 2026-10-02): a column empty in every exported row is left out, and a
+// column filled in fewer than half of them moves to the right-hand end, so the well-filled columns come first. Order is
+// otherwise kept. Returns { headers, rows }.
+export function compactCsvColumns(headers, rows) {
+  const filled = headers.map((_, i) => rows.filter((r) => String(r[i] ?? "").trim() !== "").length);
+  const keep = headers.map((_, i) => i).filter((i) => filled[i] > 0);
+  const order = [...keep.filter((i) => filled[i] * 2 >= rows.length), ...keep.filter((i) => filled[i] * 2 < rows.length)];
+  return { headers: order.map((i) => headers[i]), rows: rows.map((r) => order.map((i) => r[i])) };
+}
+
 export function toCsv(headers, rows) {
   return "﻿" + [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\r\n") + "\r\n";
 }

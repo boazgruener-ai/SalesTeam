@@ -4,6 +4,7 @@
 // dialog (mass status changes with a confirmation step and one-level undo)
 // and the "Prioritize Unscored Leads" action.
 import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { confirmIfCostly } from "./api-usage.js";
 import { guardBatchStart, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -2118,11 +2119,6 @@ document.getElementById("detail-mentor-clear-btn").addEventListener("click", asy
 // already shows visually instead of in the file).
 // ---------------------------------------------------------------------
 
-function csvEscape(value) {
-  const text = String(value ?? "");
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
 function exportLeadsToCsv(leads, filenameTag) {
   if (leads.length === 0) {
     alert("No leads to export.");
@@ -2143,7 +2139,9 @@ function exportLeadsToCsv(leads, filenameTag) {
     lead.priorityReason || "",
     leadCreatorUrl(lead) || (lead.type === "job" ? lead.jobUrl : lead.postUrl) || "",
   ]);
-  const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\r\n");
+  // Same file shape as the accounts/contacts exports: empty columns left out, sparse ones last, UTF-8 that Excel reads.
+  const compact = compactCsvColumns(headers, rows);
+  const csv = toCsv(compact.headers, compact.rows);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

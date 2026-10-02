@@ -16,7 +16,7 @@
 import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
 import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
-import { toCsv } from "./csv-export.js";
+import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
   getTargetAccountsWorkbook,
@@ -6187,7 +6187,8 @@ function tableCsv(columns, rows) {
     }
     return cells;
   });
-  return toCsv(headers, lines);
+  const compact = compactCsvColumns(headers, lines);
+  return toCsv(compact.headers, compact.rows);
 }
 
 async function exportTableCsv(kind) {
