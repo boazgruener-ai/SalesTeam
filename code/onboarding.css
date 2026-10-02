@@ -187,6 +187,7 @@ label {
 
 select,
 input[type="text"],
+input[type="password"],
 input[type="number"],
 textarea {
   width: 100%;
@@ -222,7 +223,9 @@ textarea {
   font-weight: 600;
 }
 
-.wizard-buttons button#confirm-change-btn {
+.wizard-buttons button#confirm-change-btn,
+.wizard-buttons button#research-stop-btn,
+.wizard-buttons button#research-skip-btn {
   background: white;
   color: var(--blue);
 }
