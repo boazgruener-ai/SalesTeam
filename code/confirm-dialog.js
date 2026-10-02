@@ -74,6 +74,50 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
   });
 }
 
+// A question with more than two answers: one button per choice, plus Cancel. Resolves to the chosen value, or null
+// for Cancel / Escape. The first choice is the highlighted one.
+//
+//   const scope = await askChoice("Export which rows?", [{ value: "all", label: "All 900" }, { value: "shown", label: "The 12 shown" }]);
+export function askChoice(message, choices, { cancelLabel = "Cancel" } = {}) {
+  return new Promise((resolve) => {
+    ensureStyle();
+    const dialog = document.createElement("dialog");
+    dialog.id = "salesteam-confirm-dialog";
+    const text = document.createElement("p");
+    text.className = "sc-message";
+    text.textContent = message;
+    const actions = document.createElement("div");
+    actions.className = "sc-actions";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "sc-cancel";
+    cancelBtn.textContent = cancelLabel;
+    cancelBtn.onclick = () => finish(null);
+    actions.appendChild(cancelBtn);
+    [...choices].reverse().forEach((choice, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = i === choices.length - 1 ? "sc-ok" : "sc-cancel";
+      btn.textContent = choice.label;
+      btn.onclick = () => finish(choice.value);
+      actions.appendChild(btn);
+    });
+    dialog.append(text, actions);
+    dialog.onclose = () => finish(null); // Escape
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    cancelBtn.focus();
+  });
+}
+
 // A result / progress pop-up with a single OK (or Close, while the action is still running) button - used instead of a
 // small line of text somewhere on the page, which was easy to miss (reported 2026-09-21).
 export function showNotice(message, { working = false, error = false } = {}) {

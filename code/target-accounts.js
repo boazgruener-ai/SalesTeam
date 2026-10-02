@@ -15,7 +15,7 @@
 // moved here from Settings the same day.
 import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
-import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
 import { toCsv } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
@@ -1032,6 +1032,8 @@ function rawValue(company, column) {
     return s ? (column.id === "seniority" ? s.label : s.priority) : null;
   }
   if (company.fullName == null && column.id === "globalEmployees") return effectiveEmployees(company).value;
+  // A contact found on the web keeps the page it was found on as primarySourceUrl (web lane); show it as its Source.
+  if (company.fullName != null && column.id === "sourceUrl") return company.sourceUrl || company.primarySourceUrl || null;
   return company[column.id];
 }
 
@@ -6175,7 +6177,11 @@ function tableCsv(columns, rows) {
   const lines = rows.map((row) => {
     const cells = [];
     for (const column of columns) {
-      const v = column.id === "companyType" ? localizeTypeWording(rawValue(row, column)) : rawValue(row, column);
+      let v = column.id === "companyType" ? localizeTypeWording(rawValue(row, column)) : rawValue(row, column);
+      // A workbook date is an Excel day number (46276): written as a date (2026-09-10) Excel reads as one.
+      if (column.date && typeof v === "number") v = new Date(Date.UTC(1899, 11, 30) + v * 86400000).toISOString().slice(0, 10);
+      // Stored as 1-3; the table and the file both say what it means.
+      if (column.id === "seniorityPriority" && v != null && v !== "") v = SENIORITY_PRIORITY_LABELS[v] || v;
       cells.push(v == null ? "" : v);
       if (column.currencyField) cells.push(row[column.currencyField] || "");
     }
@@ -6187,23 +6193,32 @@ function tableCsv(columns, rows) {
 async function exportTableCsv(kind) {
   const accounts = kind === "accounts";
   const all = accounts ? workbook.companies.length : workbook.contacts.length;
-  const rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+  let rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
   const noun = (n) => (accounts ? `account${n === 1 ? "" : "s"}` : `contact${n === 1 ? "" : "s"}`);
   if (all === 0) {
     await askConfirm(`There are no ${noun(0)} to export yet.`, { okLabel: "OK", cancelLabel: "Close" });
     return;
   }
-  if (rows.length === 0) {
-    await askConfirm(`The search or column filters hide all ${all} ${noun(all)}, so there is nothing to export. Clear them first.`, { okLabel: "OK", cancelLabel: "Close" });
-    return;
+  // A filter is on (Boaz, 2026-10-02: a forgotten saved filter made the file look half empty): always ask which.
+  const chips = tableFilterChips(accounts ? searchInputEl : contactsSearchInputEl,
+    accounts ? columnFilters : contactColumnFilters, accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS);
+  if (chips.length > 0) {
+    const choices = [{ value: "all", label: `All ${all} ${noun(all)}` }];
+    if (rows.length > 0) choices.push({ value: "shown", label: `Only the ${rows.length} filtered` });
+    const scope = await askChoice(
+      `A filter is on, so the table shows ${rows.length} of ${all} ${noun(all)}:\n${chips.map((c) => `  - ${c.label}`).join("\n")}\n\n` +
+      "Which do you want to export?", choices);
+    if (!scope) return;
+    if (scope === "all") {
+      // Every row in the table's sort order: the filtered rows' order applied to all of them.
+      const savedSearch = (accounts ? searchInputEl : contactsSearchInputEl).value;
+      const savedFilters = accounts ? { ...columnFilters } : { ...contactColumnFilters };
+      clearTableFilters(accounts ? searchInputEl : contactsSearchInputEl, accounts ? columnFilters : contactColumnFilters);
+      rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+      (accounts ? searchInputEl : contactsSearchInputEl).value = savedSearch;
+      Object.assign(accounts ? columnFilters : contactColumnFilters, savedFilters);
+    }
   }
-  if (rows.length < all && !(await askConfirm(
-    `The table shows ${rows.length} of ${all} ${noun(all)} - a search or column filter is on.
-
-` +
-    `Export only these ${rows.length}? To export all ${all}, clear the search and filters first.`,
-    { okLabel: `Export the ${rows.length} shown`, cancelLabel: "Cancel" },
-  ))) return;
   const csv = tableCsv(accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS, rows);
   const filename = `SalesTeam-${accounts ? "accounts" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
   downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
