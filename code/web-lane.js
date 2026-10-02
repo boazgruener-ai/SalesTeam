@@ -342,6 +342,20 @@ export function measureText(s) {
   ].filter(Boolean).join("\n");
 }
 
+// 1.2.0.50 (Boaz): the pop-up's version - what was done and what it cost; measureText above stays in the Activity Log.
+export function measureShortText(s) {
+  const m = measureLane(s.results);
+  const groups = [m.traded, m.other].filter(Boolean);
+  const sum = (k) => groups.reduce((a, g) => a + (g[k] || 0), 0);
+  const completed = s.done - s.failed;
+  return [
+    `${completed} of ${s.total} accounts researched${s.failed ? ` (${s.failed} could not be)` : ""}` +
+      `${s.stoppedReason ? ` - stopped: ${s.stoppedReason}` : ""}.`,
+    `Found: ${sum("contacts")} people, ${sum("initiatives")} initiatives, ${sum("filled")} missing facts filled in.`,
+    `Total cost: about US$${(s.spent || 0).toFixed(2)}.`,
+  ].join("\n");
+}
+
 // The people at this company without a LinkedIn profile, best first (a known seniority, then a job title),
 // at most 6 - two searches cover about that many names.
 async function peopleWithoutProfile(companyId) {

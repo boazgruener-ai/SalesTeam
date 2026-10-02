@@ -5,8 +5,8 @@ import { askConfirm } from "./confirm-dialog.js";
 import { BULK_STATE_KEY, getRunningBatch } from "./batch-jobs.js";
 import { initPipelineStatus } from "./pipeline-status.js";
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
-import { WEB_LANE_STATE_KEY, measureText } from "./web-lane.js";
-import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
+import { WEB_LANE_STATE_KEY, measureShortText } from "./web-lane.js";
+import { WEB_DISCOVERY_STATE_KEY, discoveryShortText } from "./discovery-report.js";
 
 const STALE_MS = 180000;
 let onChange = null;
@@ -145,7 +145,7 @@ async function renderLane(state) {
     if (fresh && !fresh.acknowledged) {
       await chrome.storage.local.set({ [WEB_LANE_STATE_KEY]: { ...fresh, acknowledged: true } });
       const why = stopReasonText(fresh);
-      const text = ["Web research (new) finished.", measureText(fresh), why, "The same summary is in the Activity Log."].filter(Boolean).join("\n\n");
+      const text = ["Web research finished.", measureShortText(fresh), why, "The details are in the Activity Log."].filter(Boolean).join("\n\n");
       await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
     }
     laneAnnouncing = false;
@@ -190,7 +190,7 @@ async function renderDiscovery(state) {
     if (fresh && !fresh.acknowledged) {
       await chrome.storage.local.set({ [WEB_DISCOVERY_STATE_KEY]: { ...fresh, acknowledged: true } });
       const why = fresh.stoppedReason === "user" ? "" : stopReasonText(fresh);
-      const text = ["Finding new accounts finished.", discoveryText(fresh), why, "The same summary is in the Activity Log."].filter(Boolean).join("\n\n");
+      const text = ["Finding new accounts finished.", discoveryShortText(fresh), why, "The details are in the Activity Log."].filter(Boolean).join("\n\n");
       await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
     }
     discoveryAnnouncing = false;
