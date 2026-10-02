@@ -852,3 +852,8 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 .settings-research-offer { border-left: 4px solid #1155cc; font-size: 13px; }
 .settings-research-offer p { margin: 0 0 8px; }
 .settings-research-offer-buttons { display: flex; gap: 8px; }
+
+/* 1.2.0.46: Leads Prioritization in two parts, Posts and Job ads. */
+.lp-part-heading { margin: 22px 0 4px; padding-bottom: 4px; border-bottom: 2px solid #d3e2f3; font-size: 16px; }
+.lp-rules-heading { margin: 14px 0 4px; font-size: 13px; }
+#jobs-min-confidence-select { max-width: 260px; }

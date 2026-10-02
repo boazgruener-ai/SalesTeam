@@ -1856,6 +1856,7 @@ add_bullets(doc, [
     'Offered once to existing installs - a setup finished without the research sees a one-time offer on the Settings cards and at the top of Change Settings - Research (opens About you with the research started) or No thanks (setupResearch.declinedInSettings). The action stays under Settings > User Profile > Open About you.',
     'New steps - Initiative stages (ranked, at least one ticked), Companies to include (Name, website - the exclusion list wins), How big is your list (accounts, contacts per account, initiatives per account) with a live cost-and-time estimate from onboarding-estimate.js, measured averages replacing the defaults after 20 accounts. 15 steps in all.',
     "Finish - with automatic preparation and web research ticked, Finish starts the build: included companies, then Web Discovery from company listings on the web (Source “Web”), then the web lane; LinkedIn is kicked. The wizard itself never visits LinkedIn. The stop rule ends discovery at the list's target.",
+    "Leads Prioritization - the step opens with one general explanation, then Posts (rules you build) and Job ads (two fixed rules) as two parts. The Job ads' 0-100 confidence threshold became a level the user picks (Very High / High / Medium / Low, default High; key jobRulesMinConfidence). An account's level is its workbook rating, else SalesTeam's own Priority (P1 Very High ... P4-P5 Low), so web and LinkedIn accounts count too (accountConfidenceRank, evaluateTargetAccountMatch). The numeric threshold remains only inside company prioritization (hasSufficientImportEvidence).",
 ])
 p = doc.add_paragraph()
 p.add_run('Building the accounts').bold = True
@@ -2889,7 +2890,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.45."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.46."
 )
 
 for section in doc.sections:

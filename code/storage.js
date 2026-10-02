@@ -1533,6 +1533,48 @@ export async function saveTargetAccountScoreThreshold(threshold) {
   await chrome.storage.local.set({ [TARGET_ACCOUNT_SCORE_THRESHOLD_KEY]: threshold });
 }
 
+// 1.2.0.46 (Boaz): the Job rules' "how sure must we be that this is a real Target Account" is a level the user picks
+// (Very High / High / Medium / Low, default High) instead of a 0-100 number nobody could read. An account's level is
+// the research workbook's own label when it has one, else SalesTeam's own Priority (P1 Very High, P2 High, P3 Medium,
+// P4-P5 Low) - so accounts found on the web or LinkedIn count too, which the old workbook-score rule never let them.
+export const CONFIDENCE_LEVELS = [
+  { id: "very_high", label: "Very High", rank: 4 },
+  { id: "high", label: "High", rank: 3 },
+  { id: "medium", label: "Medium", rank: 2 },
+  { id: "low", label: "Low", rank: 1 },
+];
+const JOB_RULES_MIN_CONFIDENCE_KEY = "jobRulesMinConfidence";
+const DEFAULT_JOB_RULES_MIN_CONFIDENCE = "high";
+
+export async function getJobRulesMinConfidence() {
+  const data = await chrome.storage.local.get(JOB_RULES_MIN_CONFIDENCE_KEY);
+  const value = data[JOB_RULES_MIN_CONFIDENCE_KEY];
+  return CONFIDENCE_LEVELS.some((l) => l.id === value) ? value : DEFAULT_JOB_RULES_MIN_CONFIDENCE;
+}
+
+export async function saveJobRulesMinConfidence(level) {
+  if (!CONFIDENCE_LEVELS.some((l) => l.id === level)) return;
+  await chrome.storage.local.set({ [JOB_RULES_MIN_CONFIDENCE_KEY]: level });
+}
+
+// 4..1, 0 for a "Provisional" workbook label (not confirmed, never enough), null when nothing says.
+export function accountConfidenceRank(workbookLabel, salesTeamPriority) {
+  const label = String(workbookLabel || "").trim().toLowerCase();
+  if (label) {
+    if (label.includes("provisional")) return 0;
+    if (label.startsWith("very high")) return 4;
+    if (label.startsWith("high")) return 3;
+    if (label.startsWith("medium")) return 2;
+    if (label.startsWith("low")) return 1;
+  }
+  const p = Number(String(salesTeamPriority || "").replace(/^P/i, ""));
+  if (p === 1) return 4;
+  if (p === 2) return 3;
+  if (p === 3) return 2;
+  if (p === 4 || p === 5) return 1;
+  return null;
+}
+
 // The full relational slice of the workbook (Companies/Contacts/
 // AI_Initiatives/AI_Investment/Sources - see xlsx-lite.js's
 // parseFullTargetAccountsWorkbook and PRD 6.12), for the Target Accounts
@@ -3337,13 +3379,13 @@ export async function setLeadPriority(key, priority) {
 export const PRIORITIZATION_RULE_CATALOG = [
   {
     id: "job_company_cap",
-    description: "Job listing at a qualifying Target Account company - there's no individual to contact, so the company match alone is capped.",
+    description: "Job listing at a Target Account at or above the level chosen above - there's no individual to contact, so it gets this priority automatically, without an AI call.",
     type: "decisive",
     defaultValue: 3,
   },
   {
     id: "job_signal_ceiling",
-    description: "Job listing whose company matched a Target Account, but not confidently enough for the Job company cap above (a Provisional label or below-threshold score) - the Sales Mentor still decides, but is never allowed to rate it better than this, since there's still no individual to contact.",
+    description: "Job listing at a Target Account below the level chosen above - the Sales Mentor still decides, but is never allowed to rate it better than this, since there's still no individual to contact.",
     type: "ceiling",
     defaultValue: 3,
   },
@@ -3433,11 +3475,20 @@ export function findTargetContactMatch(lead, contacts) {
 // a very high score - the real workbook's highest scores cluster in a large
 // Provisional bucket (thin evidence, not confirmed fit), so score alone
 // isn't a safe basis for an automatic override.
-export function evaluateTargetAccountMatch(company, targetAccounts, threshold) {
-  const match = targetAccounts[normalizeCompanyName(company)];
-  if (!match || match.score == null) return { match: null, qualifies: false };
-  const confidentLabel = match.priorityLabel === "Very High" || match.priorityLabel === "High";
-  return { match, qualifies: confidentLabel && match.score >= threshold };
+// A lead's company against the Target Accounts: the workbook-scored entry when there is one, else the account row
+// itself (web / LinkedIn accounts have no targetAccounts entry), with SalesTeam's own Priority as its confidence.
+// qualifies = its confidence level is at least minConfidence (a CONFIDENCE_LEVELS id).
+export function evaluateTargetAccountMatch(company, targetAccounts, minConfidence, companyRow = null, salesTeamPriority = null) {
+  const mapped = targetAccounts[normalizeCompanyName(company)];
+  const scored = mapped && mapped.score != null ? mapped : null;
+  if (!scored && !companyRow) return { match: null, qualifies: false };
+  const priority = salesTeamPriority || companyRow?.salesTeamPriority || null;
+  const match = scored
+    ? { ...scored, salesTeamPriority: priority }
+    : { company: companyRow.company, score: null, priorityLabel: null, salesTeamPriority: priority };
+  const rank = accountConfidenceRank(match.priorityLabel, priority);
+  const minRank = CONFIDENCE_LEVELS.find((l) => l.id === minConfidence)?.rank ?? 3;
+  return { match, qualifies: rank != null && rank >= minRank };
 }
 
 // ---------------------------------------------------------------------------
@@ -3704,7 +3755,8 @@ async function applyCompanyPrioritizationResultsUnlocked(results) {
 }
 
 function describeMatch(match) {
-  return `${match.company} scored ${Math.round(match.score)}/100 (${match.priorityLabel})`;
+  if (match.score != null && match.priorityLabel) return `${match.company} scored ${Math.round(match.score)}/100 (${match.priorityLabel})`;
+  return `${match.company}${match.salesTeamPriority ? ` (SalesTeam Priority ${match.salesTeamPriority})` : ""}`;
 }
 
 // Generic, user-defined Post-lead prioritization rules (2026-09-16) -
@@ -4012,7 +4064,8 @@ export async function partitionLeadsByTargetAccount(leads) {
   const exclusionMatcher = await getExclusionMatcher();
   const isExcludedCompanyName = (name) => isCompanyRowExcluded(companyByName.get(normalizeCompanyName(name)) || { company: name }, exclusionMatcher);
 
-  const threshold = await getTargetAccountScoreThreshold();
+  const minConfidence = await getJobRulesMinConfidence();
+  const accountExtras = await getTargetAccountExtras();
   const rules = await getPrioritizationRules();
   const ruleById = Object.fromEntries(rules.map((r) => [r.id, r]));
 
@@ -4023,7 +4076,10 @@ export async function partitionLeadsByTargetAccount(leads) {
       toScore.push(lead);
       continue;
     }
-    const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, threshold);
+    const leadCompanyKey = normalizeCompanyName(lead.company);
+    const leadCompanyRow = companyByName.get(leadCompanyKey) || null;
+    const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, minConfidence, leadCompanyRow,
+      accountExtras[leadCompanyKey]?.overrides?.salesTeamPriority || null);
 
     if (match && lead.type === "job") {
       if (qualifies) {
@@ -4149,7 +4205,7 @@ export function tagPrioritiesWithTargetAccountSignal(priorities, leads) {
     }
     if (lead.targetAccountSignal) {
       const signal = lead.targetAccountSignal;
-      const tag = `[Target Account signal: ${signal.company} scored ${Math.round(signal.score)}/100 (${signal.priorityLabel})] `;
+      const tag = `[Target Account signal: ${describeMatch(signal)}] `;
       baseReason = tag + baseReason;
     }
     if (lead.targetAccountFloor && p.priority > lead.targetAccountFloor) {
@@ -6143,6 +6199,7 @@ function wizardSettingsBackupKeys() {
     COMPANY_ALIASES_KEY,
     POST_PRIORITIZATION_RULES_KEY,
     PRIORITIZATION_RULE_OVERRIDES_KEY,
+    JOB_RULES_MIN_CONFIDENCE_KEY,
     ACCOUNT_PRIORITY_GUIDELINES_KEY,
     ORGANIZATION_TYPE_ELIGIBILITY_KEY,
     KEYWORD_SEARCH_LANGUAGES_KEY,

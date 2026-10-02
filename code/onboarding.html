@@ -229,24 +229,52 @@
 
     <!-- Step 4b: Leads Prioritization (moved from settings.html 2026-09-16) -->
     <section id="enter-leads-prioritization" class="wizard-step" hidden>
-      <h2>Leads Prioritization: how should we rank the leads (posts) we already scan?</h2>
+      <h2>Leads Prioritization: how should we rank the leads (posts) your scans find?</h2>
+      <!-- 1.2.0.46 (Boaz): general explanation first, then Posts and Job ads, each with its own explanation, setting
+           and rules. The 0-100 "confidence threshold" became a level the user picks (Very High ... Low). -->
       <p class="step-intro">
-        These rules adjust how the Sales Mentor ranks a lead (post) whose company is in your Target Accounts list.
-        (Ranking the companies themselves is a different step: Discovery Prioritization.) The Sales Mentor's own
-        judgment always comes first; each rule below only changes the ranking of a lead that meets its condition.
-        Changes are saved as you make them.
+        After every scan the Sales Mentor ranks each new lead (post) from P1 (best) to P5. The rules on this page
+        adjust that ranking when the lead's company is one of your Target Accounts. (Ranking the companies themselves
+        is a different step: Discovery Prioritization.) The Sales Mentor's own judgment always comes first; a rule
+        only changes the ranking of a lead that meets its condition. Changes are saved as you make them.
       </p>
-      <label for="leads-prioritization-threshold-input">Target Account confidence threshold (Job rules)</label>
-      <input type="number" id="leads-prioritization-threshold-input" min="0" max="100" title="A company only triggers the Job rules below once your research labels it 'Very High' or 'High' (never Provisional/lower, regardless of score) AND its score is at or above this. Post rules (further down) set their own thresholds per rule instead - changing this number doesn't affect them." />
+
+      <h3 class="lp-part-heading">Posts</h3>
       <p class="field-hint">
-        A company is treated as confidently matched once it's labeled "Very High" or "High" by your research
-        (never Provisional or lower, whatever its score) <strong>and</strong> its score is at or above this
-        number. Doesn't affect the Target Accounts Dashboard's own Import/Export - every company there is
-        included regardless of this threshold. Only governs the <strong>Job</strong> rules below - the
-        <strong>Post</strong> rules further down set their own thresholds, one per rule.
+        A post is written by a real, named person you can contact - the stronger signal. Each post is checked against
+        the rules below, top to bottom; the first <strong>enabled</strong> rule whose conditions <strong>all</strong>
+        match applies its effect (a floor, a ceiling, or a fixed priority). If no rule matches, the Sales Mentor ranks
+        the post on its own. Order matters, so put more specific rules above more general ones with ↑/↓.
       </p>
-      <p id="leads-prioritization-threshold-error" class="step-error" hidden>Target Account confidence threshold must be a number from 0 to 100.</p>
-      <h3>Job rules</h3>
+      <h4 class="lp-rules-heading">Post rules</h4>
+      <p class="field-hint">
+        Build a rule from any of: a column of your Target Accounts (type a column name; the box suggests the ones
+        your list has), "Account is in the Target Accounts list", "Post author is a Target Contact", "Post matched a
+        Topic".
+      </p>
+      <div id="post-rules-list"></div>
+      <button type="button" id="add-post-rule-btn">+ Add rule</button>
+
+      <h3 class="lp-part-heading">Job ads</h3>
+      <p class="field-hint">
+        A job ad comes from the company itself - there is no person to contact yet, so it is a weaker signal than a
+        post. Job ads have two fixed rules instead of rules you build: a job ad tells SalesTeam little more than the
+        company and the job title, so there is nothing else to build a rule from. You can switch either rule off or
+        change its priority.
+      </p>
+      <label for="jobs-min-confidence-select">How sure must SalesTeam be that the company is a strong Target Account?</label>
+      <select id="jobs-min-confidence-select">
+        <option value="very_high">Very High</option>
+        <option value="high">High (recommended)</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+      <p class="field-hint" id="jobs-min-confidence-hint"></p>
+      <p class="field-hint">
+        An account's level is its research workbook rating when it has one, otherwise SalesTeam's own Priority:
+        P1 = Very High, P2 = High, P3 = Medium, P4-P5 = Low.
+      </p>
+      <h4 class="lp-rules-heading">Job ad rules</h4>
       <div id="leads-prioritization-rules-wrap">
         <table id="leads-prioritization-rules-table">
           <thead>
@@ -262,22 +290,6 @@
           <tbody id="leads-prioritization-rules-tbody"></tbody>
         </table>
       </div>
-
-      <h3>Post rules</h3>
-      <p class="field-hint">
-        <strong>Post leads</strong> (a real, named individual - a stronger signal than a Job listing) are
-        checked against the rules below, top to bottom. Each rule is a set of conditions that <strong>all</strong>
-        have to match (AND) - build one from a Workbook column check, "Account is in the Target Accounts
-        list", "Post author is a Target Contact" and/or "Post matched a Topic". The first <strong>enabled</strong>
-        rule whose conditions all match wins and applies its Floor/Ceiling/Decisive effect; if no rule
-        matches, the Sales Mentor scores the lead (post) entirely on its own. Order matters - only the first match
-        is used, so reorder with ↑/↓ to put more specific rules above more general ones. A Workbook column
-        condition's column field suggests every column actually found in your imported Target Accounts
-        workbook's Companies sheet as you type - or type any column name directly, even one not currently
-        suggested.
-      </p>
-      <div id="post-rules-list"></div>
-      <button type="button" id="add-post-rule-btn">+ Add rule</button>
       <datalist id="post-rule-column-options"></datalist>
     </section>
 

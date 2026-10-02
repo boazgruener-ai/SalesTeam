@@ -603,7 +603,8 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
     "A lead may carry a `targetAccountSignal` - independent research on that company's investment/maturity " +
     "from a separate target-account list, with a priorityLabel (e.g. \"Very High\", " +
-    "\"High - Provisional\") and a 0-100 score. For a post lead (a real, named individual you can actually " +
+    "\"High - Provisional\") and a 0-100 score - or, for an account without that research, only SalesTeam's own " +
+    "account priority (salesTeamPriority, P1 best to P5). For a post lead (a real, named individual you can actually " +
     "message), treat it as a real, meaningful positive signal toward a higher priority - weigh it more " +
     "heavily when the label isn't marked Provisional and the score is high. For a job lead specifically, " +
     "weigh it much more conservatively: the \"creator\" is the company itself, not an individual, so there is " +
@@ -638,8 +639,9 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
 function summarizeTargetAccountSignal(signal) {
   if (!signal) return undefined;
   return {
-    priorityLabel: signal.priorityLabel,
-    score: signal.score,
+    priorityLabel: signal.priorityLabel || undefined,
+    score: signal.score ?? undefined,
+    salesTeamPriority: signal.priorityLabel ? undefined : signal.salesTeamPriority || undefined,
     topInitiatives: signal.topInitiatives || undefined,
   };
 }

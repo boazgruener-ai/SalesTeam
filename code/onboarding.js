@@ -36,8 +36,9 @@ import {
   clearDiscoveredContacts,
   getPrioritizationRules,
   savePrioritizationRuleOverride,
-  getTargetAccountScoreThreshold,
-  saveTargetAccountScoreThreshold,
+  getJobRulesMinConfidence,
+  saveJobRulesMinConfidence,
+  CONFIDENCE_LEVELS,
   getPostPrioritizationRules,
   savePostPrioritizationRules,
   getTopics,
@@ -824,11 +825,19 @@ function validateAlwaysStep() {
   return { valid: true };
 }
 
+// What the chosen level means for job ads, in one line (1.2.0.46).
+const JOBS_MIN_CONFIDENCE_HINTS = {
+  very_high: "Only your very best accounts count: few job ads get the automatic cap, the Sales Mentor ranks most of them itself (never better than the ceiling below).",
+  high: "Recommended. Strong accounts count; a job ad at a weaker account is still ranked by the Sales Mentor, never better than the ceiling below.",
+  medium: "Most accounts count: more job ads get the automatic priority without an AI call - cheaper, but less nuanced.",
+  low: "Every rated account counts: nearly every job ad at a Target Account gets the automatic priority.",
+};
+
+function renderJobsMinConfidenceHint() {
+  el("jobs-min-confidence-hint").textContent = JOBS_MIN_CONFIDENCE_HINTS[el("jobs-min-confidence-select").value] || "";
+}
+
 function validateLeadsPrioritizationStep() {
-  const threshold = Number(el("leads-prioritization-threshold-input").value);
-  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
-    return { valid: false, error: "Target Account confidence threshold must be a number from 0 to 100." };
-  }
   for (const row of el("leads-prioritization-rules-tbody").querySelectorAll("tr")) {
     const rule = prioritizationRules.find((r) => r.id === row.dataset.key);
     if (!rule) continue;
@@ -1157,7 +1166,7 @@ const STEP_VALIDATORS = {
 function currentScoringSignature() {
   return JSON.stringify({
     rules: prioritizationRules.map((r) => [r.id, r.enabled, r.value]),
-    threshold: Number(el("leads-prioritization-threshold-input").value),
+    jobsMinConfidence: el("jobs-min-confidence-select").value,
     post: postPrioritizationRules,
   });
 }
@@ -1236,7 +1245,7 @@ async function persistStep(step) {
       await Promise.all(prioritizationRules.map((rule) =>
         savePrioritizationRuleOverride(rule.id, { enabled: rule.enabled, value: rule.value })
       ));
-      await saveTargetAccountScoreThreshold(Number(el("leads-prioritization-threshold-input").value));
+      await saveJobRulesMinConfidence(el("jobs-min-confidence-select").value);
       await savePostPrioritizationRules(postPrioritizationRules);
       await flagScoringRulesChangeIfAny();
       break;
@@ -1353,10 +1362,11 @@ function renderSummaryInto(step, container) {
       break;
     }
     case "leads-prioritization": {
-      appendPara(container, "Target Account confidence threshold: ", { strong: el("leads-prioritization-threshold-input").value }, ".");
+      const level = CONFIDENCE_LEVELS.find((l) => l.id === el("jobs-min-confidence-select").value);
+      appendPara(container, "Job ads - minimum Target Account level: ", { strong: level ? level.label : "High" }, ".");
       const disabled = prioritizationRules.filter((r) => !r.enabled);
       if (disabled.length === 0) {
-        appendPara(container, `All ${prioritizationRules.length} rules enabled.`);
+        appendPara(container, `Job ad rules: all ${prioritizationRules.length} enabled.`);
       } else {
         appendPara(
           container, `${prioritizationRules.length - disabled.length} of ${prioritizationRules.length} rules enabled. Disabled: `,
@@ -2627,7 +2637,9 @@ async function init() {
   el("industry-select-none-btn").addEventListener("click", () => setAllIndustryRows(false));
   el("industry-select-all-btn").addEventListener("click", () => setAllIndustryRows(true));
   renderPriorityStepOptions();
-  el("leads-prioritization-threshold-input").value = await getTargetAccountScoreThreshold();
+  el("jobs-min-confidence-select").value = await getJobRulesMinConfidence();
+  renderJobsMinConfidenceHint();
+  el("jobs-min-confidence-select").addEventListener("change", () => { renderJobsMinConfidenceHint(); scheduleAutoSave(); });
   prioritizationRules = await getPrioritizationRules();
   renderLeadsPrioritizationRules();
   postPrioritizationRules = await getPostPrioritizationRules();
