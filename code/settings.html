@@ -272,6 +272,16 @@
         Company Search using your saved onboarding criteria, checkpointing into the Discovery Queue above.
         Remove or fold into real progress UI once Phase 5 is fully wired into the main scan flow.
       </p>
+      <!-- 1.2.0.43 (Boaz): moved here from the Setup's Size step - only this panel and the Discovery Queue panel
+           read it; building the list from the Setup uses "How big is your list". -->
+      <div class="settings-buttons-row">
+        <label for="company-discovery-max-input">Most companies per Company Discovery run</label>
+        <input type="number" id="company-discovery-max-input" min="1" max="500" step="1" style="width: 90px" />
+        <button type="button" id="company-discovery-max-save-btn">Save</button>
+        <span id="company-discovery-max-status" class="field-hint" role="status"></span>
+      </div>
+      <p class="field-hint">Used by this panel and the Discovery Queue panel only. Up to 500, to keep one run's LinkedIn
+        visits bounded.</p>
       <p id="company-discovery-status" class="field-hint"></p>
       <div class="settings-buttons-row">
         <button type="button" id="company-discovery-start-btn">Start fresh + run</button>

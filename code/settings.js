@@ -30,6 +30,7 @@ import {
   getUserProfile,
   saveUserProfile,
   getTargetUniverseConfig,
+  saveTargetUniverseConfig,
   getTargetContactProfile,
   clearCompanyLocationSizeCache,
   getDiscoveredCompanies,
@@ -459,6 +460,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.scanAbortRequested) {
     scanAbortRequestedFlag = Boolean(changes.scanAbortRequested.newValue);
   }
+});
+
+// Company Discovery's run cap (support only; moved out of the Setup's Size step in 1.2.0.43).
+const companyDiscoveryMaxInput = document.getElementById("company-discovery-max-input");
+getTargetUniverseConfig().then((c) => { companyDiscoveryMaxInput.value = c.maxCompanies; });
+document.getElementById("company-discovery-max-save-btn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("company-discovery-max-status");
+  const value = Number(companyDiscoveryMaxInput.value);
+  if (!Number.isInteger(value) || value < 1 || value > 500) {
+    statusEl.textContent = "Enter a whole number from 1 to 500.";
+    return;
+  }
+  await saveTargetUniverseConfig({ ...(await getTargetUniverseConfig()), maxCompanies: value });
+  statusEl.textContent = "Saved ✓";
 });
 
 document.getElementById("company-discovery-start-btn").addEventListener("click", async () => {

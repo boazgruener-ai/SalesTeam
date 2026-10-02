@@ -583,10 +583,6 @@ function refreshLocationPriorityRows() {
 }
 
 function validateSizeStep() {
-  const maxCompanies = Number(el("size-max-companies-input").value);
-  if (!Number.isInteger(maxCompanies) || maxCompanies < 1 || maxCompanies > 500) {
-    return { valid: false, error: "Maximum companies must be a whole number between 1 and 500." };
-  }
   const sizeBuckets = {};
   for (const row of el("size-buckets-wrap").querySelectorAll(".priority-item-row")) {
     sizeBuckets[row.dataset.key] = {
@@ -598,7 +594,7 @@ function validateSizeStep() {
     return { valid: false, error: "Choose at least one size range." };
   }
   targetUniverseConfig.sizeBuckets = sizeBuckets;
-  targetUniverseConfig.maxCompanies = maxCompanies;
+  // maxCompanies is not asked here any more (1.2.0.43): it is set in Settings > Company Discovery (support) and kept.
   return { valid: true };
 }
 
@@ -2612,7 +2608,6 @@ async function init() {
   el("location-mode-select").addEventListener("change", renderLocationModeVisibility);
 
   renderSizeBucketRows(targetUniverseConfig.sizeBuckets);
-  el("size-max-companies-input").value = targetUniverseConfig.maxCompanies;
 
   renderIndustryPriorityRows(targetUniverseConfig.industries);
   renderOrganizationTypeRows(organizationTypeEligibility);
@@ -2724,7 +2719,6 @@ async function init() {
     el("page-subtitle-change").hidden = false;
     el("linkedin-use-note").hidden = true; // the note belongs to the first-time setup, not to Change Settings
     el("change-back-to-menu-link").hidden = false;
-    el("size-max-companies-wrap").hidden = false;
     const askedStep = new URLSearchParams(location.search).get("step");
     if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
     else showSettingsHome();
