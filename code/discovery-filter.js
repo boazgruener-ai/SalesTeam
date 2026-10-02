@@ -91,6 +91,15 @@ export function buildKnownCompanies(accounts) {
   return known;
 }
 
+// 1.2.0.61 (Boaz, 9 accounts to review): listings write revenue in millions ("Revenue (USD millions)": 62,030 for
+// Gunvor) and the copy kept 62030. Below 1 million in plain units, or under 1,000 per employee, no company on a
+// listing of target-size companies is that small: it is millions.
+export function listingRevenue(revenue, employees) {
+  if (revenue === null || !(revenue >= 0)) return null;
+  if (revenue > 0 && revenue < 1e6 && (employees === null || !(employees > 0) || revenue / employees < 1000)) return revenue * 1e6;
+  return revenue;
+}
+
 // One listing row, cleaned: { name, website, domain, hqCountry, employees (number|null), revenue, currency,
 // year, industry, industryMatch, isPublic, rank, sourceUrl }.
 export function cleanListingRow(raw, fallbackSourceUrl) {
@@ -105,7 +114,7 @@ export function cleanListingRow(raw, fallbackSourceUrl) {
     name, website, domain: websiteDomain(website || ""),
     hqCountry: String(r.hqCountry || "").trim() || null,
     employees: employees !== null && employees >= 0 ? Math.round(employees) : null,
-    revenue: revenue !== null && revenue >= 0 ? revenue : null,
+    revenue: listingRevenue(revenue, employees),
     currency: /^[A-Z]{3}$/.test(String(r.currency || "").trim().toUpperCase()) ? String(r.currency).trim().toUpperCase() : null,
     year: parseLooseNumber(r.year),
     industry: String(r.industry || "").trim() || null,

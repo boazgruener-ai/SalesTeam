@@ -2058,7 +2058,8 @@ export async function readDiscoveryListing(listing, ctx, settings, { signal } = 
     "You read a listing page and copy its rows. Open the page with web fetch; if the list continues on a next page and " +
     "fewer rows than asked were found, open that next page too. Copy only what the page states - never add a company, a " +
     "number or a website the page does not give. Numbers as plain numbers (no units, no separators; \"1.2 bn\" becomes " +
-    "1200000000)." +
+    "1200000000). When a column header gives the unit - \"Revenue (USD millions)\", \"in CHF m\", \"Mio.\" - multiply " +
+    "into plain units (62,030 under \"USD millions\" becomes 62030000000) and take the currency from the header." +
     "\nReply with ONE short line saying what the page lists, then as the very last part DATA: followed by JSON: " +
     "{\"rows\":[" + discoveryRowKeys(ctx.industryNames) + ", ...]} - in the page's own order, keeping its rank.";
   const user = `Listing page: ${listing.url}\n${listing.what ? `It lists: ${listing.what}\n` : ""}` +

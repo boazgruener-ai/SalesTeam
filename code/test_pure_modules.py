@@ -454,6 +454,15 @@ def test_implausible_briefing_is_discarded(ctx):
     check("...by rule 2", ctx.eval("storedBad.rule"), 2)
 
 
+def test_listing_revenue_in_millions(ctx):
+    """1.2.0.61: a listing's "Revenue (USD millions)" column copied as 62030 becomes plain units."""
+    check("Gunvor 62,030 with 1,600 staff -> 62.03 bn", num(ctx, "listingRevenue(62030, 1600)"), 62030000000)
+    check("no employee count, under 1 m -> millions", num(ctx, "listingRevenue(850, null)"), 850000000)
+    check("plain units stay", num(ctx, "listingRevenue(144000000000, 1600)"), 144000000000)
+    check("a small firm's plain revenue stays", num(ctx, "listingRevenue(500000, 5)"), 500000)
+    check("nothing stays nothing", ctx.eval("listingRevenue(null, 10)"), None)
+
+
 def test_revenue_in_millions_is_named(ctx):
     """Gunvor, 1.2.0.59: 62,030 stored (millions, from a Wikipedia list), 144,000,000,000 found, 1,600 staff.
 
@@ -472,7 +481,8 @@ def test_revenue_in_millions_is_named(ctx):
       });
       var g = gunvor.decisions[0];
     """)
-    check("the found revenue is not discarded", ctx.eval("g.action") != "dismiss", True)
+    check("the found revenue is applied - the current one is the same figure in millions", ctx.eval("g.action"), "apply")
+    check("...by rule 2", ctx.eval("g.rule"), 2)
     check("the reason names millions", "written in millions" in ctx.eval("JSON.stringify(g)"), True)
     check("no bare 'implies 39' text", "implies 39" in ctx.eval("JSON.stringify(g)"), False)
 
@@ -1820,6 +1830,7 @@ def main():
     test_currency_follows_global_only(ctx)
     test_implausible_briefing_is_discarded(ctx)
     test_revenue_in_millions_is_named(ctx)
+    test_listing_revenue_in_millions(ctx)
     test_employee_contradiction_does_not_taint_other_fields(ctx)
     test_currency_is_never_put_to_the_user(ctx)
     test_converted_comparison_is_judged_more_loosely(ctx)

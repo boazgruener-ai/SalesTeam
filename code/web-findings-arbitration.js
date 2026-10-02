@@ -119,8 +119,8 @@ export function illogicalReasons(proposal, ctx, limits) {
   const lim = { ...DEFAULT_ARBITRATION_SETTINGS.illogical, ...(limits || {}) };
   const out = [];
   let currencyMissing = false;
-  const add = (side, text) => {
-    out.push({ side, text: currencyMissing ? `${text} (the currency is not known)` : text });
+  const add = (side, text, units = false) => {
+    out.push({ side, text: currencyMissing ? `${text} (the currency is not known)` : text, ...(units ? { units: true } : {}) });
     currencyMissing = false;
   };
   // An amount with its currency, in plain units: "CHF 62,030", or "CHF 62 billion" with `big`. The found side's
@@ -167,7 +167,7 @@ export function illogicalReasons(proposal, ctx, limits) {
       const lo = Math.min(f, c), hi = Math.max(f, c);
       if (lo > 0 && lo < lim.revenueUnitsFloor && hi >= lim.revenueUnitsCeil) {
         const loSide = lo === c ? "current" : "found", hiSide = lo === c ? "found" : "current";
-        add(loSide, `${money(loSide, key, lo)} against ${money(hiSide, key, hi)} looks like a units mistake (millions written as units)`);
+        add(loSide, `${money(loSide, key, lo)} against ${money(hiSide, key, hi)} looks like a units mistake (millions written as units)`, true);
       } else if (lo > 0 && hi / lo >= 200000 && hi / lo <= 5000000) {
         // 1.2.0.59 (Gunvor: 62,030 stored, 144,000,000,000 found): about a million times smaller, allowing for a
         // currency and a year apart - the smaller one is almost certainly written in millions.
@@ -175,7 +175,7 @@ export function illogicalReasons(proposal, ctx, limits) {
         add(loSide,
           `${loSide === "current" ? "the current" : "the found"} revenue ${money(loSide, key, lo)} looks like it is written in millions ` +
           `(${money(loSide, key, lo)} million = ${money(loSide, key, lo * 1e6, true)}, close to the ` +
-          `${money(hiSide, key, hi, true)} ${hiSide === "found" ? "found on the web" : "the account holds"})`);
+          `${money(hiSide, key, hi, true)} ${hiSide === "found" ? "found on the web" : "the account holds"})`, true);
       }
     }
   }
@@ -300,6 +300,13 @@ function decideFinding(proposal, ctx, settings) {
   const currentIsIllogical = problems.some((p) => p.side === "current");
 
   if (problems.length > 0 && s.rule2IllogicalReview) {
+    // 1.2.0.61 (Boaz: all 9 accounts to review were this): the current revenue is the web finding written in
+    // millions (a listing's "Revenue (USD millions)" column) and the web finding itself is sound - nothing to
+    // decide, the web finding is the same figure in plain units.
+    const currentProblems = problems.filter((p) => p.side === "current");
+    if (!foundIsIllogical && currentProblems.length > 0 && currentProblems.every((p) => p.units)) {
+      return { action: "apply", rule: 2, why: `used the web finding - ${currentProblems.map((p) => p.text).join("; ")}` };
+    }
     // Asking about a value that is plainly junk wastes the one resource this whole mechanism exists
     // to protect. When ONLY the incoming value fails the checks and the account already holds a
     // sound one, there is nothing to decide: keep what is there. A human is needed only when the
