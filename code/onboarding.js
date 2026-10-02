@@ -2034,6 +2034,53 @@ el("about-research-btn").addEventListener("click", async () => {
   await runSellerResearch();
 });
 
+// 1.2.1 step 7 (design 3.12, R4.6): the once-only offer, also at the top of Change Settings - this page covers the
+// Settings cards that carry the same box (1.2.0.36 showed it only there, so it went unseen). Same rule as settings.js:
+// a finished setup whose research never ran, and not declined.
+function renderSettingsResearchOffer() {
+  let box = el("settings-research-offer");
+  const show = completedBefore && setupResearch.status === "none" && !setupResearch.declinedInSettings;
+  if (!show) {
+    if (box) box.hidden = true;
+    return;
+  }
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "settings-research-offer";
+    box.className = "wizard-note settings-research-offer";
+    const text = document.createElement("p");
+    text.innerHTML = "<strong>New:</strong> ";
+    text.append("SalesTeam can research your company's website and propose improvements to the setup " +
+      `(about ${usd(SELLER_RESEARCH_ESTIMATE_USD)}). The proposals are shown next to the current settings; nothing ` +
+      "changes unless you take one.");
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.textContent = "Research";
+    yes.addEventListener("click", () => {
+      box.hidden = true;
+      showStep(STEP_ORDER.indexOf("about"));
+      el("about-research-btn").click();
+    });
+    const no = document.createElement("button");
+    no.type = "button";
+    no.textContent = "No thanks";
+    no.addEventListener("click", async () => {
+      box.hidden = true;
+      setupResearch = { ...setupResearch, declinedInSettings: Date.now() };
+      await saveSetupResearch(setupResearch);
+      try {
+        await appendActivityLog({ actor: "user", action: "setup_research", label: "Declined the setup research offered in Settings" });
+      } catch { /* the log is informational */ }
+    });
+    const row = document.createElement("div");
+    row.className = "settings-research-offer-buttons";
+    row.append(yes, no);
+    box.append(text, row);
+    el("wizard-nav-bar").after(box);
+  }
+  box.hidden = false;
+}
+
 // ---- The progress screen (design 3.6) ----
 
 function showResearchScreen(seller) {
@@ -2633,6 +2680,7 @@ async function init() {
     const askedStep = new URLSearchParams(location.search).get("step");
     if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
     else showSettingsHome();
+    renderSettingsResearchOffer();
     // Settings' once-only offer (design 3.12): About you opens with the research started. The button's own checks
     // apply - with no company website or API key it says what is missing instead.
     if (askedStep === "about" && new URLSearchParams(location.search).get("research") === "1") el("about-research-btn").click();
