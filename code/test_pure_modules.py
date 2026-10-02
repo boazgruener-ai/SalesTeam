@@ -450,8 +450,28 @@ def test_implausible_briefing_is_discarded(ctx):
         ctxFor({ hasRevenue: true, effective: { globalEmployees: 0, globalRevenue: 5000000 } }),
         {});
     """)
-    check("an implausible STORED value still asks", ctx.eval("storedBad.action"), "review")
+    # 1.2.0.63 (Boaz, Coop): a sound web finding that repairs the stored value is applied, not asked.
+    check("a sound web finding repairs an implausible STORED value", ctx.eval("storedBad.action"), "apply")
     check("...by rule 2", ctx.eval("storedBad.rule"), 2)
+
+    # Still asked when the web finding does not repair it: Nestle before 1.2.0.62 - the stored REVENUE
+    # (89,791, millions) is what is wrong, and the employee finding changes nothing about that.
+    ctx.eval("""
+      var nestle = arbitrateFinding(
+        { key: "globalEmployees", label: "E", found: 271000, current: 308000, state: "different" },
+        ctxFor({ hasRevenue: true, effective: { globalEmployees: 308000, globalRevenue: 89791, revenueCurrency: "CHF" } }),
+        {});
+    """)
+    check("a finding that does not repair the stored problem still asks", ctx.eval("nestle.action"), "review")
+
+    # Coop: 37,370 worldwide against 60,678 local stored; the web says 97,040 worldwide.
+    ctx.eval("""
+      var coop = arbitrateFinding(
+        { key: "globalEmployees", label: "E", found: 97040, current: 37370, state: "different" },
+        ctxFor({ hasRevenue: true, effective: { globalEmployees: 37370, swissEmployees: 60678, globalRevenue: 34900000000, revenueCurrency: "CHF" } }),
+        {});
+    """)
+    check("Coop: the worldwide count that fixes local > worldwide is applied", ctx.eval("coop.action"), "apply")
 
 
 def test_listing_revenue_in_millions(ctx):
@@ -525,8 +545,9 @@ def test_currency_is_never_put_to_the_user(ctx):
       var amount = res.decisions.find((d) => d.proposal.key === "globalRevenue");
       var currency = res.decisions.find((d) => d.proposal.key === "revenueCurrency");
     """)
-    check("the implausible stored amount is still escalated", ctx.eval("amount.action"), "review")
-    check("but the currency never is", ctx.eval("currency.action"), "dismiss")
+    # 1.2.0.63: the found 400,000,000 repairs the stored 115, so it is applied - and the currency follows it.
+    check("the implausible stored amount is repaired by the web finding", ctx.eval("amount.action"), "apply")
+    check("the currency follows the applied amount, never asked", ctx.eval("currency.action"), "apply")
 
 
 def test_converted_comparison_is_judged_more_loosely(ctx):

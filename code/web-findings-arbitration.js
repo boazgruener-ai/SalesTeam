@@ -300,12 +300,20 @@ function decideFinding(proposal, ctx, settings) {
   const currentIsIllogical = problems.some((p) => p.side === "current");
 
   if (problems.length > 0 && s.rule2IllogicalReview) {
-    // 1.2.0.61 (Boaz: all 9 accounts to review were this): the current revenue is the web finding written in
-    // millions (a listing's "Revenue (USD millions)" column) and the web finding itself is sound - nothing to
-    // decide, the web finding is the same figure in plain units.
+    // 1.2.0.61/.63 (Boaz: every account to review was this): the current value is what is wrong, the web finding is
+    // sound, and with the web finding in place nothing is wrong any more - a revenue written in millions next to the
+    // same figure in plain units (Gunvor), or 37,370 employees worldwide against 60,678 local where the web says
+    // 97,040 worldwide (Coop). Nothing to decide: the web finding is the repair.
     const currentProblems = problems.filter((p) => p.side === "current");
-    if (!foundIsIllogical && currentProblems.length > 0 && currentProblems.every((p) => p.units)) {
-      return { action: "apply", rule: 2, why: `used the web finding - ${currentProblems.map((p) => p.text).join("; ")}` };
+    if (!foundIsIllogical && currentProblems.length > 0) {
+      const after = illogicalReasons(
+        { ...proposal, current: proposal.found },
+        { ...ctx, effective: { ...(ctx?.effective || {}), [proposal.key]: proposal.found } },
+        s.illogical,
+      );
+      if (after.length === 0) {
+        return { action: "apply", rule: 2, why: `used the web finding - it repairs the current value: ${currentProblems.map((p) => p.text).join("; ")}` };
+      }
     }
     // Asking about a value that is plainly junk wastes the one resource this whole mechanism exists
     // to protect. When ONLY the incoming value fails the checks and the account already holds a

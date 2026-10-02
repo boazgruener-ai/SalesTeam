@@ -5656,14 +5656,20 @@ function openWebFindingsReview(companyKey, { onSaved } = {}) {
   const context = document.getElementById("web-research-apply-context");
   context.innerHTML = "";
   const shownKeys = new Set(proposals.map((p) => p.key));
+  // 1.2.0.63 (Boaz, Coop): when employees or revenue are asked about, all four size figures - employees and
+  // revenue, worldwide and local - are always on screen, empty ones too, first; they only make sense together.
+  const SIZE_KEYS = ["globalEmployees", "swissEmployees", "globalRevenue", "swissRevenue"];
+  const sizeAsked = proposals.some((p) => SIZE_KEYS.includes(p.key));
   const related = WEB_FINDING_FIELDS
     .filter((f) => !shownKeys.has(f.key))
     .map((f) => ({
+      key: f.key,
       label: f.label,
       found: saved?.data ? f.from(saved.data) : null,
       current: effective[f.key],
     }))
-    .filter((row) => !isBlankFinding(row.found) || !isBlankFinding(row.current));
+    .filter((row) => (sizeAsked && SIZE_KEYS.includes(row.key)) || !isBlankFinding(row.found) || !isBlankFinding(row.current))
+    .sort((a, b) => Number(sizeAsked && SIZE_KEYS.includes(b.key)) - Number(sizeAsked && SIZE_KEYS.includes(a.key)));
   if (related.length > 0) {
     const caption = document.createElement("p");
     caption.className = "page-subtitle";
