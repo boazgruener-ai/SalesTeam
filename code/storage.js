@@ -4825,10 +4825,14 @@ const WEB_FINDINGS_ARBITRATION_KEY = "webFindingsArbitration";
 export async function getWebFindingsArbitration() {
   const data = await chrome.storage.local.get(WEB_FINDINGS_ARBITRATION_KEY);
   const saved = data[WEB_FINDINGS_ARBITRATION_KEY] || {};
+  const savedIllogical = { ...(saved.illogical || {}) };
+  // 1.2.0.59: the old default 10,000,000 saved with the Settings card is the old default, not a choice -
+  // it threw out real commodity-trader revenue (Gunvor, 90 million per employee).
+  if (savedIllogical.revPerEmployeeMax === 10000000) delete savedIllogical.revPerEmployeeMax;
   return {
     ...DEFAULT_ARBITRATION_SETTINGS,
     ...saved,
-    illogical: { ...DEFAULT_ARBITRATION_SETTINGS.illogical, ...(saved.illogical || {}) },
+    illogical: { ...DEFAULT_ARBITRATION_SETTINGS.illogical, ...savedIllogical },
   };
 }
 

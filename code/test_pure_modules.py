@@ -454,6 +454,29 @@ def test_implausible_briefing_is_discarded(ctx):
     check("...by rule 2", ctx.eval("storedBad.rule"), 2)
 
 
+def test_revenue_in_millions_is_named(ctx):
+    """Gunvor, 1.2.0.59: 62,030 stored (millions, from a Wikipedia list), 144,000,000,000 found, 1,600 staff.
+
+    The old text said "it implies 39 of revenue per employee" - Boaz: "39 what?". The current side must be
+    named as written in millions, and the found side (90 million per employee - a commodity trader) must
+    not be thrown out as implausible.
+    """
+    ctx.eval("""
+      var gunvor = arbitrateAccount({
+        proposals: [
+          { key: "globalRevenue", label: "Revenue (global)", found: 144000000000, current: 62030, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 1600, globalRevenue: 62030 } }),
+        settings: {},
+      });
+      var g = gunvor.decisions[0];
+    """)
+    check("the found revenue is not discarded", ctx.eval("g.action") != "dismiss", True)
+    check("the reason names millions", "written in millions" in ctx.eval("JSON.stringify(g)"), True)
+    check("no bare 'implies 39' text", "implies 39" in ctx.eval("JSON.stringify(g)"), False)
+
+
 def test_employee_contradiction_does_not_taint_other_fields(ctx):
     """An account whose stored local headcount exceeds its global one had EVERY finding escalated.
 
@@ -1796,6 +1819,7 @@ def main():
     test_local_revenue_currency(ctx)
     test_currency_follows_global_only(ctx)
     test_implausible_briefing_is_discarded(ctx)
+    test_revenue_in_millions_is_named(ctx)
     test_employee_contradiction_does_not_taint_other_fields(ctx)
     test_currency_is_never_put_to_the_user(ctx)
     test_converted_comparison_is_judged_more_loosely(ctx)

@@ -65,7 +65,9 @@ export const DEFAULT_ARBITRATION_SETTINGS = {
     revenueUnitsFloor: 1000,
     revenueUnitsCeil: 1000000,
     revPerEmployeeMin: 1000,
-    revPerEmployeeMax: 10000000,
+    // 1.2.0.59: was 10,000,000 - Gunvor (US$144 bn, 1,600 staff) makes 90 million per employee and Vitol over
+    // 200 million; commodity traders are real. A units mistake is caught by the ratio check below instead.
+    revPerEmployeeMax: 1000000000,
   },
 };
 
@@ -150,6 +152,12 @@ export function illogicalReasons(proposal, ctx, limits) {
       const lo = Math.min(f, c), hi = Math.max(f, c);
       if (lo > 0 && lo < lim.revenueUnitsFloor && hi >= lim.revenueUnitsCeil) {
         add(lo === c ? "current" : "found", `${formatNum(lo)} against ${formatNum(hi)} looks like a units mistake (millions written as units)`);
+      } else if (lo > 0 && hi / lo >= 200000 && hi / lo <= 5000000) {
+        // 1.2.0.59 (Gunvor: 62,030 stored, 144,000,000,000 found): about a million times smaller, allowing for a
+        // currency and a year apart - the smaller one is almost certainly written in millions.
+        add(lo === c ? "current" : "found",
+          `${lo === c ? "the current" : "the found"} revenue ${formatNum(lo)} looks like it is written in millions ` +
+          `(${formatNum(lo)} million = ${bigLabel(lo * 1e6)}, close to the ${bigLabel(hi)} on the other side)`);
       }
     }
   }
@@ -198,13 +206,26 @@ export function illogicalReasons(proposal, ctx, limits) {
       const employees = EMPLOYEE_FIELDS.has(key) ? n : otherEmployees;
       if (revenue === null || employees === null || employees <= 0 || revenue <= 0) continue;
       const rpe = revenue / employees;
-      if (rpe < lim.revPerEmployeeMin || rpe > lim.revPerEmployeeMax) {
-        add(side, `it implies ${formatNum(Math.round(rpe))} of revenue per employee`);
+      // Already explained as a millions mistake on this side: the per-employee figure would only repeat it.
+      if (out.some((r) => r.side === side && /written in millions/.test(r.text))) continue;
+      // 1.2.0.59 (Boaz: "39 what?"): name both numbers and what is wrong with the result.
+      const pair = `revenue ${formatNum(revenue)} with ${formatNum(employees)} employees is ${formatNum(Math.round(rpe))} per employee`;
+      if (rpe < lim.revPerEmployeeMin) {
+        add(side, `${pair} - far less than any real company earns per person` +
+          `${rpe * 1e6 >= lim.revPerEmployeeMin && rpe * 1e6 <= lim.revPerEmployeeMax ? "; the revenue is probably written in millions" : ""}`);
+      } else if (rpe > lim.revPerEmployeeMax) {
+        add(side, `${pair} - far more than any real company earns per person`);
       }
     }
   }
 
   return out;
+}
+
+function bigLabel(n) {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1).replace(/\.0$/, "")} billion`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, "")} million`;
+  return formatNum(n);
 }
 
 function formatNum(n) {
