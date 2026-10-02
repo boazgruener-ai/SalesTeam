@@ -46,11 +46,13 @@ import {
   saveWebFindingsArbitration,
   getRevenueNormalization,
   saveRevenueNormalization,
+  getSetupResearch,
+  saveSetupResearch,
 } from "./storage.js";
 import { RULES as ARBITRATION_RULES, DEFAULT_ARBITRATION_SETTINGS } from "./web-findings-arbitration.js";
 import { SUPPORTED_CURRENCIES, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
-import { sanitizeApiKey } from "./agent-shared.js";
+import { sanitizeApiKey, SELLER_RESEARCH_ESTIMATE_USD } from "./agent-shared.js";
 import {
   getDiscoveryQueueState,
   startDiscoveryQueue,
@@ -265,6 +267,8 @@ document.getElementById("open-target-accounts-btn").addEventListener("click", ()
 document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
+document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
@@ -713,9 +717,11 @@ function routeSettings() {
     openChangeSettingsInline();
     return;
   }
-  // Change Settings opened straight on one setting (the User Profile card's "Open About you", 1.2.0.16).
-  if (location.hash === "#change-settings-about") {
-    showEmbeddedPage("onboarding.html?mode=settings&step=about", "Change Settings");
+  // Change Settings opened straight on one setting (the User Profile card's "Open About you", 1.2.0.16), or on About
+  // you with the seller research started (the once-only offer, design 3.12).
+  if (location.hash === "#change-settings-about" || location.hash === "#change-settings-research") {
+    const research = location.hash === "#change-settings-research" ? "&research=1" : "";
+    showEmbeddedPage(`onboarding.html?mode=settings&step=about${research}`, "Change Settings");
     document.querySelectorAll("#app-nav .nav-item.active").forEach((e) => e.classList.remove("active"));
     document.getElementById("nav-change-settings")?.classList.add("active");
     return;
@@ -734,6 +740,33 @@ function routeSettings() {
 }
 
 window.addEventListener("hashchange", routeSettings);
+// 1.2.1 step 7 (design 3.12, R4.6): a setup finished before 1.2.1 never saw the seller research, so Settings offers
+// it once. "No thanks" is remembered (declinedInSettings); running the research ends the offer too (status leaves
+// "none"). Either way the action stays under User Profile > Open About you.
+async function renderSellerResearchOffer() {
+  const offerEl = document.getElementById("seller-research-offer");
+  const [completedAt, research] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch()]);
+  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings);
+  document.getElementById("seller-research-offer-text").textContent =
+    "SalesTeam can research your company's website and propose improvements to the setup " +
+    `(about US$${SELLER_RESEARCH_ESTIMATE_USD.toFixed(2)}). The proposals are shown next to the current settings; ` +
+    "nothing changes unless you take one.";
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && (changes.setupResearch || changes.onboardingCompletedAt)) renderSellerResearchOffer();
+});
+document.getElementById("seller-research-offer-yes-btn").addEventListener("click", () => {
+  if (location.hash === "#change-settings-research") routeSettings();
+  else location.hash = "#change-settings-research";
+});
+document.getElementById("seller-research-offer-no-btn").addEventListener("click", async () => {
+  await saveSetupResearch({ ...(await getSetupResearch()), declinedInSettings: Date.now() });
+  try {
+    await appendActivityLog({ actor: "user", action: "setup_research", label: "Declined the setup research offered in Settings" });
+  } catch { /* the log is informational */ }
+});
+
 document.getElementById("profile-open-about-you-btn")?.addEventListener("click", () => {
   if (location.hash === "#change-settings-about") routeSettings();
   else location.hash = "#change-settings-about";
@@ -787,6 +820,7 @@ async function init() {
     ? `Last completed ${new Date(onboardingCompletedAt).toLocaleDateString()}.`
     : "Not completed yet.";
   await renderOnboardingProgress();
+  await renderSellerResearchOffer();
 
   await renderDiscoveryQueueState();
 

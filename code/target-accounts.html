@@ -192,6 +192,7 @@
         <button id="restore-target-accounts-page-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
         <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
+        <button id="export-accounts-csv-page-btn" type="button" class="nav-item" title="Save the accounts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
         <button id="hubspot-export-page-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
         <button id="hubspot-import-page-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
@@ -200,6 +201,7 @@
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
+        <button id="export-contacts-csv-page-btn" type="button" class="nav-item" title="Save the contacts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
       </details>
 
       <details class="nav-group">
@@ -361,6 +363,8 @@
         <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="result-count"></span>
       </div>
+      <!-- 1.2.1 step 7: every active filter as a chip, so a saved filter can never hide rows unnoticed. -->
+      <div id="accounts-active-filters-bar" class="active-filters-bar" hidden></div>
 
       <div id="accounts-bulk-bar" class="bulk-bar" hidden>
         <span id="accounts-bulk-count" class="bulk-bar-count"></span>
@@ -402,6 +406,8 @@
         <button id="contacts-columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="contacts-result-count"></span>
       </div>
+      <!-- 1.2.1 step 7: every active filter as a chip, so a saved filter can never hide rows unnoticed. -->
+      <div id="contacts-active-filters-bar" class="active-filters-bar" hidden></div>
 
       <div id="contacts-bulk-bar" class="bulk-bar" hidden>
         <span id="contacts-bulk-count" class="bulk-bar-count"></span>

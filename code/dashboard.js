@@ -164,6 +164,8 @@ document.getElementById("open-target-accounts-btn").addEventListener("click", ()
 document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
+document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
@@ -617,8 +619,8 @@ function renderAllPieCharts() {
   const last7 = relevantLeads.filter((l) => leadDate(l) >= since(7));
   const last30 = relevantLeads.filter((l) => leadDate(l) >= since(30));
   const onSliceClick = (status) => {
-    statusFilterSelect.value = status;
-    statusFilter = status;
+    setStatusFilter(status);
+    saveFilterSortState();
     renderTableFromScratch();
   };
   renderPieChart(document.getElementById("pie-7"), last7, onSliceClick);
@@ -1049,6 +1051,107 @@ function loadFilterSortState() {
     // ignore a corrupted/missing saved blob - defaults already set above
   }
   searchInput.value = searchText;
+  foldStatusColumnFilter();
+}
+
+// ---- One status filter, not two (1.2.1 step 7) ----
+// Reported 2026-10-02: the top Status dropdown said "All statuses" while a saved Status COLUMN filter ("Responded")
+// hid every lead. The two now never disagree: a column filter naming a status exactly becomes the dropdown's value,
+// and any other Status column filter shows in the dropdown as its own entry, so choosing a status there replaces it.
+const STATUS_COLUMN_OPTION = "__status-column";
+
+function foldStatusColumnFilter() {
+  const filter = columnFilters.status;
+  if (!hasActiveFilter(filter)) return;
+  const exact = !filter.emptyOnly && LEAD_STATUSES.find((st) => st.toLowerCase() === filter.text.trim().toLowerCase());
+  if (exact) {
+    statusFilter = exact;
+    columnFilters.status = null;
+  } else {
+    statusFilter = "all";
+  }
+}
+
+function setStatusFilter(value) {
+  statusFilter = value;
+  columnFilters.status = null;
+}
+
+function syncStatusFilterSelect() {
+  statusFilterSelect.querySelector(`option[value="${STATUS_COLUMN_OPTION}"]`)?.remove();
+  const filter = columnFilters.status;
+  if (hasActiveFilter(filter)) {
+    const opt = document.createElement("option");
+    opt.value = STATUS_COLUMN_OPTION;
+    opt.textContent = filter.emptyOnly ? "Status column filter: empty only" : `Status column filter: "${filter.text}"`;
+    statusFilterSelect.appendChild(opt);
+    statusFilterSelect.value = STATUS_COLUMN_OPTION;
+    return;
+  }
+  statusFilterSelect.value = statusFilter;
+}
+
+// ---- Active filters, always visible (1.2.1 step 7) ----
+// Every filter that hides leads, as a chip above the table with its own remove button, plus Clear all.
+function activeFilterChips() {
+  const chips = [];
+  if (statusFilter !== "all") chips.push({ label: `Status: ${statusFilter}`, clear: () => { statusFilter = "all"; } });
+  if (searchText.trim()) {
+    chips.push({ label: `Search: "${searchText.trim()}"`, clear: () => { searchText = ""; searchInput.value = ""; } });
+  }
+  for (const col of COLUMNS) {
+    const filter = columnFilters[col.id];
+    if (!hasActiveFilter(filter)) continue;
+    chips.push({
+      label: filter.emptyOnly ? `${col.label}: empty only` : `${col.label}: "${filter.text}"`,
+      clear: () => { columnFilters[col.id] = null; },
+    });
+  }
+  return chips;
+}
+
+function clearAllFilters() {
+  statusFilter = "all";
+  searchText = "";
+  searchInput.value = "";
+  columnFilters = {};
+  saveFilterSortState();
+  renderTableFromScratch();
+}
+
+function renderActiveFiltersBar() {
+  const bar = document.getElementById("active-filters-bar");
+  const chips = activeFilterChips();
+  bar.innerHTML = "";
+  bar.hidden = chips.length === 0;
+  if (chips.length === 0) return;
+  const title = document.createElement("span");
+  title.className = "active-filters-title";
+  title.textContent = "Filters on:";
+  bar.appendChild(title);
+  for (const chip of chips) {
+    const chipEl = document.createElement("span");
+    chipEl.className = "filter-chip";
+    chipEl.textContent = chip.label;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "filter-chip-remove";
+    x.textContent = "\u2715";
+    x.title = `Remove the filter ${chip.label}`;
+    x.addEventListener("click", () => {
+      chip.clear();
+      saveFilterSortState();
+      renderTableFromScratch();
+    });
+    chipEl.appendChild(x);
+    bar.appendChild(chipEl);
+  }
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "filter-clear-all-btn";
+  clearBtn.textContent = "Clear all";
+  clearBtn.addEventListener("click", clearAllFilters);
+  bar.appendChild(clearBtn);
 }
 
 function saveHiddenColumns() {
@@ -1203,6 +1306,7 @@ function toggleColumnMenu(column, anchorEl) {
 
     const applyFilter = () => {
       columnFilters[column.id] = { text: filterInput.value.trim(), emptyOnly: emptyOnlyCheckbox.checked };
+      if (column.id === "status") foldStatusColumnFilter();
       saveFilterSortState();
       closeColumnMenu();
       renderTableFromScratch();
@@ -1375,6 +1479,7 @@ function renderTableHead() {
     }
 
     if (hasActiveFilter(columnFilters[column.id])) {
+      th.classList.add("col-filtered");
       const filterDot = document.createElement("span");
       filterDot.className = "filter-active-dot";
       filterDot.title = columnFilters[column.id].emptyOnly ? "Filtered: empty only" : `Filtered: "${columnFilters[column.id].text}"`;
@@ -1566,6 +1671,8 @@ function buildGroupSummaryRow(group) {
 function renderTable() {
   renderColgroup();
   renderTableHead();
+  syncStatusFilterSelect();
+  renderActiveFiltersBar();
 
   const leads = applyFilterSortSearch();
   // Say WHAT is hiding leads, not just "filtered": the default view hides Irrelevant leads (those the negative
@@ -1590,7 +1697,22 @@ function renderTable() {
     const td = document.createElement("td");
     td.colSpan = visibleColumns().length + 1;
     td.className = "empty-state";
-    td.textContent = allLeads.length === 0 ? "No leads yet. Run a scan from the side panel." : "No leads match your filters.";
+    const chips = activeFilterChips();
+    if (allLeads.length === 0) {
+      td.textContent = "No leads yet. Run a scan from the side panel.";
+    } else if (chips.length > 0) {
+      // Say which filter hides them and how many, with the way out right there (1.2.1 step 7).
+      td.textContent = `All ${countBase} lead${countBase === 1 ? " is" : "s are"} hidden by ` +
+        `${chips.length === 1 ? "this filter" : "these filters"}: ${chips.map((c) => c.label).join("; ")}. `;
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "filter-clear-all-btn";
+      clearBtn.textContent = chips.length === 1 ? "Clear the filter" : "Clear all filters";
+      clearBtn.addEventListener("click", clearAllFilters);
+      td.appendChild(clearBtn);
+    } else {
+      td.textContent = "No leads to show - Irrelevant leads are hidden. Tick \"Show Irrelevant\" to see them.";
+    }
     tr.appendChild(td);
     tbody.appendChild(tr);
     syncTopScrollWidth();
@@ -2546,7 +2668,8 @@ searchInput.addEventListener("input", (event) => {
 });
 
 statusFilterSelect.addEventListener("change", (event) => {
-  statusFilter = event.target.value;
+  if (event.target.value === STATUS_COLUMN_OPTION) return;
+  setStatusFilter(event.target.value);
   saveFilterSortState();
   renderTableFromScratch();
 });

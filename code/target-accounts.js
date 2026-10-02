@@ -16,6 +16,7 @@
 import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
 import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { toCsv } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
   getTargetAccountsWorkbook,
@@ -1896,6 +1897,7 @@ function renderTableHead() {
       th.appendChild(arrow);
     }
     if (columnFilters[column.id]?.text) {
+      th.classList.add("col-filtered");
       const dot = document.createElement("span");
       dot.className = "filter-active-dot";
       const f = columnFilters[column.id];
@@ -1992,8 +1994,91 @@ function syncTopScrollWidth() {
   tableScrollTopFillerEl.style.width = `${companiesTableEl.scrollWidth}px`;
 }
 
+// ---- Active filters, always visible (1.2.1 step 7, same as the Posts Dashboard) ----
+// The search and every column filter as a chip above the table, each with its own remove button, plus Clear all;
+// and when they hide every row, the table says which filters do it instead of showing nothing.
+function tableFilterChips(searchEl, filters, columns) {
+  const chips = [];
+  if (searchEl.value.trim()) chips.push({ label: `Search: "${searchEl.value.trim()}"`, clear: () => { searchEl.value = ""; } });
+  for (const column of columns) {
+    const f = filters[column.id];
+    if (!f?.text) continue;
+    chips.push({
+      label: `${column.label}: ${f.exclude ? "not " : ""}"${f.text}"`,
+      clear: () => { filters[column.id] = null; },
+    });
+  }
+  return chips;
+}
+
+function clearTableFilters(searchEl, filters) {
+  searchEl.value = "";
+  for (const id of Object.keys(filters)) filters[id] = null;
+}
+
+function renderFilterChipsBar(barEl, chips, onChange, clearAll) {
+  barEl.innerHTML = "";
+  barEl.hidden = chips.length === 0;
+  if (chips.length === 0) return;
+  const title = document.createElement("span");
+  title.className = "active-filters-title";
+  title.textContent = "Filters on:";
+  barEl.appendChild(title);
+  for (const chip of chips) {
+    const chipEl = document.createElement("span");
+    chipEl.className = "filter-chip";
+    chipEl.textContent = chip.label;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "filter-chip-remove";
+    x.textContent = "\u2715";
+    x.title = `Remove the filter ${chip.label}`;
+    x.addEventListener("click", () => { chip.clear(); onChange(); });
+    chipEl.appendChild(x);
+    barEl.appendChild(chipEl);
+  }
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "filter-clear-all-btn";
+  clearBtn.textContent = "Clear all";
+  clearBtn.addEventListener("click", () => { clearAll(); onChange(); });
+  barEl.appendChild(clearBtn);
+}
+
+function filteredEmptyRow(colSpan, total, noun, chips, onClear) {
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = colSpan;
+  td.className = "filtered-empty-state";
+  td.textContent = `All ${total} ${noun} are hidden by ${chips.length === 1 ? "this filter" : "these filters"}: ` +
+    `${chips.map((c) => c.label).join("; ")}. `;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "filter-clear-all-btn";
+  btn.textContent = chips.length === 1 ? "Clear the filter" : "Clear all filters";
+  btn.addEventListener("click", onClear);
+  td.appendChild(btn);
+  tr.appendChild(td);
+  return tr;
+}
+
+function onAccountFiltersChanged() {
+  currentPage = 1;
+  saveFilterSortState();
+  renderTable();
+}
+
+function onContactFiltersChanged() {
+  contactCurrentPage = 1;
+  saveContactFilterSortState();
+  renderContactsTable();
+}
+
 function renderTable() {
   const companies = sortedFilteredCompanies();
+  const accountChips = tableFilterChips(searchInputEl, columnFilters, COMPANY_COLUMNS);
+  renderFilterChipsBar(document.getElementById("accounts-active-filters-bar"), accountChips, onAccountFiltersChanged,
+    () => clearTableFilters(searchInputEl, columnFilters));
   resultCountEl.textContent = `${companies.length} of ${workbook.companies.length} companies`;
   const cols = visibleColumns();
 
@@ -2015,6 +2100,12 @@ function renderTable() {
   paginationBottomEl.appendChild(buildPaginationBar(companies.length));
 
   tbodyEl.innerHTML = "";
+  if (companies.length === 0 && workbook.companies.length > 0 && accountChips.length > 0) {
+    tbodyEl.appendChild(filteredEmptyRow(cols.length + 2, workbook.companies.length, "accounts", accountChips, () => {
+      clearTableFilters(searchInputEl, columnFilters);
+      onAccountFiltersChanged();
+    }));
+  }
   for (const company of pageCompanies) {
     const companyKey = normalizeCompanyName(company.company);
     const tr = document.createElement("tr");
@@ -2422,6 +2513,7 @@ function renderContactsTableHead() {
       th.appendChild(arrow);
     }
     if (contactColumnFilters[column.id]?.text) {
+      th.classList.add("col-filtered");
       const dot = document.createElement("span");
       dot.className = "filter-active-dot";
       const f = contactColumnFilters[column.id];
@@ -2456,6 +2548,9 @@ function hasUnreviewedPostForContact(contact) {
 
 function renderContactsTable() {
   const contacts = sortedFilteredContacts();
+  const contactChips = tableFilterChips(contactsSearchInputEl, contactColumnFilters, CONTACT_LIST_COLUMNS);
+  renderFilterChipsBar(document.getElementById("contacts-active-filters-bar"), contactChips, onContactFiltersChanged,
+    () => clearTableFilters(contactsSearchInputEl, contactColumnFilters));
   contactsResultCountEl.textContent = `${contacts.length} of ${workbook.contacts.length} contacts`;
   const cols = visibleContactColumns();
 
@@ -2475,6 +2570,12 @@ function renderContactsTable() {
   contactsPaginationBottomEl.appendChild(buildContactsPaginationBar(contacts.length));
 
   contactsTbodyEl.innerHTML = "";
+  if (contacts.length === 0 && workbook.contacts.length > 0 && contactChips.length > 0) {
+    contactsTbodyEl.appendChild(filteredEmptyRow(cols.length + 2, workbook.contacts.length, "contacts", contactChips, () => {
+      clearTableFilters(contactsSearchInputEl, contactColumnFilters);
+      onContactFiltersChanged();
+    }));
+  }
   for (const contact of pageContacts) {
     const contactKey = contactKeyFor(contact.company, contact.fullName);
     const tr = document.createElement("tr");
@@ -6061,6 +6162,61 @@ document.getElementById("contact-back-link").addEventListener("click", (e) => {
   location.hash = "contacts";
 });
 
+// ---- Accounts-only / contacts-only CSV (1.2.1 step 7) ----
+// One spreadsheet per table, in SalesTeam's own column names (the HubSpot export above uses HubSpot's). It holds the
+// rows the table shows now - its search and column filters applied, every page, in its sort order - and every
+// column, hidden ones included, with the same values the cells show.
+function tableCsv(columns, rows) {
+  const headers = [];
+  for (const column of columns) {
+    headers.push(column.label);
+    if (column.currencyField) headers.push(`${column.label} Currency`);
+  }
+  const lines = rows.map((row) => {
+    const cells = [];
+    for (const column of columns) {
+      const v = column.id === "companyType" ? localizeTypeWording(rawValue(row, column)) : rawValue(row, column);
+      cells.push(v == null ? "" : v);
+      if (column.currencyField) cells.push(row[column.currencyField] || "");
+    }
+    return cells;
+  });
+  return toCsv(headers, lines);
+}
+
+async function exportTableCsv(kind) {
+  const accounts = kind === "accounts";
+  const all = accounts ? workbook.companies.length : workbook.contacts.length;
+  const rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+  const noun = (n) => (accounts ? `account${n === 1 ? "" : "s"}` : `contact${n === 1 ? "" : "s"}`);
+  if (all === 0) {
+    await askConfirm(`There are no ${noun(0)} to export yet.`, { okLabel: "OK", cancelLabel: "Close" });
+    return;
+  }
+  if (rows.length === 0) {
+    await askConfirm(`The search or column filters hide all ${all} ${noun(all)}, so there is nothing to export. Clear them first.`, { okLabel: "OK", cancelLabel: "Close" });
+    return;
+  }
+  if (rows.length < all && !(await askConfirm(
+    `The table shows ${rows.length} of ${all} ${noun(all)} - a search or column filter is on.
+
+` +
+    `Export only these ${rows.length}? To export all ${all}, clear the search and filters first.`,
+    { okLabel: `Export the ${rows.length} shown`, cancelLabel: "Cancel" },
+  ))) return;
+  const csv = tableCsv(accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS, rows);
+  const filename = `SalesTeam-${accounts ? "accounts" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
+  appendActivityLog({ actor: "user", action: "csv_exported", label: `Exported ${rows.length} ${noun(rows.length)} to ${filename}` });
+  await askConfirm(`Saved ${rows.length} ${noun(rows.length)} to your Downloads folder as ${filename}. It opens in Excel.`, { okLabel: "OK", cancelLabel: "Close" });
+}
+
+document.getElementById("export-accounts-csv-page-btn").addEventListener("click", () => exportTableCsv("accounts"));
+document.getElementById("export-contacts-csv-page-btn").addEventListener("click", () => {
+  showView("contactsList");
+  exportTableCsv("contacts");
+});
+
 // ---- HubSpot export / import (by file) ----
 const HUBSPOT_SCOPE_RANK = { P1: 1, P2: 2, P3: 3 };
 
@@ -6580,6 +6736,9 @@ const ACTION_DIALOG_IDS = {
 };
 function openActionFromHash() {
   const action = new URLSearchParams(location.hash.slice(1)).get("action");
+  // The CSV exports have no dialog of their own (another page's menu opens them here).
+  if (action === "export-accounts-csv") { exportTableCsv("accounts"); return; }
+  if (action === "export-contacts-csv") { showView("contactsList"); exportTableCsv("contacts"); return; }
   const dialogId = ACTION_DIALOG_IDS[action];
   if (!dialogId) return;
   // 25th round of direct feedback (2026-09-19): "I even managed to get 2

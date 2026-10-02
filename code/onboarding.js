@@ -2633,6 +2633,9 @@ async function init() {
     const askedStep = new URLSearchParams(location.search).get("step");
     if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
     else showSettingsHome();
+    // Settings' once-only offer (design 3.12): About you opens with the research started. The button's own checks
+    // apply - with no company website or API key it says what is missing instead.
+    if (askedStep === "about" && new URLSearchParams(location.search).get("research") === "1") el("about-research-btn").click();
     return;
   }
   const savedStepIndex = await getOnboardingProgressStepIndex();

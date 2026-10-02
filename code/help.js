@@ -5,7 +5,7 @@
 // entry) plus light typo tolerance (edit-distance on individual words) -
 // not semantic/AI matching.
 
-const CATEGORIES = ["Scanning & Topics", "Negative Topics & Filtering", "Dashboard & Leads", "Advisors (AI)", "Settings & Backup"];
+const CATEGORIES = ["Scanning & Topics", "Setup & Target Accounts", "Negative Topics & Filtering", "Dashboard & Leads", "Advisors (AI)", "Settings & Backup"];
 
 // Each entry's `keywords` exist purely to catch how someone might actually
 // phrase a question - including the OPPOSITE of the literal answer (e.g.
@@ -59,7 +59,7 @@ const QA = [
     category: "Scanning & Topics",
     question: "How SalesTeam works with online platforms and data sources?",
     keywords: ["linkedin", "terms", "policy", "policies", "rules", "safe", "safety", "ban", "banned", "restricted", "account", "scraping", "compliance", "limit", "touch budget", "resell", "data", "registry", "registries", "website", "websites", "public data", "platform", "platforms", "research"],
-    answer: "SalesTeam is built with the rules of the online platforms and data sources it works with in mind. Its research draws on publicly available sources: the research prompt has an AI assistant consult public company registries and websites, and SalesTeam's own scans read pages of platforms such as LinkedIn. It is designed for personal use, the way a person would use these sites: every scan starts when you click a button, and automatic account preparation runs only if you switch it on: you start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser. Every search and page visit happens in a browser tab or window you can see, only while Chrome is open, and you can turn the automation off at any time in Settings. There is no bulk collection of pages. A built-in safety limit keeps the number of searches and page visits per day modest - within what one person could do by hand. SalesTeam has no server or database of its own, so it never collects, resells or shares anyone's data: everything it finds stays on your device, for your own use, and it never sends messages or connection requests for you. Because each platform's terms of use apply to how any tool is used on it (LinkedIn's terms, for example), we recommend keeping your use moderate and within the daily limit.",
+    answer: "SalesTeam is built with the rules of the online platforms and data sources it works with in mind. Its research draws on publicly available sources: the research prompt has an AI assistant consult public company registries and websites, and SalesTeam's own scans read pages of platforms such as LinkedIn. SalesTeam can also research companies on the public web itself - their own websites and web search results - through your own Anthropic API key, only if you switch web research on and within the monthly budget you set. It is designed for personal use, the way a person would use these sites: every scan starts when you click a button, and automatic account preparation runs only if you switch it on: you start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser. Every search and page visit happens in a browser tab or window you can see, only while Chrome is open, and you can turn the automation off at any time in Settings. There is no bulk collection of pages. A built-in safety limit keeps the number of searches and page visits per day modest - within what one person could do by hand. SalesTeam has no server or database of its own, so it never collects, resells or shares anyone's data: everything it finds stays on your device, for your own use, and it never sends messages or connection requests for you. Because each platform's terms of use apply to how any tool is used on it (LinkedIn's terms, for example), we recommend keeping your use moderate and within the daily limit.",
   },
   {
     id: "manual-only",
@@ -67,6 +67,27 @@ const QA = [
     question: "Does SalesTeam scan automatically, or only when I click?",
     keywords: ["automatic", "automation", "background", "schedule", "scheduled", "run on its own", "manual", "ready", "account preparation", "turn off"],
     answer: 'Scans of posts and jobs are manual: every one starts with you clicking "Scan All Topics." Account preparation is the one thing that can run by itself, and only if you switch it on (at the end of Setup, or in Settings > Automation). You start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser. It links accounts to LinkedIn, finds their size and key contacts in a small window of its own, only while Chrome is open, and makes way whenever you start a scan. Web research joins in only if you also tick it, within the monthly budget you set. Untick either one in Settings > Automation to stop it.',
+  },
+  {
+    id: "setup-research",
+    category: "Setup & Target Accounts",
+    question: "Can SalesTeam fill in the Setup for me?",
+    keywords: ["research my company", "propose", "proposal", "proposals", "about you", "website", "setup wizard", "onboarding", "fill in", "suggest settings", "improve setup"],
+    answer: 'Yes, as proposals you can accept or ignore. In the Setup\'s first step, About you, enter your company and its website and press "Research my company" (about US$0.30 on your Anthropic API key). SalesTeam reads the company\'s website and proposes answers for Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude. Each proposal is shown next to the current setting, and nothing changes unless you take it. If you finished the Setup before version 1.2.1, Settings offers this once; it stays available any time under Settings > User Profile > Open About you.',
+  },
+  {
+    id: "find-new-accounts",
+    category: "Setup & Target Accounts",
+    question: "How does SalesTeam find new target accounts?",
+    keywords: ["new accounts", "find companies", "discover companies", "web discovery", "target accounts", "list", "listing", "how many accounts", "companies to include", "build my list"],
+    answer: 'When you finish the Setup with automatic preparation and web research both ticked, SalesTeam builds the list for you. It first adds the companies you named under "Companies to include", then looks for companies that match your Location, Size and Industry answers in company listings on the public web, using web search on your Anthropic API key. Companies under "Companies to exclude" are never added. New accounts show "Web" as their Source. Each account is then researched on the web for what it still lacks (size, contacts, initiatives) within the monthly web budget you set, and checked on LinkedIn within your daily limit. The Setup\'s last step, "How big is your list", sets how many accounts, contacts per account and initiatives to aim for, and shows the estimated cost and time.',
+  },
+  {
+    id: "export-accounts-contacts",
+    category: "Setup & Target Accounts",
+    question: "How do I export my accounts or contacts to Excel?",
+    keywords: ["export", "csv", "excel", "spreadsheet", "download accounts", "download contacts", "accounts list", "contacts list", "crm", "salesforce", "hubspot"],
+    answer: 'On the Target Accounts Dashboard, use "Export Accounts (CSV)" in the menu; on the Target Contacts Dashboard, "Export Contacts (CSV)". Each saves one file that opens in Excel, with every column of that table under SalesTeam\'s own column names. It holds the rows the table shows: if a search or column filter is on, SalesTeam asks first, so clear the filters to export everything. For HubSpot, "Export to HubSpot…" saves two files with HubSpot\'s own column names instead.',
   },
   {
     id: "what-is-negative-topic",
@@ -149,15 +170,15 @@ const QA = [
     id: "sort-filter-column",
     category: "Dashboard & Leads",
     question: "How do I sort or filter a specific column in the table?",
-    keywords: ["sort column", "filter column", "column dropdown", "excel style", "sort ascending", "sort descending"],
-    answer: 'Click a column\'s title to toggle sort direction, or click the ▾ icon for a menu with Sort Ascending/Descending and a text filter for just that column. Column widths are also resizable by dragging their edges.',
+    keywords: ["sort column", "filter column", "column dropdown", "excel style", "sort ascending", "sort descending", "empty table", "no leads", "nothing shown", "clear filters", "filters on", "missing leads"],
+    answer: 'Click a column\'s title to toggle sort direction, or click the ▾ icon for a menu with Sort Ascending/Descending and a text filter for just that column. A filtered column has a blue header, and every filter that is on (search, status, column filters) is listed above the table, each with its own ✕ and a "Clear all" button. Filters are remembered for next time, so if a table looks empty, look there first. Column widths are also resizable by dragging their edges.',
   },
   {
     id: "export-csv",
     category: "Dashboard & Leads",
     question: "How do I export my leads to a CSV file?",
     keywords: ["export", "csv", "download leads", "spreadsheet"],
-    answer: 'On the Dashboard, use "Export All (CSV)" for every lead, or "Export Filtered (CSV)" for exactly what the table is currently showing (respecting search, status, and column filters).',
+    answer: 'On the Dashboard, use "Export All (CSV)" for every lead, or "Export Filtered (CSV)" for exactly what the table is currently showing (respecting search, status, and column filters). Accounts and contacts have their own exports on the Target Accounts and Target Contacts Dashboards.',
   },
   {
     id: "search-all-leads",
@@ -192,7 +213,7 @@ const QA = [
     category: "Settings & Backup",
     question: "Where do I describe what my company sells?",
     keywords: ["what we offer", "company context", "our services", "what do we sell"],
-    answer: 'On the Settings page, under "What We Offer." Every AI feature (drafting, Sales Mentor, Customer Voice) uses this to reason about real fit against a lead, not just react to their post in isolation.',
+    answer: 'In Settings > Change Settings > "What you sell" (the same step as in the Setup). Every AI feature (drafting, Sales Mentor, Customer Voice) uses this to reason about real fit against a lead, not just react to their post in isolation. SalesTeam can also propose this text from your company\'s website - see "Can SalesTeam fill in the Setup for me?"',
   },
   {
     id: "message-templates",
