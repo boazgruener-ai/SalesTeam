@@ -1152,7 +1152,7 @@ const STEP_VALIDATORS = {
 // ---------------------------------------------------------------------
 // Per-step persistence (only ever called from the Confirm button).
 
-// When the scoring rules really changed, leave a flag the Posts Dashboard turns into a "Re-score existing leads now?"
+// When the scoring rules really changed, leave a flag the Leads Dashboard turns into a "Re-score existing leads now?"
 // prompt (re-scoring is only ever needed after the rules change, so it is offered here rather than as a menu item).
 function currentScoringSignature() {
   return JSON.stringify({
@@ -1195,7 +1195,7 @@ function showRescoreDialog() {
 }
 
 // After Save & Exit / Finish: offer the re-score right when the user has just changed the rules. "Re-score now" opens
-// the Posts Dashboard, which starts the re-score (its own confirmation still applies). Returns true when it navigated.
+// the Leads Dashboard, which starts the re-score (its own confirmation still applies). Returns true when it navigated.
 async function offerRescoreIfRulesChanged() {
   if (!scoringRulesChangedThisVisit) return false;
   scoringRulesChangedThisVisit = false;

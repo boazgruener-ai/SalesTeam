@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>SalesTeam Posts Dashboard</title>
+  <title>SalesTeam Leads Dashboard</title>
   <link rel="icon" href="icons/icon16.png" />
   <link rel="stylesheet" href="dashboard.css" />
 </head>
@@ -34,7 +34,7 @@
            its own markup (open/current), which meant the REST of the list
            reshuffled depending on which page you were on. Reordered to a
            single fixed order, identical across all 4 pages (Target
-           Accounts, Target Contacts, Posts Dashboard, Scanner, Settings,
+           Accounts, Target Contacts, Leads Dashboard, Scanner, Settings,
            Debug last) - only which group carries `open`/is the current
            page changes now, never their relative order. -->
       <!-- 23rd round of direct feedback (2026-09-19): "If I have a sub-menu
@@ -77,16 +77,16 @@
            and Target Contacts." Flattened to match, same 8 items, no
            sub-labels. -->
       <details class="nav-group" open>
-        <summary class="nav-group-label">Posts Dashboard</summary>
+        <summary class="nav-group-label">Leads Dashboard</summary>
         <!-- 20th round of direct feedback (2026-09-19): "the Posts sub-
-             menu is missing the 1st entry... 'Posts Dashboard', so there
+             menu is missing the 1st entry... 'Leads Dashboard', so there
              is no way to reach it from the menu" - target-accounts.html's
              own "Target Accounts Dashboard" group has its own self item
              first (id="tab-accounts", "Target Accounts") - this group
              never got the equivalent, so there was no findable way back
-             to Posts Dashboard's own real content once something else got
+             to Leads Dashboard's own real content once something else got
              embedded over it (only the brand-name click, not obvious). -->
-        <button id="open-posts-dashboard-self-btn" type="button" class="nav-item active" title="Return to Posts Dashboard">Posts Dashboard</button>
+        <button id="open-posts-dashboard-self-btn" type="button" class="nav-item active" title="Return to Leads Dashboard">Leads Dashboard</button>
         <button id="export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
         <button id="export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
       </details>
@@ -155,7 +155,7 @@
     <main id="app-main">
       <div id="page-native-content">
       <div id="page-header-bar">
-        <h1>SalesTeam Posts Dashboard</h1>
+        <h1>SalesTeam Leads Dashboard</h1>
         <span id="prioritize-status" class="status-text"></span>
         <span id="rescore-all-status" class="status-text"></span>
         <span id="extract-companies-status" class="status-text"></span>
@@ -265,7 +265,7 @@
     <button id="bulk-close-x-btn" type="button" aria-label="Close" title="Close">✕</button>
     <h3>Bulk Change Status</h3>
     <p class="bulk-warning">
-      ⚠ This changes the status of every lead currently matching the table's filters
+      ⚠ This changes the status of every lead (post) currently matching the table's filters
       (<strong id="bulk-dialog-count">0</strong> lead<span id="bulk-dialog-count-plural">s</span>) in one action.
       Double-check your search/status/column filters before applying.
     </p>
@@ -348,7 +348,7 @@
       </div>
       <div id="detail-templates-editor" hidden>
         <p class="field-hint">
-          Auto-picked per lead based on connection status, or choose manually above. These instructions are
+          Auto-picked per lead (post) based on connection status, or choose manually above. These instructions are
           shared across every lead - editing one here changes it everywhere it's used, including the Sales
           Mentor's own drafting tool.
         </p>

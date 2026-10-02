@@ -107,7 +107,7 @@
 
     <!-- Step 1: Location -->
     <section id="enter-location" class="wizard-step">
-      <h2>Where are your target companies and leads?</h2>
+      <h2>Where are your target companies and leads (posts)?</h2>
       <div class="proposal-slot" id="proposal-location" hidden></div>
       <p class="step-intro">
         This is your one target geography - it scopes both which companies Discovery searches for and which
@@ -215,7 +215,7 @@
         Rank the three criteria by overall importance. Which specific locations/sizes/industries matter most is
         set per-item on their own steps (Location/Size/Industry) - this just orders the three criteria against
         each other. Feeds automatic company scoring once Discovery scanning ships. This governs Discovery's own
-        company search - for the separate rules that already prioritize scanned Topic leads today, see the next
+        company search - for the separate rules that already prioritize scanned Topic leads (posts) today, see the next
         step, Leads Prioritization.
       </p>
       <label for="priority-rank-1">Most important</label>
@@ -231,11 +231,10 @@
     <section id="enter-leads-prioritization" class="wizard-step" hidden>
       <h2>Leads Prioritization: how should we rank the leads (posts) we already scan?</h2>
       <p class="step-intro">
-        These layer on top of the Sales Mentor's own judgment for a lead whose company is in your Target
-        Accounts list (Target Accounts Dashboard) - not the Discovery step above, which governs company
-        search instead. The Sales Mentor's own judgment is always the base decision and can never itself be
-        disabled; these only ever constrain or override it for a lead that satisfies their specific
-        condition. Saved immediately as you change them, same as everywhere else in this wizard.
+        These rules adjust how the Sales Mentor ranks a lead (post) whose company is in your Target Accounts list.
+        (Ranking the companies themselves is a different step: Discovery Prioritization.) The Sales Mentor's own
+        judgment always comes first; each rule below only changes the ranking of a lead that meets its condition.
+        Changes are saved as you make them.
       </p>
       <label for="leads-prioritization-threshold-input">Target Account confidence threshold (Job rules)</label>
       <input type="number" id="leads-prioritization-threshold-input" min="0" max="100" title="A company only triggers the Job rules below once your research labels it 'Very High' or 'High' (never Provisional/lower, regardless of score) AND its score is at or above this. Post rules (further down) set their own thresholds per rule instead - changing this number doesn't affect them." />
@@ -271,7 +270,7 @@
         have to match (AND) - build one from a Workbook column check, "Account is in the Target Accounts
         list", "Post author is a Target Contact" and/or "Post matched a Topic". The first <strong>enabled</strong>
         rule whose conditions all match wins and applies its Floor/Ceiling/Decisive effect; if no rule
-        matches, the Sales Mentor scores the lead entirely on its own. Order matters - only the first match
+        matches, the Sales Mentor scores the lead (post) entirely on its own. Order matters - only the first match
         is used, so reorder with ↑/↓ to put more specific rules above more general ones. A Workbook column
         condition's column field suggests every column actually found in your imported Target Accounts
         workbook's Companies sheet as you type - or type any column name directly, even one not currently
@@ -296,11 +295,11 @@
 
     <!-- Step 6: Things you can offer (optional) -->
     <section id="enter-value-add-offers" class="wizard-step" hidden>
-      <h2>What can you offer a lead to start a conversation? (optional)</h2>
+      <h2>What can you offer a lead (post) to start a conversation? (optional)</h2>
       <div class="proposal-slot" id="proposal-value-add-offers" hidden></div>
       <div id="value-add-offers-checklist" hidden></div>
       <p class="step-intro">
-        Something you can offer a lead in a message, as a reason to reply - one per line, real resources only: an
+        Something you can offer a lead (post) in a message, as a reason to reply - one per line, real resources only: an
         article link, a report, "free 20-min demo". The AI only ever offers what is listed here (and what is ticked
         above), never anything it invents.
       </p>
@@ -389,7 +388,7 @@
       <div class="proposal-slot" id="proposal-exclusions" hidden></div>
       <div id="exclusions-checklist" hidden></div>
       <p class="step-intro">
-        A company here is never treated as a lead, regardless of anything else about it. One LinkedIn
+        A company here is never treated as a lead (post), regardless of anything else about it. One LinkedIn
         company-page URL per line in each box below - not a company name, since names are too easy to
         mismatch (legal suffixes, short vs. long names, misspellings). Each line is checked as you go.
       </p>
@@ -513,7 +512,7 @@
     <h3>Scoring rules changed</h3>
     <p>
       You changed the scoring rules. <strong>They are already saved</strong> and apply to every new scan.
-      Leads you already have keep their old scores until they are re-scored.
+      Leads (posts) you already have keep their old scores until they are re-scored.
     </p>
     <div class="stale-discovery-dialog-actions">
       <button type="button" id="rescore-now-btn">Re-score existing leads now</button>

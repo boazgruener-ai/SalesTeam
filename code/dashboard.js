@@ -153,7 +153,7 @@ document.getElementById("embedded-page-close-btn").addEventListener("click", hid
 document.getElementById("app-nav-brand-name").addEventListener("click", hideEmbeddedPage);
 // 20th round of direct feedback (2026-09-19) - see the HTML's own comment
 // on this button for the full reasoning: a findable, self-referential way
-// back to Posts Dashboard's own real content, matching target-accounts.js's
+// back to Leads Dashboard's own real content, matching target-accounts.js's
 // own "Target Accounts" self tab.
 document.getElementById("open-posts-dashboard-self-btn").addEventListener("click", hideEmbeddedPage);
 
@@ -820,7 +820,7 @@ function makeIconBtn(icon, title, onClick, extraClass) {
 
 // Row-level kebab menu (PRD 6.20 Phase 10, 2026-09-17) - replaces the 6
 // always-visible icon buttons this cell used to render, per the user's own
-// observation that 6 icons per row (Posts Dashboard) and no per-row actions
+// observation that 6 icons per row (Leads Dashboard) and no per-row actions
 // at all (Target Accounts/Contacts) were two different, inconsistent
 // patterns for the same underlying need. Same action set as before, purely
 // collapsed into a menu - no behavior change. Same open/position/close-on-
@@ -934,7 +934,7 @@ const COLUMNS = [
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
   { id: "location", label: "Location", width: 130, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
 ];
-// 18th round of direct feedback (2026-09-19): "only in the Posts Dashboard,
+// 18th round of direct feedback (2026-09-19): "only in the Leads Dashboard,
 // the Kebabs have a column header called Action[s]... this whole back and
 // forth... is telling me that the code... is not re-using common
 // components" - "actions" is no longer just another COLUMNS entry (a label,
@@ -2788,7 +2788,7 @@ tableSectionEl.addEventListener("scroll", () => {
 
 // 23rd round of direct feedback (2026-09-19) - see target-accounts.js's
 // own copy of this comment for the full reasoning. Every OTHER page's own
-// copy of "Posts Dashboard" now duplicates these same action buttons (not
+// copy of "Leads Dashboard" now duplicates these same action buttons (not
 // just the base "open this page" button) - each one links here with
 // "#action=X" (see those pages' own HTML comments), triggered
 // automatically on load with a real .click() (so any of these buttons'

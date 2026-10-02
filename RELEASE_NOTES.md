@@ -35,12 +35,14 @@
   counting accounts as not found.
 - **Export accounts or contacts to Excel** - new **Export Accounts (CSV)** and **Export Contacts (CSV)** menu items save
   one spreadsheet per table, every column under SalesTeam's own names, dates as dates. With a filter on, you choose all rows
-  or only the filtered ones. Every export (accounts, contacts, posts) leaves out columns that are empty in every row and
+  or only the filtered ones. Every export (accounts, contacts, leads) leaves out columns that are empty in every row and
   puts sparsely filled ones last.
-- **Filters you cannot miss** - every active filter (status, search, column filters) is listed above the Posts, Target
+- **Filters you cannot miss** - every active filter (status, search, column filters) is listed above the Leads, Target
   Accounts and Target Contacts tables, each with its own ✕ and a **Clear all**; a filtered column has a blue header; an
-  empty table names the filters hiding its rows. On the Posts Dashboard the Status dropdown and the Status column filter
-  can no longer disagree (a saved filter could hide every lead while the dropdown said "All statuses").
+  empty table names the filters hiding its rows. On the Leads Dashboard the Status dropdown and the Status column filter
+  can no longer disagree (a saved filter could hide every lead (post) while the dropdown said "All statuses").
+- **Leads Dashboard** - the Posts Dashboard is now the **Leads Dashboard**, and texts say "leads (posts)": what the
+  scans find is a lead to look at, not yet a qualified sales lead.
 - **Faster and safer** - Target Accounts opens in about 2 seconds instead of about 17 on a large list; account writes from
   parallel jobs can no longer overwrite each other; web research backs off and resumes on Anthropic's rate limit.
 - **Also** - a "Web researched" slice in the Evidence-level pie; companies excluded as Other are left out of lead scans too;

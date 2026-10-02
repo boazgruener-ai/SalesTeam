@@ -28,7 +28,7 @@
            its own markup (open/current), which meant the REST of the list
            reshuffled depending on which page you were on. Reordered to a
            single fixed order, identical across all 4 pages (Target
-           Accounts, Target Contacts, Posts Dashboard, Scanner, Settings,
+           Accounts, Target Contacts, Leads Dashboard, Scanner, Settings,
            Debug last) - only which group carries `open`/is the current
            page changes now, never their relative order. -->
       <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
@@ -53,11 +53,11 @@
       </details>
 
       <details class="nav-group">
-        <summary class="nav-group-label">Posts Dashboard</summary>
+        <summary class="nav-group-label">Leads Dashboard</summary>
         <!-- 23rd round of direct feedback (2026-09-19) - see
              target-accounts.html's own copy of this comment for the full
              reasoning. -->
-        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the leads (posts) your scans found">Open Leads Dashboard</button>
         <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
         <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
       </details>
@@ -326,8 +326,8 @@
       <p class="field-hint">
         This is the DEFAULT language for everything SalesTeam's AI writes - the Sales Mentor's chat replies,
         Customer Voice's replies, drafted LinkedIn messages, and every other AI-generated text in the
-        extension. The one exception: when Customer Voice is grounded in one specific real lead (via
-        get_lead_details), it replies in THAT lead's own post language instead, whatever it is - a French
+        extension. The one exception: when Customer Voice is grounded in one specific real lead (post) - via
+        get_lead_details - it replies in THAT lead's own post language instead, whatever it is - a French
         lead gets a French reaction even if this is set to English, since that's what a real reply from them
         would look like. Everywhere else, this setting is what's actually used.
       </p>
@@ -363,7 +363,7 @@
       <table id="billing-features" class="billing-table"></table>
       <h4 class="billing-heading">Warning before an expensive action</h4>
       <p class="field-hint">
-        Before an AI action that could cost more than this amount (for example scoring hundreds of leads), SalesTeam asks you to
+        Before an AI action that could cost more than this amount (for example scoring hundreds of leads (posts)), SalesTeam asks you to
         confirm. Set 0 to switch the warning off. SalesTeam does not stop spending by itself - to cap it for real, set a spend
         limit in your Anthropic Console.
       </p>
@@ -380,7 +380,7 @@
       </p>
       <p class="field-hint">
         <strong>Web research</strong> = the "Research this account on the web" button (searches + the AI reading them).
-        <strong>Other AI features</strong> = everything else on your API key: message drafting, lead and company prioritization, company
+        <strong>Other AI features</strong> = everything else on your API key: message drafting, lead (post) and company prioritization, company
         extraction, topic suggestions, search-quality analysis and the Advisors chats. Prices used: Claude Sonnet $2 in / $10 out per million
         tokens, Claude Haiku $1 / $5, and about $0.01 per web search.
       </p>
@@ -397,7 +397,7 @@
       </p>
       <p class="field-hint">
         After you pick the file you choose <strong>what to restore</strong>: settings, accounts / contacts / initiatives,
-        your edits to them, leads and conversations, the activity log, and display preferences. Only the parts you
+        your edits to them, leads (posts) and conversations, the activity log, and display preferences. Only the parts you
         tick are replaced; everything else stays as it is. A safety copy of your current data is saved first.
       </p>
       <button id="backup-restore-btn" type="button" title="Choose a backup file (.zip, or an older .json) - you then choose which parts to restore">Restore from backup…</button>
@@ -412,7 +412,7 @@
     <section class="settings-card" id="backup-section">
       <h3>Backup</h3>
       <p class="field-hint">
-        One backup holds everything - settings, accounts, contacts, leads, chats and the activity log - as a single dated zip.
+        One backup holds everything - settings, accounts, contacts, leads (posts), chats and the activity log - as a single dated zip.
         The zip also contains your accounts and leads as CSV spreadsheets, ready to open in Excel or upload to another system.
       </p>
 

@@ -355,7 +355,7 @@ const navGroupContactsEl = document.getElementById("nav-group-contacts");
 // simple pages (Advisors/Activity Log/Help - "Pipeline Overview" removed
 // entirely per the same feedback, see below) have no nav shell of their
 // own, so embedding just shows their real content. The 3 "big" pages
-// (Target Accounts/Posts Dashboard/Scanner/Settings) DO have their own
+// (Target Accounts/Leads Dashboard/Scanner/Settings) DO have their own
 // full #app-shell/#app-nav - embedding one as-is would nest a second
 // sidebar inside this page's own. Fixed with a `?embedded=1` query param
 // each of those pages' own JS checks for (see this file's own `route()`/
@@ -387,13 +387,13 @@ function showEmbeddedPage(page, title) {
   embeddedPageTitleEl.textContent = title;
   embeddedPageBarEl.hidden = true;
   // 26th round of direct feedback (2026-09-19): "Re-score All Priorities...
-  // only works once and never again, unless I click Open Posts Dashboard
+  // only works once and never again, unless I click Open Leads Dashboard
   // again, which seems to reset/unfreeze it." Root cause: re-clicking the
   // SAME action item twice in a row sets the iframe's src to the EXACT
   // SAME URL it already has - assigning an identical src is a total no-op
   // in browsers (no navigation, not even a hashchange event), so neither
   // init() nor the hashchange listener ever get a second chance to re-run
-  // the action. "Open Posts Dashboard" only "fixed" it by accident, since
+  // the action. "Open Leads Dashboard" only "fixed" it by accident, since
   // its own hash always differs from whatever action was last triggered,
   // which is always a real, distinct navigation. Bounced through
   // about:blank first whenever the requested URL matches what's already
@@ -457,14 +457,14 @@ if (new URLSearchParams(location.search).has("embedded")) {
   document.getElementById("app-shell").classList.add("embedded-mode");
 }
 
-document.getElementById("open-dashboard-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html", "Posts Dashboard"));
-document.getElementById("nav-prioritize-unscored-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=prioritize-unscored", "Posts Dashboard"));
-document.getElementById("nav-rescore-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=rescore-all", "Posts Dashboard"));
-document.getElementById("nav-extract-companies-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies", "Posts Dashboard"));
-document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Posts Dashboard"));
-document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Posts Dashboard"));
-document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Posts Dashboard"));
-document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Posts Dashboard"));
+document.getElementById("open-dashboard-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html", "Leads Dashboard"));
+document.getElementById("nav-prioritize-unscored-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=prioritize-unscored", "Leads Dashboard"));
+document.getElementById("nav-rescore-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=rescore-all", "Leads Dashboard"));
+document.getElementById("nav-extract-companies-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies", "Leads Dashboard"));
+document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Leads Dashboard"));
+document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Leads Dashboard"));
+document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Leads Dashboard"));
+document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Leads Dashboard"));
 document.getElementById("open-scanner-page-btn").addEventListener("click", () => showEmbeddedPage("scanner.html", "Scanner"));
 
 document.getElementById("open-settings-setup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#setup-section", "Settings"));
@@ -1996,7 +1996,7 @@ function syncTopScrollWidth() {
   tableScrollTopFillerEl.style.width = `${companiesTableEl.scrollWidth}px`;
 }
 
-// ---- Active filters, always visible (1.2.1 step 7, same as the Posts Dashboard) ----
+// ---- Active filters, always visible (1.2.1 step 7, same as the Leads Dashboard) ----
 // The search and every column filter as a chip above the table, each with its own remove button, plus Clear all;
 // and when they hide every row, the table says which filters do it instead of showing nothing.
 function tableFilterChips(searchEl, filters, columns) {
@@ -2175,7 +2175,7 @@ const CONTACT_LIST_COLUMNS = [
   // (findLeadsForContact, same author+company matching the pie already uses), so the two can
   // never disagree. There is deliberately no per-contact status EDITOR - status lives on a lead
   // (a real Post/Job, the actual communication event), not on the contact itself; change it
-  // from that lead's own detail page on the Posts Dashboard.
+  // from that lead's own detail page on the Leads Dashboard.
   { id: "contactStatus", label: "Status", visible: true, pill: true },
   { id: "jobTitle", label: "Job Title", visible: true },
   { id: "function", label: "Function", visible: true },
@@ -2806,7 +2806,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // Target Accounts Dashboard stats (PRD 6.19) - computed over the FULL
 // company set, not whatever's currently searched/filtered in the table
-// below, same reasoning as the Posts Dashboard's own pies (a 7-day/30-day/
+// below, same reasoning as the Leads Dashboard's own pies (a 7-day/30-day/
 // all-time snapshot, independent of the leads table's own filters) - these
 // are meant to answer "what does the whole target list look like," not
 // "what does my current search look like." Recomputed on every
@@ -4093,7 +4093,7 @@ function buildOverviewCard(fields) {
     } else {
       dd.textContent = value;
       if (expandable) {
-        // Same click-to-expand/collapse pattern as the Posts Dashboard's
+        // Same click-to-expand/collapse pattern as the Leads Dashboard's
         // own truncated cells (dashboard.js's contentCell/.content-cell) -
         // reported directly, asked for the identical behavior here: a
         // truncated field's full value opens on click, growing in place,
@@ -6720,7 +6720,7 @@ window.addEventListener("hashchange", () => {
 // Reported 2026-09-22 and repeatable: "Target Accounts" is <a href="#"> (the empty hash this page
 // normally already sits on) and "Target Contacts" is <a href="#contacts">, and both were routed by
 // hashchange alone. Clicking the one whose hash is already set fires NO hashchange, so nothing ran:
-// with another page embedded (Posts Dashboard, say) the embedded page stayed up and the click looked
+// with another page embedded (Leads Dashboard, say) the embedded page stayed up and the click looked
 // completely dead until a browser refresh. settings.js already carries this same fix for its own
 // #app-nav links; these two tabs were the one place it was missed. The timeout lets the browser apply
 // the href's hash first, so route() reads the intended one.

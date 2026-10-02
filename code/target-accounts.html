@@ -183,7 +183,7 @@
            label would just be confusing, not genuinely separate features.
            (2) The Views/Data/Enrichment/Prioritization sub-division
            removed from these two groups specifically (each is small
-           enough now not to need it) - kept on Posts Dashboard/Settings
+           enough now not to need it) - kept on Leads Dashboard/Settings
            below, which still have enough items to benefit from it. -->
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
@@ -205,7 +205,7 @@
       </details>
 
       <details class="nav-group">
-        <summary class="nav-group-label">Posts Dashboard</summary>
+        <summary class="nav-group-label">Leads Dashboard</summary>
         <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
              own copy of this comment (Target Accounts group) for the full
              reasoning. Each of these duplicates dashboard.html's own real
@@ -214,7 +214,7 @@
              the matching button there, so any of these buttons' own
              existing confirm() gates (Re-score All Priorities) still run
              normally. -->
-        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the leads (posts) your scans found">Open Leads Dashboard</button>
         <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
         <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
       </details>
@@ -311,7 +311,7 @@
           The full externally-researched company and contact workbook - every account, plus its known contacts and
           initiatives, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
           unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
-          automatic lead prioritization (see the Posts Dashboard's Priority column).
+          automatic lead (post) prioritization (see the Leads Dashboard's Priority column).
         </p>
         <span id="target-accounts-page-io-status" class="status-text"></span>
         <p id="linkedin-resolve-status" class="page-subtitle" hidden></p>

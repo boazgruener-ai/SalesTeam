@@ -416,7 +416,7 @@ details.nav-group > div > .nav-item {
 }
 
 /* A sub-heading INSIDE an open group's own item list (e.g. "Scoring"/
-   "Enrichment"/"Export" within the Posts Dashboard group) - one level
+   "Enrichment"/"Export" within the Leads Dashboard group) - one level
    smaller/lighter than .nav-group-label, indented to match the items
    below it, so the hierarchy (page > category > item) stays legible. */
 .nav-group-sublabel {
@@ -565,7 +565,7 @@ details.nav-group > div > .nav-item {
 }
 
 /* ---- pie charts (Target Accounts / Target Contacts Dashboards) - same
-   markup/classes as the Posts Dashboard's own pie charts (dashboard.css),
+   markup/classes as the Leads Dashboard's own pie charts (dashboard.css),
    duplicated here since this is a separate page. ---- */
 #accounts-stats-section, #contacts-stats-section {
   display: flex;
@@ -1054,7 +1054,7 @@ th.col-filtered {
    language as this file's own column-header menu) rather than a second
    near-identical set of classes - only the trigger button is new. Same
    visual language as dashboard.css's own .kebab-btn/.row-menu-* for the
-   Posts Dashboard's row menu (a separate file, duplicated per this
+   Leads Dashboard's row menu (a separate file, duplicated per this
    codebase's existing convention, not shared). */
 .kebab-btn {
   border: 1px solid #ccc;
@@ -1478,7 +1478,7 @@ thead .actions-col {
   font-weight: 600;
 }
 
-/* Same click-to-expand/collapse pattern as the Posts Dashboard's own
+/* Same click-to-expand/collapse pattern as the Leads Dashboard's own
    truncated cells (.content-cell, dashboard.css) - truncated to one line
    by default, full value on click, growing the card in place; click again
    to collapse. Only plain-text fields get this (buildField, target-
