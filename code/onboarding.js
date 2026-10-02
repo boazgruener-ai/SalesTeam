@@ -2332,6 +2332,13 @@ async function logSetupResearch(label) {
   } catch { /* the log is for measuring only */ }
 }
 
+// 1.2.0.53 (Boaz: 7, then 5, then 4 offers): how many offers a run kept and left out, so a change can be explained.
+function offersMeasure(proposals) {
+  const p = proposals?.["value-add-offers"];
+  if (!p) return "";
+  return `; offers: ${p.items?.length || 0} kept${p.dropped ? `, ${p.dropped} left out (no page on the website)` : ""}`;
+}
+
 function researchMeasures(result) {
   return `${usd(result.costUsd)}, ${Math.round((result.ms || 0) / 1000)} s, ${result.fetches || 0} pages read, ` +
     `${result.searches || 0} searches`;
@@ -2384,7 +2391,7 @@ async function runSellerResearch() {
     for (const key of Object.keys(checklists)) delete checklists[key];
     const found = Object.entries(proposals).filter(([, p]) => p.found).map(([step]) => STEP_TITLES[step]);
     await logSetupResearch(`Setup research of ${site}: ${researchMeasures(result)}; proposals for ${found.length} steps` +
-      `${found.length ? ` (${found.join(", ")})` : ""}`);
+      `${found.length ? ` (${found.join(", ")})` : ""}${offersMeasure(proposals)}`);
     continueAfterResearch();
     return;
   }
@@ -2637,10 +2644,14 @@ async function researchStepAgain(step, hint) {
   const result = await researchSeller(seller, {
     only: PROPOSAL_STEP_KEYS[step], hint, sectors: CONFIRMED_INDUSTRIES, outputLanguage: el("about-language-select").value,
   }, { apiKey });
-  await logSetupResearch(`Setup research again (${STEP_TITLES[step]}${hint ? `, hint "${hint.slice(0, 80)}"` : ""}): ${researchMeasures(result)}`);
-  if (!result.data) throw new Error(result.stopped === "timeout" ? "it was cut off after 4 minutes" : "no usable answer came back");
+  const againLabel = `Setup research again (${STEP_TITLES[step]}${hint ? `, hint "${hint.slice(0, 80)}"` : ""}): ${researchMeasures(result)}`;
+  if (!result.data) {
+    await logSetupResearch(againLabel);
+    throw new Error(result.stopped === "timeout" ? "it was cut off after 4 minutes" : "no usable answer came back");
+  }
   const raw = { ...(setupResearch.raw || {}), ...result.data };
   const rebuilt = buildSetupProposals(raw, proposalCtx(), stepsRebuiltBy(step));
+  await logSetupResearch(`${againLabel}${offersMeasure(rebuilt)}`);
   const accepted = { ...(setupResearch.accepted || {}) };
   // Only this step is proposed afresh; another step rebuilt with it (the Ideal customer note) keeps its acceptance.
   delete accepted[step];
