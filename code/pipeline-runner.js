@@ -332,9 +332,15 @@ async function runAccount(tab, entry, cfg, r, opts) {
   let webResearches = 0;
   let webUsd = 0;
 
+  // Making way for the user (U2) happens after the JOB in progress, not the whole account: an account with a
+  // resolve, a size, a People page and three profile searches takes minutes of paced LinkedIn visits, and the
+  // user's job gave up waiting after 2.5 (1.2.0.1 live test, 2026-09-28). An account cut short is not marked as
+  // handled today, so the next run picks it up again.
+  let cutShort = false;
   while (!r.stopRequested) {
     const job = jobs.find((j) => (j === "profile" ? profileSearches < MAX_PROFILE_SEARCHES_PER_ACCOUNT : !ran.has(j)));
     if (!job) break;
+    if (r.pauseRequested) { cutShort = true; break; }
     if (WEB_JOBS.has(job)) {
       // One research per account and pass, whichever kind (a full one covers the gaps).
       for (const j of WEB_JOBS) ran.add(j);
@@ -397,12 +403,13 @@ async function runAccount(tab, entry, cfg, r, opts) {
     for (const j of attempted) if (j !== "profile" && !WEB_JOBS.has(j) && jobs.includes(j)) failed.add(j);
   }
 
+  if (cutShort) lines.push("Paused here to make way for your job - the rest of this account follows in a later run");
   let attempts = pipeline.attempts || {};
   for (const j of failed) attempts = withFailedAttempt({ attempts }, j, day);
   // The whole state is written, not only what changed: when the account's inputs changed (step 4,
   // R12.5.2), view.pipeline arrived already cleared, and this is where the clearing is stored.
   await savePipelineAccountState(key, {
-    attempts, profileTried: pipeline.profileTried || [], lastRunDay: day, inputsKey: view.inputsKey || pipeline.inputsKey || null,
+    attempts, profileTried: pipeline.profileTried || [], lastRunDay: cutShort ? (pipeline.lastRunDay || null) : day, inputsKey: view.inputsKey || pipeline.inputsKey || null,
     emptyPage: pipeline.emptyPage || null, keep: Boolean(pipeline.keep), pageChange: pipeline.pageChange || null,
     idTaken: pipeline.idTaken || null, webGapAt: pipeline.webGapAt || {},
   });

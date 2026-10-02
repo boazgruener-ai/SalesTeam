@@ -1511,6 +1511,7 @@ async function streamWebResearch(apiKey, body, signal, onSearch) {
     const err = new Error(`Anthropic replied with an error (HTTP ${response.status}): ${reason}`);
     err.status = response.status;
     err.body = errBody;
+    err.retryAfter = response.headers.get("retry-after"); // read by bulk research's 429 back-off (rate-limit.js)
     throw err;
   }
   const blocks = [];
@@ -1644,7 +1645,9 @@ export async function researchAccountOnWeb(company, settings, { onStatus, signal
           if (Array.isArray(block.content)) {
             for (const r of block.content) if (r.url && !sources.has(r.url)) sources.set(r.url, { url: r.url, title: r.title || r.url });
           } else if (block.content && block.content.error_code && ["unavailable", "too_many_requests"].includes(block.content.error_code)) {
-            throw new Error(`The web search service reported "${block.content.error_code}". Try again in a few minutes.`);
+            const err = new Error(`The web search service reported "${block.content.error_code}". Try again in a few minutes.`);
+            err.rateLimited = true; // transient: bulk research backs off and retries instead of stopping (rate-limit.js)
+            throw err;
           }
         } else if (block.type === "text") {
           text += block.text;

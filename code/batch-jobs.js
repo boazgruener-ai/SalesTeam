@@ -52,7 +52,10 @@ function showWaitNote(text) {
   note.style.cssText = "position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483001;background:#fff;" +
     "border:1px solid #c9d7e8;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);padding:8px 14px;font:13px system-ui,sans-serif;color:#1a1a1a;";
   note.textContent = text;
-  document.body.append(note);
+  // An open modal <dialog> sits in the browser's top layer, above any z-index: a note in <body> would be hidden
+  // behind its grey backdrop (1.2.0.1 live test - Start looked dead for up to 2.5 minutes). Put it in the dialog.
+  const modal = [...document.querySelectorAll("dialog[open]")].pop();
+  (modal || document.body).append(note);
   return note;
 }
 

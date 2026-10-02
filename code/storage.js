@@ -4,6 +4,7 @@ import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } fr
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms } from "./web-research-apply.js";
+import { mergeFieldChanges } from "./extras-merge.js";
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
 // post/job URL, with status, priority, and negative-topic-match reason), scan
@@ -1007,10 +1008,36 @@ const TARGET_ACCOUNT_SCORE_THRESHOLD_KEY = "targetAccountScoreThreshold";
 const DEFAULT_TARGET_ACCOUNT_SCORE_THRESHOLD = 70;
 
 // --------------------------------------------------------------------------
+// Account write lock (1.2.1 build step 0, ONBOARDING_RESEARCH_DESIGN.md 2.2)
+// --------------------------------------------------------------------------
+
+// Every read-modify-write of targetAccounts, targetAccountsWorkbook and targetAccountExtras reads the WHOLE
+// map, changes a few entries and writes the whole map back - so two writers that overlap (four bulk-research
+// workers finishing together, the pipeline and a manual edit on the account page) could each read the old map,
+// and the second write silently dropped the first one's change. Every such writer now runs inside this lock.
+// It is a Web Lock rather than an in-memory promise chain because Web Locks are shared by every context of the
+// extension's origin - the background worker AND each open SalesTeam page - so a page-side edit queues behind a
+// background write instead of racing it, with no message round-trip. A lock whose holder is closed or reloaded
+// mid-write is released by the browser.
+// NOT re-entrant: a writer already inside the lock must call another writer's `...Unlocked` version, or it waits
+// for itself forever. Each locked writer is a one-line wrapper passing its `arguments` to `<name>Unlocked`, so
+// the unlocked body and its signature stay exactly as they were.
+const ACCOUNT_WRITE_LOCK = "salesteam-account-writes";
+let accountWriteChain = Promise.resolve(); // fallback only, for a context without navigator.locks
+
+export function withAccountWriteLock(fn) {
+  if (globalThis.navigator?.locks?.request) return navigator.locks.request(ACCOUNT_WRITE_LOCK, () => fn());
+  const run = accountWriteChain.then(() => fn());
+  accountWriteChain = run.catch(() => {});
+  return run;
+}
+
+// --------------------------------------------------------------------------
 // Target Accounts - import, metadata, scan scope, score threshold
 // --------------------------------------------------------------------------
 
-export async function importTargetAccounts(list, fileName = null) {
+export async function importTargetAccounts(list, fileName = null) { return withAccountWriteLock(() => importTargetAccountsUnlocked(...arguments)); }
+async function importTargetAccountsUnlocked(list, fileName = null) {
   // Carries a company's resolved LinkedIn ID (6.16) forward across a
   // wholesale re-import - reported directly as a real risk: this map is
   // rebuilt from scratch every import (by design, since the research
@@ -1202,7 +1229,8 @@ export async function getTargetAccountsMissingLinkedinId() {
 // above for why this exists. Separate from applyResolvedCompanyIds (which
 // only ever hears about successes) since a failed attempt still needs to
 // stop being treated as "never tried."
-export async function markLinkedinResolveAttempted(keys) {
+export async function markLinkedinResolveAttempted(keys) { return withAccountWriteLock(() => markLinkedinResolveAttemptedUnlocked(...arguments)); }
+async function markLinkedinResolveAttemptedUnlocked(keys) {
   const map = await getTargetAccounts();
   const attemptedAt = Date.now();
   let marked = 0;
@@ -1247,7 +1275,8 @@ export async function getScanTargetCompanyIds(scope) {
 // ("linkedin" for the resolver, "discovery" for a Discovery card). Both go into the account's
 // provenance in the same write: an id only counts as verified once it was read off the very page the
 // account's link points to (1.2 build step 1; step 0 found 6 of 30 stored ids disagreeing with it).
-export async function applyResolvedCompanyIds(resolutions) {
+export async function applyResolvedCompanyIds(resolutions) { return withAccountWriteLock(() => applyResolvedCompanyIdsUnlocked(...arguments)); }
+async function applyResolvedCompanyIdsUnlocked(resolutions) {
   const [map, extras, workbookBefore] = await Promise.all([getTargetAccounts(), getTargetAccountExtras(), getTargetAccountsWorkbook()]);
   let updated = 0;
   let refused = 0;
@@ -1326,7 +1355,7 @@ export async function applyResolvedCompanyIds(resolutions) {
   }
   if (updated > 0 || refused > 0) await chrome.storage.local.set({ [TARGET_ACCOUNTS_KEY]: map, [TARGET_ACCOUNT_EXTRAS_KEY]: extras });
   // ...and again into the WORKBOOK, which is a genuinely separate store (see syncLinkedinLinksToWorkbook).
-  await syncLinkedinLinksToWorkbook();
+  await syncLinkedinLinksToWorkbookUnlocked(); // already holding the account write lock
   return updated;
 }
 
@@ -1341,7 +1370,8 @@ export async function applyResolvedCompanyIds(resolutions) {
 // overwrite: the workbook's own imported link always wins. Cheap and idempotent, so it is safe to call
 // on page load - which is what repairs accounts already resolved before this existed, with no further
 // LinkedIn lookups.
-export async function syncLinkedinLinksToWorkbook() {
+export async function syncLinkedinLinksToWorkbook() { return withAccountWriteLock(() => syncLinkedinLinksToWorkbookUnlocked(...arguments)); }
+async function syncLinkedinLinksToWorkbookUnlocked() {
   const [map, data] = await Promise.all([
     getTargetAccounts(),
     chrome.storage.local.get(TARGET_ACCOUNTS_WORKBOOK_KEY),
@@ -1455,7 +1485,8 @@ function normalizeContactRows(contacts) {
 // silently collapsed into one. A rare case (the fresh ChatGPT research
 // would have to specifically cover a company Discovery already found on
 // its own), not treated as a bug.
-export async function importTargetAccountsWorkbook(sheets) {
+export async function importTargetAccountsWorkbook(sheets) { return withAccountWriteLock(() => importTargetAccountsWorkbookUnlocked(...arguments)); }
+async function importTargetAccountsWorkbookUnlocked(sheets) {
   const importedAt = Date.now();
   const existing = await getTargetAccountsWorkbook();
   // Rows that did not come from the research workbook (LinkedIn Discovery, HubSpot import) survive a workbook re-import.
@@ -1751,7 +1782,8 @@ export async function getPendingDiscoveredMergePreview() {
   };
 }
 
-export async function mergeDiscoveredIntoWorkbook() {
+export async function mergeDiscoveredIntoWorkbook() { return withAccountWriteLock(() => mergeDiscoveredIntoWorkbookUnlocked(...arguments)); }
+async function mergeDiscoveredIntoWorkbookUnlocked() {
   const {
     workbook, newCompanyRows, newContactRows, matchedCompanies, heldNameMatches, heldContacts,
     totalDiscoveredCompanies, totalDiscoveredContacts, duplicateContactsSkipped, orphanedContactsSkipped,
@@ -1783,7 +1815,7 @@ export async function mergeDiscoveredIntoWorkbook() {
       src: "discovery",
       checkedLink: m.discovered.slug ? `https://www.linkedin.com/company/${m.discovered.slug}/` : null,
     }));
-  const idsBackfilled = idBackfills.length > 0 ? await applyResolvedCompanyIds(idBackfills) : 0;
+  const idsBackfilled = idBackfills.length > 0 ? await applyResolvedCompanyIdsUnlocked(idBackfills) : 0; // already holding the lock
 
   // How many distinct companies the new contacts actually landed on -
   // reported directly, 2026-09-17: "55 contacts added" alone doesn't say
@@ -1871,7 +1903,8 @@ export async function getExistingCompaniesNeedingContacts(maxExistingContacts = 
 // markLinkedinResolveAttempted above - otherwise a handful of genuinely
 // contact-less companies would keep consuming the whole budget of every
 // run, ahead of a company this feature hasn't tried yet.
-export async function markContactDiscoveryAttempted(keys) {
+export async function markContactDiscoveryAttempted(keys) { return withAccountWriteLock(() => markContactDiscoveryAttemptedUnlocked(...arguments)); }
+async function markContactDiscoveryAttemptedUnlocked(keys) {
   const extras = await getTargetAccountExtras();
   const attemptedAt = Date.now();
   let marked = 0;
@@ -1887,7 +1920,8 @@ export async function markContactDiscoveryAttempted(keys) {
 // already-present contacts the same way computeDiscoveredMergeDiff does
 // (contactKeyFor identity), so re-running this after a partial/stopped run
 // never double-adds the same person.
-export async function appendContactsToWorkbook(newContactRows) {
+export async function appendContactsToWorkbook(newContactRows) { return withAccountWriteLock(() => appendContactsToWorkbookUnlocked(...arguments)); }
+async function appendContactsToWorkbookUnlocked(newContactRows) {
   if (!newContactRows || newContactRows.length === 0) return 0;
   const workbook = await getTargetAccountsWorkbook();
   const existingContactKeys = new Set((workbook.contacts || []).map((c) => contactKeyFor(c.company, c.fullName)));
@@ -1955,7 +1989,8 @@ export async function getCompaniesNeedingSize() {
 // of outcome) - same reasoning as markContactDiscoveryAttempted above, so a
 // handful of companies whose page never yields a readable size don't keep
 // consuming the whole budget of every future run ahead of ones never tried.
-export async function markCompanySizeFetchAttempted(keys) {
+export async function markCompanySizeFetchAttempted(keys) { return withAccountWriteLock(() => markCompanySizeFetchAttemptedUnlocked(...arguments)); }
+async function markCompanySizeFetchAttemptedUnlocked(keys) {
   const extras = await getTargetAccountExtras();
   const attemptedAt = Date.now();
   let marked = 0;
@@ -1975,7 +2010,8 @@ export async function markCompanySizeFetchAttempted(keys) {
 // from an imported one once stored. employeeCountText (the raw LinkedIn
 // band, e.g. "501-1K employees") is kept alongside purely for display -
 // never read by the deterministic scorer, which only ever wants the number.
-export async function applyCompanySizeResults(results) {
+export async function applyCompanySizeResults(results) { return withAccountWriteLock(() => applyCompanySizeResultsUnlocked(...arguments)); }
+async function applyCompanySizeResultsUnlocked(results) {
   if (!results || results.length === 0) return 0;
   const [workbook, extras] = await Promise.all([getTargetAccountsWorkbook(), getTargetAccountExtras()]);
   const byId = new Map(results.map((r) => [r.companyId, r]));
@@ -2055,7 +2091,8 @@ export function availableTargetAccountsSections(data) {
 
 // `sections` = a Set of the ids above; omitted/null restores everything the file carries. The
 // returned counts describe what was actually restored (null when "accounts" was not selected).
-export async function importTargetAccountsBackup(data, sections = null) {
+export async function importTargetAccountsBackup(data, sections = null) { return withAccountWriteLock(() => importTargetAccountsBackupUnlocked(...arguments)); }
+async function importTargetAccountsBackupUnlocked(data, sections = null) {
   const has = (id) => !sections || sections.has(id);
   const isPlainObject = (v) => v && typeof v === "object" && !Array.isArray(v);
 
@@ -3512,7 +3549,8 @@ export async function getCompaniesForPrioritization({ rescoreAll = false, rescor
 // Read-mutate-write onto targetAccountsWorkbook.companies, same pattern as
 // appendContactsToWorkbook/markContactDiscoveryAttempted above.
 // results: { companyId, priority, priorityScore, priorityReason }[].
-export async function applyCompanyPrioritizationResults(results) {
+export async function applyCompanyPrioritizationResults(results) { return withAccountWriteLock(() => applyCompanyPrioritizationResultsUnlocked(...arguments)); }
+async function applyCompanyPrioritizationResultsUnlocked(results) {
   if (!results || results.length === 0) return 0;
   const workbook = await getTargetAccountsWorkbook();
   const byId = new Map(results.map((r) => [r.companyId, r]));
@@ -4211,10 +4249,21 @@ export async function getTargetAccountExtra(companyKey) {
 
 // src says where a changed override came from: "user" (a manual edit, the default) or "web" (an
 // accepted web finding). It is recorded per field in the same write (1.2 build step 1, design 4.2).
-export async function saveTargetAccountExtra(companyKey, patch, { src = "user" } = {}) {
+// `base` (optional): the copy of `overrides` / `webFindingsDismissed` the caller started from, e.g.
+// { base: { overrides: snapshot } }. Given one, only the keys the caller changed relative to it are applied onto the
+// stored object, so a change another writer made meanwhile is kept (extras-merge.js). Without it the object in
+// `patch` replaces the stored one whole, as before.
+export async function saveTargetAccountExtra(companyKey, patch, { src = "user", base = null } = {}) { return withAccountWriteLock(() => saveTargetAccountExtraUnlocked(...arguments)); }
+async function saveTargetAccountExtraUnlocked(companyKey, patch, { src = "user", base = null } = {}) {
   if (!companyKey) return;
   const extras = await getTargetAccountExtras();
   const before = extras[companyKey] || {};
+  if (base && patch) {
+    patch = { ...patch };
+    for (const field of ["overrides", "webFindingsDismissed"]) {
+      if (patch[field] && field in base) patch[field] = mergeFieldChanges(base[field], patch[field], before[field]);
+    }
+  }
   const next = { ...emptyExtra(), ...before, ...patch };
   if (patch && patch.overrides) next.provenance = stampOverrideProvenance(before.overrides, patch.overrides, next, src);
   extras[companyKey] = next;
@@ -4257,7 +4306,8 @@ export async function clearKeptSeparatePairs() {
 
 // HubSpot import: ADDS companies and contacts SalesTeam does not have yet (matched by company name / person). Nothing
 // existing is changed or removed. A contact whose company is unknown gets a minimal company row so it has a home.
-export async function addHubspotRowsToWorkbook(companyRows, contactRows) {
+export async function addHubspotRowsToWorkbook(companyRows, contactRows) { return withAccountWriteLock(() => addHubspotRowsToWorkbookUnlocked(...arguments)); }
+async function addHubspotRowsToWorkbookUnlocked(companyRows, contactRows) {
   const wb = await getTargetAccountsWorkbook();
   const companies = [...(wb.companies || [])];
   const contacts = [...(wb.contacts || [])];
@@ -4298,7 +4348,8 @@ export async function addHubspotRowsToWorkbook(companyRows, contactRows) {
 
 // Initiatives found by the web research are added to the account's Initiatives list (same sheet as the research workbook's
 // initiatives, so they appear in the account view and in exports). A name already listed for the company is not added again.
-export async function addWebResearchInitiatives(companyId, companyName, items) {
+export async function addWebResearchInitiatives(companyId, companyName, items) { return withAccountWriteLock(() => addWebResearchInitiativesUnlocked(...arguments)); }
+async function addWebResearchInitiativesUnlocked(companyId, companyName, items) {
   const wb = await getTargetAccountsWorkbook();
   const existing = wb.aiInitiatives || [];
   const have = new Set(existing.filter((i) => i.companyId === companyId).map((i) => String(i.initiativeName || "").trim().toLowerCase()));
@@ -4326,7 +4377,8 @@ export async function addWebResearchInitiatives(companyId, companyName, items) {
   return added.length;
 }
 
-export async function mergeTargetAccounts(keepKey, dropKey, { keepId = null, dropId = null } = {}) {
+export async function mergeTargetAccounts(keepKey, dropKey, { keepId = null, dropId = null } = {}) { return withAccountWriteLock(() => mergeTargetAccountsUnlocked(...arguments)); }
+async function mergeTargetAccountsUnlocked(keepKey, dropKey, { keepId = null, dropId = null } = {}) {
   const sameKey = keepKey === dropKey;
   if (!keepKey || !dropKey || (sameKey && (!keepId || !dropId || keepId === dropId))) throw new Error("Pick two different accounts to merge.");
   const workbook = await getTargetAccountsWorkbook();
@@ -4510,7 +4562,8 @@ function extrasUndoKey(slot) {
   return key;
 }
 
-export async function bulkPatchExtras(scope, patchByKey, slot = "bulkEdit") {
+export async function bulkPatchExtras(scope, patchByKey, slot = "bulkEdit") { return withAccountWriteLock(() => bulkPatchExtrasUnlocked(...arguments)); }
+async function bulkPatchExtrasUnlocked(scope, patchByKey, slot = "bulkEdit") {
   const isAccounts = scope === "accounts";
   const storageKey = isAccounts ? TARGET_ACCOUNT_EXTRAS_KEY : TARGET_CONTACT_EXTRAS_KEY;
   const extras = isAccounts ? await getTargetAccountExtras() : await getTargetContactExtras();
@@ -4548,7 +4601,8 @@ export async function getLastBulkExtrasChange(slot = "bulkEdit") {
 
 // One level of undo, matching "Undo last Bulk change" on the Leads Dashboard - not a full history.
 // Clears the record afterwards so a second click has nothing left to do.
-export async function undoLastBulkExtrasChange(slot = "bulkEdit") {
+export async function undoLastBulkExtrasChange(slot = "bulkEdit") { return withAccountWriteLock(() => undoLastBulkExtrasChangeUnlocked(...arguments)); }
+async function undoLastBulkExtrasChangeUnlocked(slot = "bulkEdit") {
   const record = await getLastBulkExtrasChange(slot);
   if (!record) return 0;
   const isAccounts = record.scope === "accounts";
@@ -4810,13 +4864,16 @@ export async function getAccountViews({ persistDerived = true } = {}) {
 
   if (persistDerived && Object.keys(derived).length > 0) {
     // Re-read right before writing and touch only provenance, so a write that landed in between
-    // (a web research, an edit) is never overwritten by this snapshot.
-    const fresh = await getTargetAccountExtras();
-    for (const [key, fields] of Object.entries(derived)) {
-      const cur = fresh[key] || emptyExtra();
-      fresh[key] = { ...cur, provenance: { ...(cur.provenance || {}), ...fields } };
-    }
-    await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
+    // (a web research, an edit) is never overwritten by this snapshot. Only this re-read-and-write holds
+    // the account write lock - the views above are a plain read.
+    await withAccountWriteLock(async () => {
+      const fresh = await getTargetAccountExtras();
+      for (const [key, fields] of Object.entries(derived)) {
+        const cur = fresh[key] || emptyExtra();
+        fresh[key] = { ...cur, provenance: { ...(cur.provenance || {}), ...fields } };
+      }
+      await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
+    });
   }
   return views;
 }
@@ -4884,15 +4941,18 @@ export async function autoResolveWebFindings({ onlyKeys = null } = {}) {
     if (patch) { patches[key] = patch; out.accounts++; }
   }
   if (Object.keys(patches).length > 0) {
-    // Re-read right before writing, so a write that landed while the rules ran is not lost.
-    const fresh = await getTargetAccountExtras();
-    for (const [key, patch] of Object.entries(patches)) {
-      const before = fresh[key] || emptyExtra();
-      const next = { ...emptyExtra(), ...before, ...patch };
-      if (patch.overrides) next.provenance = stampOverrideProvenance(before.overrides, patch.overrides, next, "web");
-      fresh[key] = next;
-    }
-    await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
+    // Re-read right before writing, under the account write lock, so a write that landed while the rules
+    // ran is not lost.
+    await withAccountWriteLock(async () => {
+      const fresh = await getTargetAccountExtras();
+      for (const [key, patch] of Object.entries(patches)) {
+        const before = fresh[key] || emptyExtra();
+        const next = { ...emptyExtra(), ...before, ...patch };
+        if (patch.overrides) next.provenance = stampOverrideProvenance(before.overrides, patch.overrides, next, "web");
+        fresh[key] = next;
+      }
+      await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: fresh });
+    });
     await appendActivityLogBatch(entries);
   }
   return out;
@@ -4919,7 +4979,7 @@ export async function applyPipelineWebResearch(key, result, { topics = null } = 
   if (fresh.length > 0) {
     const overrides = { ...(extras[key]?.overrides || {}) };
     for (const p of fresh) overrides[p.key] = p.found;
-    await saveTargetAccountExtra(key, { overrides }, { src: "web" });
+    await saveTargetAccountExtra(key, { overrides }, { src: "web", base: { overrides: extras[key]?.overrides } });
     appendActivityLogBatch(fresh.map((p) => ({
       actor: "extension", action: "web_finding_auto_resolved",
       label: `${company.company} - ${p.label}: took the web value ${p.found} (automatic, the field was empty)`,
@@ -4933,7 +4993,8 @@ export async function applyPipelineWebResearch(key, result, { topics = null } = 
 // ---- Writes made by the 1.2 data pipeline (build step 2, DATA_PIPELINE_DESIGN.md 5.5 and T1-T4) ----
 
 // Merges into extras[key].pipeline - attempts per job, contacts already searched, the day last handled.
-export async function savePipelineAccountState(key, patch) {
+export async function savePipelineAccountState(key, patch) { return withAccountWriteLock(() => savePipelineAccountStateUnlocked(...arguments)); }
+async function savePipelineAccountStateUnlocked(key, patch) {
   const extras = await getTargetAccountExtras();
   const cur = extras[key] || emptyExtra();
   extras[key] = { ...cur, pipeline: { ...(cur.pipeline || {}), ...patch } };
@@ -4946,7 +5007,8 @@ export async function savePipelineAccountState(key, patch) {
 // count in the trace. The count is checked through the account's override when it has one - the value
 // the table and readiness show - and a replaced override is replaced in place, so it cannot go on
 // shadowing the row. Returns { kept, previous }.
-export async function applyEmployeeCheck(key, { verdict, employeeCount, sizeBandText }) {
+export async function applyEmployeeCheck(key, { verdict, employeeCount, sizeBandText }) { return withAccountWriteLock(() => applyEmployeeCheckUnlocked(...arguments)); }
+async function applyEmployeeCheckUnlocked(key, { verdict, employeeCount, sizeBandText }) {
   if (!verdict) return null;
   const [workbook, extras] = await Promise.all([getTargetAccountsWorkbook(), getTargetAccountExtras()]);
   const cur = extras[key] || emptyExtra();
@@ -4989,7 +5051,8 @@ export async function applyEmployeeCheck(key, { verdict, employeeCount, sizeBand
 // person at the company. Written onto the workbook contact row (Contact Link = lastVerified2, dated
 // lastVerified), which is what readiness reads. Returns the previous Contact Link, or undefined when
 // the contact is gone.
-export async function setContactLinkedinProfile(contactKey, profileUrl) {
+export async function setContactLinkedinProfile(contactKey, profileUrl) { return withAccountWriteLock(() => setContactLinkedinProfileUnlocked(...arguments)); }
+async function setContactLinkedinProfileUnlocked(contactKey, profileUrl) {
   const workbook = await getTargetAccountsWorkbook();
   let previous;
   const today = new Date().toISOString().slice(0, 10);
@@ -5224,7 +5287,8 @@ export async function getDecisionQueue() {
 
 // Clears an account's failed attempts, empty-page mark, Keep and pending page change: something new
 // arrived for it (R12.5.2), so the pipeline tries it again from scratch.
-async function resetPipelineFor(key) {
+async function resetPipelineFor(key) { return withAccountWriteLock(() => resetPipelineForUnlocked(...arguments)); }
+async function resetPipelineForUnlocked(key) {
   const extras = await getTargetAccountExtras();
   const cur = extras[key] || emptyExtra();
   extras[key] = { ...cur, pipeline: { ...(cur.pipeline || {}), attempts: {}, profileTried: [], emptyPage: null, keep: false, pageChange: null, lastRunDay: null } };
@@ -5299,7 +5363,7 @@ export async function applyDecision(item, choice) {
           .find((x) => x.key === "revenueCurrency");
         if (currency) { overrides.revenueCurrency = currency.found; delete dismissed.revenueCurrency; }
       }
-      await saveTargetAccountExtra(item.accountKey, { overrides, webFindingsDismissed: dismissed }, { src: "web" });
+      await saveTargetAccountExtra(item.accountKey, { overrides, webFindingsDismissed: dismissed }, { src: "web", base: { overrides: extra.overrides, webFindingsDismissed: extra.webFindingsDismissed } });
       label = `"${item.company}": ${p.label} set to the web finding (${p.found})`;
     } else {
       dismissed[p.field] = p.found;
@@ -5827,7 +5891,8 @@ export function availableSettingsSections(data) {
 
 // `sections` = a Set of the ids above to restore; omitted/null restores everything the file carries
 // (the original behaviour). Whatever is not selected is left exactly as it is right now.
-export async function importSettings(data, sections = null) {
+export async function importSettings(data, sections = null) { return withAccountWriteLock(() => importSettingsUnlocked(...arguments)); }
+async function importSettingsUnlocked(data, sections = null) {
   const has = (id) => !sections || sections.has(id);
   await Promise.all([
     ...(has("scanner") ? [

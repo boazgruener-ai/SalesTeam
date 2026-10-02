@@ -11,6 +11,7 @@
 //     data/<category>.json the raw stored data, grouped by category, for restoring
 import { createZip, readZip, bytesToText } from "./backup-zip.js";
 import { workbookCsvFiles, leadsToCsv } from "./csv-export.js";
+import { withAccountWriteLock } from "./storage.js";
 
 // Never written to a backup file: the API key (a backup is plain text - re-enter it after a reinstall),
 // this feature's own bookkeeping, transient scan state, and a re-derivable cache.
@@ -236,7 +237,8 @@ export async function restoreFullBackup(parsed, selected) {
         try { localStorage.setItem(k, v); } catch { /* ignore a preference that cannot be stored */ }
       }
     } else {
-      await chrome.storage.local.set(data);
+      // Under the account write lock, so a pipeline or research write running meanwhile cannot land half-way.
+      await withAccountWriteLock(() => chrome.storage.local.set(data));
     }
   }
 }
