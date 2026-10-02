@@ -220,7 +220,9 @@ function updateNavBar(step, index) {
   } else {
     navBar.hidden = false;
     el("nav-back-btn").hidden = index === 0;
-    el("nav-exit-btn").hidden = false;
+    // 1.2.0.41: on a step, "Save & Exit to menu" already leaves - a second exit button only added doubt. It stays on
+    // the finish screen, which has no Save & Exit.
+    el("nav-exit-btn").hidden = !settingsMode;
     el("nav-save-exit-btn").hidden = false;
     el("nav-save-btn").hidden = false;
     // Change Settings ends at the last setting: there is no Setup complete step after it.

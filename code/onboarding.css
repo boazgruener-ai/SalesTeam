@@ -132,6 +132,15 @@ h1 {
   margin-right: auto;
 }
 
+/* 1.2.0.41 (Boaz): one blue button only - the one that moves on. In the setup that is Next (Save is still there, but
+   every answer is saved automatically anyway); in Change Settings it is Save. "Exit to menu" did the same as
+   "Save & Exit to menu", so the setup shows only the latter. */
+body:not(.settings-mode) #wizard-nav-buttons #nav-save-btn,
+body.settings-mode #wizard-nav-buttons #nav-next-btn {
+  background: white;
+  color: var(--blue);
+}
+
 .wizard-step {
   background: white;
   border: 1px solid var(--border);
