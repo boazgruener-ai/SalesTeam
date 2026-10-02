@@ -162,13 +162,18 @@
       <h2>What size companies?</h2>
       <div class="proposal-slot" id="proposal-size" hidden></div>
       <p class="step-intro">
-        Check the size ranges you want to include, each with its own priority - a Discovery scan never returns
-        more than the cap below in one run.
+        Check the size ranges you want to include, each with its own priority. How many companies to find is set in
+        the last step, "How big is your list".
       </p>
       <div id="size-buckets-wrap" class="priority-item-list"></div>
-      <label for="size-max-companies-input">Maximum companies per Discovery run</label>
-      <input type="number" id="size-max-companies-input" min="1" max="500" value="200" />
-      <p class="field-hint">Hard-capped at 500 to keep any one run's LinkedIn touch-budget cost bounded.</p>
+      <!-- 1.2.0.42 (Boaz): only the support panels (settings.js Company Discovery / Discovery Queue) read this cap - the list size is
+           set in "How big is your list". So the first setup does not ask it; Change Settings keeps it, explained. -->
+      <div id="size-max-companies-wrap" hidden>
+        <label for="size-max-companies-input">Support only: most companies one Company Discovery test run may add</label>
+        <input type="number" id="size-max-companies-input" min="1" max="500" value="200" />
+        <p class="field-hint">Used only by the support panels under Advanced tools (Company Discovery, Discovery Queue).
+          Building the list from the Setup and "Find new accounts" use "How big is your list" instead. Up to 500.</p>
+      </div>
       <p id="size-error" class="step-error" hidden></p>
     </section>
 

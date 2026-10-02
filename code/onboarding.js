@@ -1329,7 +1329,7 @@ function renderSummaryInto(step, container) {
       const sizeText = checkedBuckets.length
         ? checkedBuckets.map((b) => `${b.label} (${PRIORITY_LABELS[c.sizeBuckets[b.key].priority]})`).join(", ")
         : "(none selected)";
-      appendPara(container, "Size ranges: ", { strong: sizeText }, `. Up to `, { strong: String(c.maxCompanies) }, ` companies per Discovery run.`);
+      appendPara(container, "Size ranges: ", { strong: sizeText }, ".");
       break;
     }
     case "industry": {
@@ -2724,6 +2724,7 @@ async function init() {
     el("page-subtitle-change").hidden = false;
     el("linkedin-use-note").hidden = true; // the note belongs to the first-time setup, not to Change Settings
     el("change-back-to-menu-link").hidden = false;
+    el("size-max-companies-wrap").hidden = false;
     const askedStep = new URLSearchParams(location.search).get("step");
     if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
     else showSettingsHome();
