@@ -15,7 +15,7 @@
 // Finish starts it. Progress and the result are kept under WEB_DISCOVERY_STATE_KEY (batch-status.js shows them).
 import {
   getAnthropicApiKey, getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig,
-  getTargetContactProfile, getExclusionMatcher, getOrganizationTypeEligibility, getCompanyWebsite, getDiscoveryKnownAccounts,
+  getTargetContactProfile, getExclusionMatcher, getOrganizationTypeEligibility, getCompanyWebsite, getSellerCompanyName, getDiscoveryKnownAccounts,
   addWebDiscoveredCompanies, saveLastDiscoveryAdd, appendActivityLog, computeCompanyDeterministicPreScore, SIZE_PRIORITY_BUCKETS,
   getDiscoveredCompanies, getTargetAccountsWorkbook, autoMergeDiscoveryResults, normalizeCompanyName,
 } from "./storage.js";
@@ -231,7 +231,7 @@ async function webPart({ apiKey, universe, bands, state, save, signal, stop, cou
   const industryNames = (universe.industries || []).map((i) => i && i.name).filter(Boolean);
   const eligibility = await getOrganizationTypeEligibility();
   const filterCtx = {
-    seller: { name: null, website: await getCompanyWebsite() },
+    seller: { name: (await getSellerCompanyName()) || null, website: await getCompanyWebsite() },
     exclusions: await getExclusionMatcher(),
     known: buildKnownCompanies(await getDiscoveryKnownAccounts()), // includes what the LinkedIn part just added
     sizeBuckets: universe.sizeBuckets, bands, industryNames,

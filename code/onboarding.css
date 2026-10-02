@@ -756,8 +756,6 @@ textarea {
 #nav-save-status { margin: 0 6px; font-size: 12px; }
 
 /* Change Settings mode (onboarding.html?mode=settings): a plain list of settings, no step workflow. */
-body.settings-mode #nav-back-btn,
-body.settings-mode #nav-next-btn,
 body.settings-mode #nav-save-exit-btn,
 body.settings-mode #nav-exit-btn,
 body.settings-mode #step-progress,
@@ -772,3 +770,33 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 
 /* "How SalesTeam works with LinkedIn" note at the top of the setup wizard */
 .wizard-note { margin: 10px 0 6px; padding: 10px 14px; background: #eef4fb; border: 1px solid #d3e2f3; border-radius: 8px; font-size: 12px; line-height: 1.5; color: #1f2933; max-width: 900px; }
+
+/* 1.2.1 onboarding research (design 3.5-3.6): a step's proposal banner, the proposal checklists, the progress screen. */
+.proposal-banner { margin: 10px 0 14px; padding: 10px 14px; background: #fff8e6; border: 1px solid #f0d58a; border-left: 4px solid #e0a800; border-radius: 8px; font-size: 13px; line-height: 1.5; max-width: 900px; }
+.proposal-banner-empty { background: #f6f6f6; border-color: var(--border); border-left-color: var(--gray-light); }
+.proposal-banner p { margin: 0 0 4px; }
+.proposal-banner a { color: var(--blue); }
+.proposal-banner-note { color: var(--gray); font-size: 12px; }
+.proposal-banner-actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+.proposal-again-form { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.proposal-again-form[hidden], .proposal-slot[hidden] { display: none; }
+.proposal-again-hint { flex: 1 1 320px; min-width: 200px; }
+.proposal-checklist { margin: 8px 0 12px; max-width: 900px; }
+.proposal-checklist-title { margin: 0 0 4px; font-weight: 600; font-size: 13px; }
+.proposal-checklist-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.proposal-checklist-row:not(.priority-item-unchecked) .proposal-checklist-text { font-weight: 600; }
+.proposal-checklist-text { flex: 1 1 auto; min-width: 160px; }
+.proposal-checklist-rank { width: 22px; color: var(--gray); font-size: 12px; text-align: right; }
+.proposal-checklist-label { color: var(--gray); font-size: 12px; white-space: nowrap; }
+.proposal-checklist-source { font-size: 12px; color: var(--blue); }
+.proposal-rank-btn { padding: 1px 7px; }
+.proposal-checklist-add { display: flex; gap: 8px; margin-top: 4px; }
+#research-lines { list-style: none; padding: 0; margin: 10px 0; max-width: 900px; font-size: 13px; }
+#research-lines li { padding: 3px 0; color: var(--gray); }
+#research-lines li:last-child { color: var(--ink); font-weight: 600; }
+#research-cost { font-size: 13px; color: var(--gray); }
+#about-research-box button { margin-top: 6px; }
+
+/* Hover tip on each organization type (1.2.0.18). */
+.organization-type-row[title] { cursor: help; }
+.organization-type-tip { color: var(--blue); font-size: 12px; }

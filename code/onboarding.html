@@ -47,9 +47,63 @@
 
   <main id="onboarding-main">
 
+    <!-- About you (1.2.1, design 3.1) - who the user is and which company they sell for; offers the seller research. -->
+    <section id="enter-about" class="wizard-step" hidden>
+      <h2>About you</h2>
+      <p class="step-intro">
+        Who you are and which company you sell for. With your company's website, SalesTeam can research it and
+        propose answers for the next steps - you check, change or clear each one before moving on.
+      </p>
+      <div class="proposal-slot" id="proposal-about" hidden></div>
+      <label for="about-name-input">Your name</label>
+      <input type="text" id="about-name-input" placeholder="e.g. Alex Muster" />
+      <label for="about-company-input">Your company's name</label>
+      <input type="text" id="about-company-input" placeholder="e.g. Acme AG" />
+      <label for="about-website-input">Your company's website</label>
+      <input type="text" id="about-website-input" placeholder="https://yourcompany.com" />
+      <div id="about-api-key-wrap" hidden>
+        <label for="about-api-key-input">Anthropic API key</label>
+        <input type="password" id="about-api-key-input" autocomplete="off" placeholder="sk-ant-..." />
+        <p class="field-hint">
+          All research runs on your own Anthropic API key, which stays in this browser. You can also add it later in
+          Settings - every step works without it.
+        </p>
+      </div>
+      <label for="about-language-select">Language SalesTeam writes in</label>
+      <select id="about-language-select">
+        <option value="english">English</option>
+        <option value="german">German (Hochdeutsch)</option>
+        <option value="french">French</option>
+      </select>
+      <p class="field-hint">Drafted messages, the Sales Mentor and the proposals of the research. The same setting as in Settings.</p>
+      <div id="about-research-box" class="wizard-note">
+        <p id="about-research-text"></p>
+        <button type="button" id="about-research-btn"></button>
+        <p id="about-research-error" class="step-error" hidden></p>
+      </div>
+      <p class="step-error" hidden></p>
+    </section>
+
+    <!-- Researching your company (1.2.1, design 3.6) - not a numbered step: shown between About you and Location
+         while the seller research runs. -->
+    <section id="enter-research" class="wizard-step" hidden>
+      <h2>Researching your company…</h2>
+      <p class="step-intro" id="research-intro"></p>
+      <ul id="research-lines"></ul>
+      <p id="research-cost"></p>
+      <p id="research-error" class="step-error" hidden></p>
+      <div class="wizard-buttons">
+        <button type="button" id="research-stop-btn" title="End the research now">Stop</button>
+        <button type="button" id="research-skip-btn" title="End the research and fill in the steps yourself">Skip research</button>
+        <button type="button" id="research-retry-btn" hidden>Try again</button>
+        <button type="button" id="research-continue-btn" hidden>Continue without research</button>
+      </div>
+    </section>
+
     <!-- Step 1: Location -->
     <section id="enter-location" class="wizard-step">
       <h2>Where are your target companies and leads?</h2>
+      <div class="proposal-slot" id="proposal-location" hidden></div>
       <p class="step-intro">
         This is your one target geography - it scopes both which companies Discovery searches for and which
         of your already-scanned leads (Posts/Jobs) get kept. Discovery's own company search can only actually
@@ -101,6 +155,7 @@
     <!-- Step 2: Size + cap -->
     <section id="enter-size" class="wizard-step" hidden>
       <h2>What size companies?</h2>
+      <div class="proposal-slot" id="proposal-size" hidden></div>
       <p class="step-intro">
         Check the size ranges you want to include, each with its own priority - a Discovery scan never returns
         more than the cap below in one run.
@@ -115,6 +170,7 @@
     <!-- Step 3: Industry (optional) -->
     <section id="enter-industry" class="wizard-step" hidden>
       <h2>Any specific industries? (optional)</h2>
+      <div class="proposal-slot" id="proposal-industry" hidden></div>
       <p class="step-intro">
         Leave unchecked for no industry restriction. Only industries with a live-verified LinkedIn code are
         offered below (same reasoning as Location) - more are added over time; LinkedIn's own catalog has
@@ -125,17 +181,20 @@
       <button type="button" id="industry-select-all-btn" class="step-inline-btn">Select all</button>
       <div id="industry-checkbox-wrap" class="priority-item-list"></div>
 
-      <h3>Organization types (optional)</h3>
+      <h3>Organization types other than companies (optional)</h3>
       <p class="step-intro">
-        A nonprofit or government body isn't automatically disqualifying - it can be a completely legitimate
-        buyer depending on its size and budget, or a bad fit purely because it's too small, not because of its
-        type. Choose per type: <strong>Yes</strong> (treat as a normal candidate, the default), <strong>No</strong>
-        (exclude wholesale), or <strong>Review</strong> (keep it, but flag it for you to look at yourself rather
-        than deciding automatically). Only catches a discovered company when its own LinkedIn card literally
-        displays one of these type names - a company categorized here but displaying a more specific label
-        (e.g. a non-profit whose card says "International Affairs") won't be caught without visiting its own
-        page, a real cost this doesn't spend automatically. Only types with a live-verified LinkedIn code are
-        offered below - more are added over time.
+        <strong>Companies - private or publicly traded - are always included</strong>, so they are not in this list. It
+        is only about the other kinds of organization: non-profits, public administrations, universities and the like.
+        Such an organization isn't automatically a bad fit - it can be a perfectly good buyer depending on its size
+        and budget. Choose per type: <strong>Yes</strong> (treat it like a company, the default), <strong>No</strong>
+        (leave it out), or <strong>Review</strong> (keep it, but flag it for you to decide yourself). Hover over a type
+        to see what it covers.
+      </p>
+      <p class="field-hint">
+        A discovered organization is caught only when its LinkedIn card shows one of these type names - one filed
+        here but showing a more specific label (e.g. a non-profit whose card says "International Affairs") is caught
+        only after a visit to its own page, which is not spent automatically. Only types with a live-verified LinkedIn
+        code are offered - more are added over time.
       </p>
       <div id="organization-type-wrap" class="organization-type-list"></div>
 
@@ -224,21 +283,24 @@
     <!-- Step 5: Company Context -->
     <section id="enter-company-context" class="wizard-step" hidden>
       <h2>What do you sell?</h2>
+      <div class="proposal-slot" id="proposal-company-context" hidden></div>
       <p class="step-intro">
         Describe your company and what you actually offer. Shared with AI drafting, the Sales Mentor, and
         Customer Voice.
       </p>
       <textarea id="company-context-input" placeholder="e.g. We specialize in process optimization and custom solutions for mid/large companies, built on established, proven tooling plus our own in-house development."></textarea>
-      <label for="company-website-input">Company website (optional)</label>
-      <input type="text" id="company-website-input" placeholder="https://yourcompany.com" />
+      <p class="field-hint">Your company's website is asked on the first step, About you.</p>
     </section>
 
     <!-- Step 6: Things you can offer (optional) -->
     <section id="enter-value-add-offers" class="wizard-step" hidden>
-      <h2>What can you offer as a value-add? (optional)</h2>
+      <h2>What can you offer a lead to start a conversation? (optional)</h2>
+      <div class="proposal-slot" id="proposal-value-add-offers" hidden></div>
+      <div id="value-add-offers-checklist" hidden></div>
       <p class="step-intro">
-        Real resources only, one per line — an article link, a report, "free 20-min demo". The AI will only
-        ever mention something from this list when drafting, never invent one.
+        Something you can offer a lead in a message, as a reason to reply - one per line, real resources only: an
+        article link, a report, "free 20-min demo". The AI only ever offers what is listed here (and what is ticked
+        above), never anything it invents.
       </p>
       <textarea id="value-add-offers-input" placeholder="https://yourcompany.com/ai-readiness-report&#10;Free 20-minute demo at their convenience"></textarea>
     </section>
@@ -246,6 +308,7 @@
     <!-- Step 7: Ideal Customer Profile -->
     <section id="enter-icp" class="wizard-step" hidden>
       <h2>Who's your ideal customer?</h2>
+      <div class="proposal-slot" id="proposal-icp" hidden></div>
       <p class="step-intro">
         Company size, geography, what they're investing in - independent of what you offer.
       </p>
@@ -255,12 +318,15 @@
     <!-- Step 8: Target-contact profile -->
     <section id="enter-contacts" class="wizard-step" hidden>
       <h2>Who should we look for at each company?</h2>
+      <div class="proposal-slot" id="proposal-contacts" hidden></div>
       <p class="step-intro">
         Exact job titles, one per line, and/or broader title keywords, one per line. At least one of the two
         is required - this is who a future contact-discovery scan searches each company for.
       </p>
+      <div id="contacts-titles-checklist" hidden></div>
       <label for="contacts-exact-titles-input">Exact titles</label>
       <textarea id="contacts-exact-titles-input" placeholder="e.g. Chief Operating Officer&#10;VP of Digital Transformation"></textarea>
+      <div id="contacts-keywords-checklist" hidden></div>
       <label for="contacts-title-keywords-input">Title keywords</label>
       <textarea id="contacts-title-keywords-input" placeholder="e.g. Operations&#10;Digital Transformation&#10;Innovation"></textarea>
       <label>Preferred seniority (optional)</label>
@@ -287,6 +353,8 @@
          the storage shape and step count changed, not the per-line UX). -->
     <section id="enter-exclusions" class="wizard-step" hidden>
       <h2>Any companies to exclude? (optional)</h2>
+      <div class="proposal-slot" id="proposal-exclusions" hidden></div>
+      <div id="exclusions-checklist" hidden></div>
       <p class="step-intro">
         A company here is never treated as a lead, regardless of anything else about it. One LinkedIn
         company-page URL per line in each box below - not a company name, since names are too easy to

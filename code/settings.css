@@ -604,3 +604,7 @@ textarea {
   margin: 0;
   font-size: 12px;
 }
+
+/* User Profile: where the company and its website are set (Change Settings > About you, 1.2.0.16). */
+#profile-about-you-note { margin-top: 12px; padding: 10px 14px; background: #eef4fb; border: 1px solid #d3e2f3; border-radius: 8px; font-size: 12px; line-height: 1.5; }
+#profile-about-you-note button { margin-top: 8px; }

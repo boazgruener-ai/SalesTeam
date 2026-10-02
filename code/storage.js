@@ -229,6 +229,34 @@ export async function saveCompanyWebsite(website) {
   await chrome.storage.local.set({ [COMPANY_WEBSITE_KEY]: website });
 }
 
+// 1.2.1 (onboarding research, design 3.1): the seller's own company name, asked on the wizard's "About you" step -
+// needed to research the seller, and to recognise the seller's own company when it turns up in Web Discovery.
+const SELLER_COMPANY_NAME_KEY = "sellerCompanyName";
+
+export async function getSellerCompanyName() {
+  const data = await chrome.storage.local.get(SELLER_COMPANY_NAME_KEY);
+  return data[SELLER_COMPANY_NAME_KEY] || "";
+}
+
+export async function saveSellerCompanyName(name) {
+  await chrome.storage.local.set({ [SELLER_COMPANY_NAME_KEY]: String(name || "").trim() });
+}
+
+// The seller research and the wizard proposals built from it (design 3.2): { status: "none" | "running" | "done" |
+// "failed" | "stopped" | "skipped", at, heartbeatAt, costUsd, model, ms, seller: { name, website }, raw, briefing,
+// proposals: { [step]: proposal }, accepted: { [step]: at }, error }. Nothing here is a setting: a proposal reaches the
+// real settings keys only through the step's own save, when the user presses Next.
+const SETUP_RESEARCH_KEY = "setupResearch";
+
+export async function getSetupResearch() {
+  const data = await chrome.storage.local.get(SETUP_RESEARCH_KEY);
+  return { status: "none", proposals: {}, accepted: {}, ...(data[SETUP_RESEARCH_KEY] || {}) };
+}
+
+export async function saveSetupResearch(research) {
+  await chrome.storage.local.set({ [SETUP_RESEARCH_KEY]: research });
+}
+
 // Deliberately separate from Company Context above - "what we offer" (the
 // product/service) and "who we're targeting" (company size, geography, what
 // they're investing in) are different concepts a salesperson thinks about
@@ -6023,6 +6051,8 @@ function wizardSettingsBackupKeys() {
     KEYWORD_SEARCH_LANGUAGES_KEY,
     USER_PROFILE_KEY,
     COMPANY_WEBSITE_KEY,
+    SELLER_COMPANY_NAME_KEY,
+    SETUP_RESEARCH_KEY,
     ONBOARDING_COMPLETED_AT_KEY,
     ONBOARDING_PROGRESS_STEP_KEY,
   ];

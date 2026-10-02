@@ -1496,7 +1496,9 @@ function summarizeAccountForWebResearch(company, targetCountries, onlyTopics) {
 
 // Reads one streamed Messages response into { content, stop_reason }. Ends quietly (with what has arrived so far) when the
 // signal aborts.
-async function streamWebResearch(apiKey, body, signal, onSearch) {
+// onToolInput (optional): called with (name, input) once a server tool's input is complete - the setup research's
+// progress screen shows which page is being read and what is being searched.
+async function streamWebResearch(apiKey, body, signal, onSearch, onToolInput) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -1549,6 +1551,7 @@ async function streamWebResearch(apiKey, body, signal, onSearch) {
       if (block && block.type === "server_tool_use") {
         try { block.input = block._json ? JSON.parse(block._json) : {}; } catch { block.input = {}; }
         delete block._json;
+        if (onToolInput) { try { onToolInput(block.name, block.input); } catch { /* progress display only */ } }
       }
     } else if (ev.type === "message_delta") { stopReason = ev.delta?.stop_reason || stopReason; takeUsage(ev.usage); }
     else if (ev.type === "error") throw new Error(ev.error?.message || "Anthropic reported an error while streaming.");
@@ -1904,7 +1907,8 @@ const DISCOVERY_TIME_LIMIT_MS = 240000;
 
 // One call with server-side web tools, the lane's way (basic tool versions first, thinking off, pause_turn
 // continued). Returns { text, sources, searches, fetches, turns, model, stopped, costUsd, ms }.
-async function discoveryCall({ system, user, fetchUses, fetchTokens, searchUses, maxTokens, label }, settings, { signal } = {}) {
+// onTool(name, input) and onCost(usdSoFar) (optional) report progress while it runs.
+async function discoveryCall({ system, user, fetchUses, fetchTokens, searchUses, maxTokens, label }, settings, { signal, onTool, onCost } = {}) {
   const apiKey = sanitizeApiKey(settings.apiKey || "");
   if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
   const started = Date.now();
@@ -1940,7 +1944,7 @@ async function discoveryCall({ system, user, fetchUses, fetchTokens, searchUses,
         }, controller.signal, (name) => {
           if (name === "web_search") searches++;
           else if (name === "web_fetch") fetches++;
-        });
+        }, onTool);
       } catch (err) {
         if (err.status === 400 && sendThinkingOff && /thinking/i.test(err.body || "")) { sendThinkingOff = false; turn--; continue; }
         if (err.status === 400 && !current && !triedCurrent && /web_(fetch|search)|tool/i.test(err.body || "")) { current = true; triedCurrent = true; turn--; continue; }
@@ -1952,6 +1956,7 @@ async function discoveryCall({ system, user, fetchUses, fetchTokens, searchUses,
       turns++;
       model = data.model || model;
       for (const k of Object.keys(usageTotal)) usageTotal[k] += data.usage?.[k] || 0;
+      if (onCost) { try { onCost(estimateCostUsd(model, { ...usageTotal, searches }).totalUsd); } catch { /* display only */ } }
       for (const block of data.content || []) {
         if (block.type === "web_search_tool_result") {
           if (Array.isArray(block.content)) {
@@ -2074,4 +2079,58 @@ export async function fitSearchDiscovery(ctx, settings, { signal } = {}) {
   const data = discoveryData(call.text);
   const rows = Array.isArray(data && data.rows) ? data.rows.filter((r) => r && r.name && r.sourceUrl) : [];
   return { ...call, rows };
+}
+
+// 1.2.1 onboarding research (ONBOARDING_RESEARCH_DESIGN.md 3.3): one call reads the seller's own website and returns
+// plain facts - names, texts, each with the page it came from - for the Setup wizard to propose. The model never
+// produces an id or a wizard value: setup-proposals.js maps the answer onto the wizard's own options.
+export const SELLER_RESEARCH_ESTIMATE_USD = 0.3;
+const SELLER_TEXT_LANGUAGES = { english: "English", german: "German (standard business German)", french: "French" };
+
+const SELLER_DATA_KEYS = {
+  summary: "\"summary\":{\"text\":\"2-4 sentences: what the company sells and the problems it solves\",\"url\":string}",
+  idealCustomer: "\"idealCustomer\":{\"text\":\"2-4 sentences: who buys it - their size, where they are, what they invest in, what makes them buy now\",\"url\":string}",
+  sellsToCountries: "\"sellsToCountries\":[{\"name\":\"a country, in English\",\"scope\":\"company\" when the named company itself sells there (its own offices, its own customers and case studies) or \"group\" when only its parent group or sister companies do,\"url\":string}]",
+  customerSizes: "\"customerSizes\":[{\"text\":\"the size of its customers, as the site puts it\",\"minEmployees\":number|null,\"maxEmployees\":number|null,\"url\":string}] (numbers only when the page states them)",
+  customerIndustries: "\"customerIndustries\":[{\"name\":\"the industry, as the site names it\",\"sector\":one of [SECTORS] or null when unsure,\"url\":string}]",
+  organizationTypes: "\"organizationTypes\":[{\"name\":string,\"url\":string}] (only when evident: public sector, hospitals, universities, non-profits...)",
+  buyerTitles: "\"buyerTitles\":[{\"title\":\"a job title of a likely buyer\",\"url\":string}] (at most 10, from who the site addresses, its case studies and testimonials)",
+  resources: "\"resources\":[{\"title\":string,\"url\":\"the resource's own page on the company's site\"}] (real pages only: reports, white papers, webinars, a free assessment or demo offer)",
+  competitors: "\"competitors\":[{\"name\":string,\"website\":string|null,\"url\":\"the page that names it\"}]",
+  customers: "\"customers\":[{\"name\":string,\"website\":string|null,\"url\":\"the page that names it (logos, case studies)\"}]",
+  partners: "\"partners\":[{\"name\":string,\"website\":string|null,\"url\":\"the page that names it\"}]",
+  siteLanguage: "\"siteLanguage\":\"the main language of the site as a two-letter code\"",
+};
+
+// seller: { name, website }. opts: { sectors (the wizard's industry names), only (answer keys, for "Research again"),
+// hint (the user's own words for it), outputLanguage }. Returns { data, briefing, ...call measures }; data is null
+// when the answer did not come in (stopped, cut off).
+export async function researchSeller(seller, opts, settings, { signal, onTool, onCost } = {}) {
+  const keys = (opts.only && opts.only.length ? opts.only : Object.keys(SELLER_DATA_KEYS)).filter((k) => SELLER_DATA_KEYS[k]);
+  const sectors = (opts.sectors || []).map((n) => JSON.stringify(n)).join(", ");
+  const shape = "{" + keys.map((k) => SELLER_DATA_KEYS[k].replace("[SECTORS]", `[${sectors}]`)).join(",") + "}";
+  const focused = keys.length < Object.keys(SELLER_DATA_KEYS).length;
+  const system =
+    "You research a B2B company's own website so that its sales prospecting tool can be set up for it. Open the home " +
+    "page first with web fetch, then the pages that answer the questions: about, products / services / solutions, " +
+    "customers / case studies / references, partners, resources or downloads, contact or locations. Use web search only " +
+    "for what the site does not say (mainly competitors). Report only what a page states: every item carries the URL " +
+    "of the page it came from, never invent a URL, a company, a resource or a number, and leave a list empty rather " +
+    "than guess. Answer for the company named below: when its website also presents a parent group or sister " +
+    "companies, report only what applies to that company itself, and mark countries where only the group works as " +
+    "scope \"group\"." +
+    ` Write the texts (summary, idealCustomer) in ${SELLER_TEXT_LANGUAGES[opts.outputLanguage] || "English"}; keep the` +
+    " JSON keys exactly as given, and country names in English." +
+    "\nReply with at most three short lines, then as the very last part DATA: followed by JSON: " + shape;
+  const user = `Company: ${seller.name || "(name not given)"}\nWebsite: ${seller.website}` +
+    (focused ? `\nResearch only this part: ${keys.join(", ")}.` : "") +
+    (opts.hint ? `\nThe user adds: ${String(opts.hint).slice(0, 500)}` : "");
+  const call = await discoveryCall({
+    system, user,
+    fetchUses: focused ? 4 : 6, fetchTokens: 8000, searchUses: focused ? 2 : 3, maxTokens: 6000,
+    label: focused ? "Setup - research the seller again" : "Setup - research the seller",
+  }, settings, { signal, onTool, onCost });
+  const data = discoveryData(call.text);
+  const idx = String(call.text || "").lastIndexOf("DATA:");
+  return { ...call, data: data && typeof data === "object" ? data : null, briefing: (idx >= 0 ? call.text.slice(0, idx) : call.text || "").trim().slice(0, 2000) };
 }
