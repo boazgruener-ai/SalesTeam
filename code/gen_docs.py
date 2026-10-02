@@ -1602,7 +1602,7 @@ add_bullets(doc, [
     "scroll listener.",
     "Overview card fields click-to-expand (v0.29.60) - reported directly with a screenshot: a truncated "
     "field (e.g. “Team Head Digital Workpl...”) in the Account/Contact overview card should use the same "
-    "click-to-expand/collapse behavior already used on the Posts Dashboard's own truncated cells "
+    "click-to-expand/collapse behavior already used on the Leads Dashboard's own truncated cells "
     "(dashboard.js's contentCell/.content-cell) - click to see the full value, click again to collapse. "
     "buildField (target-accounts.js) takes an expandable flag - every plain-text field in the compact grid "
     "gets an .overview-value-expandable class and a click listener toggling .expanded, same pattern as "
@@ -1612,7 +1612,7 @@ add_bullets(doc, [
     "value happens to be actually truncated.",
     "Three parallel dashboards, pie-chart stats, and a Target Contacts Dashboard (v0.29.61) - reported "
     "directly, three linked requests. Naming: “Target Accounts Dashboard” / “Target Contacts Dashboard” / "
-    "“Posts Dashboard” - fully descriptive, parallel names rather than an ambiguous “The Dashboard,” so the "
+    "“Leads Dashboard” - fully descriptive, parallel names rather than an ambiguous “The Dashboard,” so the "
     "tab title and page heading always say which of the three is showing; file names unchanged, only "
     "display text. New renderGenericPieChart(containerEl, slices, {unitLabel, onSliceClick}) - the Posts "
     "Dashboard's own renderPieChart (dashboard.js) is hardwired to lead-status buckets; rather than "
@@ -1643,19 +1643,19 @@ add_bullets(doc, [
     "existing Contact view (contactKeyFor/openContact). Two pies: Contact status (same derivation as "
     "Account status, scoped via findLeadsForContact) and a proposed 2nd, LinkedIn verification (Current - "
     "LinkedIn verified/Legacy - LinkedIn reverify/Not verified, bucketing evidenceQuality2 - the exact "
-    "field the duplicate-header fix, v0.29.51, made trustworthy in the first place). Posts Dashboard: "
+    "field the duplicate-header fix, v0.29.51, made trustworthy in the first place). Leads Dashboard: "
     "creatorCell now calls findTargetContactMatch (storage.js, exported - already built for the "
     "priority-signal feature, 6.11) and appends a “Target Contact” badge/link when a post's author is a "
     "known Target Contact; clicking it opens target-accounts.html#contact=<key>, the same cross-page "
     "pattern openLeadInDashboard already uses in the opposite direction. Target Contacts are loaded once "
     "at page init and refreshed only via a dedicated targetAccountsWorkbook storage-change listener "
-    "branch, not re-fetched on every one of the Posts Dashboard's frequent loadLeads() calls. Not yet "
+    "branch, not re-fetched on every one of the Leads Dashboard's frequent loadLeads() calls. Not yet "
     "confirmed live at ship time.",
     "Side panel navigation fixed (v0.29.62) - reported directly: the new Target Contacts Dashboard had no "
     "side panel button at all, only reachable as an in-page tab from the Accounts Dashboard. A new “Target "
     "Contacts Dashboard” button opens target-accounts.html#contacts directly (the same in-page hash route "
     "the tab bar itself uses). Side panel button order changed to Target Accounts Dashboard, Target "
-    "Contacts Dashboard, Posts Dashboard, Advisors, Settings, Activity Log, Help - Help kept last per "
+    "Contacts Dashboard, Leads Dashboard, Advisors, Settings, Activity Log, Help - Help kept last per "
     "explicit instruction, to stay last as more buttons get added over time.",
     "Two proposed pies corrected on the facts, not just removed (v0.29.63) - reported directly: the "
     "Contacts Dashboard's “LinkedIn verification” pie (proposed in the v0.29.61 entry above) was wrong - "
@@ -1845,6 +1845,35 @@ p.add_run('Tables and exchange').bold = True
 add_bullets(doc, [
     "Bulk edit - tick rows on the Accounts and Contacts tables; the header box ticks the current page only, and a second explicit click reaches every filtered row (Gmail's rule). Status, Priority (accounts only), Next action due, or Remove, with one-click undo. One storage read and write per batch.",
     'HubSpot import and export by file - Export to HubSpot… writes a companies file and a contacts file that HubSpot maps automatically, with SalesTeam priority and status as extra columns. Import from HubSpot… adds companies and contacts SalesTeam does not have yet, without changing existing ones.',
+])
+
+doc.add_heading('6.22 Onboarding research (v1.2.1)', level=3)
+doc.add_paragraph('1.2.1 lets the Setup propose its own answers and build the list it describes, researching on the web first and using LinkedIn only for what the web could not confirm. The full design, its decisions (D1-D11) and the measurements are in ONBOARDING_RESEARCH_DESIGN.md; the requirements in ONBOARDING_RESEARCH_REQUIREMENTS.md.')
+p = doc.add_paragraph()
+p.add_run('Setup').bold = True
+add_bullets(doc, [
+    "About you - a new first step: company, website, language. Research my company (about US$0.30, under a minute, a progress screen with Stop and Skip) reads the seller's website and proposes Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude (setup-proposals.js, pure; proposal-ui.js). On a first setup the proposals are filled in; on an existing setup each is shown beside the current value and taken only with Use proposal.",
+    'Research coverage - the research lists every offer on the resources, downloads or events page and searches for competitors on purpose (8 pages, 4 searches); fewer than five competitors triggers a short competitors-only follow-up (researchMoreCompetitors). The progress screen expects the last measured run, else 40 s. The Activity Log line counts offers kept/left out and competitors, customers and partners.',
+    'Offered once to existing installs - a setup finished without the research sees a one-time offer on the Settings cards and at the top of Change Settings - Research (opens About you with the research started) or No thanks (setupResearch.declinedInSettings). The action stays under Settings > User Profile > Open About you.',
+    'New steps - Initiative stages (ranked, at least one ticked), Companies to include (Name, website - the exclusion list wins), How big is your list (accounts, contacts per account, initiatives per account) with a live cost-and-time estimate from onboarding-estimate.js, measured averages replacing the defaults after 20 accounts. 12 steps in the first Setup since 1.2.0.51: Discovery Prioritization, Leads Prioritization and Company aliases moved to Change Settings > Advanced (defaults apply), and technical detail inside a step sits behind an Advanced settings link. Finish asks how research findings are handled (decide where safe, or ask about every difference - askEveryDifference).',
+    "Finish - with automatic preparation and web research ticked, Finish starts the build: included companies, then Web Discovery from company listings on the web (Source “Web”), then the web lane; LinkedIn is kicked. The wizard itself never visits LinkedIn. The stop rule ends discovery at the list's target.",
+    "Leads Prioritization - the step opens with one general explanation, then Posts (rules you build) and Job ads (two fixed rules) as two parts. The Job ads' 0-100 confidence threshold became a level the user picks (Very High / High / Medium / Low, default High; key jobRulesMinConfidence). An account's level is its workbook rating, else SalesTeam's own Priority (P1 Very High ... P4-P5 Low), so web and LinkedIn accounts count too (accountConfidenceRank, evaluateTargetAccountMatch). The numeric threshold remains only inside company prioritization (hasSufficientImportEvidence).",
+])
+p = doc.add_paragraph()
+p.add_run('Building the accounts').bold = True
+add_bullets(doc, [
+    'Web lane - per account, one research asking only for what is missing (size, HQ, initiatives at the ticked stages, up to five contacts at the Setup seniority levels, LinkedIn profiles from search results); per-field sources; contacts-only research on Haiku 4.5; carries on by itself while LinkedIn waits for its daily limit, within the monthly budget.',
+    'Usable without LinkedIn - an account with web-verified contacts counts as Usable (readiness.js); LinkedIn after the web: one name search, then the People page, stopping at the target contacts per account. The first 10 Ready are built first; the Scanner starts at 10 Ready.',
+    'Revenue in millions and repairing web findings - listing revenue under a unit header (“Revenue (USD millions)”) is read into plain units (prompt plus listingRevenue in discovery-filter.js); rows added before 1.2.0.61 are repaired once on the update (repairListingRevenueInMillions, Activity Log). Rule 2: when the current value is implausible, the web finding is sound and nothing is implausible with it in place, the web finding is applied instead of asked. Reasons give amounts with currency; the review dialog always shows the four size figures; revenue per employee is believable up to 1 billion.',
+    "After Finish - while Web Discovery runs the top bar shows it (the pipeline's idle text steps aside); its finish pop-up gives Ready x of y, the 10-Ready rule, the next step and Decisions waiting; an idle pipeline names Ready accounts, whether a scan can start and decisions waiting; accounts held for the web lane read as such, and a finished web lane kicks the pipeline.",
+    'Safety - account write lock across parallel jobs; 429 back-off and resume; a LinkedIn login wall stops the pipeline and asks the user to log in instead of marking accounts not found.',
+])
+p = doc.add_paragraph()
+p.add_run('Tables and exports').bold = True
+add_bullets(doc, [
+    "Accounts and contacts CSV - Export Accounts (CSV) and Export Contacts (CSV): one file per table, every column under SalesTeam's own names, dates as dates, Seniority Priority as High/Medium/Low. With a search or column filter on, the user chooses all rows or only the filtered ones. All exports (accounts, contacts, posts) leave out columns empty in every row and put columns filled in fewer than half the rows last (compactCsvColumns, csv-export.js).",
+    "Visible filters - on Posts, Target Accounts and Target Contacts every active filter is a chip above the table with its own remove button and Clear all; a filtered column has a tinted header; an empty table names the filters hiding its rows. On Posts the Status dropdown and the Status column filter are one filter: an exact status in the column becomes the dropdown's value, any other Status column filter shows in the dropdown as its own entry.",
+    'One top status bar - running and waiting jobs show in one bar at the top of every page; pop-ups only for decisions and finished jobs.',
 ])
 
 doc.add_heading("7. Non-functional requirements", level=2)
@@ -2248,7 +2277,7 @@ add_bullets(doc, [
     "Contacts, Fetch Company Size, Prioritize Companies all landed in the same shared page header in one "
     "session - confirmed as a real bug too: that header sits outside the Target Accounts/Contacts tab "
     "switcher, so company-only actions show on the Contacts tab). Approved via a 4-artboard visual mockup "
-    "(link in the plan file). Scope: (1) row-level kebab menus replacing Posts Dashboard's 6 always-visible "
+    "(link in the plan file). Scope: (1) row-level kebab menus replacing Leads Dashboard's 6 always-visible "
     "icons and adding per-row actions to Target Accounts (Open/Edit/Merge/Remove) and Target Contacts "
     "(Open/Edit/Remove, no Merge - contacts already dedupe automatically); (2) a left-nav shell for the 3 "
     "full-tab pages (not the side panel, a genuinely different constrained surface), grouping today's flat "
@@ -2290,7 +2319,7 @@ add_bullets(doc, [
     "found from live feedback and fixed the same day: the kebab column sat at the far right of a wide, "
     "horizontally-scrolling table - once scrolled right to see it, it was no longer obvious which row it "
     "belonged to. Fixed via position: sticky on both the header and body cells, applied to both Target "
-    "Accounts/Contacts and (proactively, same underlying problem) the Posts Dashboard table. "
+    "Accounts/Contacts and (proactively, same underlying problem) the Leads Dashboard table. "
     "dashboard.html/.css and settings.html/.css given the same left-nav shell confirmed on Target Accounts "
     "first - Dashboard's 8 header buttons became plain nav items (no dialogs needed, none of them ever had "
     "a parameter input); Settings (a page of topic cards, not action buttons) got anchor-jump nav items "
@@ -2356,7 +2385,7 @@ add_bullets(doc, [
     "zero-contact relevant accounts are now skipped entirely rather than bucketed, so a single-contact "
     "account (one departure from having no contact at all) is no longer lumped in with a properly-covered "
     "one.",
-    "Posts Dashboard cross-linked from Target Accounts' left nav, plus 3 new stat pies, 2026-09-18: a Posts "
+    "Leads Dashboard cross-linked from Target Accounts' left nav, plus 3 new stat pies, 2026-09-18: a Posts "
     "Dashboard link added to Target Accounts' “Views” nav group (its first-ever cross-page link). Posts "
     "Dashboard's stats row gained Priority (P1-P5 + Not scored), Status (all-time), and Source (Post/In-Post "
     "Job Ad/Job Listing) pies alongside the original 3 time-windowed ones - 6 cards total, changed from an "
@@ -2404,7 +2433,7 @@ add_bullets(doc, [
     "panel. sidepanel.html (already a Quick Launch hub from the Step 4 split) got extended rather than "
     "building a second hub page: a new “My Profile ↗” item, and a deliberately separate, visually muted "
     "“Debug” item at the very bottom (“not something a normal user will use... only in case of a support "
-    "session,” the user's own words). Every full-tab page (Target Accounts, Posts Dashboard, Settings, "
+    "session,” the user's own words). Every full-tab page (Target Accounts, Leads Dashboard, Settings, "
     "Scanner) gained a “← Home” link as the first nav item - a plain relative link (not chrome.tabs.create "
     "like every other cross-page link here) so it navigates the current tab back to the hub instead of "
     "opening yet another one. “Target Accounts” was removed from Settings entirely (the user's own question: "
@@ -2450,7 +2479,7 @@ add_bullets(doc, [
     "more room, persisted across page navigations via localStorage.",
     "Mega-menu, 6th round of direct feedback, 2026-09-19: “Pipeline Overview” removed entirely (redundant "
     "once every real destination had its own nav entry). Nothing in the nav opens a new browser tab any more "
-    "- every cross-page item, including the “big” pages (Target Accounts/Posts Dashboard/Scanner/Settings), "
+    "- every cross-page item, including the “big” pages (Target Accounts/Leads Dashboard/Scanner/Settings), "
     "now embeds via iframe. Since those 4 pages each have their own full nav shell, a new ?embedded=1 query "
     "param makes a page hide its own nav when loaded inside another page's embed, avoiding a nested double "
     "sidebar - the embedded page shows only its real content, relying on the host's nav + “← Back” for "
@@ -2493,7 +2522,7 @@ add_bullets(doc, [
     "style, unrelated to actual selection) and missing the ↗ the other 3 had. .primary removed, ↗ added, and "
     "(at the time) a .nav-item.active class was introduced to follow whichever button was last clicked - "
     "later removed entirely once it proved unreliable; see the final entry below. "
-    "Separately, a reported “old version of the left main menu” on Posts Dashboard was "
+    "Separately, a reported “old version of the left main menu” on Leads Dashboard was "
     "investigated and traced to a genuinely older dashboard.html packaged inside "
     "builds/v0.31.0/SalesTeam-v0.31.0.zip in this repo (no left nav at all, pre-dating the mega-menu) - not a "
     "code bug in the live code/ source, which has the current nav; flagged back to the user to confirm which "
@@ -2501,18 +2530,18 @@ add_bullets(doc, [
     "Side panel follow-up, 2026-09-19: the user confirmed the correct folder was loaded and reloaded and the "
     "“old version of the left main menu” issue persisted; a live DevTools diagnostic then proved the page was "
     "in fact current, ruling out staleness. The real cause was something else entirely - see the next entry.",
-    "Posts Dashboard sub-labels flattened, 11th round of direct feedback, 2026-09-19: the actual root cause of "
+    "Leads Dashboard sub-labels flattened, 11th round of direct feedback, 2026-09-19: the actual root cause of "
     "the “old version of the left main menu” report - dashboard.html's own nav group still divided its 8 "
     "action items into Scoring/Enrichment/Export sub-labels, a deliberate choice made in the 5th round "
     "specifically because Target Accounts/Target Contacts got simplified past that style while Posts "
     "Dashboard (and Settings) kept it for having more items. Reported directly: “the menu has these older "
     "version of sections... that we no longer have in the menu of Target Accounts and Target Contacts.” "
-    "Fixed by flattening Posts Dashboard's own group to match (sub-label divs removed, same 8 items now "
+    "Fixed by flattening Leads Dashboard's own group to match (sub-label divs removed, same 8 items now "
     "flat; .nav-group-sublabel deleted from dashboard.css as now-dead code). settings.html has the same kind "
     "of sub-division and was left unchanged - flagged to the user as an open question rather than assumed "
     "into scope.",
     "Kebab/Actions column sticky-header bug fixed, 12th round of direct feedback, 2026-09-19: reported with a "
-    "screenshot - the Posts Dashboard table's row kebab (⋮) menu appeared positioned over the last visible "
+    "screenshot - the Leads Dashboard table's row kebab (⋮) menu appeared positioned over the last visible "
     "column instead of to the side. Reproduced live with a synthetic copy of the table (real data needs "
     "chrome.storage, unavailable outside a loaded extension) and confirmed via getComputedStyle: the body "
     "td.actions-cell was correctly position: sticky the whole time, but the HEADER th.actions-cell computed "
@@ -2528,7 +2557,7 @@ add_bullets(doc, [
     "accounts.css already uses) rather than a further bug; whether the user wants a structurally different "
     "non-overlapping pinned column is unconfirmed.",
     "Embedded-page height collapse bug fixed, 13th round of direct feedback, 2026-09-19: reported as “worse” "
-    "than the kebab issue, from a full testing pass - navigating into an embedded page (e.g. Posts Dashboard "
+    "than the kebab issue, from a full testing pass - navigating into an embedded page (e.g. Leads Dashboard "
     "embedded inside Target Accounts) collapsed the main screen into “a small scrollable area at the top,” "
     "across many nav items. Root cause: #app-shell's align-items: flex-start never actually stretches "
     "#app-main to its own min-height: 100vh - it only looked full-height because real, in-flow content was "
@@ -2539,18 +2568,18 @@ add_bullets(doc, [
     "min-height: 100vh to #app-main in all three. Verified live by manually triggering the embed DOM changes "
     "and confirming via screenshot that the embedded page now fills the full viewport.",
     "Nav group order normalized across all 4 pages, 14th round of direct feedback, 2026-09-19: reported "
-    "directly - “if I click on the Posts Dashboard in the side panel, the main menu changes its order and "
-    "puts the Posts Dashboard first. It should not do that.” Root cause: each full-tab page's own nav put "
+    "directly - “if I click on the Leads Dashboard in the side panel, the main menu changes its order and "
+    "puts the Leads Dashboard first. It should not do that.” Root cause: each full-tab page's own nav put "
     "its OWN group first in its static markup (current/open), so the rest of the list reshuffled depending "
     "on which page was current - target-accounts.html happened to already define what became the de facto "
     "canonical order, so landing there never visibly moved anything, while dashboard/settings/scanner all "
     "did. Fixed by reordering every page's nav-group blocks to one fixed sequence (Target Accounts "
-    "Dashboard, Target Contacts Dashboard, Posts Dashboard, Scanner, Settings, Debug test panels last) - "
+    "Dashboard, Target Contacts Dashboard, Leads Dashboard, Scanner, Settings, Debug test panels last) - "
     "only which group carries “open” changes now, never their relative order. Purely a markup reorder, no "
     "CSS/JS changes.",
-    "Posts Dashboard's Actions column rebuilt as a separate table, 15th round of direct feedback, "
+    "Leads Dashboard's Actions column rebuilt as a separate table, 15th round of direct feedback, "
     "2026-09-19: the bigger fix for the kebab-overlap issue (chosen explicitly over a narrower-columns quick "
-    "fix). Root cause of “only Posts Dashboard, not Target Accounts/Contacts”: both tables used the same "
+    "fix). Root cause of “only Leads Dashboard, not Target Accounts/Contacts”: both tables used the same "
     "position: sticky; right: 0 last column, which by design overlays whatever real column is scrolled "
     "underneath it - true for both, but dashboard.js's 16 columns are wide (150px+, table-layout: fixed) so "
     "the overlap cut off a large, noticeable chunk, while target-accounts.js's ~35 narrower, auto-sized "
@@ -2563,8 +2592,8 @@ add_bullets(doc, [
     "each row's height afterward (syncActionsColumnRowHeights) since leads' Content/Title/Priority Reason "
     "cells wrap to different heights per row and would otherwise drift the two tables out of alignment. "
     "target-accounts.css's own sticky .actions-col was left untouched - the report and chosen fix were "
-    "specific to Posts Dashboard.",
-    "Posts Dashboard's Actions column reverted back to sticky, 16th round of direct feedback, 2026-09-19: "
+    "specific to Leads Dashboard.",
+    "Leads Dashboard's Actions column reverted back to sticky, 16th round of direct feedback, 2026-09-19: "
     "the separate-table structure was undone the same day - reported directly, with a side-by-side "
     "screenshot comparison against Target Contacts, that it “doesn't look good... much nicer and cleaner "
     "[with sticky]. Why can't you use the same solution as with the other Dashboards?” Reverted to one table "
@@ -2581,8 +2610,8 @@ add_bullets(doc, [
     "moved into a new #export-settings-dialog (same action-dialog pattern target-accounts.html already uses "
     "for its own nav-triggered dialogs), with Export Settings now opening the dialog instead of exporting "
     "immediately.",
-    "Posts Dashboard's Actions column rebuilt to actually mirror target-accounts.js, 18th round of direct "
-    "feedback, 2026-09-19: reported with precision - “only in the Posts Dashboard, the Kebabs have a column "
+    "Leads Dashboard's Actions column rebuilt to actually mirror target-accounts.js, 18th round of direct "
+    "feedback, 2026-09-19: reported with precision - “only in the Leads Dashboard, the Kebabs have a column "
     "header called Action[s]... still overlapping the last column... and there is no Scroll slide at the top "
     "of the table... this is telling me that the code is not re-using common components.” Root cause: "
     "dashboard.js had “actions” as just another entry in the shared COLUMNS array (a label, a resize handle) "
@@ -2600,12 +2629,12 @@ add_bullets(doc, [
     "Empty debug-state-display boxes hidden, 2026-09-19: reported directly, with screenshots - "
     "Company/Contact Discovery's debug panels showed 2 empty grey rectangles below their buttons even with "
     "nothing to display. Fixed with .debug-state-display:empty { display: none; } in settings.css.",
-    "Posts Dashboard kebab header white-box fixed + missing nav self-item added, 2026-09-19: the sticky "
+    "Leads Dashboard kebab header white-box fixed + missing nav self-item added, 2026-09-19: the sticky "
     "column's own background: #fff (needed on the body cell only) was also landing on the header cell at "
     "higher specificity than the shared header background, breaking its blue tint - split the rule so only "
-    "the body cell gets it. Also added #open-posts-dashboard-self-btn (“Posts Dashboard”) as the first item "
+    "the body cell gets it. Also added #open-posts-dashboard-self-btn (“Leads Dashboard”) as the first item "
     "in its own nav group, matching Target Accounts' own self-referential tab - reported directly, there was "
-    "no findable way back to Posts Dashboard's own content once something else was embedded over it.",
+    "no findable way back to Leads Dashboard's own content once something else was embedded over it.",
     "Actions column extracted into a shared module, 2026-09-19: reported directly, twice, with increasing "
     "directness - “why can't you simply re-use the code that displays the Kebabs in the Target and Contacts "
     "Dashboard, instead of keep trying to find workarounds.” Root cause: dashboard.js and target-accounts.js "
@@ -2656,7 +2685,7 @@ add_bullets(doc, [
     "behavior since rounds 6-7). dashboard.html/settings.html/scanner.html's own copies of “Target Accounts "
     "Dashboard”/“Target Contacts Dashboard” now include the same dialog-opening actions "
     "target-accounts.html's native copy has; target-accounts.html/settings.html/scanner.html's own copies of "
-    "“Posts Dashboard” now include the same 8 real actions dashboard.html's native copy has. Each item embeds "
+    "“Leads Dashboard” now include the same 8 real actions dashboard.html's native copy has. Each item embeds "
     "the target page with #action=X; new openActionFromHash() (target-accounts.js) and runActionFromHash() "
     "(dashboard.js) auto-trigger the matching dialog/button on arrival, layered on top of each page's "
     "existing hash handling (verified no collision). Two items deliberately left out, flagged rather than "
@@ -2703,11 +2732,11 @@ add_bullets(doc, [
     "Fixed by closing every action dialog before opening the target one, guaranteeing at most one is ever "
     "open.",
     "“Re-score All Priorities only works once,” 2026-09-19: reported directly - “unless I click on Open "
-    "Posts Dashboard again, which seems to reset/unfreeze it... only happens with this specific action.” "
+    "Leads Dashboard again, which seems to reset/unfreeze it... only happens with this specific action.” "
     "Root cause: a third real browser quirk - re-clicking the same action nav item twice sets the iframe's "
     "src to a URL IDENTICAL to what it already has, and an identical src assignment is a total no-op (no "
     "navigation, not even a hashchange), so neither init() nor the hashchange listener get a second chance "
-    "to re-fire the action. “Open Posts Dashboard” only ever “fixed” it by accident, since its hash always "
+    "to re-fire the action. “Open Leads Dashboard” only ever “fixed” it by accident, since its hash always "
     "differs from the last action triggered. Fixed in all 4 host files' showEmbeddedPage(): when the "
     "requested URL matches the iframe's current src, bounce through about:blank first, forcing a genuinely "
     "fresh navigation every time.",
@@ -2719,7 +2748,7 @@ add_bullets(doc, [
     "duplicating #app-main's own equivalent padding - stacking silently inflated <body> 84px past the "
     "one-viewport #app-shell, forcing a permanent outer/document scrollbar regardless of actual content "
     "height (settings.css/scanner.css never had this duplicate, which is why only Target Accounts/Contacts "
-    "and Posts Dashboard showed it). Root cause #2: #app-nav's own scroll plus its position: sticky "
+    "and Leads Dashboard showed it). Root cause #2: #app-nav's own scroll plus its position: sticky "
     "interacting with that outer scrollbar produced two visually distinct phases (nav pinned while only "
     "main content moves, then nav joining the scroll once room ran out) - read as 2 separate bars. The "
     "user's own stated ideal became the fix's spec: “the inner vertical scroll is often needed when we "
@@ -2864,7 +2893,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.35."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.51."
 )
 
 for section in doc.sections:

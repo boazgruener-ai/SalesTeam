@@ -40,7 +40,7 @@ export const BACKUP_CATEGORIES = [
     keys: ["targetUniverseConfig", "targetContactProfile", "companyExclusions", "companyExclusionsMigrated", "companyExclusionsLifted", "companyAliases",
       "postPrioritizationRules", "prioritizationRuleOverrides", "accountPriorityGuidelines", "organizationTypeEligibility",
       "keywordSearchLanguages", "userProfile", "companyWebsite", "onboardingCompletedAt", "onboardingProgressStepIndex",
-      "targetAccountScoreThreshold"],
+      "targetAccountScoreThreshold", "jobRulesMinConfidence"],
   },
   {
     id: "accounts", label: "Accounts, contacts and initiatives",

@@ -183,7 +183,7 @@
            label would just be confusing, not genuinely separate features.
            (2) The Views/Data/Enrichment/Prioritization sub-division
            removed from these two groups specifically (each is small
-           enough now not to need it) - kept on Posts Dashboard/Settings
+           enough now not to need it) - kept on Leads Dashboard/Settings
            below, which still have enough items to benefit from it. -->
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
@@ -192,6 +192,7 @@
         <button id="restore-target-accounts-page-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
         <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
+        <button id="export-accounts-csv-page-btn" type="button" class="nav-item" title="Save the accounts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
         <button id="hubspot-export-page-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
         <button id="hubspot-import-page-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
@@ -200,10 +201,11 @@
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
+        <button id="export-contacts-csv-page-btn" type="button" class="nav-item" title="Save the contacts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
       </details>
 
       <details class="nav-group">
-        <summary class="nav-group-label">Posts Dashboard</summary>
+        <summary class="nav-group-label">Leads Dashboard</summary>
         <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
              own copy of this comment (Target Accounts group) for the full
              reasoning. Each of these duplicates dashboard.html's own real
@@ -212,7 +214,7 @@
              the matching button there, so any of these buttons' own
              existing confirm() gates (Re-score All Priorities) still run
              normally. -->
-        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the leads (posts) your scans found">Open Leads Dashboard</button>
         <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
         <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
       </details>
@@ -309,7 +311,7 @@
           The full externally-researched company and contact workbook - every account, plus its known contacts and
           initiatives, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
           unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
-          automatic lead prioritization (see the Posts Dashboard's Priority column).
+          automatic lead (post) prioritization (see the Leads Dashboard's Priority column).
         </p>
         <span id="target-accounts-page-io-status" class="status-text"></span>
         <p id="linkedin-resolve-status" class="page-subtitle" hidden></p>
@@ -361,6 +363,8 @@
         <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="result-count"></span>
       </div>
+      <!-- 1.2.1 step 7: every active filter as a chip, so a saved filter can never hide rows unnoticed. -->
+      <div id="accounts-active-filters-bar" class="active-filters-bar" hidden></div>
 
       <div id="accounts-bulk-bar" class="bulk-bar" hidden>
         <span id="accounts-bulk-count" class="bulk-bar-count"></span>
@@ -402,6 +406,8 @@
         <button id="contacts-columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="contacts-result-count"></span>
       </div>
+      <!-- 1.2.1 step 7: every active filter as a chip, so a saved filter can never hide rows unnoticed. -->
+      <div id="contacts-active-filters-bar" class="active-filters-bar" hidden></div>
 
       <div id="contacts-bulk-bar" class="bulk-bar" hidden>
         <span id="contacts-bulk-count" class="bulk-bar-count"></span>

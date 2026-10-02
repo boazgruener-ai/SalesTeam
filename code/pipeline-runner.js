@@ -37,7 +37,7 @@ import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
   parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING, autoRunBlocker, USER_JOB_HOLD_MS,
   isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS, READY_GOAL_KEY, discoveryMayRun,
-  isLinkedinLoginWall, linkedinLoggedOutRecently, LINKEDIN_LOGGED_OUT_KEY,
+  isLinkedinLoginWall, linkedinLoggedOutRecently, LINKEDIN_LOGGED_OUT_KEY, heldForWebLane,
 } from "./pipeline-plan.js";
 import { resolveAccountOnTab } from "./company-resolve-extraction.js";
 import { armSizeRead, disarmSizeRead, readSizeOnTab } from "./company-size-extraction.js";
@@ -167,6 +167,7 @@ export async function kickPipeline(source) {
     const now = Date.now();
     // 1.2.1 step 6 (design 8): the stop rule's discovery. Web only, so it needs the web budget, not LinkedIn.
     if (auto.pausedDay !== localDay(now) && !web.reason) await discoverForTargets(web, { now }).catch(() => {});
+    let held = 0;
     let reason = autoRunBlocker({
       enabled: auto.enabled, pausedDay: auto.pausedDay, today: localDay(now), holdUntil: store[PIPELINE_HOLD_KEY] || 0,
       runningBatch, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now, webPossible: !web.reason,
@@ -180,12 +181,17 @@ export async function kickPipeline(source) {
       const { entries, counts } = await readinessNow();
       const loggedOut = linkedinLoggedOutRecently(store[LINKEDIN_LOGGED_OUT_KEY], now);
       const opts = { linkedin: !loggedOut && stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason, ...(await planContext(counts)) };
-      if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts).length === 0) reason = opts.linkedin ? "nothing_left" : "budget";
+      if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts).length === 0) {
+        // 1.2.0.57 (Boaz, after Finish Setup): accounts the web lane is still researching are held back, and that
+        // read as "All accounts processed for today" while 17 accounts still needed their LinkedIn page.
+        held = entries.filter((e) => e.view && !e.view.deleted && !e.view.excluded && heldForWebLane(e.view, opts.webLaneHold, now)).length;
+        reason = held ? "web_lane" : opts.linkedin ? "nothing_left" : "budget";
+      }
     }
     if (reason) {
       // Kept only for the reasons the status line explains; hold and busy pass by themselves.
-      if (["nothing_left", "no_backup", "budget"].includes(reason)) {
-        await chrome.storage.local.set({ [PIPELINE_IDLE_KEY]: { reason, at: now } });
+      if (["nothing_left", "no_backup", "budget", "web_lane"].includes(reason)) {
+        await chrome.storage.local.set({ [PIPELINE_IDLE_KEY]: { reason, at: now, held } });
       }
       // 1.2.0.10 (Boaz, 2026-10-01): the LinkedIn visits are used up and the pipeline has no web research of its
       // own to do, but the web budget allows more - the web lane carries on (contacts, profiles, initiatives).

@@ -35,6 +35,7 @@ import {
   getScanCompanyScope,
   getScanTargetCompanyIds,
   autoMergeDiscoveryResults,
+  repairListingRevenueInMillions,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
@@ -42,7 +43,7 @@ import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease, countTo
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
 import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
-import { startWebLane, stopWebLane } from "./web-lane.js";
+import { startWebLane, stopWebLane, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { startWebDiscovery, stopWebDiscovery } from "./web-discovery.js";
 import { startPipelineRun, stopPipelineRun, kickPipeline, pausePipelineForUser, clearUserJobHold, startOnboardingBuild } from "./pipeline-runner.js";
 import { setPipelinePausedDay } from "./pipeline-automation.js";
@@ -102,6 +103,11 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("settings.html#wizard") });
   }
+  // 1.2.0.62: listing revenue stored in millions before 1.2.0.61 - repaired on the update, then the pipeline
+  // replans so the web findings that only existed because of it are settled again.
+  if (details.reason === "update") {
+    repairListingRevenueInMillions().then((n) => { if (n) kickPipeline("data_repair").catch(() => {}); }).catch(() => {});
+  }
 });
 
 // 1.2 data pipeline, build step 3 (DATA_PIPELINE_DESIGN.md 5.4): the automatic triggers that live here.
@@ -127,6 +133,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
     .then(() => rescoreDerivedPriorities().catch(() => null))
     .then(() => kickPipeline("discovery_merged"))
     .catch(() => {});
+});
+
+// 1.2.0.57: a web lane run that FINISHED releases the accounts it held back from the LinkedIn work, so the pipeline
+// replans at once instead of waiting for the next page kick (up to 10 minutes, and only while a page is open).
+// Only after a run that researched something - a lane that ends with nothing done must not kick in a loop.
+chrome.storage.onChanged.addListener((changes, area) => {
+  const change = area === "local" && changes[WEB_LANE_STATE_KEY];
+  if (!change || change.newValue?.status !== "done" || change.oldValue?.status === "done") return;
+  if (!(change.newValue.done > 0)) return;
+  kickPipeline("web_lane_done").catch(() => {});
 });
 
 function chunk(array, size) {

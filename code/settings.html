@@ -28,7 +28,7 @@
            its own markup (open/current), which meant the REST of the list
            reshuffled depending on which page you were on. Reordered to a
            single fixed order, identical across all 4 pages (Target
-           Accounts, Target Contacts, Posts Dashboard, Scanner, Settings,
+           Accounts, Target Contacts, Leads Dashboard, Scanner, Settings,
            Debug last) - only which group carries `open`/is the current
            page changes now, never their relative order. -->
       <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
@@ -41,6 +41,7 @@
         <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
         <button id="nav-import-target-accounts-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
         <button id="nav-restore-accounts-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="nav-export-accounts-csv-btn" type="button" class="nav-item" title="Save the accounts the Target Accounts table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
         <button id="nav-hubspot-export-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
         <button id="nav-hubspot-import-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
       </details>
@@ -48,14 +49,15 @@
       <details class="nav-group">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
+        <button id="nav-export-contacts-csv-btn" type="button" class="nav-item" title="Save the contacts the Target Contacts table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
       </details>
 
       <details class="nav-group">
-        <summary class="nav-group-label">Posts Dashboard</summary>
+        <summary class="nav-group-label">Leads Dashboard</summary>
         <!-- 23rd round of direct feedback (2026-09-19) - see
              target-accounts.html's own copy of this comment for the full
              reasoning. -->
-        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the leads (posts) your scans found">Open Leads Dashboard</button>
         <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
         <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
       </details>
@@ -127,7 +129,7 @@
         <button id="nav-extract-companies-profiles-btn" type="button" class="nav-item" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
         <button id="nav-prioritize-target-accounts-btn" type="button" class="nav-item" title="Score every eligible company's Priority (P1-P5)">Prioritize Companies…</button>
         <a href="#revenue-currency-section" class="nav-item" id="nav-revenue-currency-section" title="Clean-up and currency conversion for revenue and employee figures">Revenue &amp; Currency</a>
-        <a href="#web-findings-section" class="nav-item" id="nav-web-findings-section" title="The rules behind &quot;Resolve Web Findings Automatically…&quot; on the Target Accounts Dashboard">Web Findings &ndash; Automatic Arbitration</a>
+        <a href="#web-findings-section" class="nav-item" id="nav-web-findings-section" title="The rules behind &quot;Resolve Web Findings Automatically…&quot; on the Target Accounts Dashboard">How to handle research findings</a>
         <a href="#discovery-queue-section" class="nav-item" id="nav-discovery-queue-section">Discovery Queue (support)</a>
         <a href="#company-discovery-section" class="nav-item" id="nav-company-discovery-section">Company Discovery (support)</a>
         <a href="#contact-discovery-section" class="nav-item" id="nav-contact-discovery-section">Contact Discovery (support)</a>
@@ -147,17 +149,22 @@
       </div>
 
   <div id="settings-main">
+    <!-- 1.2.1 step 7 (ONBOARDING_RESEARCH_DESIGN.md 3.12, R4.6): offered once to a setup finished before 1.2.1. The
+         same action stays under User Profile > Open About you. -->
+    <div id="seller-research-offer" hidden>
+      <p><strong>New:</strong> <span id="seller-research-offer-text"></span></p>
+      <div class="settings-buttons-row">
+        <button type="button" id="seller-research-offer-yes-btn">Research</button>
+        <button type="button" id="seller-research-offer-no-btn">No thanks</button>
+      </div>
+    </div>
     <section class="settings-card" id="setup-section">
-      <h3>Target Account &amp; Contact Discovery Setup</h3>
+      <h3>Setup</h3>
       <p class="field-hint">
-        Who/where/what size to search for once Discovery scanning ships (PRD 6.20) - location, company size,
-        industry, priority guidelines, target-contact titles, and competitors to exclude. Walked through once
-        on install; revisit it any time here.
-      </p>
-      <p class="field-hint">
-        "What We Offer," "Ideal Customer Profile," "Things you can offer," and the Location/Prioritization
-        settings that used to live further down this page all moved into this same wizard - edit them there,
-        with "Save &amp; Exit" to jump back here right after.
+        The 12 Setup steps: who you are, which companies and people to look for (location, size, industry, target
+        contacts), what you sell and can offer, companies to include or exclude, and how big your list should be.
+        Walked through once after installing; each answer can be changed later in Change Settings, which also holds
+        the advanced settings (Discovery and Leads Prioritization, Company aliases).
       </p>
       <div id="onboarding-progress-wrap">
         <div id="onboarding-progress-label"></div>
@@ -261,6 +268,16 @@
         Company Search using your saved onboarding criteria, checkpointing into the Discovery Queue above.
         Remove or fold into real progress UI once Phase 5 is fully wired into the main scan flow.
       </p>
+      <!-- 1.2.0.43 (Boaz): moved here from the Setup's Size step - only this panel and the Discovery Queue panel
+           read it; building the list from the Setup uses "How big is your list". -->
+      <div class="settings-buttons-row">
+        <label for="company-discovery-max-input">Most companies per Company Discovery run</label>
+        <input type="number" id="company-discovery-max-input" min="1" max="500" step="1" style="width: 90px" />
+        <button type="button" id="company-discovery-max-save-btn">Save</button>
+        <span id="company-discovery-max-status" class="field-hint" role="status"></span>
+      </div>
+      <p class="field-hint">Used by this panel and the Discovery Queue panel only. Up to 500, to keep one run's LinkedIn
+        visits bounded.</p>
       <p id="company-discovery-status" class="field-hint"></p>
       <div class="settings-buttons-row">
         <button type="button" id="company-discovery-start-btn">Start fresh + run</button>
@@ -305,8 +322,8 @@
       <p class="field-hint">
         This is the DEFAULT language for everything SalesTeam's AI writes - the Sales Mentor's chat replies,
         Customer Voice's replies, drafted LinkedIn messages, and every other AI-generated text in the
-        extension. The one exception: when Customer Voice is grounded in one specific real lead (via
-        get_lead_details), it replies in THAT lead's own post language instead, whatever it is - a French
+        extension. The one exception: when Customer Voice is grounded in one specific real lead (post) - via
+        get_lead_details - it replies in THAT lead's own post language instead, whatever it is - a French
         lead gets a French reaction even if this is set to English, since that's what a real reply from them
         would look like. Everywhere else, this setting is what's actually used.
       </p>
@@ -342,7 +359,7 @@
       <table id="billing-features" class="billing-table"></table>
       <h4 class="billing-heading">Warning before an expensive action</h4>
       <p class="field-hint">
-        Before an AI action that could cost more than this amount (for example scoring hundreds of leads), SalesTeam asks you to
+        Before an AI action that could cost more than this amount (for example scoring hundreds of leads (posts)), SalesTeam asks you to
         confirm. Set 0 to switch the warning off. SalesTeam does not stop spending by itself - to cap it for real, set a spend
         limit in your Anthropic Console.
       </p>
@@ -359,7 +376,7 @@
       </p>
       <p class="field-hint">
         <strong>Web research</strong> = the "Research this account on the web" button (searches + the AI reading them).
-        <strong>Other AI features</strong> = everything else on your API key: message drafting, lead and company prioritization, company
+        <strong>Other AI features</strong> = everything else on your API key: message drafting, lead (post) and company prioritization, company
         extraction, topic suggestions, search-quality analysis and the Advisors chats. Prices used: Claude Sonnet $2 in / $10 out per million
         tokens, Claude Haiku $1 / $5, and about $0.01 per web search.
       </p>
@@ -376,7 +393,7 @@
       </p>
       <p class="field-hint">
         After you pick the file you choose <strong>what to restore</strong>: settings, accounts / contacts / initiatives,
-        your edits to them, leads and conversations, the activity log, and display preferences. Only the parts you
+        your edits to them, leads (posts) and conversations, the activity log, and display preferences. Only the parts you
         tick are replaced; everything else stays as it is. A safety copy of your current data is saved first.
       </p>
       <button id="backup-restore-btn" type="button" title="Choose a backup file (.zip, or an older .json) - you then choose which parts to restore">Restore from backup…</button>
@@ -391,7 +408,7 @@
     <section class="settings-card" id="backup-section">
       <h3>Backup</h3>
       <p class="field-hint">
-        One backup holds everything - settings, accounts, contacts, leads, chats and the activity log - as a single dated zip.
+        One backup holds everything - settings, accounts, contacts, leads (posts), chats and the activity log - as a single dated zip.
         The zip also contains your accounts and leads as CSV spreadsheets, ready to open in Excel or upload to another system.
       </p>
 
@@ -482,7 +499,16 @@
     </section>
 
     <section class="settings-card" id="web-findings-section">
-      <h3>Web Findings &ndash; Automatic Arbitration</h3>
+      <h3>How to handle research findings</h3>
+      <!-- 1.2.0.51: the same plain choice as on the Setup's Finish screen. -->
+      <label class="checkbox-label">
+        <input type="radio" name="findings-mode" id="findings-mode-auto" value="auto" />
+        Decide automatically where it is safe, and ask me only when it matters (recommended)
+      </label>
+      <label class="checkbox-label">
+        <input type="radio" name="findings-mode" id="findings-mode-ask" value="ask" />
+        Ask me about every difference (empty fields are still filled in)
+      </label>
       <p class="field-hint">
         When a web research turns up a fact that disagrees with what an account already holds, most of the time it is
         not a mistake: two correct figures counted differently (84,146 employees or 150,000 &ndash; direct staff against

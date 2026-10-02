@@ -40,7 +40,7 @@
       <button type="button" id="nav-exit-btn" title="Leave the setup and open the SalesTeam menu. Your answers so far are saved automatically.">Exit to menu</button>
       <button type="button" id="nav-save-btn" title="Save this step now and stay here">Save</button>
       <span id="nav-save-status" class="status-text" role="status"></span>
-      <button type="button" id="nav-save-exit-btn">Save &amp; Exit</button>
+      <button type="button" id="nav-save-exit-btn" title="Save this step and leave the setup. You can continue where you left off later.">Save &amp; Exit to menu</button>
       <button type="button" id="nav-next-btn">Next</button>
     </div>
   </div>
@@ -89,6 +89,11 @@
     <section id="enter-research" class="wizard-step" hidden>
       <h2>Researching your company…</h2>
       <p class="step-intro" id="research-intro"></p>
+      <!-- 1.2.0.40 (Boaz): how long it still takes, so a waiting user does not press Stop or Skip out of doubt. -->
+      <div id="research-progress">
+        <div id="research-progress-track"><div id="research-progress-fill"></div></div>
+        <p id="research-eta"></p>
+      </div>
       <ul id="research-lines"></ul>
       <p id="research-cost"></p>
       <p id="research-error" class="step-error" hidden></p>
@@ -102,7 +107,7 @@
 
     <!-- Step 1: Location -->
     <section id="enter-location" class="wizard-step">
-      <h2>Where are your target companies and leads?</h2>
+      <h2>Where are your target companies and leads (posts)?</h2>
       <div class="proposal-slot" id="proposal-location" hidden></div>
       <p class="step-intro">
         This is your one target geography - it scopes both which companies Discovery searches for and which
@@ -157,13 +162,10 @@
       <h2>What size companies?</h2>
       <div class="proposal-slot" id="proposal-size" hidden></div>
       <p class="step-intro">
-        Check the size ranges you want to include, each with its own priority - a Discovery scan never returns
-        more than the cap below in one run.
+        Check the size ranges you want to include, each with its own priority. How many companies to find is set in
+        the last step, "How big is your list".
       </p>
       <div id="size-buckets-wrap" class="priority-item-list"></div>
-      <label for="size-max-companies-input">Maximum companies per Discovery run</label>
-      <input type="number" id="size-max-companies-input" min="1" max="500" value="200" />
-      <p class="field-hint">Hard-capped at 500 to keep any one run's LinkedIn touch-budget cost bounded.</p>
       <p id="size-error" class="step-error" hidden></p>
     </section>
 
@@ -213,7 +215,7 @@
         Rank the three criteria by overall importance. Which specific locations/sizes/industries matter most is
         set per-item on their own steps (Location/Size/Industry) - this just orders the three criteria against
         each other. Feeds automatic company scoring once Discovery scanning ships. This governs Discovery's own
-        company search - for the separate rules that already prioritize scanned Topic leads today, see the next
+        company search - for the separate rules that already prioritize scanned Topic leads (posts) today, see the next
         step, Leads Prioritization.
       </p>
       <label for="priority-rank-1">Most important</label>
@@ -227,25 +229,52 @@
 
     <!-- Step 4b: Leads Prioritization (moved from settings.html 2026-09-16) -->
     <section id="enter-leads-prioritization" class="wizard-step" hidden>
-      <h2>Leads Prioritization: how should we rank the leads (posts) we already scan?</h2>
+      <h2>Leads Prioritization: how should we rank the leads (posts) your scans find?</h2>
+      <!-- 1.2.0.46 (Boaz): general explanation first, then Posts and Job ads, each with its own explanation, setting
+           and rules. The 0-100 "confidence threshold" became a level the user picks (Very High ... Low). -->
       <p class="step-intro">
-        These layer on top of the Sales Mentor's own judgment for a lead whose company is in your Target
-        Accounts list (Target Accounts Dashboard) - not the Discovery step above, which governs company
-        search instead. The Sales Mentor's own judgment is always the base decision and can never itself be
-        disabled; these only ever constrain or override it for a lead that satisfies their specific
-        condition. Saved immediately as you change them, same as everywhere else in this wizard.
+        After every scan the Sales Mentor ranks each new lead (post) from P1 (best) to P5. The rules on this page
+        adjust that ranking when the lead's company is one of your Target Accounts. (Ranking the companies themselves
+        is a different step: Discovery Prioritization.) The Sales Mentor's own judgment always comes first; a rule
+        only changes the ranking of a lead that meets its condition. Changes are saved as you make them.
       </p>
-      <label for="leads-prioritization-threshold-input">Target Account confidence threshold (Job rules)</label>
-      <input type="number" id="leads-prioritization-threshold-input" min="0" max="100" title="A company only triggers the Job rules below once your research labels it 'Very High' or 'High' (never Provisional/lower, regardless of score) AND its score is at or above this. Post rules (further down) set their own thresholds per rule instead - changing this number doesn't affect them." />
+
+      <h3 class="lp-part-heading">Posts</h3>
       <p class="field-hint">
-        A company is treated as confidently matched once it's labeled "Very High" or "High" by your research
-        (never Provisional or lower, whatever its score) <strong>and</strong> its score is at or above this
-        number. Doesn't affect the Target Accounts Dashboard's own Import/Export - every company there is
-        included regardless of this threshold. Only governs the <strong>Job</strong> rules below - the
-        <strong>Post</strong> rules further down set their own thresholds, one per rule.
+        A post is written by a real, named person you can contact - the stronger signal. Each post is checked against
+        the rules below, top to bottom; the first <strong>enabled</strong> rule whose conditions <strong>all</strong>
+        match applies its effect (a floor, a ceiling, or a fixed priority). If no rule matches, the Sales Mentor ranks
+        the post on its own. Order matters, so put more specific rules above more general ones with ↑/↓.
       </p>
-      <p id="leads-prioritization-threshold-error" class="step-error" hidden>Target Account confidence threshold must be a number from 0 to 100.</p>
-      <h3>Job rules</h3>
+      <h4 class="lp-rules-heading">Post rules</h4>
+      <p class="field-hint">
+        Build a rule from any of: a column of your Target Accounts (type a column name; the box suggests the ones
+        your list has), "Account is in the Target Accounts list", "Post author is a Target Contact", "Post matched a
+        Topic".
+      </p>
+      <div id="post-rules-list"></div>
+      <button type="button" id="add-post-rule-btn">+ Add rule</button>
+
+      <h3 class="lp-part-heading">Job ads</h3>
+      <p class="field-hint">
+        A job ad comes from the company itself - there is no person to contact yet, so it is a weaker signal than a
+        post. Job ads have two fixed rules instead of rules you build: a job ad tells SalesTeam little more than the
+        company and the job title, so there is nothing else to build a rule from. You can switch either rule off or
+        change its priority.
+      </p>
+      <label for="jobs-min-confidence-select">How sure must SalesTeam be that the company is a strong Target Account?</label>
+      <select id="jobs-min-confidence-select">
+        <option value="very_high">Very High</option>
+        <option value="high">High (recommended)</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+      <p class="field-hint" id="jobs-min-confidence-hint"></p>
+      <p class="field-hint">
+        An account's level is its research workbook rating when it has one, otherwise SalesTeam's own Priority:
+        P1 = Very High, P2 = High, P3 = Medium, P4-P5 = Low.
+      </p>
+      <h4 class="lp-rules-heading">Job ad rules</h4>
       <div id="leads-prioritization-rules-wrap">
         <table id="leads-prioritization-rules-table">
           <thead>
@@ -261,22 +290,6 @@
           <tbody id="leads-prioritization-rules-tbody"></tbody>
         </table>
       </div>
-
-      <h3>Post rules</h3>
-      <p class="field-hint">
-        <strong>Post leads</strong> (a real, named individual - a stronger signal than a Job listing) are
-        checked against the rules below, top to bottom. Each rule is a set of conditions that <strong>all</strong>
-        have to match (AND) - build one from a Workbook column check, "Account is in the Target Accounts
-        list", "Post author is a Target Contact" and/or "Post matched a Topic". The first <strong>enabled</strong>
-        rule whose conditions all match wins and applies its Floor/Ceiling/Decisive effect; if no rule
-        matches, the Sales Mentor scores the lead entirely on its own. Order matters - only the first match
-        is used, so reorder with ↑/↓ to put more specific rules above more general ones. A Workbook column
-        condition's column field suggests every column actually found in your imported Target Accounts
-        workbook's Companies sheet as you type - or type any column name directly, even one not currently
-        suggested.
-      </p>
-      <div id="post-rules-list"></div>
-      <button type="button" id="add-post-rule-btn">+ Add rule</button>
       <datalist id="post-rule-column-options"></datalist>
     </section>
 
@@ -294,15 +307,22 @@
 
     <!-- Step 6: Things you can offer (optional) -->
     <section id="enter-value-add-offers" class="wizard-step" hidden>
-      <h2>What can you offer a lead to start a conversation? (optional)</h2>
+      <h2>What can you offer a lead (post) to start a conversation? (optional)</h2>
       <div class="proposal-slot" id="proposal-value-add-offers" hidden></div>
       <div id="value-add-offers-checklist" hidden></div>
       <p class="step-intro">
-        Something you can offer a lead in a message, as a reason to reply - one per line, real resources only: an
+        Something you can offer a lead (post) in a message, as a reason to reply - one per row, real resources only: an
         article link, a report, "free 20-min demo". The AI only ever offers what is listed here (and what is ticked
         above), never anything it invents.
       </p>
-      <textarea id="value-add-offers-input" placeholder="https://yourcompany.com/ai-readiness-report&#10;Free 20-minute demo at their convenience"></textarea>
+      <!-- 1.2.0.47 (Boaz): a numbered table, one offer per row, so it is clear how many there are and where each
+           ends. The textarea stays as the stored value (one "Offer - link" per line), hidden; the table writes it. -->
+      <table id="value-add-offers-table" class="offers-table">
+        <thead><tr><th>#</th><th>Offer</th><th>Link (optional)</th><th></th></tr></thead>
+        <tbody id="value-add-offers-tbody"></tbody>
+      </table>
+      <button type="button" id="value-add-offers-add-btn" class="step-inline-btn">+ Add offer</button>
+      <textarea id="value-add-offers-input" hidden></textarea>
     </section>
 
     <!-- Step 7: Ideal Customer Profile -->
@@ -387,31 +407,32 @@
       <div class="proposal-slot" id="proposal-exclusions" hidden></div>
       <div id="exclusions-checklist" hidden></div>
       <p class="step-intro">
-        A company here is never treated as a lead, regardless of anything else about it. One LinkedIn
-        company-page URL per line in each box below - not a company name, since names are too easy to
-        mismatch (legal suffixes, short vs. long names, misspellings). Each line is checked as you go.
+        A company here is never treated as a lead (post), regardless of anything else about it. One company per line
+        in each box below: its name, its LinkedIn company page, or both ("Name - https://www.linkedin.com/company/...").
+        A LinkedIn page is the surest match; a name alone also works, matched by name and website. Each line is
+        checked as you go.
       </p>
 
       <label for="exclusions-competitor-input">Competitors</label>
-      <textarea id="exclusions-competitor-input" placeholder="https://www.linkedin.com/company/example-competitor/"></textarea>
+      <textarea id="exclusions-competitor-input" placeholder="Example Competitor AG - https://www.linkedin.com/company/example/"></textarea>
       <div id="exclusions-competitor-parsed-list"></div>
 
       <label for="exclusions-recruiter-input">Recruiters / staffing agencies</label>
       <p class="field-hint">Pre-filled with well-known global agencies to save you the lookup; add your local ones and remove any that don't apply, or clear the list entirely if you'd rather skip this.</p>
-      <textarea id="exclusions-recruiter-input" placeholder="https://www.linkedin.com/company/example-agency/"></textarea>
+      <textarea id="exclusions-recruiter-input" placeholder="Example Staffing - https://www.linkedin.com/company/example/"></textarea>
       <div id="exclusions-recruiter-parsed-list"></div>
 
       <label for="exclusions-customer-input">Existing customers</label>
-      <textarea id="exclusions-customer-input" placeholder="https://www.linkedin.com/company/example-customer/"></textarea>
+      <textarea id="exclusions-customer-input" placeholder="Example Customer AG - https://www.linkedin.com/company/example/"></textarea>
       <div id="exclusions-customer-parsed-list"></div>
 
       <label for="exclusions-partner-input">Existing partners / resellers</label>
-      <textarea id="exclusions-partner-input" placeholder="https://www.linkedin.com/company/example-partner/"></textarea>
+      <textarea id="exclusions-partner-input" placeholder="Example Partner - https://www.linkedin.com/company/example/"></textarea>
       <div id="exclusions-partner-parsed-list"></div>
 
       <label for="exclusions-other-input">Other</label>
       <p class="field-hint">Anything else that doesn't fit the categories above.</p>
-      <textarea id="exclusions-other-input" placeholder="https://www.linkedin.com/company/example/"></textarea>
+      <textarea id="exclusions-other-input" placeholder="Example Company - https://www.linkedin.com/company/example/"></textarea>
       <div id="exclusions-other-parsed-list"></div>
     </section>
 
@@ -466,10 +487,10 @@
       <h2>Setup complete</h2>
       <div id="finish-summary"></div>
       <p class="field-hint">
-        Your targeting profile is saved. You can revisit any of this any time from Settings' "Edit Setup". This
-        takes you back to Settings once saved. With automatic preparation on, <strong>Finish Setup</strong> starts
-        building your account list at once: new accounts from the web first, then their research, then the
-        LinkedIn checks within your daily limit.
+        Your answers are saved; you can change any of them later in Settings &gt; Change Settings.
+        <strong>Finish Setup</strong> opens the Target Accounts Dashboard. With automatic preparation on, it also
+        starts building your account list at once: new accounts from the web first, then their research, then the
+        LinkedIn checks within your daily limit - the bar at the top of every page shows what is running.
       </p>
       <!-- 1.2 data pipeline, build step 3 (DATA_PIPELINE_DESIGN.md 10.1, U5): the consent. Off unless ticked. -->
       <div id="finish-automation" style="border:1px solid #c9d7e8;border-radius:8px;padding:10px 14px;margin:12px 0;">
@@ -489,10 +510,29 @@
           <input type="number" id="finish-web-budget" min="0" step="1" style="width: 80px" />
           <span id="finish-web-budget-note"></span>
         </p>
+        <!-- 1.2.0.51 (Boaz): how research findings are handled - one plain choice, the rules folded away. -->
+        <div id="finish-findings">
+          <p class="field-hint"><strong>When web research finds a value that differs from what an account already has:</strong></p>
+          <label class="checkbox-label">
+            <input type="radio" name="finish-findings-mode" id="finish-findings-auto" value="auto" />
+            Decide automatically where it is safe, and ask me only when it matters (recommended)
+          </label>
+          <label class="checkbox-label">
+            <input type="radio" name="finish-findings-mode" id="finish-findings-ask" value="ask" />
+            Ask me about every difference (empty fields are still filled in)
+          </label>
+          <details class="advanced-settings">
+            <summary>Advanced settings</summary>
+            <p class="field-hint">The rules used to decide automatically. Each one can be switched off; its cases are
+              then put to you in Decisions. The same list is in Settings &gt; Change Settings &gt; Advanced &gt; How to
+              handle research findings.</p>
+            <div id="finish-findings-rules"></div>
+          </details>
+        </div>
       </div>
       <div class="wizard-buttons">
         <button type="button" id="finish-btn">Finish Setup</button>
-        <a href="#" id="finish-back-to-menu-link" class="wizard-back-link">Finish Setup and back to menu</a>
+        <a href="#" id="finish-back-to-menu-link" class="wizard-back-link">Finish Setup and open Target Accounts</a>
       </div>
     </section>
 
@@ -511,7 +551,7 @@
     <h3>Scoring rules changed</h3>
     <p>
       You changed the scoring rules. <strong>They are already saved</strong> and apply to every new scan.
-      Leads you already have keep their old scores until they are re-scored.
+      Leads (posts) you already have keep their old scores until they are re-scored.
     </p>
     <div class="stale-discovery-dialog-actions">
       <button type="button" id="rescore-now-btn">Re-score existing leads now</button>

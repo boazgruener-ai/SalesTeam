@@ -7,13 +7,15 @@
 // making sure a backup from the last 12 hours exists - U1), the one-time consent question for existing
 // users (U5), and pipelineStatusLine(), the one line under the Pipeline status pie, in Settings and in the bar.
 import { askConfirm } from "./confirm-dialog.js";
-import { setStatusMessage } from "./status-bar.js";
+import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 import { runAutoBackupIfDue } from "./backup-restore.js";
 import { getRunningBatch } from "./batch-jobs.js";
 import { timeBelowCeiling } from "./linkedin-touch-log.js";
 import { localDay, PIPELINE_TOUCH_CEILING, LINKEDIN_LOGGED_OUT_KEY, LINKEDIN_LOGGED_OUT_WAIT_MS, linkedinLoggedOutRecently } from "./pipeline-plan.js";
-import { getOnboardingCompletedAt } from "./storage.js";
+import { getOnboardingCompletedAt, getAccountReadiness } from "./storage.js";
+import { countReadiness, MIN_READY_TO_SCAN } from "./readiness.js";
 import { WEB_LANE_STATE_KEY } from "./web-lane.js";
+import { WEB_DISCOVERY_STATE_KEY } from "./discovery-report.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, claimConsentQuestion, CONSENT_TITLE, CONSENT_TEXT,
   PIPELINE_AUTOMATION_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_KICK_EVERY_MS,
@@ -61,6 +63,10 @@ async function paintBar(state) {
     return;
   }
   stopping = false;
+  // 1.2.0.56 (Boaz, after Finish Setup): while new accounts are being found, the bar showed "All accounts processed
+  // for today" - stale (no accounts yet) and it hid the "Finding new accounts" message (the bar shows the message set
+  // first). That message is the one that matters then, so the idle text steps aside; it comes back when it ends.
+  if (await discoveryRunning()) { clearStatusMessage(BAR_ID); return; }
   try {
     const line = await pipelineStatusLine();
     setStatusMessage(BAR_ID, { text: /^Automatic preparation/.test(line) ? line : `Automatic preparation: ${line}` });
@@ -167,10 +173,35 @@ async function webSideText() {
   return "no account needs web research just now";
 }
 
+function isWebLaneLive(lane) {
+  return Boolean(lane) && lane.status === "running" && Date.now() - (lane.heartbeatAt || 0) <= STALE_MS;
+}
+
+// 1.2.0.58 (Boaz: 13 Ready, 9 waiting for his decision, and the bar said "All accounts processed for today. Your
+// daily LinkedIn limit is now free for scanning"): say what is Ready, whether a scan can start, and what waits for
+// the user - not that everything is done.
+async function nothingLeftText() {
+  let c = null;
+  try { c = countReadiness((await getAccountReadiness()).map((r) => r.assessment)); } catch { /* fall back below */ }
+  if (!c) return "Nothing more to prepare for now.";
+  const ready = `${c.ready} account${c.ready === 1 ? "" : "s"} Ready`;
+  const scan = c.ready >= MIN_READY_TO_SCAN ? " - you can scan for leads now"
+    : c.ready > 0 ? ` - you can scan for leads (the Scanner works best from ${MIN_READY_TO_SCAN})` : "";
+  const waiting = c.needs_decision
+    ? ` · ${c.needs_decision} wait${c.needs_decision === 1 ? "s" : ""} for your decision (Decisions, in the menu)`
+    : "";
+  return `Nothing more to prepare for now: ${ready}${scan}${waiting}.`;
+}
+
+async function discoveryRunning() {
+  const d = (await chrome.storage.local.get(WEB_DISCOVERY_STATE_KEY))[WEB_DISCOVERY_STATE_KEY];
+  return Boolean(d) && d.status === "running" && Date.now() - (d.heartbeatAt || 0) <= STALE_MS;
+}
+
 // The one line under the Pipeline status pie (design 10.2, U3) and in Settings > Automation.
 export async function pipelineStatusLine() {
   const auto = await getPipelineAutomation();
-  const store = await chrome.storage.local.get([PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, LINKEDIN_LOGGED_OUT_KEY]);
+  const store = await chrome.storage.local.get([PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, LINKEDIN_LOGGED_OUT_KEY, WEB_LANE_STATE_KEY]);
   const state = store[PIPELINE_STATE_KEY];
   if (state && state.status === "running" && Date.now() - (state.heartbeatAt || 0) <= STALE_MS) {
     const what = state.auto ? "Preparing accounts" : "Pipeline run in progress";
@@ -190,8 +221,12 @@ export async function pipelineStatusLine() {
   }
   const release = await timeBelowCeiling(PIPELINE_TOUCH_CEILING);
   if (release) return `LinkedIn limit for automation reached · resumes around ${timeLabel(release)} · ${await webSideText()}`;
+  if (await discoveryRunning()) return "Researching new target accounts on the web - preparation starts on each one as it is added.";
   const idle = store[PIPELINE_IDLE_KEY];
-  if (idle && idle.reason === "nothing_left") return "All accounts processed for today. Your daily LinkedIn limit is now free for scanning.";
+  if (idle && idle.reason === "web_lane" && isWebLaneLive(store[WEB_LANE_STATE_KEY])) {
+    return `Web research is finishing ${idle.held || "some"} account${idle.held === 1 ? "" : "s"} first - the LinkedIn work (company pages, contacts) follows by itself.`;
+  }
+  if (idle && idle.reason === "nothing_left") return await nothingLeftText();
   if (idle && idle.reason === "no_backup") return "Waiting for today's backup before starting. It is made while a SalesTeam page is open.";
   return "Automatic preparation is on. It starts on its own while Chrome is open.";
 }
@@ -249,7 +284,7 @@ export async function initPipelineStatus() {
   setInterval(async () => { const s = await read(); if (s && s.status === "running") render(s); }, 15000);
   // The waiting text depends on more than the run record (the automation switch, a hold, a job of the user's,
   // the LinkedIn visits freeing up), so it is repainted when those change and once a minute.
-  const waitKeys = [PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_AUTOMATION_KEY, "activeBatchJob", WEB_LANE_STATE_KEY];
+  const waitKeys = [PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, PIPELINE_AUTOMATION_KEY, "activeBatchJob", WEB_LANE_STATE_KEY, WEB_DISCOVERY_STATE_KEY];
   chrome.storage.onChanged.addListener(async (changes, area) => {
     if (area === "local" && waitKeys.some((k) => changes[k])) paintBar(await read());
   });

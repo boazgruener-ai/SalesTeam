@@ -4,6 +4,7 @@
 // dialog (mass status changes with a confirmation step and one-level undo)
 // and the "Prioritize Unscored Leads" action.
 import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { confirmIfCostly } from "./api-usage.js";
 import { guardBatchStart, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -152,7 +153,7 @@ document.getElementById("embedded-page-close-btn").addEventListener("click", hid
 document.getElementById("app-nav-brand-name").addEventListener("click", hideEmbeddedPage);
 // 20th round of direct feedback (2026-09-19) - see the HTML's own comment
 // on this button for the full reasoning: a findable, self-referential way
-// back to Posts Dashboard's own real content, matching target-accounts.js's
+// back to Leads Dashboard's own real content, matching target-accounts.js's
 // own "Target Accounts" self tab.
 document.getElementById("open-posts-dashboard-self-btn").addEventListener("click", hideEmbeddedPage);
 
@@ -164,6 +165,8 @@ document.getElementById("open-target-accounts-btn").addEventListener("click", ()
 document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
+document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
@@ -617,8 +620,8 @@ function renderAllPieCharts() {
   const last7 = relevantLeads.filter((l) => leadDate(l) >= since(7));
   const last30 = relevantLeads.filter((l) => leadDate(l) >= since(30));
   const onSliceClick = (status) => {
-    statusFilterSelect.value = status;
-    statusFilter = status;
+    setStatusFilter(status);
+    saveFilterSortState();
     renderTableFromScratch();
   };
   renderPieChart(document.getElementById("pie-7"), last7, onSliceClick);
@@ -817,7 +820,7 @@ function makeIconBtn(icon, title, onClick, extraClass) {
 
 // Row-level kebab menu (PRD 6.20 Phase 10, 2026-09-17) - replaces the 6
 // always-visible icon buttons this cell used to render, per the user's own
-// observation that 6 icons per row (Posts Dashboard) and no per-row actions
+// observation that 6 icons per row (Leads Dashboard) and no per-row actions
 // at all (Target Accounts/Contacts) were two different, inconsistent
 // patterns for the same underlying need. Same action set as before, purely
 // collapsed into a menu - no behavior change. Same open/position/close-on-
@@ -931,7 +934,7 @@ const COLUMNS = [
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
   { id: "location", label: "Location", width: 130, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
 ];
-// 18th round of direct feedback (2026-09-19): "only in the Posts Dashboard,
+// 18th round of direct feedback (2026-09-19): "only in the Leads Dashboard,
 // the Kebabs have a column header called Action[s]... this whole back and
 // forth... is telling me that the code... is not re-using common
 // components" - "actions" is no longer just another COLUMNS entry (a label,
@@ -1049,6 +1052,107 @@ function loadFilterSortState() {
     // ignore a corrupted/missing saved blob - defaults already set above
   }
   searchInput.value = searchText;
+  foldStatusColumnFilter();
+}
+
+// ---- One status filter, not two (1.2.1 step 7) ----
+// Reported 2026-10-02: the top Status dropdown said "All statuses" while a saved Status COLUMN filter ("Responded")
+// hid every lead. The two now never disagree: a column filter naming a status exactly becomes the dropdown's value,
+// and any other Status column filter shows in the dropdown as its own entry, so choosing a status there replaces it.
+const STATUS_COLUMN_OPTION = "__status-column";
+
+function foldStatusColumnFilter() {
+  const filter = columnFilters.status;
+  if (!hasActiveFilter(filter)) return;
+  const exact = !filter.emptyOnly && LEAD_STATUSES.find((st) => st.toLowerCase() === filter.text.trim().toLowerCase());
+  if (exact) {
+    statusFilter = exact;
+    columnFilters.status = null;
+  } else {
+    statusFilter = "all";
+  }
+}
+
+function setStatusFilter(value) {
+  statusFilter = value;
+  columnFilters.status = null;
+}
+
+function syncStatusFilterSelect() {
+  statusFilterSelect.querySelector(`option[value="${STATUS_COLUMN_OPTION}"]`)?.remove();
+  const filter = columnFilters.status;
+  if (hasActiveFilter(filter)) {
+    const opt = document.createElement("option");
+    opt.value = STATUS_COLUMN_OPTION;
+    opt.textContent = filter.emptyOnly ? "Status column filter: empty only" : `Status column filter: "${filter.text}"`;
+    statusFilterSelect.appendChild(opt);
+    statusFilterSelect.value = STATUS_COLUMN_OPTION;
+    return;
+  }
+  statusFilterSelect.value = statusFilter;
+}
+
+// ---- Active filters, always visible (1.2.1 step 7) ----
+// Every filter that hides leads, as a chip above the table with its own remove button, plus Clear all.
+function activeFilterChips() {
+  const chips = [];
+  if (statusFilter !== "all") chips.push({ label: `Status: ${statusFilter}`, clear: () => { statusFilter = "all"; } });
+  if (searchText.trim()) {
+    chips.push({ label: `Search: "${searchText.trim()}"`, clear: () => { searchText = ""; searchInput.value = ""; } });
+  }
+  for (const col of COLUMNS) {
+    const filter = columnFilters[col.id];
+    if (!hasActiveFilter(filter)) continue;
+    chips.push({
+      label: filter.emptyOnly ? `${col.label}: empty only` : `${col.label}: "${filter.text}"`,
+      clear: () => { columnFilters[col.id] = null; },
+    });
+  }
+  return chips;
+}
+
+function clearAllFilters() {
+  statusFilter = "all";
+  searchText = "";
+  searchInput.value = "";
+  columnFilters = {};
+  saveFilterSortState();
+  renderTableFromScratch();
+}
+
+function renderActiveFiltersBar() {
+  const bar = document.getElementById("active-filters-bar");
+  const chips = activeFilterChips();
+  bar.innerHTML = "";
+  bar.hidden = chips.length === 0;
+  if (chips.length === 0) return;
+  const title = document.createElement("span");
+  title.className = "active-filters-title";
+  title.textContent = "Filters on:";
+  bar.appendChild(title);
+  for (const chip of chips) {
+    const chipEl = document.createElement("span");
+    chipEl.className = "filter-chip";
+    chipEl.textContent = chip.label;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "filter-chip-remove";
+    x.textContent = "\u2715";
+    x.title = `Remove the filter ${chip.label}`;
+    x.addEventListener("click", () => {
+      chip.clear();
+      saveFilterSortState();
+      renderTableFromScratch();
+    });
+    chipEl.appendChild(x);
+    bar.appendChild(chipEl);
+  }
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "filter-clear-all-btn";
+  clearBtn.textContent = "Clear all";
+  clearBtn.addEventListener("click", clearAllFilters);
+  bar.appendChild(clearBtn);
 }
 
 function saveHiddenColumns() {
@@ -1203,6 +1307,7 @@ function toggleColumnMenu(column, anchorEl) {
 
     const applyFilter = () => {
       columnFilters[column.id] = { text: filterInput.value.trim(), emptyOnly: emptyOnlyCheckbox.checked };
+      if (column.id === "status") foldStatusColumnFilter();
       saveFilterSortState();
       closeColumnMenu();
       renderTableFromScratch();
@@ -1375,6 +1480,7 @@ function renderTableHead() {
     }
 
     if (hasActiveFilter(columnFilters[column.id])) {
+      th.classList.add("col-filtered");
       const filterDot = document.createElement("span");
       filterDot.className = "filter-active-dot";
       filterDot.title = columnFilters[column.id].emptyOnly ? "Filtered: empty only" : `Filtered: "${columnFilters[column.id].text}"`;
@@ -1566,6 +1672,8 @@ function buildGroupSummaryRow(group) {
 function renderTable() {
   renderColgroup();
   renderTableHead();
+  syncStatusFilterSelect();
+  renderActiveFiltersBar();
 
   const leads = applyFilterSortSearch();
   // Say WHAT is hiding leads, not just "filtered": the default view hides Irrelevant leads (those the negative
@@ -1590,7 +1698,22 @@ function renderTable() {
     const td = document.createElement("td");
     td.colSpan = visibleColumns().length + 1;
     td.className = "empty-state";
-    td.textContent = allLeads.length === 0 ? "No leads yet. Run a scan from the side panel." : "No leads match your filters.";
+    const chips = activeFilterChips();
+    if (allLeads.length === 0) {
+      td.textContent = "No leads yet. Run a scan from the side panel.";
+    } else if (chips.length > 0) {
+      // Say which filter hides them and how many, with the way out right there (1.2.1 step 7).
+      td.textContent = `All ${countBase} lead${countBase === 1 ? " is" : "s are"} hidden by ` +
+        `${chips.length === 1 ? "this filter" : "these filters"}: ${chips.map((c) => c.label).join("; ")}. `;
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "filter-clear-all-btn";
+      clearBtn.textContent = chips.length === 1 ? "Clear the filter" : "Clear all filters";
+      clearBtn.addEventListener("click", clearAllFilters);
+      td.appendChild(clearBtn);
+    } else {
+      td.textContent = "No leads to show - Irrelevant leads are hidden. Tick \"Show Irrelevant\" to see them.";
+    }
     tr.appendChild(td);
     tbody.appendChild(tr);
     syncTopScrollWidth();
@@ -1996,11 +2119,6 @@ document.getElementById("detail-mentor-clear-btn").addEventListener("click", asy
 // already shows visually instead of in the file).
 // ---------------------------------------------------------------------
 
-function csvEscape(value) {
-  const text = String(value ?? "");
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
 function exportLeadsToCsv(leads, filenameTag) {
   if (leads.length === 0) {
     alert("No leads to export.");
@@ -2021,7 +2139,9 @@ function exportLeadsToCsv(leads, filenameTag) {
     lead.priorityReason || "",
     leadCreatorUrl(lead) || (lead.type === "job" ? lead.jobUrl : lead.postUrl) || "",
   ]);
-  const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\r\n");
+  // Same file shape as the accounts/contacts exports: empty columns left out, sparse ones last, UTF-8 that Excel reads.
+  const compact = compactCsvColumns(headers, rows);
+  const csv = toCsv(compact.headers, compact.rows);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -2546,7 +2666,8 @@ searchInput.addEventListener("input", (event) => {
 });
 
 statusFilterSelect.addEventListener("change", (event) => {
-  statusFilter = event.target.value;
+  if (event.target.value === STATUS_COLUMN_OPTION) return;
+  setStatusFilter(event.target.value);
   saveFilterSortState();
   renderTableFromScratch();
 });
@@ -2667,7 +2788,7 @@ tableSectionEl.addEventListener("scroll", () => {
 
 // 23rd round of direct feedback (2026-09-19) - see target-accounts.js's
 // own copy of this comment for the full reasoning. Every OTHER page's own
-// copy of "Posts Dashboard" now duplicates these same action buttons (not
+// copy of "Leads Dashboard" now duplicates these same action buttons (not
 // just the base "open this page" button) - each one links here with
 // "#action=X" (see those pages' own HTML comments), triggered
 // automatically on load with a real .click() (so any of these buttons'

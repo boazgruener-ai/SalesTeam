@@ -15,7 +15,8 @@
 // moved here from Settings the same day.
 import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
-import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
   getTargetAccountsWorkbook,
@@ -354,7 +355,7 @@ const navGroupContactsEl = document.getElementById("nav-group-contacts");
 // simple pages (Advisors/Activity Log/Help - "Pipeline Overview" removed
 // entirely per the same feedback, see below) have no nav shell of their
 // own, so embedding just shows their real content. The 3 "big" pages
-// (Target Accounts/Posts Dashboard/Scanner/Settings) DO have their own
+// (Target Accounts/Leads Dashboard/Scanner/Settings) DO have their own
 // full #app-shell/#app-nav - embedding one as-is would nest a second
 // sidebar inside this page's own. Fixed with a `?embedded=1` query param
 // each of those pages' own JS checks for (see this file's own `route()`/
@@ -386,13 +387,13 @@ function showEmbeddedPage(page, title) {
   embeddedPageTitleEl.textContent = title;
   embeddedPageBarEl.hidden = true;
   // 26th round of direct feedback (2026-09-19): "Re-score All Priorities...
-  // only works once and never again, unless I click Open Posts Dashboard
+  // only works once and never again, unless I click Open Leads Dashboard
   // again, which seems to reset/unfreeze it." Root cause: re-clicking the
   // SAME action item twice in a row sets the iframe's src to the EXACT
   // SAME URL it already has - assigning an identical src is a total no-op
   // in browsers (no navigation, not even a hashchange event), so neither
   // init() nor the hashchange listener ever get a second chance to re-run
-  // the action. "Open Posts Dashboard" only "fixed" it by accident, since
+  // the action. "Open Leads Dashboard" only "fixed" it by accident, since
   // its own hash always differs from whatever action was last triggered,
   // which is always a real, distinct navigation. Bounced through
   // about:blank first whenever the requested URL matches what's already
@@ -456,14 +457,14 @@ if (new URLSearchParams(location.search).has("embedded")) {
   document.getElementById("app-shell").classList.add("embedded-mode");
 }
 
-document.getElementById("open-dashboard-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html", "Posts Dashboard"));
-document.getElementById("nav-prioritize-unscored-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=prioritize-unscored", "Posts Dashboard"));
-document.getElementById("nav-rescore-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=rescore-all", "Posts Dashboard"));
-document.getElementById("nav-extract-companies-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies", "Posts Dashboard"));
-document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Posts Dashboard"));
-document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Posts Dashboard"));
-document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Posts Dashboard"));
-document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Posts Dashboard"));
+document.getElementById("open-dashboard-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html", "Leads Dashboard"));
+document.getElementById("nav-prioritize-unscored-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=prioritize-unscored", "Leads Dashboard"));
+document.getElementById("nav-rescore-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=rescore-all", "Leads Dashboard"));
+document.getElementById("nav-extract-companies-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies", "Leads Dashboard"));
+document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Leads Dashboard"));
+document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Leads Dashboard"));
+document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Leads Dashboard"));
+document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Leads Dashboard"));
 document.getElementById("open-scanner-page-btn").addEventListener("click", () => showEmbeddedPage("scanner.html", "Scanner"));
 
 document.getElementById("open-settings-setup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#setup-section", "Settings"));
@@ -1031,6 +1032,8 @@ function rawValue(company, column) {
     return s ? (column.id === "seniority" ? s.label : s.priority) : null;
   }
   if (company.fullName == null && column.id === "globalEmployees") return effectiveEmployees(company).value;
+  // A contact found on the web keeps the page it was found on as primarySourceUrl (web lane); show it as its Source.
+  if (company.fullName != null && column.id === "sourceUrl") return company.sourceUrl || company.primarySourceUrl || null;
   return company[column.id];
 }
 
@@ -1896,6 +1899,7 @@ function renderTableHead() {
       th.appendChild(arrow);
     }
     if (columnFilters[column.id]?.text) {
+      th.classList.add("col-filtered");
       const dot = document.createElement("span");
       dot.className = "filter-active-dot";
       const f = columnFilters[column.id];
@@ -1992,8 +1996,91 @@ function syncTopScrollWidth() {
   tableScrollTopFillerEl.style.width = `${companiesTableEl.scrollWidth}px`;
 }
 
+// ---- Active filters, always visible (1.2.1 step 7, same as the Leads Dashboard) ----
+// The search and every column filter as a chip above the table, each with its own remove button, plus Clear all;
+// and when they hide every row, the table says which filters do it instead of showing nothing.
+function tableFilterChips(searchEl, filters, columns) {
+  const chips = [];
+  if (searchEl.value.trim()) chips.push({ label: `Search: "${searchEl.value.trim()}"`, clear: () => { searchEl.value = ""; } });
+  for (const column of columns) {
+    const f = filters[column.id];
+    if (!f?.text) continue;
+    chips.push({
+      label: `${column.label}: ${f.exclude ? "not " : ""}"${f.text}"`,
+      clear: () => { filters[column.id] = null; },
+    });
+  }
+  return chips;
+}
+
+function clearTableFilters(searchEl, filters) {
+  searchEl.value = "";
+  for (const id of Object.keys(filters)) filters[id] = null;
+}
+
+function renderFilterChipsBar(barEl, chips, onChange, clearAll) {
+  barEl.innerHTML = "";
+  barEl.hidden = chips.length === 0;
+  if (chips.length === 0) return;
+  const title = document.createElement("span");
+  title.className = "active-filters-title";
+  title.textContent = "Filters on:";
+  barEl.appendChild(title);
+  for (const chip of chips) {
+    const chipEl = document.createElement("span");
+    chipEl.className = "filter-chip";
+    chipEl.textContent = chip.label;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "filter-chip-remove";
+    x.textContent = "\u2715";
+    x.title = `Remove the filter ${chip.label}`;
+    x.addEventListener("click", () => { chip.clear(); onChange(); });
+    chipEl.appendChild(x);
+    barEl.appendChild(chipEl);
+  }
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "filter-clear-all-btn";
+  clearBtn.textContent = "Clear all";
+  clearBtn.addEventListener("click", () => { clearAll(); onChange(); });
+  barEl.appendChild(clearBtn);
+}
+
+function filteredEmptyRow(colSpan, total, noun, chips, onClear) {
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = colSpan;
+  td.className = "filtered-empty-state";
+  td.textContent = `All ${total} ${noun} are hidden by ${chips.length === 1 ? "this filter" : "these filters"}: ` +
+    `${chips.map((c) => c.label).join("; ")}. `;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "filter-clear-all-btn";
+  btn.textContent = chips.length === 1 ? "Clear the filter" : "Clear all filters";
+  btn.addEventListener("click", onClear);
+  td.appendChild(btn);
+  tr.appendChild(td);
+  return tr;
+}
+
+function onAccountFiltersChanged() {
+  currentPage = 1;
+  saveFilterSortState();
+  renderTable();
+}
+
+function onContactFiltersChanged() {
+  contactCurrentPage = 1;
+  saveContactFilterSortState();
+  renderContactsTable();
+}
+
 function renderTable() {
   const companies = sortedFilteredCompanies();
+  const accountChips = tableFilterChips(searchInputEl, columnFilters, COMPANY_COLUMNS);
+  renderFilterChipsBar(document.getElementById("accounts-active-filters-bar"), accountChips, onAccountFiltersChanged,
+    () => clearTableFilters(searchInputEl, columnFilters));
   resultCountEl.textContent = `${companies.length} of ${workbook.companies.length} companies`;
   const cols = visibleColumns();
 
@@ -2015,6 +2102,12 @@ function renderTable() {
   paginationBottomEl.appendChild(buildPaginationBar(companies.length));
 
   tbodyEl.innerHTML = "";
+  if (companies.length === 0 && workbook.companies.length > 0 && accountChips.length > 0) {
+    tbodyEl.appendChild(filteredEmptyRow(cols.length + 2, workbook.companies.length, "accounts", accountChips, () => {
+      clearTableFilters(searchInputEl, columnFilters);
+      onAccountFiltersChanged();
+    }));
+  }
   for (const company of pageCompanies) {
     const companyKey = normalizeCompanyName(company.company);
     const tr = document.createElement("tr");
@@ -2082,7 +2175,7 @@ const CONTACT_LIST_COLUMNS = [
   // (findLeadsForContact, same author+company matching the pie already uses), so the two can
   // never disagree. There is deliberately no per-contact status EDITOR - status lives on a lead
   // (a real Post/Job, the actual communication event), not on the contact itself; change it
-  // from that lead's own detail page on the Posts Dashboard.
+  // from that lead's own detail page on the Leads Dashboard.
   { id: "contactStatus", label: "Status", visible: true, pill: true },
   { id: "jobTitle", label: "Job Title", visible: true },
   { id: "function", label: "Function", visible: true },
@@ -2422,6 +2515,7 @@ function renderContactsTableHead() {
       th.appendChild(arrow);
     }
     if (contactColumnFilters[column.id]?.text) {
+      th.classList.add("col-filtered");
       const dot = document.createElement("span");
       dot.className = "filter-active-dot";
       const f = contactColumnFilters[column.id];
@@ -2456,6 +2550,9 @@ function hasUnreviewedPostForContact(contact) {
 
 function renderContactsTable() {
   const contacts = sortedFilteredContacts();
+  const contactChips = tableFilterChips(contactsSearchInputEl, contactColumnFilters, CONTACT_LIST_COLUMNS);
+  renderFilterChipsBar(document.getElementById("contacts-active-filters-bar"), contactChips, onContactFiltersChanged,
+    () => clearTableFilters(contactsSearchInputEl, contactColumnFilters));
   contactsResultCountEl.textContent = `${contacts.length} of ${workbook.contacts.length} contacts`;
   const cols = visibleContactColumns();
 
@@ -2475,6 +2572,12 @@ function renderContactsTable() {
   contactsPaginationBottomEl.appendChild(buildContactsPaginationBar(contacts.length));
 
   contactsTbodyEl.innerHTML = "";
+  if (contacts.length === 0 && workbook.contacts.length > 0 && contactChips.length > 0) {
+    contactsTbodyEl.appendChild(filteredEmptyRow(cols.length + 2, workbook.contacts.length, "contacts", contactChips, () => {
+      clearTableFilters(contactsSearchInputEl, contactColumnFilters);
+      onContactFiltersChanged();
+    }));
+  }
   for (const contact of pageContacts) {
     const contactKey = contactKeyFor(contact.company, contact.fullName);
     const tr = document.createElement("tr");
@@ -2703,7 +2806,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // Target Accounts Dashboard stats (PRD 6.19) - computed over the FULL
 // company set, not whatever's currently searched/filtered in the table
-// below, same reasoning as the Posts Dashboard's own pies (a 7-day/30-day/
+// below, same reasoning as the Leads Dashboard's own pies (a 7-day/30-day/
 // all-time snapshot, independent of the leads table's own filters) - these
 // are meant to answer "what does the whole target list look like," not
 // "what does my current search look like." Recomputed on every
@@ -3990,7 +4093,7 @@ function buildOverviewCard(fields) {
     } else {
       dd.textContent = value;
       if (expandable) {
-        // Same click-to-expand/collapse pattern as the Posts Dashboard's
+        // Same click-to-expand/collapse pattern as the Leads Dashboard's
         // own truncated cells (dashboard.js's contentCell/.content-cell) -
         // reported directly, asked for the identical behavior here: a
         // truncated field's full value opens on click, growing in place,
@@ -5553,14 +5656,20 @@ function openWebFindingsReview(companyKey, { onSaved } = {}) {
   const context = document.getElementById("web-research-apply-context");
   context.innerHTML = "";
   const shownKeys = new Set(proposals.map((p) => p.key));
+  // 1.2.0.63 (Boaz, Coop): when employees or revenue are asked about, all four size figures - employees and
+  // revenue, worldwide and local - are always on screen, empty ones too, first; they only make sense together.
+  const SIZE_KEYS = ["globalEmployees", "swissEmployees", "globalRevenue", "swissRevenue"];
+  const sizeAsked = proposals.some((p) => SIZE_KEYS.includes(p.key));
   const related = WEB_FINDING_FIELDS
     .filter((f) => !shownKeys.has(f.key))
     .map((f) => ({
+      key: f.key,
       label: f.label,
       found: saved?.data ? f.from(saved.data) : null,
       current: effective[f.key],
     }))
-    .filter((row) => !isBlankFinding(row.found) || !isBlankFinding(row.current));
+    .filter((row) => (sizeAsked && SIZE_KEYS.includes(row.key)) || !isBlankFinding(row.found) || !isBlankFinding(row.current))
+    .sort((a, b) => Number(sizeAsked && SIZE_KEYS.includes(b.key)) - Number(sizeAsked && SIZE_KEYS.includes(a.key)));
   if (related.length > 0) {
     const caption = document.createElement("p");
     caption.className = "page-subtitle";
@@ -6061,6 +6170,75 @@ document.getElementById("contact-back-link").addEventListener("click", (e) => {
   location.hash = "contacts";
 });
 
+// ---- Accounts-only / contacts-only CSV (1.2.1 step 7) ----
+// One spreadsheet per table, in SalesTeam's own column names (the HubSpot export above uses HubSpot's). It holds the
+// rows the table shows now - its search and column filters applied, every page, in its sort order - and every
+// column, hidden ones included, with the same values the cells show.
+function tableCsv(columns, rows) {
+  const headers = [];
+  for (const column of columns) {
+    headers.push(column.label);
+    if (column.currencyField) headers.push(`${column.label} Currency`);
+  }
+  const lines = rows.map((row) => {
+    const cells = [];
+    for (const column of columns) {
+      let v = column.id === "companyType" ? localizeTypeWording(rawValue(row, column)) : rawValue(row, column);
+      // A workbook date is an Excel day number (46276): written as a date (2026-09-10) Excel reads as one.
+      if (column.date && typeof v === "number") v = new Date(Date.UTC(1899, 11, 30) + v * 86400000).toISOString().slice(0, 10);
+      // Stored as 1-3; the table and the file both say what it means.
+      if (column.id === "seniorityPriority" && v != null && v !== "") v = SENIORITY_PRIORITY_LABELS[v] || v;
+      cells.push(v == null ? "" : v);
+      if (column.currencyField) cells.push(row[column.currencyField] || "");
+    }
+    return cells;
+  });
+  const compact = compactCsvColumns(headers, lines);
+  return toCsv(compact.headers, compact.rows);
+}
+
+async function exportTableCsv(kind) {
+  const accounts = kind === "accounts";
+  const all = accounts ? workbook.companies.length : workbook.contacts.length;
+  let rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+  const noun = (n) => (accounts ? `account${n === 1 ? "" : "s"}` : `contact${n === 1 ? "" : "s"}`);
+  if (all === 0) {
+    await askConfirm(`There are no ${noun(0)} to export yet.`, { okLabel: "OK", cancelLabel: "Close" });
+    return;
+  }
+  // A filter is on (Boaz, 2026-10-02: a forgotten saved filter made the file look half empty): always ask which.
+  const chips = tableFilterChips(accounts ? searchInputEl : contactsSearchInputEl,
+    accounts ? columnFilters : contactColumnFilters, accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS);
+  if (chips.length > 0) {
+    const choices = [{ value: "all", label: `All ${all} ${noun(all)}` }];
+    if (rows.length > 0) choices.push({ value: "shown", label: `Only the ${rows.length} filtered` });
+    const scope = await askChoice(
+      `A filter is on, so the table shows ${rows.length} of ${all} ${noun(all)}:\n${chips.map((c) => `  - ${c.label}`).join("\n")}\n\n` +
+      "Which do you want to export?", choices);
+    if (!scope) return;
+    if (scope === "all") {
+      // Every row in the table's sort order: the filtered rows' order applied to all of them.
+      const savedSearch = (accounts ? searchInputEl : contactsSearchInputEl).value;
+      const savedFilters = accounts ? { ...columnFilters } : { ...contactColumnFilters };
+      clearTableFilters(accounts ? searchInputEl : contactsSearchInputEl, accounts ? columnFilters : contactColumnFilters);
+      rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+      (accounts ? searchInputEl : contactsSearchInputEl).value = savedSearch;
+      Object.assign(accounts ? columnFilters : contactColumnFilters, savedFilters);
+    }
+  }
+  const csv = tableCsv(accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS, rows);
+  const filename = `SalesTeam-${accounts ? "accounts" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
+  appendActivityLog({ actor: "user", action: "csv_exported", label: `Exported ${rows.length} ${noun(rows.length)} to ${filename}` });
+  await askConfirm(`Saved ${rows.length} ${noun(rows.length)} to your Downloads folder as ${filename}. It opens in Excel.`, { okLabel: "OK", cancelLabel: "Close" });
+}
+
+document.getElementById("export-accounts-csv-page-btn").addEventListener("click", () => exportTableCsv("accounts"));
+document.getElementById("export-contacts-csv-page-btn").addEventListener("click", () => {
+  showView("contactsList");
+  exportTableCsv("contacts");
+});
+
 // ---- HubSpot export / import (by file) ----
 const HUBSPOT_SCOPE_RANK = { P1: 1, P2: 2, P3: 3 };
 
@@ -6548,7 +6726,7 @@ window.addEventListener("hashchange", () => {
 // Reported 2026-09-22 and repeatable: "Target Accounts" is <a href="#"> (the empty hash this page
 // normally already sits on) and "Target Contacts" is <a href="#contacts">, and both were routed by
 // hashchange alone. Clicking the one whose hash is already set fires NO hashchange, so nothing ran:
-// with another page embedded (Posts Dashboard, say) the embedded page stayed up and the click looked
+// with another page embedded (Leads Dashboard, say) the embedded page stayed up and the click looked
 // completely dead until a browser refresh. settings.js already carries this same fix for its own
 // #app-nav links; these two tabs were the one place it was missed. The timeout lets the browser apply
 // the href's hash first, so route() reads the intended one.
@@ -6580,6 +6758,9 @@ const ACTION_DIALOG_IDS = {
 };
 function openActionFromHash() {
   const action = new URLSearchParams(location.hash.slice(1)).get("action");
+  // The CSV exports have no dialog of their own (another page's menu opens them here).
+  if (action === "export-accounts-csv") { exportTableCsv("accounts"); return; }
+  if (action === "export-contacts-csv") { showView("contactsList"); exportTableCsv("contacts"); return; }
   const dialogId = ACTION_DIALOG_IDS[action];
   if (!dialogId) return;
   // 25th round of direct feedback (2026-09-19): "I even managed to get 2

@@ -603,7 +603,8 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
     "A lead may carry a `targetAccountSignal` - independent research on that company's investment/maturity " +
     "from a separate target-account list, with a priorityLabel (e.g. \"Very High\", " +
-    "\"High - Provisional\") and a 0-100 score. For a post lead (a real, named individual you can actually " +
+    "\"High - Provisional\") and a 0-100 score - or, for an account without that research, only SalesTeam's own " +
+    "account priority (salesTeamPriority, P1 best to P5). For a post lead (a real, named individual you can actually " +
     "message), treat it as a real, meaningful positive signal toward a higher priority - weigh it more " +
     "heavily when the label isn't marked Provisional and the score is high. For a job lead specifically, " +
     "weigh it much more conservatively: the \"creator\" is the company itself, not an individual, so there is " +
@@ -638,8 +639,9 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
 function summarizeTargetAccountSignal(signal) {
   if (!signal) return undefined;
   return {
-    priorityLabel: signal.priorityLabel,
-    score: signal.score,
+    priorityLabel: signal.priorityLabel || undefined,
+    score: signal.score ?? undefined,
+    salesTeamPriority: signal.priorityLabel ? undefined : signal.salesTeamPriority || undefined,
     topInitiatives: signal.topInitiatives || undefined,
   };
 }
@@ -2056,7 +2058,8 @@ export async function readDiscoveryListing(listing, ctx, settings, { signal } = 
     "You read a listing page and copy its rows. Open the page with web fetch; if the list continues on a next page and " +
     "fewer rows than asked were found, open that next page too. Copy only what the page states - never add a company, a " +
     "number or a website the page does not give. Numbers as plain numbers (no units, no separators; \"1.2 bn\" becomes " +
-    "1200000000)." +
+    "1200000000). When a column header gives the unit - \"Revenue (USD millions)\", \"in CHF m\", \"Mio.\" - multiply " +
+    "into plain units (62,030 under \"USD millions\" becomes 62030000000) and take the currency from the header." +
     "\nReply with ONE short line saying what the page lists, then as the very last part DATA: followed by JSON: " +
     "{\"rows\":[" + discoveryRowKeys(ctx.industryNames) + ", ...]} - in the page's own order, keeping its rank.";
   const user = `Listing page: ${listing.url}\n${listing.what ? `It lists: ${listing.what}\n` : ""}` +
@@ -2125,7 +2128,11 @@ export async function researchSeller(seller, opts, settings, { signal, onTool, o
     "You research a B2B company's own website so that its sales prospecting tool can be set up for it. Open the home " +
     "page first with web fetch, then the pages that answer the questions: about, products / services / solutions, " +
     "customers / case studies / references, partners, resources or downloads, contact or locations. Use web search only " +
-    "for what the site does not say (mainly competitors). Report only what a page states: every item carries the URL " +
+    "for what the site does not say. For competitors, search for the company's competitors and alternatives (e.g. " +
+    "\"<company> competitors\", and its main service in its country) and list every competitor the results name, " +
+    "each with its website when known - all of them, up to 15, not just the first. For resources, open the site's resources, downloads, events or " +
+    "insights page and list every item it shows that the company offers (report, white paper, guide, webinar, event, " +
+    "free assessment or demo), each with its own page - all of them, not a sample. Report only what a page states: every item carries the URL " +
     "of the page it came from, never invent a URL, a company, a resource or a number, and leave a list empty rather " +
     "than guess. Answer for the company named below: when its website also presents a parent group or sister " +
     "companies, report only what applies to that company itself, and mark countries where only the group works as " +
@@ -2138,7 +2145,7 @@ export async function researchSeller(seller, opts, settings, { signal, onTool, o
     (opts.hint ? `\nThe user adds: ${String(opts.hint).slice(0, 500)}` : "");
   const call = await discoveryCall({
     system, user,
-    fetchUses: focused ? 4 : 6, fetchTokens: 8000, searchUses: focused ? 2 : 3, maxTokens: 6000,
+    fetchUses: focused ? 4 : 8, fetchTokens: 8000, searchUses: focused ? 2 : 4, maxTokens: 6000,
     label: focused ? "Setup - research the seller again" : "Setup - research the seller",
   }, settings, { signal, onTool, onCost });
   const data = discoveryData(call.text);

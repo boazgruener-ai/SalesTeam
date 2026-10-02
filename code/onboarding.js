@@ -36,8 +36,11 @@ import {
   clearDiscoveredContacts,
   getPrioritizationRules,
   savePrioritizationRuleOverride,
-  getTargetAccountScoreThreshold,
-  saveTargetAccountScoreThreshold,
+  getJobRulesMinConfidence,
+  saveJobRulesMinConfidence,
+  getWebFindingsArbitration,
+  saveWebFindingsArbitration,
+  CONFIDENCE_LEVELS,
   getPostPrioritizationRules,
   savePostPrioritizationRules,
   getTopics,
@@ -52,6 +55,7 @@ import {
 import { INITIATIVE_STAGE_LABELS, normalizeInitiativeStages, normalizeCompletionTargets, TARGET_LIMITS } from "./pipeline-plan.js";
 import { onboardingEstimate } from "./onboarding-estimate.js";
 import { researchSeller, SELLER_RESEARCH_ESTIMATE_USD, sanitizeApiKey } from "./agent-shared.js";
+import { RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
 import {
   buildSetupProposals, PROPOSAL_STEP_KEYS, stepsRebuiltBy, initiallyTicked, mergeChecklistWithLines, offerLine, sourceLabel,
 } from "./setup-proposals.js";
@@ -67,10 +71,17 @@ import { getDiscoveryQueueState, resetDiscoveryQueue } from "./discovery-queue.j
 // same Low/Medium/High labels, same numeric values, everywhere it's used.
 const PRIORITY_LABELS = { 1: "Low", 2: "Medium", 3: "High" };
 
-const STEP_ORDER = [
+const ALL_STEPS = [
   "about", "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
-  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets", "finish",
+  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets",
 ];
+// 1.2.0.51 (Boaz): technical steps a new user need not decide are not in the first Setup (their defaults apply);
+// Change Settings lists them last, under "Advanced".
+const ADVANCED_STEPS = ["priority", "leads-prioritization", "aliases"];
+const BASIC_STEPS = ALL_STEPS.filter((s) => !ADVANCED_STEPS.includes(s));
+const STEP_ORDER = new URLSearchParams(location.search).get("mode") === "settings"
+  ? [...BASIC_STEPS, ...ADVANCED_STEPS, "finish"]
+  : [...BASIC_STEPS, "finish"];
 const STEP_TITLES = {
   about: "About you", location: "Location", size: "Size", industry: "Industry", priority: "Discovery Prioritization",
   "leads-prioritization": "Leads Prioritization",
@@ -196,7 +207,17 @@ function leaveWizard() {
   afterSetupSaved().finally(leaveWizardNow);
 }
 
+// 1.2.0.49 (Boaz): Finish used to land on Settings' Setup card ("Completed", yet "Continue Setup…" below it). A
+// finished first setup goes to the Target Accounts Dashboard instead, where the list it just started is being built.
+let setupJustFinished = false;
+
 function leaveWizardNow() {
+  if (setupJustFinished && !settingsMode) {
+    const accountsUrl = chrome.runtime.getURL("target-accounts.html");
+    if (window.top !== window) window.top.location.href = accountsUrl;
+    else window.location.href = accountsUrl;
+    return;
+  }
   if (window.top !== window) {
     // Same page, just closes the embedded wizard (works whatever the page's query string). The PARENT is the Settings
     // page that hosts this frame - when Settings itself is embedded in another page (opened from the Posts or
@@ -220,7 +241,9 @@ function updateNavBar(step, index) {
   } else {
     navBar.hidden = false;
     el("nav-back-btn").hidden = index === 0;
-    el("nav-exit-btn").hidden = false;
+    // 1.2.0.41: on a step, "Save & Exit to menu" already leaves - a second exit button only added doubt. It stays on
+    // the finish screen, which has no Save & Exit.
+    el("nav-exit-btn").hidden = !settingsMode;
     el("nav-save-exit-btn").hidden = false;
     el("nav-save-btn").hidden = false;
     // Change Settings ends at the last setting: there is no Setup complete step after it.
@@ -246,6 +269,12 @@ function renderWizardStepList() {
   listEl.innerHTML = "";
   STEP_ORDER.forEach((step, index) => {
     if (step === "finish") return;
+    if (settingsMode && step === ADVANCED_STEPS[0]) {
+      const label = document.createElement("div");
+      label.className = "wizard-step-list-group";
+      label.textContent = "Advanced";
+      listEl.appendChild(label);
+    }
     const btn = document.createElement("button");
     btn.type = "button";
     btn.dataset.step = step;
@@ -260,6 +289,18 @@ function renderWizardStepList() {
     });
     listEl.appendChild(btn);
   });
+  if (settingsMode) appendAdvancedCardLinks(listEl);
+}
+
+// Change Settings' Advanced group also names the two advanced Settings cards; they open in the Settings page.
+function appendAdvancedCardLinks(listEl) {
+  for (const [section, title] of [["web-findings-section", "How to handle research findings"], ["revenue-currency-section", "Revenue & Currency"]]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = title;
+    btn.addEventListener("click", () => window.parent.postMessage({ type: "salesteam-open-settings-section", section }, location.origin));
+    listEl.appendChild(btn);
+  }
 }
 
 function showStep(index) {
@@ -267,7 +308,7 @@ function showStep(index) {
   if (hintEl) hintEl.hidden = true;
   currentStepIndex = index;
   const step = STEP_ORDER[index];
-  for (const s of STEP_ORDER) {
+  for (const s of [...ALL_STEPS, "finish"]) {
     const sectionEl = el(`enter-${s}`);
     if (sectionEl) sectionEl.hidden = s !== step;
   }
@@ -279,7 +320,7 @@ function showStep(index) {
   if (step === "location") renderLocationPriorityRows();
   if (step === "included") renderIncludedParsedList();
   if (step === "targets") renderTargetsStep();
-  if (step === "finish") { renderFinishSummary(); prefillBudgetFromEstimate(); }
+  if (step === "finish") { renderFinishSummary(); prefillBudgetFromEstimate(); renderFindingsChoice(); }
   updateNavBar(step, index);
 
   // Reported directly: a real completed run took "tens of minutes to
@@ -295,7 +336,7 @@ function showStep(index) {
 
 // Change Settings: nothing is open until a setting is picked from the list at the top.
 function showSettingsHome() {
-  for (const s of STEP_ORDER) {
+  for (const s of [...ALL_STEPS, "finish"]) {
     const sectionEl = el(`enter-${s}`);
     if (sectionEl) sectionEl.hidden = true;
   }
@@ -581,10 +622,6 @@ function refreshLocationPriorityRows() {
 }
 
 function validateSizeStep() {
-  const maxCompanies = Number(el("size-max-companies-input").value);
-  if (!Number.isInteger(maxCompanies) || maxCompanies < 1 || maxCompanies > 500) {
-    return { valid: false, error: "Maximum companies must be a whole number between 1 and 500." };
-  }
   const sizeBuckets = {};
   for (const row of el("size-buckets-wrap").querySelectorAll(".priority-item-row")) {
     sizeBuckets[row.dataset.key] = {
@@ -596,7 +633,7 @@ function validateSizeStep() {
     return { valid: false, error: "Choose at least one size range." };
   }
   targetUniverseConfig.sizeBuckets = sizeBuckets;
-  targetUniverseConfig.maxCompanies = maxCompanies;
+  // maxCompanies is not asked here any more (1.2.0.43): it is set in Settings > Company Discovery (support) and kept.
   return { valid: true };
 }
 
@@ -826,11 +863,19 @@ function validateAlwaysStep() {
   return { valid: true };
 }
 
+// What the chosen level means for job ads, in one line (1.2.0.46).
+const JOBS_MIN_CONFIDENCE_HINTS = {
+  very_high: "Only your very best accounts count: few job ads get the automatic cap, the Sales Mentor ranks most of them itself (never better than the ceiling below).",
+  high: "Recommended. Strong accounts count; a job ad at a weaker account is still ranked by the Sales Mentor, never better than the ceiling below.",
+  medium: "Most accounts count: more job ads get the automatic priority without an AI call - cheaper, but less nuanced.",
+  low: "Every rated account counts: nearly every job ad at a Target Account gets the automatic priority.",
+};
+
+function renderJobsMinConfidenceHint() {
+  el("jobs-min-confidence-hint").textContent = JOBS_MIN_CONFIDENCE_HINTS[el("jobs-min-confidence-select").value] || "";
+}
+
 function validateLeadsPrioritizationStep() {
-  const threshold = Number(el("leads-prioritization-threshold-input").value);
-  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
-    return { valid: false, error: "Target Account confidence threshold must be a number from 0 to 100." };
-  }
   for (const row of el("leads-prioritization-rules-tbody").querySelectorAll("tr")) {
     const rule = prioritizationRules.find((r) => r.id === row.dataset.key);
     if (!rule) continue;
@@ -920,32 +965,92 @@ const EXCLUSION_CATEGORY_INPUTS = EXCLUSION_CATEGORIES.map((category) => ({
   listId: `exclusions-${category}-parsed-list`,
 }));
 
-function validateExclusionsStep() {
-  // The textareas hold LinkedIn pages only. Entries named by company name or website instead (1.2.1, design
-  // 3.9) are not shown there, so they are carried over untouched - and a listed slug keeps any name/domain
-  // stored with it.
-  const bySlug = new Map(companyExclusions.filter((e) => e.slug).map((e) => [`${e.category}|${e.slug}`, e]));
-  let withoutSlug = companyExclusions.filter((e) => !e.slug);
-  // The research's proposals (1.2.1): every proposed company is decided by its checkbox - ticked ones are kept by
-  // name and website, unticked ones dropped; other name/website entries are carried as before.
-  const list = checklists.exclusions;
-  if (list) {
-    const proposed = new Set((setupResearch.proposals?.exclusions?.items || []).map(exclusionKey));
-    const items = list.getItems();
-    for (const i of items) if (i.meta) proposed.add(exclusionKey({ category: i.meta.category, name: i.text }));
-    withoutSlug = [
-      ...withoutSlug.filter((e) => !proposed.has(exclusionKey(e))),
-      ...items.filter((i) => i.checked).map((i) => (i.meta
-        ? { name: i.text, ...(i.meta.domain ? { domain: i.meta.domain } : {}), category: i.meta.category, source: "research", ...(i.meta.sourceUrl ? { sourceUrl: i.meta.sourceUrl } : {}) }
-        : { name: i.text, category: "other", source: "user" })),
-    ].filter((e, idx, all) => all.findIndex((x) => exclusionKey(x) === exclusionKey(e)) === idx);
+// 1.2.0.48 (Boaz): each category box is the full list of that category - one company per line, as its name, its
+// LinkedIn company page, or both ("Name - https://www.linkedin.com/company/x/"); a website instead of a LinkedIn page
+// is kept as the company's domain. The research's ticks write into the boxes as they change (syncExclusionTicks), so
+// what the boxes show is exactly what is saved.
+function parseExclusionLine(line) {
+  const t = String(line || "").trim();
+  if (!t) return null;
+  const m = t.match(/^(.*?)\s+-\s+(https?:\/\/\S+)$/);
+  let name = m ? m[1].trim() : "";
+  let url = m ? m[2] : "";
+  if (!m) {
+    if (/^https?:\/\//i.test(t) || /linkedin\.com\//i.test(t)) url = t;
+    else name = t;
   }
-  companyExclusions = [
-    ...EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
-      parseCompetitorLines(el(inputId).value).map((slug) => ({ ...(bySlug.get(`${category}|${slug}`) || {}), slug, category }))
-    ),
-    ...withoutSlug,
-  ];
+  if (!url) return { name };
+  const slug = parseLinkedinCompanySlug(url);
+  if (slug) return { name, slug };
+  if (/linkedin\.com/i.test(url)) return { name, bad: true, raw: t };
+  const domain = websiteDomain(url);
+  return domain ? { name, domain } : { name, bad: true, raw: t };
+}
+
+function formatExclusionLine(e) {
+  const link = e.slug ? `https://www.linkedin.com/company/${e.slug}/` : e.domain ? `https://${e.domain}` : "";
+  return e.name && link ? `${e.name} - ${link}` : e.name || link;
+}
+
+function exclusionBoxEntries(inputId) {
+  return el(inputId).value.split("\n").map(parseExclusionLine).filter(Boolean);
+}
+
+// Ticked research proposals are in their category's box; unticked ones are not. Runs on every tick change.
+function syncExclusionTicks() {
+  const list = checklists.exclusions;
+  if (!list) return;
+  const changedBoxes = new Set();
+  for (const item of list.getItems()) {
+    const category = item.meta?.category || "other";
+    const box = EXCLUSION_CATEGORY_INPUTS.find((c) => c.category === category);
+    if (!box) continue;
+    const key = normalizeCompanyName(item.text);
+    const lines = el(box.inputId).value.split("\n").map((l) => l.trim()).filter(Boolean);
+    const isThis = (l) => normalizeCompanyName(parseExclusionLine(l)?.name || "") === key;
+    const present = lines.some(isThis);
+    if (item.checked && !present) {
+      lines.push(formatExclusionLine({ name: item.text, domain: item.meta?.domain }));
+    } else if (!item.checked && present) {
+      lines.splice(0, lines.length, ...lines.filter((l) => !isThis(l)));
+    } else {
+      continue;
+    }
+    el(box.inputId).value = lines.join("\n");
+    changedBoxes.add(box);
+  }
+  for (const { inputId, listId } of changedBoxes) renderExclusionParsedList(inputId, listId);
+  if (changedBoxes.size) scheduleAutoSave();
+}
+
+function validateExclusionsStep() {
+  const byKey = new Map();
+  for (const e of companyExclusions) {
+    if (e.slug) byKey.set(`${e.category}|slug|${e.slug}`, e);
+    if (e.name) byKey.set(`${e.category}|name|${normalizeCompanyName(e.name)}`, e);
+  }
+  const proposedByKey = new Map((setupResearch.proposals?.exclusions?.items || [])
+    .map((item) => [`${item.category}|name|${normalizeCompanyName(item.name)}`, item]));
+  const fromBoxes = EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
+    exclusionBoxEntries(inputId).filter((e) => !e.bad).map((e) => {
+      const nameKey = e.name ? `${category}|name|${normalizeCompanyName(e.name)}` : null;
+      const prev = (e.slug && byKey.get(`${category}|slug|${e.slug}`)) || (nameKey && byKey.get(nameKey)) || {};
+      const proposed = nameKey ? proposedByKey.get(nameKey) : null;
+      const entry = {
+        ...prev,
+        ...(proposed ? { source: "research", ...(proposed.sourceUrl ? { sourceUrl: proposed.sourceUrl } : {}) } : {}),
+        category,
+        name: e.name || prev.name || undefined,
+        slug: e.slug || (e.name && !e.domain ? prev.slug : undefined) || undefined,
+        domain: e.domain || prev.domain || proposed?.domain || undefined,
+      };
+      for (const k of Object.keys(entry)) if (entry[k] === undefined || entry[k] === null || entry[k] === "") delete entry[k];
+      return entry;
+    }));
+  // An entry of a category this step has no box for is carried untouched.
+  const known = new Set(EXCLUSION_CATEGORY_INPUTS.map((c) => c.category));
+  companyExclusions = [...fromBoxes, ...companyExclusions.filter((e) => !known.has(e.category))]
+    .filter((e) => e.slug || e.name || e.domain);
   return { valid: true };
 }
 
@@ -1154,12 +1259,12 @@ const STEP_VALIDATORS = {
 // ---------------------------------------------------------------------
 // Per-step persistence (only ever called from the Confirm button).
 
-// When the scoring rules really changed, leave a flag the Posts Dashboard turns into a "Re-score existing leads now?"
+// When the scoring rules really changed, leave a flag the Leads Dashboard turns into a "Re-score existing leads now?"
 // prompt (re-scoring is only ever needed after the rules change, so it is offered here rather than as a menu item).
 function currentScoringSignature() {
   return JSON.stringify({
     rules: prioritizationRules.map((r) => [r.id, r.enabled, r.value]),
-    threshold: Number(el("leads-prioritization-threshold-input").value),
+    jobsMinConfidence: el("jobs-min-confidence-select").value,
     post: postPrioritizationRules,
   });
 }
@@ -1197,7 +1302,7 @@ function showRescoreDialog() {
 }
 
 // After Save & Exit / Finish: offer the re-score right when the user has just changed the rules. "Re-score now" opens
-// the Posts Dashboard, which starts the re-score (its own confirmation still applies). Returns true when it navigated.
+// the Leads Dashboard, which starts the re-score (its own confirmation still applies). Returns true when it navigated.
 async function offerRescoreIfRulesChanged() {
   if (!scoringRulesChangedThisVisit) return false;
   scoringRulesChangedThisVisit = false;
@@ -1238,7 +1343,7 @@ async function persistStep(step) {
       await Promise.all(prioritizationRules.map((rule) =>
         savePrioritizationRuleOverride(rule.id, { enabled: rule.enabled, value: rule.value })
       ));
-      await saveTargetAccountScoreThreshold(Number(el("leads-prioritization-threshold-input").value));
+      await saveJobRulesMinConfidence(el("jobs-min-confidence-select").value);
       await savePostPrioritizationRules(postPrioritizationRules);
       await flagScoringRulesChangeIfAny();
       break;
@@ -1327,7 +1432,7 @@ function renderSummaryInto(step, container) {
       const sizeText = checkedBuckets.length
         ? checkedBuckets.map((b) => `${b.label} (${PRIORITY_LABELS[c.sizeBuckets[b.key].priority]})`).join(", ")
         : "(none selected)";
-      appendPara(container, "Size ranges: ", { strong: sizeText }, `. Up to `, { strong: String(c.maxCompanies) }, ` companies per Discovery run.`);
+      appendPara(container, "Size ranges: ", { strong: sizeText }, ".");
       break;
     }
     case "industry": {
@@ -1355,10 +1460,11 @@ function renderSummaryInto(step, container) {
       break;
     }
     case "leads-prioritization": {
-      appendPara(container, "Target Account confidence threshold: ", { strong: el("leads-prioritization-threshold-input").value }, ".");
+      const level = CONFIDENCE_LEVELS.find((l) => l.id === el("jobs-min-confidence-select").value);
+      appendPara(container, "Job ads - minimum Target Account level: ", { strong: level ? level.label : "High" }, ".");
       const disabled = prioritizationRules.filter((r) => !r.enabled);
       if (disabled.length === 0) {
-        appendPara(container, `All ${prioritizationRules.length} rules enabled.`);
+        appendPara(container, `Job ad rules: all ${prioritizationRules.length} enabled.`);
       } else {
         appendPara(
           container, `${prioritizationRules.length - disabled.length} of ${prioritizationRules.length} rules enabled. Disabled: `,
@@ -1381,8 +1487,24 @@ function renderSummaryInto(step, container) {
     }
     case "value-add-offers": {
       const offers = currentValueAddOffers();
-      if (offers.length) appendPara(container, `${offers.length} offer${offers.length === 1 ? "" : "s"}: `, { strong: offers.join(", ") }, ".");
-      else appendPara(container, "(left blank)");
+      if (offers.length) {
+        // 1.2.0.47 (Boaz): one numbered line per offer, not one long comma list.
+        appendPara(container, `${offers.length} offer${offers.length === 1 ? "" : "s"}:`);
+        const ol = document.createElement("ol");
+        ol.className = "confirm-offers-list";
+        for (const offer of offers) {
+          const { text, link } = splitOfferLine(offer);
+          const li = document.createElement("li");
+          const strong = document.createElement("strong");
+          strong.textContent = text || link;
+          li.append(strong);
+          if (text && link) li.append(document.createTextNode(` - ${link}`));
+          ol.append(li);
+        }
+        container.appendChild(ol);
+      } else {
+        appendPara(container, "(left blank)");
+      }
       break;
     }
     case "icp": {
@@ -1408,7 +1530,7 @@ function renderSummaryInto(step, container) {
     case "exclusions": {
       if (companyExclusions.length) {
         for (const category of EXCLUSION_CATEGORIES) {
-          const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.slug || e.name || e.domain).filter(Boolean);
+          const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.name || e.slug || e.domain).filter(Boolean);
           if (slugs.length) {
             appendPara(
               container, `Excluding ${slugs.length} ${EXCLUSION_CATEGORY_LABELS[category].toLowerCase()}${slugs.length === 1 ? "" : "s"}: `,
@@ -1835,14 +1957,15 @@ function parseAliasLines(rawValue) {
 }
 
 function renderExclusionParsedList(inputId, listId) {
-  const lines = el(inputId).value.split("\n").map((l) => l.trim()).filter(Boolean);
   const listEl = el(listId);
   listEl.innerHTML = "";
-  for (const line of lines) {
-    const slug = parseLinkedinCompanySlug(line);
+  for (const e of exclusionBoxEntries(inputId)) {
     const row = document.createElement("div");
-    row.className = slug ? "competitor-line-ok" : "competitor-line-bad";
-    row.textContent = slug ? `✓ ${slug}` : `✗ couldn't find a LinkedIn company page in "${line}"`;
+    row.className = e.bad ? "competitor-line-bad" : "competitor-line-ok";
+    if (e.bad) row.textContent = `✗ "${e.raw}" - a LinkedIn link must be a company page (linkedin.com/company/...)`;
+    else if (e.slug) row.textContent = `✓ ${e.name ? `${e.name} - ` : ""}LinkedIn page ${e.slug}`;
+    else if (e.domain) row.textContent = `✓ ${e.name ? `${e.name} - ` : ""}website ${e.domain}`;
+    else row.textContent = `✓ ${e.name} (matched by name; add its LinkedIn page for a surer match)`;
     listEl.appendChild(row);
   }
 }
@@ -1927,6 +2050,28 @@ function renderFinishSummary() {
 // Auto-navigates to settings.html once saved (redesigned 2026-09-16) -
 // reported directly: the old "relabel to Setup saved and stop" left the
 // user stranded on the onboarding tab with no way back except closing it.
+// ---- 1.2.0.51: how research findings are handled (Finish) ----
+async function renderFindingsChoice() {
+  const settings = await getWebFindingsArbitration();
+  el(settings.askEveryDifference ? "finish-findings-ask" : "finish-findings-auto").checked = true;
+  const wrap = el("finish-findings-rules");
+  wrap.innerHTML = "";
+  for (const rule of ARBITRATION_RULES) {
+    const label = document.createElement("label");
+    label.className = "checkbox-label";
+    label.title = rule.detail;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = settings[rule.setting] !== false;
+    box.addEventListener("change", () => saveWebFindingsArbitration({ [rule.setting]: box.checked }));
+    label.append(box, document.createTextNode(` ${rule.label}`));
+    wrap.appendChild(label);
+  }
+}
+for (const id of ["finish-findings-auto", "finish-findings-ask"]) {
+  el(id).addEventListener("change", () => saveWebFindingsArbitration({ askEveryDifference: el("finish-findings-ask").checked }));
+}
+
 el("finish-back-to-menu-link").addEventListener("click", (event) => {
   event.preventDefault();
   el("finish-btn").click();
@@ -1956,6 +2101,7 @@ el("finish-btn").addEventListener("click", async () => {
   if (el("finish-automation-checkbox").checked) chrome.runtime.sendMessage({ type: "ONBOARDING_BUILD_START" }).catch(() => {});
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
+  setupJustFinished = true;
   leaveWizard();
 });
 
@@ -2034,10 +2180,105 @@ el("about-research-btn").addEventListener("click", async () => {
   await runSellerResearch();
 });
 
+// 1.2.1 step 7 (design 3.12, R4.6): the once-only offer, also at the top of Change Settings - this page covers the
+// Settings cards that carry the same box (1.2.0.36 showed it only there, so it went unseen). Same rule as settings.js:
+// a finished setup whose research never ran, and not declined.
+function renderSettingsResearchOffer() {
+  let box = el("settings-research-offer");
+  const show = completedBefore && setupResearch.status === "none" && !setupResearch.declinedInSettings;
+  if (!show) {
+    if (box) box.hidden = true;
+    return;
+  }
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "settings-research-offer";
+    box.className = "wizard-note settings-research-offer";
+    const text = document.createElement("p");
+    text.innerHTML = "<strong>New:</strong> ";
+    text.append("SalesTeam can research your company's website and propose improvements to the setup " +
+      `(about ${usd(SELLER_RESEARCH_ESTIMATE_USD)}). The proposals are shown next to the current settings; nothing ` +
+      "changes unless you take one.");
+    const yes = document.createElement("button");
+    yes.type = "button";
+    yes.textContent = "Research";
+    yes.addEventListener("click", () => {
+      box.hidden = true;
+      showStep(STEP_ORDER.indexOf("about"));
+      el("about-research-btn").click();
+    });
+    const no = document.createElement("button");
+    no.type = "button";
+    no.textContent = "No thanks";
+    no.addEventListener("click", async () => {
+      box.hidden = true;
+      setupResearch = { ...setupResearch, declinedInSettings: Date.now() };
+      await saveSetupResearch(setupResearch);
+      try {
+        await appendActivityLog({ actor: "user", action: "setup_research", label: "Declined the setup research offered in Settings" });
+      } catch { /* the log is informational */ }
+    });
+    const row = document.createElement("div");
+    row.className = "settings-research-offer-buttons";
+    row.append(yes, no);
+    box.append(text, row);
+    el("wizard-nav-bar").after(box);
+  }
+  box.hidden = false;
+}
+
 // ---- The progress screen (design 3.6) ----
 
+// The research is one AI call that decides itself how many pages to read, so there are no fixed steps to count. The
+// screen shows time instead: a bar and "about N seconds left" against the expected duration, and what it has read so
+// far. Past that time it says it is still working, and that it ends by itself at 4 minutes. The expected duration is
+// the last measured run on this computer (Research again), else 40 s - live runs took 30-60 s (design 3.6 said 45-60,
+// the 1.2.0.51 clean-profile run took 30 and the old 60 s estimate looked twice too slow).
+const SELLER_RESEARCH_DEFAULT_MS = 40000;
+const SELLER_RESEARCH_CUTOFF_MS = 4 * 60000;
+let researchExpectedMs = SELLER_RESEARCH_DEFAULT_MS;
+let researchProgressTimer = null;
+let researchStartedAt = 0;
+let researchPagesRead = 0;
+let researchSearches = 0;
+
+function renderResearchProgress() {
+  const elapsed = Date.now() - researchStartedAt;
+  const fraction = Math.min(elapsed / researchExpectedMs, 1);
+  // Up to 90% on the expected time, then creeping towards 99% - the bar never fills before the answer is in.
+  const pct = fraction < 1 ? fraction * 90 : 90 + 9 * Math.min((elapsed - researchExpectedMs) / (SELLER_RESEARCH_CUTOFF_MS - researchExpectedMs), 1);
+  el("research-progress-fill").style.width = `${pct.toFixed(1)}%`;
+  const left = Math.ceil((researchExpectedMs - elapsed) / 1000);
+  const read = [
+    researchPagesRead ? `${researchPagesRead} page${researchPagesRead === 1 ? "" : "s"} read` : "",
+    researchSearches ? `${researchSearches} search${researchSearches === 1 ? "" : "es"}` : "",
+  ].filter(Boolean).join(", ");
+  const timeText = left > 5
+    ? `About ${left} seconds left`
+    : "Taking a little longer than usual - still working; the steps open by themselves when the answer is in";
+  el("research-eta").textContent = `${timeText}${read ? ` · ${read} so far` : ""}`;
+}
+
+function startResearchProgress() {
+  const lastMs = Number(setupResearch?.ms) || 0;
+  researchExpectedMs = lastMs >= 15000 && lastMs < SELLER_RESEARCH_CUTOFF_MS ? lastMs : SELLER_RESEARCH_DEFAULT_MS;
+  researchStartedAt = Date.now();
+  researchPagesRead = 0;
+  researchSearches = 0;
+  el("research-progress").hidden = false;
+  clearInterval(researchProgressTimer);
+  renderResearchProgress();
+  researchProgressTimer = setInterval(renderResearchProgress, 1000);
+}
+
+function stopResearchProgress() {
+  clearInterval(researchProgressTimer);
+  researchProgressTimer = null;
+  el("research-progress").hidden = true;
+}
+
 function showResearchScreen(seller) {
-  for (const s of STEP_ORDER) {
+  for (const s of [...ALL_STEPS, "finish"]) {
     const sectionEl = el(`enter-${s}`);
     if (sectionEl) sectionEl.hidden = true;
   }
@@ -2046,13 +2287,14 @@ function showResearchScreen(seller) {
   el("step-progress").textContent = "";
   el("enter-research").hidden = false;
   el("research-intro").textContent =
-    `SalesTeam is reading ${sourceLabel(seller.website)} to propose answers for the next steps. This takes one to two ` +
-    "minutes; the setup goes on by itself when the answer is in.";
+    `SalesTeam is reading ${sourceLabel(seller.website)} to propose answers for the next steps. This usually takes under ` +
+    "a minute; please wait - the setup goes on by itself when the answer is in.";
   el("research-lines").innerHTML = "";
   el("research-cost").textContent = "";
   el("research-error").hidden = true;
   addResearchLine(null, "Starting the research…");
   setResearchButtons(true);
+  startResearchProgress();
 }
 
 function setResearchButtons(running) {
@@ -2064,8 +2306,8 @@ function setResearchButtons(running) {
 
 function addResearchLine(toolName, input) {
   let text;
-  if (toolName === "web_fetch") text = `Reading ${sourceLabel(input?.url || "a page")}…`;
-  else if (toolName === "web_search") text = `Searching: ${input?.query || "…"}`;
+  if (toolName === "web_fetch") { text = `Reading ${sourceLabel(input?.url || "a page")}…`; researchPagesRead++; }
+  else if (toolName === "web_search") { text = `Searching: ${input?.query || "…"}`; researchSearches++; }
   else text = String(input || "");
   if (!text) return;
   const li = document.createElement("li");
@@ -2090,9 +2332,56 @@ async function logSetupResearch(label) {
   } catch { /* the log is for measuring only */ }
 }
 
+// 1.2.0.53/.54 (Boaz: 7, then 5, then 4 offers; many competitors, then 1): what a run kept, so a change can be explained.
+function offersMeasure(proposals) {
+  const p = proposals?.["value-add-offers"];
+  const x = proposals?.exclusions;
+  const count = (cat) => (x?.items || []).filter((e) => e.category === cat).length;
+  return (p ? `; offers: ${p.items?.length || 0} kept${p.dropped ? `, ${p.dropped} left out (no page on the website)` : ""}` : "") +
+    (x ? `; exclusions: ${count("competitor")} competitors, ${count("customer")} customers, ${count("partner")} partners` : "");
+}
+
 function researchMeasures(result) {
   return `${usd(result.costUsd)}, ${Math.round((result.ms || 0) / 1000)} s, ${result.fetches || 0} pages read, ` +
     `${result.searches || 0} searches`;
+}
+
+// 1.2.0.55 (Boaz): the one research call spreads its few searches over every step and came back with 1 competitor;
+// "Research again" with the tip "search for any company in the target country offering similar services - about 10"
+// found about 10. The user should not have to know that, so a short competitors-only call with that same tip follows
+// automatically when the first answer names fewer than COMPETITORS_ENOUGH. Its competitors are added to the first.
+const COMPETITORS_ENOUGH = 5;
+const COMPETITORS_HINT = "Search for every company in this company's own country (and the countries it serves) that " +
+  "offers similar products or services to similar customers - typically about 10. List all of them.";
+
+async function researchMoreCompetitors(seller, first) {
+  const before = Array.isArray(first.data.competitors) ? first.data.competitors : [];
+  if (before.length >= COMPETITORS_ENOUGH) return first;
+  addResearchLine(null, `Found ${before.length} competitor${before.length === 1 ? "" : "s"} - searching for more…`);
+  let more;
+  try {
+    more = await researchSeller(
+      seller,
+      { only: ["competitors"], hint: COMPETITORS_HINT, sectors: CONFIRMED_INDUSTRIES, outputLanguage: el("about-language-select").value },
+      { apiKey: await getAnthropicApiKey() },
+      {
+        signal: researchController?.signal,
+        onTool: addResearchLine,
+        onCost: (cost) => { el("research-cost").textContent = `Cost so far: about ${usd((first.costUsd || 0) + cost)}`; },
+      },
+    );
+  } catch {
+    return first; // the first answer stands; the extra search is a bonus
+  }
+  const added = Array.isArray(more?.data?.competitors) ? more.data.competitors : [];
+  return {
+    ...first,
+    data: { ...first.data, competitors: [...before, ...added] },
+    costUsd: (first.costUsd || 0) + (more.costUsd || 0),
+    ms: (first.ms || 0) + (more.ms || 0),
+    fetches: (first.fetches || 0) + (more.fetches || 0),
+    searches: (first.searches || 0) + (more.searches || 0),
+  };
 }
 
 async function runSellerResearch() {
@@ -2121,11 +2410,13 @@ async function runSellerResearch() {
         onCost: (cost) => { el("research-cost").textContent = `Cost so far: about ${usd(cost)}`; },
       },
     );
+    if (result?.data && !researchSkipRequested) result = await researchMoreCompetitors(seller, result);
   } catch (err) {
     failure = err;
   } finally {
     clearInterval(heartbeat);
     researchController = null;
+    stopResearchProgress();
   }
   const site = sourceLabel(seller.website);
 
@@ -2141,7 +2432,7 @@ async function runSellerResearch() {
     for (const key of Object.keys(checklists)) delete checklists[key];
     const found = Object.entries(proposals).filter(([, p]) => p.found).map(([step]) => STEP_TITLES[step]);
     await logSetupResearch(`Setup research of ${site}: ${researchMeasures(result)}; proposals for ${found.length} steps` +
-      `${found.length ? ` (${found.join(", ")})` : ""}`);
+      `${found.length ? ` (${found.join(", ")})` : ""}${offersMeasure(proposals)}`);
     continueAfterResearch();
     return;
   }
@@ -2287,6 +2578,7 @@ function mountStepChecklists(step, p, accepted) {
     // 1.2.0.30 (Boaz): on a first setup the offers go straight into the box, like Target contacts (1.2.0.29).
     if (!completedBefore && !accepted) {
       el("value-add-offers-input").value = mergeChecklistWithLines([], [...lines, ...texts]).join("\n");
+      renderOffersTable();
       el("value-add-offers-checklist").hidden = true;
       checklists[step] = null;
       return;
@@ -2336,13 +2628,14 @@ function mountStepChecklists(step, p, accepted) {
     };
   } else if (step === "exclusions") {
     const keys = p.items.map(exclusionKey);
-    const t = ticks(keys, companyExclusions.filter((e) => !e.slug).map(exclusionKey));
+    const t = ticks(keys, companyExclusions.filter((e) => e.name).map(exclusionKey));
     checklists[step] = mountChecklist(el("exclusions-checklist"),
       p.items.map((item, i) => ({
         text: item.name, checked: t[i], sourceUrl: item.sourceUrl, meta: item,
         label: `${EXCLUSION_CATEGORY_LABELS[item.category] || item.category}${item.domain ? ` · ${item.domain}` : ""}`,
       })),
-      { title: "Found by the research - tick the ones to exclude", addPlaceholder: "Add a company by name (excluded as Other)", onChange: scheduleAutoSave });
+      { title: "Found by the research - tick the ones to exclude (they appear in the boxes below)", addPlaceholder: "Add a company by name (excluded as Other)", onChange: syncExclusionTicks });
+    syncExclusionTicks();
   }
 }
 
@@ -2392,10 +2685,14 @@ async function researchStepAgain(step, hint) {
   const result = await researchSeller(seller, {
     only: PROPOSAL_STEP_KEYS[step], hint, sectors: CONFIRMED_INDUSTRIES, outputLanguage: el("about-language-select").value,
   }, { apiKey });
-  await logSetupResearch(`Setup research again (${STEP_TITLES[step]}${hint ? `, hint "${hint.slice(0, 80)}"` : ""}): ${researchMeasures(result)}`);
-  if (!result.data) throw new Error(result.stopped === "timeout" ? "it was cut off after 4 minutes" : "no usable answer came back");
+  const againLabel = `Setup research again (${STEP_TITLES[step]}${hint ? `, hint "${hint.slice(0, 80)}"` : ""}): ${researchMeasures(result)}`;
+  if (!result.data) {
+    await logSetupResearch(againLabel);
+    throw new Error(result.stopped === "timeout" ? "it was cut off after 4 minutes" : "no usable answer came back");
+  }
   const raw = { ...(setupResearch.raw || {}), ...result.data };
   const rebuilt = buildSetupProposals(raw, proposalCtx(), stepsRebuiltBy(step));
+  await logSetupResearch(`${againLabel}${offersMeasure(rebuilt)}`);
   const accepted = { ...(setupResearch.accepted || {}) };
   // Only this step is proposed afresh; another step rebuilt with it (the Ideal customer note) keeps its acceptance.
   delete accepted[step];
@@ -2422,6 +2719,78 @@ function boxThenTicked(lines, list) {
   return mergeChecklistWithLines([], [...lines, ...list.getItems().filter((i) => i.checked).map((i) => i.text)]);
 }
 
+// ---- Things you can offer: a numbered table over the stored lines (1.2.0.47) ----
+// Each stored line is "Offer - https://link", or just one of the two. The table is drawn from the hidden textarea
+// and writes back to it on every keystroke (its "input" event drives the wizard's auto-save, as before).
+function splitOfferLine(line) {
+  const m = String(line).match(/^(.*?)\s+-\s+(https?:\/\/\S+)$/);
+  if (m) return { text: m[1].trim(), link: m[2] };
+  if (/^https?:\/\/\S+$/.test(line.trim())) return { text: "", link: line.trim() };
+  return { text: String(line).trim(), link: "" };
+}
+
+function joinOfferLine({ text, link }) {
+  const t = text.trim();
+  const l = link.trim();
+  return t && l ? `${t} - ${l}` : t || l;
+}
+
+function writeOffersFromTable() {
+  const rows = [...el("value-add-offers-tbody").querySelectorAll("tr")];
+  const lines = rows.map((tr) => joinOfferLine({
+    text: tr.querySelector(".offer-text").value, link: tr.querySelector(".offer-link").value,
+  })).filter(Boolean);
+  const box = el("value-add-offers-input");
+  box.value = lines.join("\n");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function renumberOffers() {
+  el("value-add-offers-tbody").querySelectorAll("tr").forEach((tr, i) => { tr.querySelector(".offer-n").textContent = `${i + 1}.`; });
+}
+
+function addOfferRow(offer = { text: "", link: "" }) {
+  const tr = document.createElement("tr");
+  const n = document.createElement("td");
+  n.className = "offer-n";
+  const textTd = document.createElement("td");
+  const text = document.createElement("input");
+  text.type = "text";
+  text.className = "offer-text";
+  text.placeholder = "e.g. Free 20-minute demo";
+  text.value = offer.text;
+  textTd.append(text);
+  const linkTd = document.createElement("td");
+  const link = document.createElement("input");
+  link.type = "url";
+  link.className = "offer-link";
+  link.placeholder = "https://…";
+  link.value = offer.link;
+  linkTd.append(link);
+  const xTd = document.createElement("td");
+  const x = document.createElement("button");
+  x.type = "button";
+  x.className = "offer-remove";
+  x.textContent = "\u2715";
+  x.title = "Remove this offer";
+  x.addEventListener("click", () => { tr.remove(); renumberOffers(); writeOffersFromTable(); });
+  xTd.append(x);
+  for (const input of [text, link]) input.addEventListener("input", (e) => { e.stopPropagation(); writeOffersFromTable(); });
+  tr.append(n, textTd, linkTd, xTd);
+  el("value-add-offers-tbody").append(tr);
+  renumberOffers();
+  return tr;
+}
+
+function renderOffersTable() {
+  el("value-add-offers-tbody").innerHTML = "";
+  const lines = textareaLines("value-add-offers-input");
+  for (const line of lines) addOfferRow(splitOfferLine(line));
+  if (lines.length === 0) addOfferRow();
+}
+
+el("value-add-offers-add-btn").addEventListener("click", () => addOfferRow().querySelector(".offer-text").focus());
+
 function currentValueAddOffers() {
   return boxThenTicked(textareaLines("value-add-offers-input"), checklists["value-add-offers"]);
 }
@@ -2433,6 +2802,7 @@ function foldProposalsIntoBoxes(step) {
   if (!c) return;
   if (step === "value-add-offers") {
     el("value-add-offers-input").value = currentValueAddOffers().join("\n");
+    renderOffersTable();
   } else if (step === "contacts") {
     el("contacts-exact-titles-input").value = boxThenTicked(textareaLines("contacts-exact-titles-input"), c.titles).join("\n");
     el("contacts-title-keywords-input").value = boxThenTicked(textareaLines("contacts-title-keywords-input"), c.keywords).join("\n");
@@ -2518,7 +2888,6 @@ async function init() {
   el("location-mode-select").addEventListener("change", renderLocationModeVisibility);
 
   renderSizeBucketRows(targetUniverseConfig.sizeBuckets);
-  el("size-max-companies-input").value = targetUniverseConfig.maxCompanies;
 
   renderIndustryPriorityRows(targetUniverseConfig.industries);
   renderOrganizationTypeRows(organizationTypeEligibility);
@@ -2538,7 +2907,9 @@ async function init() {
   el("industry-select-none-btn").addEventListener("click", () => setAllIndustryRows(false));
   el("industry-select-all-btn").addEventListener("click", () => setAllIndustryRows(true));
   renderPriorityStepOptions();
-  el("leads-prioritization-threshold-input").value = await getTargetAccountScoreThreshold();
+  el("jobs-min-confidence-select").value = await getJobRulesMinConfidence();
+  renderJobsMinConfidenceHint();
+  el("jobs-min-confidence-select").addEventListener("change", () => { renderJobsMinConfidenceHint(); scheduleAutoSave(); });
   prioritizationRules = await getPrioritizationRules();
   renderLeadsPrioritizationRules();
   postPrioritizationRules = await getPostPrioritizationRules();
@@ -2589,14 +2960,14 @@ async function init() {
     }
   }
   el("value-add-offers-input").value = (await getValueAddOffers()).join("\n");
+  renderOffersTable();
   el("icp-input").value = await getIdealCustomerProfile();
   el("contacts-exact-titles-input").value = targetContactProfile.exactTitles.join("\n");
   el("contacts-title-keywords-input").value = targetContactProfile.titleKeywords.join("\n");
   el("contacts-max-per-account-input").value = targetContactProfile.maxContactsPerAccount ?? 10;
   renderSeniorityLevelPriorityRows(targetContactProfile.seniorityLevels || []);
   for (const { category, inputId, listId } of EXCLUSION_CATEGORY_INPUTS) {
-    const slugs = companyExclusions.filter((e) => e.category === category && e.slug).map((e) => e.slug);
-    el(inputId).value = slugs.map((slug) => `https://www.linkedin.com/company/${slug}/`).join("\n");
+    el(inputId).value = companyExclusions.filter((e) => e.category === category).map(formatExclusionLine).filter(Boolean).join("\n");
     renderExclusionParsedList(inputId, listId);
   }
   companyAliases = await getCompanyAliases();
@@ -2633,6 +3004,10 @@ async function init() {
     const askedStep = new URLSearchParams(location.search).get("step");
     if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
     else showSettingsHome();
+    renderSettingsResearchOffer();
+    // Settings' once-only offer (design 3.12): About you opens with the research started. The button's own checks
+    // apply - with no company website or API key it says what is missing instead.
+    if (askedStep === "about" && new URLSearchParams(location.search).get("research") === "1") el("about-research-btn").click();
     return;
   }
   const savedStepIndex = await getOnboardingProgressStepIndex();

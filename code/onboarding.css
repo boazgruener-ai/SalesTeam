@@ -132,6 +132,15 @@ h1 {
   margin-right: auto;
 }
 
+/* 1.2.0.41 (Boaz): one blue button only - the one that moves on. In the setup that is Next (Save is still there, but
+   every answer is saved automatically anyway); in Change Settings it is Save. "Exit to menu" did the same as
+   "Save & Exit to menu", so the setup shows only the latter. */
+body:not(.settings-mode) #wizard-nav-buttons #nav-save-btn,
+body.settings-mode #wizard-nav-buttons #nav-next-btn {
+  background: white;
+  color: var(--blue);
+}
+
 .wizard-step {
   background: white;
   border: 1px solid var(--border);
@@ -779,7 +788,8 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 .proposal-banner p { margin: 0 0 4px; }
 .proposal-banner a { color: var(--blue); }
 .proposal-banner-note { color: var(--gray); font-size: 12px; }
-.proposal-banner-actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+.proposal-banner-actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.proposal-again-intro { font-size: 13px; color: var(--ink); }
 .proposal-again-form { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .proposal-again-form[hidden], .proposal-slot[hidden] { display: none; }
 .proposal-again-hint { flex: 1 1 320px; min-width: 200px; }
@@ -797,6 +807,11 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 #research-lines li { padding: 3px 0; color: var(--gray); }
 #research-lines li:last-child { color: var(--ink); font-weight: 600; }
 #research-cost { font-size: 13px; color: var(--gray); }
+#research-progress { max-width: 600px; margin: 12px 0 6px; }
+#research-progress[hidden] { display: none; }
+#research-progress-track { height: 10px; background: #e3e8ef; border-radius: 5px; overflow: hidden; }
+#research-progress-fill { height: 100%; width: 0; background: #1155cc; border-radius: 5px; transition: width 1s linear; }
+#research-eta { margin: 6px 0 0; font-size: 14px; font-weight: 600; color: var(--ink); }
 #about-research-box button { margin-top: 6px; }
 
 /* Hover tip on each organization type (1.2.0.18). */
@@ -832,3 +847,33 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
   line-height: 1.5;
 }
 .proposal-used-status { color: var(--good); font-weight: 600; font-size: 12.5px; align-self: center; }
+
+/* 1.2.1 step 7: the once-only setup-research offer at the top of Change Settings. */
+.settings-research-offer { border-left: 4px solid #1155cc; font-size: 13px; }
+.settings-research-offer p { margin: 0 0 8px; }
+.settings-research-offer-buttons { display: flex; gap: 8px; }
+
+/* 1.2.0.46: Leads Prioritization in two parts, Posts and Job ads. */
+.lp-part-heading { margin: 22px 0 4px; padding-bottom: 4px; border-bottom: 2px solid #d3e2f3; font-size: 16px; }
+.lp-rules-heading { margin: 14px 0 4px; font-size: 13px; }
+#jobs-min-confidence-select { max-width: 260px; }
+
+/* 1.2.0.47: Things you can offer as a numbered table. */
+.offers-table { width: 100%; max-width: 900px; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.offers-table th { text-align: left; font-size: 12px; color: var(--gray); padding: 4px 6px; border-bottom: 1px solid #d3e2f3; }
+.offers-table td { padding: 4px 6px; border-bottom: 1px solid #eef2f7; vertical-align: middle; }
+.offers-table td.offer-n { width: 28px; color: var(--gray); font-weight: 600; }
+.offers-table input { width: 100%; box-sizing: border-box; }
+.offers-table td:nth-child(2) { width: 45%; }
+.offers-table .offer-remove { border: none; background: transparent; color: #b3261e; cursor: pointer; font-size: 14px; }
+.confirm-offers-list { margin: 4px 0 8px; padding-left: 22px; }
+.confirm-offers-list li { margin: 3px 0; word-break: break-all; }
+.confirm-offers-list li strong { word-break: normal; }
+
+/* 1.2.0.51: Advanced settings, folded (the one pattern for technical settings), and Change Settings' Advanced group. */
+.advanced-settings { margin: 8px 0; }
+.advanced-settings > summary { cursor: pointer; color: var(--blue, #0a66c2); font-size: 13px; font-weight: 600; }
+.advanced-settings[open] > summary { margin-bottom: 6px; }
+#finish-findings { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3e8ef; }
+#finish-findings-rules .checkbox-label { display: block; margin: 4px 0; font-size: 13px; }
+.wizard-step-list-group { flex-basis: 100%; margin: 8px 0 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gray); }

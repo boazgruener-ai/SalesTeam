@@ -63,7 +63,7 @@ function applyFilters() {
 }
 
 // Long values (a pasted JSON blob, a list of diagnostic samples) are clamped to 4 lines, like the
-// Posts Dashboard's Content cell; a click expands/collapses. Only a value that actually overflows
+// Leads Dashboard's Content cell; a click expands/collapses. Only a value that actually overflows
 // gets the pointer cursor and hover tip (markExpandableValues, after the rows are in the DOM).
 function valueCell(value, { wide = false } = {}) {
   const td = document.createElement("td");

@@ -450,8 +450,61 @@ def test_implausible_briefing_is_discarded(ctx):
         ctxFor({ hasRevenue: true, effective: { globalEmployees: 0, globalRevenue: 5000000 } }),
         {});
     """)
-    check("an implausible STORED value still asks", ctx.eval("storedBad.action"), "review")
+    # 1.2.0.63 (Boaz, Coop): a sound web finding that repairs the stored value is applied, not asked.
+    check("a sound web finding repairs an implausible STORED value", ctx.eval("storedBad.action"), "apply")
     check("...by rule 2", ctx.eval("storedBad.rule"), 2)
+
+    # Still asked when the web finding does not repair it: Nestle before 1.2.0.62 - the stored REVENUE
+    # (89,791, millions) is what is wrong, and the employee finding changes nothing about that.
+    ctx.eval("""
+      var nestle = arbitrateFinding(
+        { key: "globalEmployees", label: "E", found: 271000, current: 308000, state: "different" },
+        ctxFor({ hasRevenue: true, effective: { globalEmployees: 308000, globalRevenue: 89791, revenueCurrency: "CHF" } }),
+        {});
+    """)
+    check("a finding that does not repair the stored problem still asks", ctx.eval("nestle.action"), "review")
+
+    # Coop: 37,370 worldwide against 60,678 local stored; the web says 97,040 worldwide.
+    ctx.eval("""
+      var coop = arbitrateFinding(
+        { key: "globalEmployees", label: "E", found: 97040, current: 37370, state: "different" },
+        ctxFor({ hasRevenue: true, effective: { globalEmployees: 37370, swissEmployees: 60678, globalRevenue: 34900000000, revenueCurrency: "CHF" } }),
+        {});
+    """)
+    check("Coop: the worldwide count that fixes local > worldwide is applied", ctx.eval("coop.action"), "apply")
+
+
+def test_listing_revenue_in_millions(ctx):
+    """1.2.0.61: a listing's "Revenue (USD millions)" column copied as 62030 becomes plain units."""
+    check("Gunvor 62,030 with 1,600 staff -> 62.03 bn", num(ctx, "listingRevenue(62030, 1600)"), 62030000000)
+    check("no employee count, under 1 m -> millions", num(ctx, "listingRevenue(850, null)"), 850000000)
+    check("plain units stay", num(ctx, "listingRevenue(144000000000, 1600)"), 144000000000)
+    check("a small firm's plain revenue stays", num(ctx, "listingRevenue(500000, 5)"), 500000)
+    check("nothing stays nothing", ctx.eval("listingRevenue(null, 10)"), None)
+
+
+def test_revenue_in_millions_is_named(ctx):
+    """Gunvor, 1.2.0.59: 62,030 stored (millions, from a Wikipedia list), 144,000,000,000 found, 1,600 staff.
+
+    The old text said "it implies 39 of revenue per employee" - Boaz: "39 what?". The current side must be
+    named as written in millions, and the found side (90 million per employee - a commodity trader) must
+    not be thrown out as implausible.
+    """
+    ctx.eval("""
+      var gunvor = arbitrateAccount({
+        proposals: [
+          { key: "globalRevenue", label: "Revenue (global)", found: 144000000000, current: 62030, state: "different" },
+        ],
+        extra: { overrides: {} },
+        ctx: ctxFor({ hasRevenue: true, effective: { globalEmployees: 1600, globalRevenue: 62030 } }),
+        settings: {},
+      });
+      var g = gunvor.decisions[0];
+    """)
+    check("the found revenue is applied - the current one is the same figure in millions", ctx.eval("g.action"), "apply")
+    check("...by rule 2", ctx.eval("g.rule"), 2)
+    check("the reason names millions", "written in millions" in ctx.eval("JSON.stringify(g)"), True)
+    check("no bare 'implies 39' text", "implies 39" in ctx.eval("JSON.stringify(g)"), False)
 
 
 def test_employee_contradiction_does_not_taint_other_fields(ctx):
@@ -492,8 +545,9 @@ def test_currency_is_never_put_to_the_user(ctx):
       var amount = res.decisions.find((d) => d.proposal.key === "globalRevenue");
       var currency = res.decisions.find((d) => d.proposal.key === "revenueCurrency");
     """)
-    check("the implausible stored amount is still escalated", ctx.eval("amount.action"), "review")
-    check("but the currency never is", ctx.eval("currency.action"), "dismiss")
+    # 1.2.0.63: the found 400,000,000 repairs the stored 115, so it is applied - and the currency follows it.
+    check("the implausible stored amount is repaired by the web finding", ctx.eval("amount.action"), "apply")
+    check("the currency follows the applied amount, never asked", ctx.eval("currency.action"), "apply")
 
 
 def test_converted_comparison_is_judged_more_loosely(ctx):
@@ -1796,6 +1850,8 @@ def main():
     test_local_revenue_currency(ctx)
     test_currency_follows_global_only(ctx)
     test_implausible_briefing_is_discarded(ctx)
+    test_revenue_in_millions_is_named(ctx)
+    test_listing_revenue_in_millions(ctx)
     test_employee_contradiction_does_not_taint_other_fields(ctx)
     test_currency_is_never_put_to_the_user(ctx)
     test_converted_comparison_is_judged_more_loosely(ctx)

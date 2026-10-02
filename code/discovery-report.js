@@ -52,3 +52,16 @@ export function discoveryText(s) {
   if (s.lastError && !s.added) lines.push(`Last error: ${s.lastError}`);
   return lines.join("\n");
 }
+
+// 1.2.0.50 (Boaz): the pop-up shows only what a user needs - how many were added, the total cost and the names. The
+// detailed measurement (discoveryText above) stays in the Activity Log.
+export function discoveryShortText(s) {
+  const added = (s.added || 0) + ((s.linkedin && s.linkedin.added) || 0);
+  const lines = [`${added} new account${added === 1 ? "" : "s"} added (target ${s.target}).`];
+  if (s.included && s.included.added) lines.push(`Including ${s.included.added} of the companies you asked to include.`);
+  lines.push(`Total cost: about US$${(Number(s.spent) || 0).toFixed(2)}.`);
+  const names = [...(s.addedNames || []), ...((s.linkedin && s.linkedin.addedNames) || [])];
+  if (names.length) lines.push(`Added: ${names.slice(0, 15).join(", ")}${names.length > 15 ? " …" : ""}`);
+  if (s.lastError && !s.added) lines.push(`It stopped with an error: ${s.lastError}`);
+  return lines.join("\n");
+}

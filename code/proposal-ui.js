@@ -91,8 +91,14 @@ export function renderProposalBanner(slot, opts) {
       }
     });
     form.append(hint, go, status);
+    // 1.2.0.44 (Boaz): say what the button is for, right before it.
+    actions.append(node("span", {
+      className: "proposal-again-intro",
+      text: "Not satisfied with the Research results? You can Research again and provide your tip as to what to search for.",
+    }));
     actions.append(node("button", {
       type: "button", className: "step-inline-btn proposal-again-toggle", text: "Research again…",
+      title: "Only if this proposal is wrong or empty: research just this step again, with a hint of what to look for",
       onClick: () => { form.hidden = !form.hidden; if (!form.hidden) hint.focus(); },
     }));
     box.append(actions, form);

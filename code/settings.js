@@ -30,6 +30,7 @@ import {
   getUserProfile,
   saveUserProfile,
   getTargetUniverseConfig,
+  saveTargetUniverseConfig,
   getTargetContactProfile,
   clearCompanyLocationSizeCache,
   getDiscoveredCompanies,
@@ -46,11 +47,13 @@ import {
   saveWebFindingsArbitration,
   getRevenueNormalization,
   saveRevenueNormalization,
+  getSetupResearch,
+  saveSetupResearch,
 } from "./storage.js";
 import { RULES as ARBITRATION_RULES, DEFAULT_ARBITRATION_SETTINGS } from "./web-findings-arbitration.js";
 import { SUPPORTED_CURRENCIES, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
-import { sanitizeApiKey } from "./agent-shared.js";
+import { sanitizeApiKey, SELLER_RESEARCH_ESTIMATE_USD } from "./agent-shared.js";
 import {
   getDiscoveryQueueState,
   startDiscoveryQueue,
@@ -167,7 +170,9 @@ logOnBlur(profileEmailInput, { action: "user_profile_changed", labelFor: () => "
 // still date-first since that's the more useful glance for anything not
 // imported today.
 editSetupBtn.addEventListener("click", () => {
-  location.hash = "#wizard"; // the wizard opens inside this page (see openWizardInline), menu still on the left
+  // A finished setup is changed one setting at a time in Change Settings; an unfinished one continues in the wizard,
+  // inside this page (see openWizardInline), menu still on the left.
+  location.hash = onboardingIsComplete ? "#change-settings" : "#wizard";
 });
 document.getElementById("nav-change-settings").addEventListener("click", () => {
   if (location.hash === "#change-settings") setTimeout(routeSettings, 0); // re-click on the open item still re-shows it
@@ -246,6 +251,13 @@ function hideEmbeddedPage() {
 // Messages from the frame this page hosts (the wizard / Change Settings).
 window.addEventListener("message", (event) => {
   if (event.origin !== location.origin || !event.data) return;
+  // Change Settings' Advanced group: open one of this page's own cards (1.2.0.51).
+  if (event.data.type === "salesteam-open-settings-section" && SETTINGS_SECTION_IDS.includes(event.data.section)) {
+    hideEmbeddedPage();
+    if (location.hash === `#${event.data.section}`) routeSettings();
+    else location.hash = `#${event.data.section}`;
+    return;
+  }
   if (event.data.type === "salesteam-leave-settings") {
     // Change Settings' "Back to menu": when this page is itself shown inside another page (Posts, Accounts, Scanner),
     // close it and land back on that page - not on a Settings card the user never chose.
@@ -265,6 +277,8 @@ document.getElementById("open-target-accounts-btn").addEventListener("click", ()
 document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
+document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
@@ -274,14 +288,14 @@ document.getElementById("nav-fetch-size-target-accounts-btn").addEventListener("
 document.getElementById("nav-prioritize-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=prioritize", "Target Accounts Dashboard"));
 document.getElementById("open-target-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#contacts", "Target Contacts Dashboard"));
 document.getElementById("nav-discover-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=discover-contacts", "Target Contacts Dashboard"));
-document.getElementById("open-dashboard-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html", "Posts Dashboard"));
-document.getElementById("nav-prioritize-unscored-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=prioritize-unscored", "Posts Dashboard"));
-document.getElementById("nav-rescore-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=rescore-all", "Posts Dashboard"));
-document.getElementById("nav-extract-companies-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies", "Posts Dashboard"));
-document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Posts Dashboard"));
-document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Posts Dashboard"));
-document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Posts Dashboard"));
-document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Posts Dashboard"));
+document.getElementById("open-dashboard-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html", "Leads Dashboard"));
+document.getElementById("nav-prioritize-unscored-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=prioritize-unscored", "Leads Dashboard"));
+document.getElementById("nav-rescore-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=rescore-all", "Leads Dashboard"));
+document.getElementById("nav-extract-companies-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies", "Leads Dashboard"));
+document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Leads Dashboard"));
+document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Leads Dashboard"));
+document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Leads Dashboard"));
+document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Leads Dashboard"));
 document.getElementById("open-scanner-page-btn").addEventListener("click", () => showEmbeddedPage("scanner.html", "Scanner"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
@@ -455,6 +469,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.scanAbortRequested) {
     scanAbortRequestedFlag = Boolean(changes.scanAbortRequested.newValue);
   }
+});
+
+// Company Discovery's run cap (support only; moved out of the Setup's Size step in 1.2.0.43).
+const companyDiscoveryMaxInput = document.getElementById("company-discovery-max-input");
+getTargetUniverseConfig().then((c) => { companyDiscoveryMaxInput.value = c.maxCompanies; });
+document.getElementById("company-discovery-max-save-btn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("company-discovery-max-status");
+  const value = Number(companyDiscoveryMaxInput.value);
+  if (!Number.isInteger(value) || value < 1 || value > 500) {
+    statusEl.textContent = "Enter a whole number from 1 to 500.";
+    return;
+  }
+  await saveTargetUniverseConfig({ ...(await getTargetUniverseConfig()), maxCompanies: value });
+  statusEl.textContent = "Saved ✓";
 });
 
 document.getElementById("company-discovery-start-btn").addEventListener("click", async () => {
@@ -674,6 +702,8 @@ async function renderLinkedinTouchStat() {
 const SETTINGS_SECTION_IDS = [
   "setup-section", "automation-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
   "discovery-queue-section", "company-discovery-section", "contact-discovery-section",
+  // 1.2.0.49: these two were missing, so they showed under whichever card was open.
+  "revenue-currency-section", "web-findings-section",
 ];
 
 let onboardingIsComplete = false;
@@ -713,9 +743,11 @@ function routeSettings() {
     openChangeSettingsInline();
     return;
   }
-  // Change Settings opened straight on one setting (the User Profile card's "Open About you", 1.2.0.16).
-  if (location.hash === "#change-settings-about") {
-    showEmbeddedPage("onboarding.html?mode=settings&step=about", "Change Settings");
+  // Change Settings opened straight on one setting (the User Profile card's "Open About you", 1.2.0.16), or on About
+  // you with the seller research started (the once-only offer, design 3.12).
+  if (location.hash === "#change-settings-about" || location.hash === "#change-settings-research") {
+    const research = location.hash === "#change-settings-research" ? "&research=1" : "";
+    showEmbeddedPage(`onboarding.html?mode=settings&step=about${research}`, "Change Settings");
     document.querySelectorAll("#app-nav .nav-item.active").forEach((e) => e.classList.remove("active"));
     document.getElementById("nav-change-settings")?.classList.add("active");
     return;
@@ -734,6 +766,33 @@ function routeSettings() {
 }
 
 window.addEventListener("hashchange", routeSettings);
+// 1.2.1 step 7 (design 3.12, R4.6): a setup finished before 1.2.1 never saw the seller research, so Settings offers
+// it once. "No thanks" is remembered (declinedInSettings); running the research ends the offer too (status leaves
+// "none"). Either way the action stays under User Profile > Open About you.
+async function renderSellerResearchOffer() {
+  const offerEl = document.getElementById("seller-research-offer");
+  const [completedAt, research] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch()]);
+  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings);
+  document.getElementById("seller-research-offer-text").textContent =
+    "SalesTeam can research your company's website and propose improvements to the setup " +
+    `(about US$${SELLER_RESEARCH_ESTIMATE_USD.toFixed(2)}). The proposals are shown next to the current settings; ` +
+    "nothing changes unless you take one.";
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && (changes.setupResearch || changes.onboardingCompletedAt)) renderSellerResearchOffer();
+});
+document.getElementById("seller-research-offer-yes-btn").addEventListener("click", () => {
+  if (location.hash === "#change-settings-research") routeSettings();
+  else location.hash = "#change-settings-research";
+});
+document.getElementById("seller-research-offer-no-btn").addEventListener("click", async () => {
+  await saveSetupResearch({ ...(await getSetupResearch()), declinedInSettings: Date.now() });
+  try {
+    await appendActivityLog({ actor: "user", action: "setup_research", label: "Declined the setup research offered in Settings" });
+  } catch { /* the log is informational */ }
+});
+
 document.getElementById("profile-open-about-you-btn")?.addEventListener("click", () => {
   if (location.hash === "#change-settings-about") routeSettings();
   else location.hash = "#change-settings-about";
@@ -750,7 +809,7 @@ document.querySelectorAll('#app-nav a.nav-item[href^="#"]').forEach((link) => {
 // other cross-page reference in this codebase avoids importing one page's
 // script from another). Re-sync this number if a step is ever added there.
 // 15 since 1.2.1 step 6 (1.2.0.31: it still said 11).
-const ONBOARDING_TOTAL_STEPS = 15;
+const ONBOARDING_TOTAL_STEPS = 12; // 1.2.0.51: 3 technical steps moved to Change Settings > Advanced
 
 // 1.2.0.31 (Boaz): the wizard runs inside this page, so the menu's "(not started)" never changed while he went through
 // it - the progress is drawn again whenever the wizard saves how far it got, or that the setup is finished.
@@ -771,6 +830,12 @@ async function renderOnboardingProgress() {
   document.getElementById("onboarding-progress-label").textContent = label;
   document.getElementById("onboarding-progress-fill").style.width = `${pct}%`;
   document.getElementById("onboarding-progress-fill").classList.toggle("onboarding-progress-fill-done", Boolean(completedAt));
+  // 1.2.0.49 (Boaz): "Completed" above a "Continue Setup…" button and "Not completed yet." below it - the status line
+  // was set once at page load. Now both follow the real state.
+  editSetupBtn.textContent = completedAt ? "Change Settings…" : stepIndex > 0 ? "Continue Setup…" : "Start Setup…";
+  editSetupStatusEl.textContent = completedAt
+    ? `Setup finished on ${new Date(completedAt).toLocaleDateString()}. To change an answer, use Change Settings.`
+    : "";
 }
 
 async function init() {
@@ -782,11 +847,8 @@ async function init() {
   await renderLinkedinTouchStat();
   setInterval(renderLinkedinTouchStat, 30000);
 
-  const onboardingCompletedAt = await getOnboardingCompletedAt();
-  editSetupStatusEl.textContent = onboardingCompletedAt
-    ? `Last completed ${new Date(onboardingCompletedAt).toLocaleDateString()}.`
-    : "Not completed yet.";
   await renderOnboardingProgress();
+  await renderSellerResearchOffer();
 
   await renderDiscoveryQueueState();
 
@@ -1056,7 +1118,13 @@ function fillWebFindingsForm(settings) {
 async function initWebFindingsArbitration() {
   if (!webFindingsEl("web-findings-rules")) return;
   buildWebFindingsRuleRows();
-  fillWebFindingsForm(await getWebFindingsArbitration());
+  const findingsSettings = await getWebFindingsArbitration();
+  fillWebFindingsForm(findingsSettings);
+  document.getElementById(findingsSettings.askEveryDifference ? "findings-mode-ask" : "findings-mode-auto").checked = true;
+  for (const id of ["findings-mode-auto", "findings-mode-ask"]) {
+    document.getElementById(id).addEventListener("change", () =>
+      saveWebFindingsArbitration({ askEveryDifference: document.getElementById("findings-mode-ask").checked }));
+  }
 
   for (const f of webFindingsNumberFields) {
     const el = webFindingsEl(f.id);

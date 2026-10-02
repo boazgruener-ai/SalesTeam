@@ -45,7 +45,7 @@
            its own markup (open/current), which meant the REST of the list
            reshuffled depending on which page you were on. Reordered to a
            single fixed order, identical across all 4 pages (Target
-           Accounts, Target Contacts, Posts Dashboard, Scanner, Settings,
+           Accounts, Target Contacts, Leads Dashboard, Scanner, Settings,
            Debug last) - only which group carries `open`/is the current
            page changes now, never their relative order. -->
       <!-- 23rd round of direct feedback (2026-09-19) - see dashboard.html's
@@ -58,6 +58,7 @@
         <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
         <button id="nav-import-target-accounts-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
         <button id="nav-restore-accounts-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="nav-export-accounts-csv-btn" type="button" class="nav-item" title="Save the accounts the Target Accounts table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
         <button id="nav-hubspot-export-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
         <button id="nav-hubspot-import-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
       </details>
@@ -65,14 +66,15 @@
       <details class="nav-group">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
+        <button id="nav-export-contacts-csv-btn" type="button" class="nav-item" title="Save the contacts the Target Contacts table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
       </details>
 
       <details class="nav-group">
-        <summary class="nav-group-label">Posts Dashboard</summary>
+        <summary class="nav-group-label">Leads Dashboard</summary>
         <!-- 23rd round of direct feedback (2026-09-19) - see
              target-accounts.html's own copy of this comment for the full
              reasoning. -->
-        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the full scanned-posts pipeline">Open Posts Dashboard</button>
+        <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the leads (posts) your scans found">Open Leads Dashboard</button>
         <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
         <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
       </details>
@@ -272,7 +274,7 @@
       <section id="negative-topics-section">
         <h2 class="section-heading">Negative Topics (Lead Filters)</h2>
         <p class="field-hint">
-          Same idea as a Topic above, just inverted: any lead matching a negative topic is noise, not a prospect.
+          Same idea as a Topic above, just inverted: any lead (post) matching a negative topic is noise, not a prospect.
           Negative topics are checked after the search results come back and are never sent to LinkedIn. The company
           filters at the top (competitors, recruiting companies, existing customers and partners) are one checkbox
           each, because their company lists are kept in the Setup wizard. Add your own custom filter for any other
@@ -288,7 +290,7 @@
         <button id="add-negative-topic-btn" type="button" title="Add a custom filter for leads you do not want to see">+ Add Negative Topic</button>
 
         <p class="field-hint" id="apply-negative-filters-hint">
-          To apply the negative filters above to your existing leads right now, without running a new scan, click
+          To apply the negative filters above to your existing leads (posts) right now, without running a new scan, click
           "Apply Negative Filters" below. Existing leads with status New that match a filter are removed from your
           lists (nothing is deleted); leads that no longer match any filter come back.
         </p>
