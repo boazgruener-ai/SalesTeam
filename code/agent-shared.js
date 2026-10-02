@@ -2127,7 +2127,9 @@ export async function researchSeller(seller, opts, settings, { signal, onTool, o
     "You research a B2B company's own website so that its sales prospecting tool can be set up for it. Open the home " +
     "page first with web fetch, then the pages that answer the questions: about, products / services / solutions, " +
     "customers / case studies / references, partners, resources or downloads, contact or locations. Use web search only " +
-    "for what the site does not say (mainly competitors). For resources, open the site's resources, downloads, events or " +
+    "for what the site does not say. For competitors, search for the company's competitors and alternatives (e.g. " +
+    "\"<company> competitors\", and its main service in its country) and list every competitor the results name, " +
+    "each with its website when known - all of them, up to 15, not just the first. For resources, open the site's resources, downloads, events or " +
     "insights page and list every item it shows that the company offers (report, white paper, guide, webinar, event, " +
     "free assessment or demo), each with its own page - all of them, not a sample. Report only what a page states: every item carries the URL " +
     "of the page it came from, never invent a URL, a company, a resource or a number, and leave a list empty rather " +
@@ -2142,7 +2144,7 @@ export async function researchSeller(seller, opts, settings, { signal, onTool, o
     (opts.hint ? `\nThe user adds: ${String(opts.hint).slice(0, 500)}` : "");
   const call = await discoveryCall({
     system, user,
-    fetchUses: focused ? 4 : 8, fetchTokens: 8000, searchUses: focused ? 2 : 3, maxTokens: 6000,
+    fetchUses: focused ? 4 : 8, fetchTokens: 8000, searchUses: focused ? 2 : 4, maxTokens: 6000,
     label: focused ? "Setup - research the seller again" : "Setup - research the seller",
   }, settings, { signal, onTool, onCost });
   const data = discoveryData(call.text);

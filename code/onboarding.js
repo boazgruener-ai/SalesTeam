@@ -2332,11 +2332,13 @@ async function logSetupResearch(label) {
   } catch { /* the log is for measuring only */ }
 }
 
-// 1.2.0.53 (Boaz: 7, then 5, then 4 offers): how many offers a run kept and left out, so a change can be explained.
+// 1.2.0.53/.54 (Boaz: 7, then 5, then 4 offers; many competitors, then 1): what a run kept, so a change can be explained.
 function offersMeasure(proposals) {
   const p = proposals?.["value-add-offers"];
-  if (!p) return "";
-  return `; offers: ${p.items?.length || 0} kept${p.dropped ? `, ${p.dropped} left out (no page on the website)` : ""}`;
+  const x = proposals?.exclusions;
+  const count = (cat) => (x?.items || []).filter((e) => e.category === cat).length;
+  return (p ? `; offers: ${p.items?.length || 0} kept${p.dropped ? `, ${p.dropped} left out (no page on the website)` : ""}` : "") +
+    (x ? `; exclusions: ${count("competitor")} competitors, ${count("customer")} customers, ${count("partner")} partners` : "");
 }
 
 function researchMeasures(result) {
