@@ -29,11 +29,12 @@ import {
 } from "./storage.js";
 import { researchAccountOnWeb, apiBlockedReason } from "./agent-shared.js";
 import { pageNamesAgree, cleanPageName, isEmptyPageBand } from "./decision-rules.js";
-import { assessAccount, companyLinkSlug, countReadiness } from "./readiness.js";
+import { assessAccount, companyLinkSlug, countReadiness, MIN_READY_TO_SCAN } from "./readiness.js";
+import { WEB_LANE_STATE_KEY, startWebLane, isWebLaneRunning } from "./web-lane.js";
 import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
   parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING, autoRunBlocker, USER_JOB_HOLD_MS,
-  isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS,
+  isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS, READY_GOAL_KEY,
 } from "./pipeline-plan.js";
 import { resolveAccountOnTab } from "./company-resolve-extraction.js";
 import { armSizeRead, disarmSizeRead, readSizeOnTab } from "./company-size-extraction.js";
@@ -46,10 +47,17 @@ import {
 } from "./pipeline-automation.js";
 
 export const PIPELINE_STATE_KEY = "pipelineState";
+// 1.2.0.10: accounts per automatic web lane run, started while the LinkedIn visits are used up. Each kick
+// (every 10 minutes while a page is open) can start the next one; the monthly web budget is the limit.
+const AUTO_WEB_LANE_ACCOUNTS = 20;
+// A web lane run whose record has not been saved for this long belongs to a worker that died (a reload).
+const WEB_LANE_STALE_MS = 2 * 60 * 1000;
 const RUN_LABEL = "Run pipeline now";
 // Keyword chunks a title-based contact discovery usually needs - a planning estimate only (5.1).
 const TYPICAL_CONTACT_CHUNKS = 2;
 // Per account and day: how many known contacts the profile job may search for by name.
+// Since 1.2.1 step 4 (D2) the first search is followed by the People page; more than one name search a day
+// happens only once the People page has given up.
 const MAX_PROFILE_SEARCHES_PER_ACCOUNT = 3;
 const MIN_DELAY_MS = 4000;
 const MAX_DELAY_MS = 9000;
@@ -159,14 +167,21 @@ export async function kickPipeline(source) {
       // W5: settling the web findings the rules can settle is local and free, so it happens on every
       // kick that could start a run, whether or not there is LinkedIn or web work to do.
       await autoResolveWebFindings().catch(() => {});
-      const { entries } = await readinessNow();
-      const opts = { linkedin: stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason };
+      const { entries, counts } = await readinessNow();
+      const opts = { linkedin: stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason, ...(await planContext(counts)) };
       if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts).length === 0) reason = opts.linkedin ? "nothing_left" : "budget";
     }
     if (reason) {
       // Kept only for the reasons the status line explains; hold and busy pass by themselves.
       if (["nothing_left", "no_backup", "budget"].includes(reason)) {
         await chrome.storage.local.set({ [PIPELINE_IDLE_KEY]: { reason, at: now } });
+      }
+      // 1.2.0.10 (Boaz, 2026-10-01): the LinkedIn visits are used up and the pipeline has no web research of its
+      // own to do, but the web budget allows more - the web lane carries on (contacts, profiles, initiatives).
+      if (reason === "budget" && !web.reason && stats.last24h >= PIPELINE_TOUCH_CEILING && !isWebLaneRunning()) {
+        const left = Math.max(0, (Number(web.monthlyUsd) || 0) - (Number(web.spentUsd) || 0));
+        const lane = await startWebLane({ limit: AUTO_WEB_LANE_ACCOUNTS, budget: left, auto: true }).catch(() => null);
+        if (lane && lane.ok) return { started: false, reason, webLane: true };
       }
       return { started: false, reason };
     }
@@ -217,6 +232,51 @@ async function readinessNow() {
   return { views, cfg, entries, counts: countReadiness(entries.filter((e) => !e.view.deleted && !e.view.excluded).map((e) => e.assessment)) };
 }
 
+// 1.2.1 step 4: what the ranking needs beyond the budgets - the D7 goal (fewer than MIN_READY_TO_SCAN Ready)
+// and the accounts a web lane run in progress still holds (design 7.1).
+async function planContext(counts) {
+  const lane = (await chrome.storage.local.get(WEB_LANE_STATE_KEY))[WEB_LANE_STATE_KEY];
+  const alive = lane && lane.status === "running" && Date.now() - (lane.heartbeatAt || 0) < WEB_LANE_STALE_MS;
+  return {
+    readyGoal: counts.ready < MIN_READY_TO_SCAN,
+    webLaneHold: alive ? { keys: [...(lane.pendingKeys || []), ...(lane.runningKeys || [])], since: lane.startedAt } : null,
+  };
+}
+
+// Measures the way to the first MIN_READY_TO_SCAN Ready accounts (step 4's check: time to 10 Ready, touches
+// per account). `ready`: the current count, or null; `account`: one account just handled, or null. Measured
+// once per install: after the goal is met the record stays as it is, for the Scanner's estimate and for us.
+async function trackReadyGoal(ready, account) {
+  const g = (await chrome.storage.local.get(READY_GOAL_KEY))[READY_GOAL_KEY] || null;
+  if (g && g.reachedAt) return;
+  const now = Date.now();
+  if (!g) {
+    if (ready == null || ready >= MIN_READY_TO_SCAN) return;
+    await chrome.storage.local.set({ [READY_GOAL_KEY]: { startedAt: now, readyAtStart: ready, ready, accounts: 0, touches: 0, workMs: 0, readyMade: 0, reachedAt: null } });
+    return;
+  }
+  const next = { ...g };
+  if (account) {
+    next.accounts++;
+    next.touches += account.touches || 0;
+    next.workMs += account.ms || 0;
+    if (account.becameReady) next.readyMade++;
+  }
+  if (ready != null) next.ready = ready;
+  if (ready != null && ready >= MIN_READY_TO_SCAN) {
+    next.reachedAt = now;
+    const min = (ms) => Math.max(1, Math.round(ms / 60000));
+    appendActivityLog({
+      actor: "extension",
+      action: "pipeline_ready_goal",
+      label: `First ${MIN_READY_TO_SCAN} accounts Ready (from ${next.readyAtStart}): ${min(now - next.startedAt)} min after the pipeline started, ` +
+        `${min(next.workMs)} min of pipeline work, ${next.touches} LinkedIn page visit${next.touches === 1 ? "" : "s"} on ${next.accounts} account${next.accounts === 1 ? "" : "s"}`,
+      newValue: next,
+    }).catch(() => {});
+  }
+  await chrome.storage.local.set({ [READY_GOAL_KEY]: next });
+}
+
 async function run(r) {
   const s = r.state;
   const save = () => chrome.storage.local.set({ [PIPELINE_STATE_KEY]: { ...s, heartbeatAt: Date.now() } }).catch(() => {});
@@ -239,7 +299,8 @@ async function run(r) {
       const { cfg, entries, counts } = s.done === 0 ? first : await readinessNow();
       s.ready = counts.ready;
       const now = Date.now();
-      const opts = { linkedin: linkedinOk, web: webOk };
+      const opts = { linkedin: linkedinOk, web: webOk, ...(await planContext(counts)) };
+      await trackReadyGoal(counts.ready, null);
       const ranked = rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts);
       s.remaining = ranked.length;
       const next = ranked[0];
@@ -271,6 +332,7 @@ async function run(r) {
       s.touches += touches;
       s.done++;
       s.accounts = [...s.accounts, { company: next.view.company, lines: outcome.lines, touches, state: outcome.state }].slice(-MAX_ACCOUNT_LINES);
+      await trackReadyGoal(null, { ms: Date.now() - started, touches, becameReady: outcome.becameReady });
       s.current = null;
       await save();
       s.webResearches += outcome.webResearches || 0;
@@ -290,7 +352,7 @@ async function run(r) {
     // Step 4 (V3): a re-check can reveal that two accounts are the same LinkedIn company. Settled here,
     // after the run, when merging cannot pull a row out from under the account being worked on.
     if (s.done > 0) await settleSafeDuplicates().catch(() => {});
-    try { s.readyAfter = (await readinessNow()).counts.ready; s.ready = s.readyAfter; } catch { /* the summary just lacks the count */ }
+    try { s.readyAfter = (await readinessNow()).counts.ready; s.ready = s.readyAfter; await trackReadyGoal(s.readyAfter, null); } catch { /* the summary just lacks the count */ }
     s.status = "finished";
     s.current = null;
     s.finishedAt = Date.now();
@@ -319,6 +381,8 @@ async function freshView(key) {
 async function runAccount(tab, entry, cfg, r, opts) {
   const key = entry.view.key;
   const day = localDay();
+  const startedAt = Date.now();
+  const wasReady = entry.assessment.state === "ready";
   const lines = [];
   let view = entry.view;
   let pipeline = { ...(view.pipeline || {}) };
@@ -358,7 +422,7 @@ async function runAccount(tab, entry, cfg, r, opts) {
         }
       } else if (res.failed) failed.add(plan.job);
       view = (await freshView(key)) || view;
-      jobs = jobsNeeded(view, assessAccount(view, cfg, Date.now()), pipeline, Date.now(), opts);
+      jobs = jobsNeeded(view, assessAccount(view, cfg, Date.now()), pipeline, Date.now(), { ...opts, profileSearches });
       continue;
     }
     // LinkedIn jobs: none without the worker window, none once the day's visits are used up (W1).
@@ -396,7 +460,7 @@ async function runAccount(tab, entry, cfg, r, opts) {
 
     view = (await freshView(key)) || view;
     const assessment = assessAccount(view, cfg, Date.now());
-    jobs = jobsNeeded(view, assessment, pipeline, Date.now(), opts);
+    jobs = jobsNeeded(view, assessment, pipeline, Date.now(), { ...opts, profileSearches });
     // A job that ran and is still needed did not close its gap: one failed day for it (5.5). The
     // profile job keeps its own record instead - the names already searched. A web job counts as failed
     // only when the research itself failed (above): its result can wait in Decisions for days.
@@ -425,16 +489,20 @@ async function runAccount(tab, entry, cfg, r, opts) {
 
   view = (await freshView(key)) || view;
   const finalState = assessAccount(view, cfg, Date.now()).state;
+  const becameReady = !wasReady && finalState === "ready";
+  // Step 4's measurement (touches per account vs. design section 9): the visits this account took.
+  const touches = await countTouchesSince(startedAt).catch(() => null);
   appendActivityLog({
     actor: "extension",
     action: "pipeline_account",
-    label: `Pipeline: ${view.company} - ${lines.length ? lines.join("; ") : "nothing changed"}`,
+    label: `Pipeline: ${view.company} - ${lines.length ? lines.join("; ") : "nothing changed"}` +
+      (touches ? ` (${touches} LinkedIn page visit${touches === 1 ? "" : "s"}${becameReady ? ", now Ready" : ""})` : becameReady ? " (now Ready)" : ""),
     // A Contact Link that pointed at another page (often the news article the research cited) and was
     // replaced by the LinkedIn profile is kept here, so the evidence can still be found.
-    newValue: { lines, state: finalState, ...(replacedLinks.length ? { replacedContactLinks: replacedLinks } : {}) },
+    newValue: { lines, state: finalState, touches, becameReady, ...(replacedLinks.length ? { replacedContactLinks: replacedLinks } : {}) },
     relatedCompanyKey: key,
   }).catch(() => {});
-  return { lines, state: finalState, windowClosed, webResearches, webUsd };
+  return { lines, state: finalState, becameReady, windowClosed, webResearches, webUsd };
 }
 
 // ---------------------------------------------------------------------------------------------------

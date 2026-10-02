@@ -1528,6 +1528,62 @@ def test_discovery_filter(ctx):
           ctx.eval("chooseDiscoveryRows(P.filter(r => r.name !== 'Included'), T, 8).map(r => r.name).slice(-1)[0]"), "NoSize")
 
 
+def test_linkedin_after_web(ctx):
+    """pipeline-plan.js - 1.2.1 step 4, LinkedIn after the web (onboarding design 7.1-7.3, D2, D7).
+    Reuses test_readiness's readyView/CFG/NOW."""
+    check("MIN_READY_TO_SCAN is 10 (D7)", ctx.eval("MIN_READY_TO_SCAN"), 10)
+    ctx.eval(r"""
+    var NOPROF = function (name, level) { return { fullName: name, relevant: true, level: level || null, linkedinUrl: null }; };
+    """)
+    check("the most senior known contact is looked up first (7.2)",
+          ctx.eval("profileContactToTry(readyView({ contacts: [NOPROF('Anna Muster', 'manager'), NOPROF('Carl Weber'), NOPROF('Beat Keller', 'cLevel')] }), {}, NOW).fullName"),
+          "Beat Keller")
+    check("equal seniority keeps the stored order",
+          ctx.eval("profileContactToTry(readyView({ contacts: [NOPROF('Anna Muster', 'head'), NOPROF('Beat Keller', 'head')] }), {}, NOW).fullName"),
+          "Anna Muster")
+    check("D2: after one name search in this pass, the People page - not a second name search",
+          ctx.eval("jobsNeeded(readyView({ contacts: [NOPROF('Anna Muster'), NOPROF('Beat Keller')] }), assessAccount(readyView({ contacts: [NOPROF('Anna Muster'), NOPROF('Beat Keller')] }), CFG, NOW), { profileTried: ['Anna Muster'] }, NOW, { profileSearches: 1 }).join(',')"),
+          "contacts")
+    check("D2: once the People page has given up, the names are searched again",
+          ctx.eval("jobsNeeded(readyView({ contacts: [NOPROF('Anna Muster'), NOPROF('Beat Keller')] }), assessAccount(readyView({ contacts: [NOPROF('Anna Muster'), NOPROF('Beat Keller')] }), CFG, NOW), { profileTried: ['Anna Muster'], attempts: { contacts: ['2026-09-23', '2026-09-24'] } }, NOW, { profileSearches: 1 }).join(',')"),
+          "profile")
+
+    # 7.1: the web lane's accounts wait for it
+    check("an account the web lane still holds is held", ctx.eval("heldForWebLane({ key: 'a' }, { keys: ['a'], since: NOW - 3600000 }, NOW)"), True)
+    check("an account the lane does not hold is not", ctx.eval("heldForWebLane({ key: 'b' }, { keys: ['a'], since: NOW - 3600000 }, NOW)"), False)
+    check("after a day the lane holds nothing", ctx.eval("heldForWebLane({ key: 'a' }, { keys: ['a'], since: NOW - 25 * 3600000 }, NOW)"), False)
+    check("no lane run, no hold", ctx.eval("heldForWebLane({ key: 'a' }, null, NOW)"), False)
+    ctx.eval(r"""
+    function rentries(views) { return views.map(function (v) { return { view: v, assessment: assessAccount(v, CFG, NOW), pipeline: {} }; }); }
+    var HQ = readyView({ key: 'hq', salesTeamPriority: 'P1', globalHqCountry: null, contacts: [] });   // needs the web for its HQ
+    var FAR = readyView({ key: 'far', salesTeamPriority: 'P2', contacts: [] });                        // People page, ~2 touches
+    var NEAR = readyView({ key: 'near', salesTeamPriority: 'P3', contacts: [NOPROF('Anna Muster')] }); // one name search
+    function order(opts) { return rankCandidates(rentries([HQ, FAR, NEAR]), NOW, 2, opts).map(function (e) { return e.view.key; }).join(','); }
+    """)
+    check("a held account is not offered to LinkedIn",
+          ctx.eval("order({ webLaneHold: { keys: ['far'], since: NOW - 60000 } })"), "hq,near")
+    check("HQ gap is not closable by LinkedIn", ctx.eval("readyByLinkedin(assessAccount(HQ, CFG, NOW))"), False)
+    check("without the goal: priority first", ctx.eval("order({})"), "hq,far,near")
+    check("under 10 Ready (D7): accounts LinkedIn can make Ready, fewest touches first, ahead of priority",
+          ctx.eval("order({ readyGoal: true })"), "near,far,hq")
+
+    # The Scanner's estimate
+    check("time left: 4 accounts at the planning figure", ctx.eval("readyEtaMinutes(6, 10)"), 25)
+    check("time left: never under 5 minutes", ctx.eval("readyEtaMinutes(9, 10, 1)"), 5)
+    check("time left: goal met", ctx.eval("readyEtaMinutes(12, 10)"), 0)
+    check("measured pace only after 3 Ready", ctx.eval("measuredMinutesPerReady({ readyMade: 2, workMs: 600000 })"), None)
+    check("measured pace", ctx.eval("measuredMinutesPerReady({ readyMade: 4, workMs: 4 * 300000 })"), 5)
+
+    # 1.2.0.13: the web lane first takes the accounts it can make Ready on its own
+    check("only a contact missing: the web can make it Ready",
+          ctx.eval("onlyContactMissing(assessAccount(readyView({ contacts: [NOPROF('Anna Muster')] }), CFG, NOW))"), True)
+    check("a LinkedIn re-check missing too: not by the web alone",
+          ctx.eval("onlyContactMissing(assessAccount(Object.assign(readyView({ contacts: [] }), { provenance: Object.assign({}, readyView().provenance, { linkedinCompanyId: { src: 'linkedin', at: NOW, link: null, v: '1234' } }) }), CFG, NOW))"), False)
+    check("a Ready account is not a candidate", ctx.eval("onlyContactMissing(assessAccount(readyView(), CFG, NOW))"), False)
+    check("lane order: ready-by-web first, ahead of traded and priority",
+          ctx.eval("webLaneOrder([{ key: 'a', isPublic: true, priority: 'P1' }, { key: 'b', isPublic: false, priority: 'P3', readyByWeb: true }]).map(function (e) { return e.key; }).join(',')"), "b,a")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1559,6 +1615,7 @@ def main():
     test_web_lane_step2(ctx)
     test_profile_search_matching(ctx)
     test_discovery_filter(ctx)
+    test_linkedin_after_web(ctx)
 
     print()
     for f in _failures:

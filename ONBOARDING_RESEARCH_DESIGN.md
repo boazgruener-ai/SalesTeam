@@ -708,6 +708,61 @@ no fit search needed. The accounts are homegrown companies of the right size (Sy
 Alpiq, Zurich Insurance Group, Raiffeisenbank…) - the opposite of the LinkedIn run's "X Switzerland" branches. Far
 below the design's estimate for discovery. Still to see: how many of them the pipeline finds on LinkedIn.
 
+**As built (step 4, 1.2.0.9) - LinkedIn after the web.** All in the existing pipeline (`pipeline-plan.js`,
+`pipeline-runner.js`); nothing new on screen except the Scanner's gate.
+
+- **7.1, the web lane goes first:** a web lane run now records the accounts it still has to research
+  (`pendingKeys`, queued or running). `heldForWebLane` keeps them out of `rankCandidates` while the run is
+  alive; a run that has stopped (budget, key, 429), whose record is more than 2 minutes old (a reload), or that
+  started more than a day ago holds nothing.
+- **7.2 / D2, one name search, then the People page:** account views now carry each contact's seniority level
+  (`level`) and `source`; `profileContactToTry` takes the **most senior** relevant contact without a profile
+  first. After one name search in a pass, `jobsNeeded` offers the People page (`contacts`) instead of a second
+  name search; only once the People page has given up (two failed days) are further names searched (up to 3 a
+  day, as before). Resolve already uses the LinkedIn company link the web found (D10), and size already rides on
+  the resolve visit or is skipped when the web gave a cited count.
+- **7.3 / D7, the first 10 Ready:** `MIN_READY_TO_SCAN` is **10**. While fewer accounts are Ready,
+  `rankCandidates` (`readyGoal`) puts first the accounts whose remaining gaps LinkedIn can close (id, employees,
+  contact, priority - `readyByLinkedin`), fewest estimated touches first, ahead of priority; an account that also
+  needs the web for its HQ or industry waits. The jobs already stop at Ready (a contact gap closes with one
+  verified contact), so nothing above Ready is done for an account before the goal is met. The Scanner's gate
+  says *"6 of 10 accounts Ready, about 25 minutes to go"* while automatic preparation is on
+  (`readyEtaMinutes`: 6 minutes per Ready account to come until 3 have been measured, then the measured pace).
+- **Measurements:** every *Pipeline:* Activity Log line ends with the account's LinkedIn page visits and "now
+  Ready"; the first run that finds fewer than 10 Ready starts `pipelineReadyGoal` (accounts, visits, pipeline
+  work time), and reaching 10 writes one line - *"First 10 accounts Ready (from N): X min after the pipeline
+  started, Y min of pipeline work, Z LinkedIn page visits on W accounts"*. Every Leads scan writes *"Leads
+  scan: N LinkedIn page visits in M min"* (D7: are 39 free touches enough?). Measured once per install, so on
+  an install that already has 10 Ready only the per-account and per-scan lines apply; time to 10 Ready needs
+  the small test target (Boaz's end goal, 10 accounts).
+
+**1.2.0.10 (Boaz, 2026-10-01) - the web goes on while LinkedIn waits.** With the pipeline's LinkedIn visits used up
+the top bar said only *"LinkedIn limit for automation reached"*, and nothing ran on the web: the pipeline's own web
+research (missing headcount or HQ, a full research once a year) had nothing left, and the web lane ran only by hand.
+Now (a part of step 6 brought forward): when a kick finds the LinkedIn limit reached and the pipeline idle, and the
+monthly web budget allows, it starts the **web lane automatically**, 20 accounts per run. Each account's cost counts
+against the monthly web budget; before every account the run checks that automatic preparation is on, not paused
+for today, and that the budget still allows; an empty credit balance or a Console limit blocks the pipeline's web
+research for the day too. No pop-up at the end, one Activity Log line (*"Automatic web research: ..."*). The bar
+says what the web side is doing: *"... resumes around 09:06 PM · web research goes on (3 of 20 accounts)"*, or
+*"· no account needs web research just now"*, *"· web research is off"*, *"· web research budget used up"*.
+
+**First automatic run (1.2.0.10, 2026-10-01, 20 accounts):** US$4.32, about **US$0.22 per account** - twice the
+planning figure (traded US$0.26 / 28 s, others US$0.18 / 21 s); about 165 people added (6-16 per account), LinkedIn
+profiles from search results for 46 of 117 (39%). Ready went from 146 to only 147: most of these accounts still need
+the LinkedIn re-check of their company id (391 accounts in all), which only LinkedIn can do. **1.2.0.12 (Boaz): at
+most 5 people per research** (`LANE_MAX_PEOPLE`), at the seniority levels chosen in Setup, most senior first - asked
+in the prompt and enforced when the people are added.
+**1.2.0.13 (Boaz):** the web lane first takes the accounts it can make Ready on its own - LinkedIn company verified,
+a verified relevant contact the only thing missing (`onlyContactMissing`, `webLaneOrder`'s `readyByWeb`) - then
+traded, priority and listing order as before.
+**Second automatic run (1.2.0.13, 2026-10-01, 20 accounts):** US$4.10, about US$0.205 per account; 72 people
+added (the cap works), profiles from search results for 38 of 83 (46%); **Ready 147 -> 158** - about US$0.37 per
+Ready account, no LinkedIn visit. The cap hardly moved the cost: it is the research reading search results and
+pages (input), not the people. **1.2.0.14 (Boaz):** a research that asks only for contacts runs on **Haiku 4.5**
+(`LANE_CONTACTS_MODEL`, half Sonnet 5's token price; searches unchanged at US$0.01) - expected about US$0.11-0.12 per
+account; the Activity Log line says "Haiku", to compare people and profiles found with the Sonnet runs.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

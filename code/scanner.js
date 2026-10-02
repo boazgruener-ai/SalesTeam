@@ -70,6 +70,7 @@ import {
   getAccountReadiness,
 } from "./storage.js";
 import { MIN_READY_TO_SCAN } from "./readiness.js";
+import { readyEtaMinutes, measuredMinutesPerReady, READY_GOAL_KEY, localDay } from "./pipeline-plan.js";
 import { getPipelineAutomation } from "./pipeline-automation.js";
 import { runAutoBackupIfDue, startAutoBackup } from "./backup-restore.js";
 import { mountLocationPicker } from "./location-picker.js";
@@ -1690,7 +1691,7 @@ clearResultsBtn.addEventListener("click", () => {
   appendActivityLog({ actor: "user", action: "results_view_cleared", label: "Cleared results view (leads are not deleted)" });
 });
 
-// Build step 3, U4 as refined 2026-09-25: 0 Ready accounts blocks the scan; 1 to MIN_READY_TO_SCAN - 1
+// Build step 3, U4 as refined 2026-09-25 (MIN_READY_TO_SCAN 10 since 1.2.1 step 4, D7): 0 Ready accounts blocks the scan; 1 to MIN_READY_TO_SCAN - 1
 // explains and offers "Scan anyway"; MIN_READY_TO_SCAN or more scans straight away.
 async function confirmReadyGate() {
   let ready = 0;
@@ -1712,8 +1713,16 @@ async function confirmReadyGate() {
     await askConfirm(`${have} The Scanner needs at least one Ready account to start.${more}`, { okLabel: "OK", cancelLabel: "Close" });
     return false;
   }
+  // 1.2.1 step 4 (design 7.3): the progress, and - while the pipeline is preparing them - the time left, from
+  // the measured pace once there is one, else the planning figure.
+  let progress = `${ready} of ${MIN_READY_TO_SCAN} accounts Ready.`;
+  if (auto.enabled && auto.pausedDay !== localDay(Date.now())) {
+    let perReady = null;
+    try { perReady = measuredMinutesPerReady((await chrome.storage.local.get(READY_GOAL_KEY))[READY_GOAL_KEY]); } catch { /* the estimate stands */ }
+    progress = `${ready} of ${MIN_READY_TO_SCAN} accounts Ready, about ${readyEtaMinutes(ready, MIN_READY_TO_SCAN, perReady)} minutes to go.`;
+  }
   return askConfirm(
-    `You have ${ready} Ready account${ready === 1 ? "" : "s"}. The Scanner works best with at least ${MIN_READY_TO_SCAN}: ` +
+    `${progress} The Scanner works best with at least ${MIN_READY_TO_SCAN}: ` +
     `it searches for posts from people at your accounts, and only well-prepared accounts give good matches.${more}`,
     { okLabel: "Scan anyway", cancelLabel: "Cancel" },
   );

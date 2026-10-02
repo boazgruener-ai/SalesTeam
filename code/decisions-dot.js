@@ -9,6 +9,9 @@ const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
   "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
 ]);
+// Written by the Decisions page after the user's own choice (1.2.0.10): recount at once, not after the debounce -
+// the dot stayed red for 5-10 s beside "Nothing to do" (Boaz, 2026-10-01).
+export const DECISION_TAKEN_KEY = "decisionTakenAt";
 const DEBOUNCE_MS = 5000; // a pipeline or research run writes every few seconds; the dot need not follow each one
 const FIRST_COUNT_DELAY_MS = 2500; // after the page has drawn its own content (1.2.0.2 load-time work)
 
@@ -49,7 +52,9 @@ export function initDecisionsDot(buttonId = "open-decisions-btn", onCount = null
     } catch { /* a page with no workbook yet simply shows no dot */ }
   };
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !Object.keys(changes).some((k) => WATCHED_KEYS.has(k))) return;
+    if (area !== "local") return;
+    if (changes[DECISION_TAKEN_KEY]) { clearTimeout(timer); refresh(); return; }
+    if (!Object.keys(changes).some((k) => WATCHED_KEYS.has(k))) return;
     clearTimeout(timer);
     timer = setTimeout(refresh, DEBOUNCE_MS);
   });

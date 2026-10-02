@@ -12,13 +12,16 @@ import {
   getAccountViews, getTargetAccountsWorkbook, getTargetAccountExtras, getReadinessConfig, getAnthropicApiKey,
   getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig, applyWebLaneResearch,
   appendActivityLog, normalizeCompanyName, setContactLinkedinProfile, contactKeyFor, saveTargetAccountExtra,
+  SENIORITY_LEVELS,
 } from "./storage.js";
-import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
-import { missingWebTopics, webLaneOrder, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
+import { researchAccountForLane, searchLinkedinProfiles, sanitizeApiKey, apiBlockedReason, LANE_CONTACTS_MODEL } from "./agent-shared.js";
+import { missingWebTopics, webLaneOrder, onlyContactMissing, isPubliclyTraded, profilesFromSearchResults, WEB_LANE_TOPICS, DEFAULT_COMPLETION_TARGETS } from "./pipeline-plan.js";
 import { researchIsPublic, findingValue } from "./web-research-apply.js";
-import { applicableProvenance, employeesField } from "./readiness.js";
+import { applicableProvenance, employeesField, assessAccount } from "./readiness.js";
 import { BULK_STATE_KEY } from "./batch-jobs.js";
 import { isRateLimited, backoffDelayMs, MAX_RATE_LIMITS_IN_A_ROW } from "./rate-limit.js";
+import { getPipelineAutomation, webBudgetState, recordWebSpend, setWebBlocked, apiKeyTail } from "./pipeline-automation.js";
+import { localDay } from "./pipeline-plan.js";
 
 export const WEB_LANE_STATE_KEY = "webLaneState";
 const WORKERS = 4;
@@ -64,6 +67,7 @@ export async function webLaneCandidates({ now = Date.now(), targets = DEFAULT_CO
       key: view.key, companyId: view.companyId, company: view.company, priority: view.salesTeamPriority, order: view.universeOrder,
       isPublic: isPubliclyTraded(extra.overrides?.companyType ?? row.companyType, researchIsPublic(research && research.data)),
       topics, known: knownFacts(view, initiatives, relevant), companyRow: row, website: view.website || null,
+      readyByWeb: onlyContactMissing(assessAccount(view, cfg, now)),
     });
   }
   const byKey = new Map(out.map((c) => [c.key, c]));
@@ -88,7 +92,15 @@ function knownFacts(view, initiatives, relevantContacts) {
   return out;
 }
 
-export async function startWebLane({ limit, budget }) {
+export function isWebLaneRunning() {
+  return Boolean(runner);
+}
+
+// `auto` (1.2.0.10): started by the automatic pipeline while its LinkedIn visits are used up (pipeline-runner.js
+// kickPipeline). Such a run is paid from the monthly web budget like the pipeline's own research (each account's
+// cost is recorded there), stops when that budget, automatic preparation or today's pause says so, and ends
+// without a pop-up - its summary goes to the Activity Log only.
+export async function startWebLane({ limit, budget, auto = false }) {
   if (runner) throw new Error("The web research lane is already running.");
   const bulk = (await chrome.storage.local.get(BULK_STATE_KEY))[BULK_STATE_KEY];
   if (bulk && bulk.status === "running") throw new Error("A bulk web research is running - wait for it to finish, or stop it, first.");
@@ -99,8 +111,11 @@ export async function startWebLane({ limit, budget }) {
   if (items.length === 0) throw new Error("No account needs web research right now - every account already has what the lane looks for.");
   const state = {
     status: "running", total: items.length, candidates: all.length, done: 0, failed: 0, spent: 0, runningKeys: [], stoppedReason: null,
+    // 1.2.1 step 4 (design 7.1): the accounts this run still has to research, queued or running. The pipeline
+    // leaves them to the lane until it is done with them (pipeline-plan.js heldForWebLane).
+    pendingKeys: items.map((item) => item.key),
     budget: Number(budget) || 0, startedAt: Date.now(), heartbeatAt: Date.now(), pausedUntil: null, finishedAt: null,
-    acknowledged: false, lastError: null, results: [],
+    auto: Boolean(auto), acknowledged: Boolean(auto), lastError: null, results: [],
   };
   const save = () => chrome.storage.local.set({ [WEB_LANE_STATE_KEY]: { ...state, heartbeatAt: Date.now() } }).catch(() => {});
   await save();
@@ -113,7 +128,7 @@ export async function startWebLane({ limit, budget }) {
       for (const c of controllers.values()) c.abort();
     },
   };
-  run(items, { apiKey, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r) }).catch(() => {});
+  run(items, { apiKey, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r), auto: Boolean(auto) }).catch(() => {});
   return { ok: true, total: items.length, candidates: all.length };
 }
 
@@ -122,7 +137,16 @@ export function stopWebLane() {
   return { ok: !!runner };
 }
 
-async function run(items, { apiKey, state, save, controllers, isStopping, stop }) {
+// An automatic run asks before every account whether it may still go on.
+async function autoStopReason() {
+  const a = await getPipelineAutomation();
+  if (!a.enabled) return "automation_off";
+  if (a.pausedDay === localDay()) return "paused_today";
+  const w = await webBudgetState();
+  return w.reason ? `web_${w.reason}` : null;
+}
+
+async function run(items, { apiKey, state, save, controllers, isStopping, stop, auto }) {
   let beat = 0;
   const keepAlive = setInterval(() => {
     chrome.storage.local.get("keepAlive").catch(() => {});
@@ -136,6 +160,11 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
       idealCustomerProfile: await getIdealCustomerProfile(),
       outputLanguage: await getOutputLanguage(),
       targetCountries: universe?.countries || [],
+      // The levels chosen in Setup, most senior first, so the research names people who count towards Ready.
+      seniorityLabels: (() => {
+        const chosen = new Set(((cfg.seniorityLevels || [])).map((l) => (typeof l === "string" ? l : l && l.id)));
+        return SENIORITY_LEVELS.filter((l) => chosen.has(l.id)).map((l) => l.label);
+      })(),
     };
     const industryNames = (cfg.industries || []).map((i) => (i && i.name) || "").filter(Boolean);
     let next = 0;
@@ -154,6 +183,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
         await waitOutPause();
         if (isStopping()) break;
         if (state.budget > 0 && state.spent >= state.budget) { stop("budget"); break; }
+        if (auto) { const why = await autoStopReason().catch(() => null); if (why) { stop(why); break; } }
         const item = retry.shift() || items[next++];
         if (!item) break;
         const own = new AbortController();
@@ -172,6 +202,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
               known: item.known,
               topicWords: mainTopics.map((t) => WEB_LANE_TOPICS[t]),
               industryNames: mainTopics.includes("industry") ? industryNames : null,
+              model: mainTopics.every((t) => t === "contacts") ? LANE_CONTACTS_MODEL : undefined,
             }, settings, { signal: own.signal });
             state.spent += result.costUsd || 0;
           }
@@ -201,10 +232,12 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
             searches: result ? result.searches : 0, fetches: result ? result.fetches : 0, turns: result ? result.turns : 0,
             inputTokens: result?.usage?.input_tokens || 0, outputTokens: result?.usage?.output_tokens || 0,
             stopped: (result && result.stopped) || null, dataLine: Boolean(result && result.data),
+            model: (result && result.model) || null,
             ...(applied || {}),
             profileAsked: profile ? profile.asked : 0, profileFound: profile ? profile.found : 0,
           };
           state.results.push(rec);
+          if (auto && rec.costUsd > 0) await recordWebSpend(rec.costUsd).catch(() => {});
           appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: accountLine(rec) }).catch(() => {});
         } catch (err) {
           if (isRateLimited(err) && !isStopping()) {
@@ -228,12 +261,17 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
           appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: `Web research (new) - ${item.company}: failed - ${String(err.message || err).slice(0, 200)}` }).catch(() => {});
           consecutiveFailures++;
           const blocked = apiBlockedReason(err);
+          // An automatic run tells the pipeline too, so neither tries again today with this key (W6).
+          if (blocked && auto && (blocked === "credit" || blocked === "limit")) await setWebBlocked(blocked, apiKeyTail(apiKey)).catch(() => {});
           if (blocked) stop(blocked);
           else if (consecutiveFailures >= 3 || [401, 402, 403].includes(err.status)) stop("errors");
         } finally {
           controllers.delete(item.key);
           state.runningKeys = state.runningKeys.filter((k) => k !== item.key);
-          if (!requeued) state.done++;
+          if (!requeued) {
+            state.done++;
+            state.pendingKeys = state.pendingKeys.filter((k) => k !== item.key);
+          }
           await save();
         }
       }
@@ -248,12 +286,16 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop }
     state.status = "done";
     state.pausedUntil = null;
     state.runningKeys = [];
+    state.pendingKeys = [];
     state.finishedAt = Date.now();
     state.measure = measureLane(state.results);
     await save();
     runner = null;
     try {
-      await appendActivityLog({ actor: "user", action: "web_lane_finished", label: `Web research lane: ${measureText(state)}` });
+      await appendActivityLog({
+        actor: auto ? "extension" : "user", action: "web_lane_finished",
+        label: `${auto ? "Automatic web research" : "Web research lane"}: ${measureText(state)}${auto && state.stoppedReason ? ` (stopped: ${state.stoppedReason})` : ""}`,
+      });
     } catch { /* the log entry is a convenience */ }
   }
 }
@@ -309,6 +351,7 @@ async function peopleWithoutProfile(companyId) {
 // One Activity Log line per account, so a run can be read account by account.
 export function accountLine(r) {
   const bits = [`${r.seconds} s`, `about US$${(r.costUsd || 0).toFixed(3)}`];
+  if (/haiku/i.test(r.model || "")) bits.push("Haiku");   // 1.2.0.14: contacts-only researches, to compare with Sonnet
   if (r.searches || r.fetches) bits.push(`${r.searches} searches, ${r.fetches} pages read${r.turns > 1 ? `, ${r.turns} rounds` : ""}`);
   if (r.stopped === "timeout") bits.push("CUT OFF at 4 minutes");
   if (r.dataLine === false && r.searches + r.fetches > 0) bits.push("no data line in the answer"); // older records have no dataLine

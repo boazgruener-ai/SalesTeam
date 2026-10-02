@@ -7,6 +7,7 @@
 import { getResults, updateResultDraft, computeCompanyDeterministicPreScore, bucketCompanyScore } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { recordApiUsage, estimateCostUsd } from "./api-usage.js";
+import { LANE_MAX_PEOPLE } from "./pipeline-plan.js";
 
 // Cheap/fast model, well-suited to drafting a short message - see the
 // environment's model list for current Claude model IDs.
@@ -16,6 +17,9 @@ export const DRAFT_MODEL = "claude-haiku-4-5-20251001";
 // approach advice (or reacting in character) is a genuine reasoning task,
 // unlike a short templated draft, so it's worth the extra cost/latency.
 export const AGENT_MODEL = "claude-sonnet-5";
+// 1.2.0.14 (Boaz, 2026-10-01): a web lane research that asks only for contacts runs on Haiku 4.5 - half Sonnet 5's
+// token price. Most lane researches are contacts-only now; Sonnet stays for facts, initiatives and summaries.
+export const LANE_CONTACTS_MODEL = "claude-haiku-4-5-20251001";
 
 // A plain fetch() has no timeout at all - a stalled connection or a slow
 // response from Anthropic's own infrastructure can hang indefinitely with
@@ -1693,7 +1697,7 @@ const LANE_TIME_LIMIT_MS = 240000;
 
 const STAGE_WORDS = "poc (proof of concept), exploration, pilot, early_production, scaling, mature, tech_native";
 
-function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, industryNames }) {
+function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, industryNames, seniorityLabels }) {
   const home = (targetCountries && targetCountries[0]) || "the seller's home market";
   const cited = "{\"value\":...,\"url\":\"the page that states it\",\"year\":YYYY|null}";
   return (
@@ -1706,8 +1710,11 @@ function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLan
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
     "\nInitiatives: only ones from about the last two years that could matter to the seller, each with its stage, one of: " + STAGE_WORDS + ".\n" +
-    "Contacts: named people in senior roles (management board, heads of IT, digital, data, operations, finance and similar) as " +
-    "the company's own pages or reports name them. For each, if a web search result shows their LinkedIn profile " +
+    "Contacts: at most " + LANE_MAX_PEOPLE + " named people, the most senior first, " +
+    (seniorityLabels && seniorityLabels.length
+      ? "only at these levels: " + seniorityLabels.join(", ") + " "
+      : "in senior roles (management board, heads of IT, digital, data, operations, finance and similar) ") +
+    "as the company's own pages or reports name them - stop once you have " + LANE_MAX_PEOPLE + ". For each, if a web search result shows their LinkedIn profile " +
     "(linkedin.com/in/...), give that link - never guess one, and do not open LinkedIn pages.\n" +
     (industryNames && industryNames.length ? "Industry: answer with exactly one of these names, or null: " + industryNames.join("; ") + ".\n" : "") +
     "Write at most five short plain-text lines about what you found (no markdown), then as the very last line DATA: followed " +
@@ -1741,7 +1748,7 @@ function laneUserMessage(company, known, topicWords, targetCountries) {
 
 // Returns { text, data, sources, searches, fetches, model, stopped, costUsd, ms, usage }. Throws like researchAccountOnWeb.
 // `company` carries the effective values (overrides applied) and its `website`.
-export async function researchAccountForLane(company, { known, topicWords, industryNames }, settings, { signal } = {}) {
+export async function researchAccountForLane(company, { known, topicWords, industryNames, model: askedModel }, settings, { signal } = {}) {
   const apiKey = sanitizeApiKey(settings.apiKey || "");
   if (!apiKey) throw new Error("Add an Anthropic API key in Settings first.");
   const started = Date.now();
@@ -1766,12 +1773,12 @@ export async function researchAccountForLane(company, { known, topicWords, indus
   let searches = 0;
   let fetches = 0;
   let turns = 0;
-  let model = AGENT_MODEL;
+  let model = askedModel || AGENT_MODEL;
   const usageTotal = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   try {
     for (let turn = 0; turn < 5; turn++) {
       const body = {
-        model: AGENT_MODEL,
+        model: askedModel || AGENT_MODEL,
         max_tokens: 4000,
         system,
         tools: [

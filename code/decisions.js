@@ -10,6 +10,7 @@
 import { getDecisionQueue, applyDecision } from "./storage.js";
 import { DECISION_KIND_LABELS } from "./decision-rules.js";
 import { askConfirm } from "./confirm-dialog.js";
+import { DECISION_TAKEN_KEY } from "./decisions-dot.js";
 
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
@@ -251,6 +252,8 @@ async function decide(choice) {
   } finally {
     setBusy(false);
   }
+  // The menu's red dot and the Pipeline status pie recount now, not after their usual delay.
+  if (done > 0) await chrome.storage.local.set({ [DECISION_TAKEN_KEY]: Date.now() }).catch(() => {});
   await load();
 }
 
