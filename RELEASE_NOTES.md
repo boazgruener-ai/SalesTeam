@@ -1,3 +1,56 @@
+# SalesTeam — v1.2.1
+
+## Onboarding research: the Setup proposes its own answers and builds the list (builds 1.2.0.1-1.2.0.39)
+
+- **The Setup proposes its answers** - a new first step, **About you**, asks for your company and its website and offers
+  **Research my company** (about US$0.30 on your Anthropic API key, one to two minutes, with a progress screen you can stop
+  or skip). SalesTeam reads the company's own website and proposes answers for Location, Size, Industry, What you sell,
+  Things you can offer, Ideal customer, Target contacts and Companies to exclude. On a first setup the proposals are filled
+  in for you to check; on a setup you already have, each proposal is shown next to the current setting and is taken only
+  with **Use proposal**. For a group website, the research answers for the company you named, its own country first.
+- **Offered once to existing users** - if you finished the Setup before 1.2.1, Settings and Change Settings show the offer
+  once (**Research** or **No thanks**); it stays available under Settings > User Profile > **Open About you**.
+- **Three new Setup steps** - **Initiative stages** (which stages of a company's initiatives matter to you, ranked),
+  **Companies to include** (companies you want in the list whatever the research finds) and **How big is your list**
+  (accounts, contacts per account and initiatives per account to aim for, with a live estimate of the cost on your API key
+  and the days of your daily LinkedIn limit it takes). The Setup now has 15 steps; its progress in the menu updates as you
+  go. The web budget on the last step is pre-filled from the estimate.
+- **Finish builds the list** - with automatic preparation and web research ticked, finishing the Setup adds the companies
+  you named, then finds new companies matching your Location, Size and Industry answers in company listings on the public
+  web (measured: about US$0.02 an account), shown with the Source "Web". It stops when the list reaches its target.
+  Excluded companies are never added - now matched by name and website as well as by LinkedIn page.
+- **Research on the web first, LinkedIn after** - each account is researched on the web for only what it still lacks:
+  size, HQ, initiatives, and up to five named contacts at your Setup seniority levels, most senior first, with their
+  LinkedIn profiles where the web shows them. Every web value keeps its own source. An account with web-verified contacts
+  counts as **Usable** without any LinkedIn visit, so the first accounts are usable within the hour. LinkedIn then only
+  confirms what the web could not: one name search, then the People page, stopping as soon as the account has its target
+  contacts, so far fewer LinkedIn visits go into each account. The first 10 Ready accounts are built
+  first; the Scanner needs 10 Ready accounts to start.
+- **The web goes on while LinkedIn waits** - when the daily LinkedIn limit is reached, web research carries on by itself
+  within your monthly budget. Contacts-only research runs on the cheaper Haiku model.
+- **One top status bar** - running and waiting jobs (the automatic pipeline, web research, discovery) show in one strong bar
+  at the top of every page, saying what is being done, what is waiting and why. Pop-ups are kept for decisions and
+  finished jobs.
+- **LinkedIn login** - if LinkedIn asks you to log in, the pipeline stops and the top bar asks you to log in, instead of
+  counting accounts as not found.
+- **Export accounts or contacts to Excel** - new **Export Accounts (CSV)** and **Export Contacts (CSV)** menu items save
+  one spreadsheet per table, every column under SalesTeam's own names, dates as dates. With a filter on, you choose all rows
+  or only the filtered ones. Every export (accounts, contacts, posts) leaves out columns that are empty in every row and
+  puts sparsely filled ones last.
+- **Filters you cannot miss** - every active filter (status, search, column filters) is listed above the Posts, Target
+  Accounts and Target Contacts tables, each with its own ✕ and a **Clear all**; a filtered column has a blue header; an
+  empty table names the filters hiding its rows. On the Posts Dashboard the Status dropdown and the Status column filter
+  can no longer disagree (a saved filter could hide every lead while the dropdown said "All statuses").
+- **Faster and safer** - Target Accounts opens in about 2 seconds instead of about 17 on a large list; account writes from
+  parallel jobs can no longer overwrite each other; web research backs off and resumes on Anthropic's rate limit.
+- **Also** - a "Web researched" slice in the Evidence-level pie; companies excluded as Other are left out of lead scans too;
+  Settings > Change Settings has Previous / Next; a list past its target reads "108 in the list, target 100".
+- **Wording** - Help, the store listing and the website describe the setup research and finding accounts on the web,
+  including what is sent to Anthropic. Web research runs only if you switch it on, within the monthly budget you set. No
+  new permissions.
+
+---
+
 # SalesTeam — v1.2.0
 
 ## Accounts kept ready automatically: one pipeline instead of twelve maintenance tools (builds 1.1.4-1.1.9)

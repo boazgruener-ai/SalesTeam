@@ -1976,6 +1976,29 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 - **HubSpot import and export by file** - Export to HubSpot… writes a companies file and a contacts file that HubSpot maps automatically, with SalesTeam priority and status as extra columns. Import from HubSpot… adds companies and contacts SalesTeam does not have yet, without changing existing ones.
 
 
+### 6.22 Onboarding research (v1.2.1)
+
+1.2.1 lets the Setup propose its own answers and build the list it describes, researching on the web first and using LinkedIn only for what the web could not confirm. The full design, its decisions (D1-D11) and the measurements are in ONBOARDING_RESEARCH_DESIGN.md; the requirements in ONBOARDING_RESEARCH_REQUIREMENTS.md.
+
+**Setup**
+
+- **About you** - a new first step: company, website, language. Research my company (about US$0.30, one to two minutes, a progress screen with Stop and Skip) reads the seller's website and proposes Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude (setup-proposals.js, pure; proposal-ui.js). On a first setup the proposals are filled in; on an existing setup each is shown beside the current value and taken only with Use proposal.
+- **Offered once to existing installs** - a setup finished without the research sees a one-time offer on the Settings cards and at the top of Change Settings - Research (opens About you with the research started) or No thanks (setupResearch.declinedInSettings). The action stays under Settings > User Profile > Open About you.
+- **New steps** - Initiative stages (ranked, at least one ticked), Companies to include (Name, website - the exclusion list wins), How big is your list (accounts, contacts per account, initiatives per account) with a live cost-and-time estimate from onboarding-estimate.js, measured averages replacing the defaults after 20 accounts. 15 steps in all.
+- **Finish** - with automatic preparation and web research ticked, Finish starts the build: included companies, then Web Discovery from company listings on the web (Source “Web”), then the web lane; LinkedIn is kicked. The wizard itself never visits LinkedIn. The stop rule ends discovery at the list's target.
+
+**Building the accounts**
+
+- **Web lane** - per account, one research asking only for what is missing (size, HQ, initiatives at the ticked stages, up to five contacts at the Setup seniority levels, LinkedIn profiles from search results); per-field sources; contacts-only research on Haiku 4.5; carries on by itself while LinkedIn waits for its daily limit, within the monthly budget.
+- **Usable without LinkedIn** - an account with web-verified contacts counts as Usable (readiness.js); LinkedIn after the web: one name search, then the People page, stopping at the target contacts per account. The first 10 Ready are built first; the Scanner starts at 10 Ready.
+- **Safety** - account write lock across parallel jobs; 429 back-off and resume; a LinkedIn login wall stops the pipeline and asks the user to log in instead of marking accounts not found.
+
+**Tables and exports**
+
+- **Accounts and contacts CSV** - Export Accounts (CSV) and Export Contacts (CSV): one file per table, every column under SalesTeam's own names, dates as dates, Seniority Priority as High/Medium/Low. With a search or column filter on, the user chooses all rows or only the filtered ones. All exports (accounts, contacts, posts) leave out columns empty in every row and put columns filled in fewer than half the rows last (compactCsvColumns, csv-export.js).
+- **Visible filters** - on Posts, Target Accounts and Target Contacts every active filter is a chip above the table with its own remove button and Clear all; a filtered column has a tinted header; an empty table names the filters hiding its rows. On Posts the Status dropdown and the Status column filter are one filter: an exact status in the column becomes the dropdown's value, any other Status column filter shows in the dropdown as its own entry.
+- **One top status bar** - running and waiting jobs show in one bar at the top of every page; pop-ups only for decisions and finished jobs.
+
 ## 7. Non-functional requirements
 
 - **No timers, one standing consent** — no `alarms`. Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.
