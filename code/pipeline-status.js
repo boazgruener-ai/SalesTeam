@@ -12,7 +12,8 @@ import { runAutoBackupIfDue } from "./backup-restore.js";
 import { getRunningBatch } from "./batch-jobs.js";
 import { timeBelowCeiling } from "./linkedin-touch-log.js";
 import { localDay, PIPELINE_TOUCH_CEILING, LINKEDIN_LOGGED_OUT_KEY, LINKEDIN_LOGGED_OUT_WAIT_MS, linkedinLoggedOutRecently } from "./pipeline-plan.js";
-import { getOnboardingCompletedAt } from "./storage.js";
+import { getOnboardingCompletedAt, getAccountReadiness } from "./storage.js";
+import { countReadiness, MIN_READY_TO_SCAN } from "./readiness.js";
 import { WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY } from "./discovery-report.js";
 import {
@@ -176,6 +177,22 @@ function isWebLaneLive(lane) {
   return Boolean(lane) && lane.status === "running" && Date.now() - (lane.heartbeatAt || 0) <= STALE_MS;
 }
 
+// 1.2.0.58 (Boaz: 13 Ready, 9 waiting for his decision, and the bar said "All accounts processed for today. Your
+// daily LinkedIn limit is now free for scanning"): say what is Ready, whether a scan can start, and what waits for
+// the user - not that everything is done.
+async function nothingLeftText() {
+  let c = null;
+  try { c = countReadiness((await getAccountReadiness()).map((r) => r.assessment)); } catch { /* fall back below */ }
+  if (!c) return "Nothing more to prepare for now.";
+  const ready = `${c.ready} account${c.ready === 1 ? "" : "s"} Ready`;
+  const scan = c.ready >= MIN_READY_TO_SCAN ? " - you can scan for leads now"
+    : c.ready > 0 ? ` - you can scan for leads (the Scanner works best from ${MIN_READY_TO_SCAN})` : "";
+  const waiting = c.needs_decision
+    ? ` · ${c.needs_decision} wait${c.needs_decision === 1 ? "s" : ""} for your decision (Decisions, in the menu)`
+    : "";
+  return `Nothing more to prepare for now: ${ready}${scan}${waiting}.`;
+}
+
 async function discoveryRunning() {
   const d = (await chrome.storage.local.get(WEB_DISCOVERY_STATE_KEY))[WEB_DISCOVERY_STATE_KEY];
   return Boolean(d) && d.status === "running" && Date.now() - (d.heartbeatAt || 0) <= STALE_MS;
@@ -209,7 +226,7 @@ export async function pipelineStatusLine() {
   if (idle && idle.reason === "web_lane" && isWebLaneLive(store[WEB_LANE_STATE_KEY])) {
     return `Web research is finishing ${idle.held || "some"} account${idle.held === 1 ? "" : "s"} first - the LinkedIn work (company pages, contacts) follows by itself.`;
   }
-  if (idle && idle.reason === "nothing_left") return "All accounts processed for today. Your daily LinkedIn limit is now free for scanning.";
+  if (idle && idle.reason === "nothing_left") return await nothingLeftText();
   if (idle && idle.reason === "no_backup") return "Waiting for today's backup before starting. It is made while a SalesTeam page is open.";
   return "Automatic preparation is on. It starts on its own while Chrome is open.";
 }
