@@ -189,7 +189,7 @@ export function illogicalReasons(proposal, ctx, limits) {
     const g = key === "globalEmployees" ? foundN : globalNow;
     const s = key === "swissEmployees" ? foundN : swissNow;
     if (g !== null && s !== null && s > g) {
-      add("found", `it would leave ${formatNum(s)} local employees at a company with ${formatNum(g)} worldwide`);
+      add("found", `with it the account would have ${formatNum(s)} employees locally but only ${formatNum(g)} worldwide - the worldwide count can never be the smaller one`);
     }
     // Kept INSIDE the employee guard. It used to sit outside it, so an account whose stored local
     // count exceeded its global one had every one of its findings marked "your current value looks
@@ -197,7 +197,10 @@ export function illogicalReasons(proposal, ctx, limits) {
     // to the user by rule 2. A contradiction about employee counts says nothing about a currency
     // code.
     if (globalNow !== null && swissNow !== null && swissNow > globalNow) {
-      add("current", `the account already says ${formatNum(swissNow)} local employees against ${formatNum(globalNow)} worldwide`);
+      // 1.2.0.64 (Boaz, Migros): "the account already says 81,826 local against 59,934 worldwide" read as SalesTeam's
+      // own mistake - say plainly that the stored figures contradict each other.
+      add("current", `the current figures contradict each other: ${formatNum(swissNow)} employees locally but only ` +
+        `${formatNum(globalNow)} worldwide - the worldwide count can never be the smaller one`);
     }
   }
 
