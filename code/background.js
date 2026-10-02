@@ -35,6 +35,7 @@ import {
   getScanCompanyScope,
   getScanTargetCompanyIds,
   autoMergeDiscoveryResults,
+  repairListingRevenueInMillions,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
@@ -101,6 +102,11 @@ chrome.runtime.onInstalled.addListener((details) => {
   // anyone who closes this tab without finishing).
   if (details.reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("settings.html#wizard") });
+  }
+  // 1.2.0.62: listing revenue stored in millions before 1.2.0.61 - repaired on the update, then the pipeline
+  // replans so the web findings that only existed because of it are settled again.
+  if (details.reason === "update") {
+    repairListingRevenueInMillions().then((n) => { if (n) kickPipeline("data_repair").catch(() => {}); }).catch(() => {});
   }
 });
 

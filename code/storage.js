@@ -1,5 +1,6 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
+import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
 import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages, initiativeCounts, targetsStatus } from "./pipeline-plan.js";
@@ -5331,6 +5332,31 @@ export async function getDiscoveryKnownAccounts() {
 // rows: chosen discovery rows (discovery-filter.js cleanListingRow shape). A row whose name or website became an
 // account since the filter ran is skipped. Silent tier (1.2.0 R6.2.1): the caller writes one Activity Log line;
 // undoLastWebDiscovery removes them again (soft delete; the caller records them with saveLastDiscoveryAdd). Returns { added: [{ key, companyId, company }], skipped }.
+// 1.2.0.62: accounts found on a web listing before 1.2.0.61 kept its "Revenue (USD millions)" figures as they
+// stand (Gunvor 62,030, Nestle 89,791), and every one of them came to the user as "the current data looks wrong".
+// Repairs those rows once, with the same rule the listing reader now applies (listingRevenue). Idempotent: a
+// repaired figure is in plain units and passes the rule unchanged, so running it again changes nothing.
+export async function repairListingRevenueInMillions() { return withAccountWriteLock(async () => {
+  const workbook = await getTargetAccountsWorkbook();
+  const fixed = [];
+  const companies = (workbook.companies || []).map((c) => {
+    if (c.source !== "Web") return c;
+    const rev = parseLooseNumber(c.globalRevenue);
+    const emp = parseLooseNumber(c.globalEmployees);
+    const repaired = listingRevenue(rev, emp);
+    if (rev === null || repaired === rev) return c;
+    fixed.push(c.company);
+    return { ...c, globalRevenue: repaired };
+  });
+  if (!fixed.length) return 0;
+  await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...workbook, companies } });
+  await appendActivityLog({
+    actor: "system", action: "data_repair",
+    label: `Revenue read from a listing in millions put into plain units for ${fixed.length} account${fixed.length === 1 ? "" : "s"}: ${fixed.join(", ")}`,
+  }).catch(() => {});
+  return fixed.length;
+}); }
+
 export async function addWebDiscoveredCompanies(rows, { runAt = Date.now() } = {}) { return withAccountWriteLock(() => addWebDiscoveredCompaniesUnlocked(...arguments)); }
 async function addWebDiscoveredCompaniesUnlocked(rows, { runAt = Date.now() } = {}) {
   const workbook = await getTargetAccountsWorkbook();
