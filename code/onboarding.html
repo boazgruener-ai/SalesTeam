@@ -89,6 +89,11 @@
     <section id="enter-research" class="wizard-step" hidden>
       <h2>Researching your company…</h2>
       <p class="step-intro" id="research-intro"></p>
+      <!-- 1.2.0.40 (Boaz): how long it still takes, so a waiting user does not press Stop or Skip out of doubt. -->
+      <div id="research-progress">
+        <div id="research-progress-track"><div id="research-progress-fill"></div></div>
+        <p id="research-eta"></p>
+      </div>
       <ul id="research-lines"></ul>
       <p id="research-cost"></p>
       <p id="research-error" class="step-error" hidden></p>

@@ -2083,6 +2083,49 @@ function renderSettingsResearchOffer() {
 
 // ---- The progress screen (design 3.6) ----
 
+// The research is one AI call that decides itself how many pages to read, so there are no fixed steps to count. The
+// screen shows time instead: a bar and "about N seconds left" against the measured duration (45-60 s, design 3.6),
+// and what it has read so far. Past that time it says it is still working, and that it ends by itself at 4 minutes.
+const SELLER_RESEARCH_EXPECTED_MS = 60000;
+const SELLER_RESEARCH_CUTOFF_MS = 4 * 60000;
+let researchProgressTimer = null;
+let researchStartedAt = 0;
+let researchPagesRead = 0;
+let researchSearches = 0;
+
+function renderResearchProgress() {
+  const elapsed = Date.now() - researchStartedAt;
+  const fraction = Math.min(elapsed / SELLER_RESEARCH_EXPECTED_MS, 1);
+  // Up to 90% on the expected time, then creeping towards 99% - the bar never fills before the answer is in.
+  const pct = fraction < 1 ? fraction * 90 : 90 + 9 * Math.min((elapsed - SELLER_RESEARCH_EXPECTED_MS) / (SELLER_RESEARCH_CUTOFF_MS - SELLER_RESEARCH_EXPECTED_MS), 1);
+  el("research-progress-fill").style.width = `${pct.toFixed(1)}%`;
+  const left = Math.ceil((SELLER_RESEARCH_EXPECTED_MS - elapsed) / 1000);
+  const read = [
+    researchPagesRead ? `${researchPagesRead} page${researchPagesRead === 1 ? "" : "s"} read` : "",
+    researchSearches ? `${researchSearches} search${researchSearches === 1 ? "" : "es"}` : "",
+  ].filter(Boolean).join(", ");
+  const timeText = left > 5
+    ? `About ${left} seconds left`
+    : "Taking a little longer than usual - still working; the steps open by themselves when the answer is in";
+  el("research-eta").textContent = `${timeText}${read ? ` · ${read} so far` : ""}`;
+}
+
+function startResearchProgress() {
+  researchStartedAt = Date.now();
+  researchPagesRead = 0;
+  researchSearches = 0;
+  el("research-progress").hidden = false;
+  clearInterval(researchProgressTimer);
+  renderResearchProgress();
+  researchProgressTimer = setInterval(renderResearchProgress, 1000);
+}
+
+function stopResearchProgress() {
+  clearInterval(researchProgressTimer);
+  researchProgressTimer = null;
+  el("research-progress").hidden = true;
+}
+
 function showResearchScreen(seller) {
   for (const s of STEP_ORDER) {
     const sectionEl = el(`enter-${s}`);
@@ -2093,13 +2136,14 @@ function showResearchScreen(seller) {
   el("step-progress").textContent = "";
   el("enter-research").hidden = false;
   el("research-intro").textContent =
-    `SalesTeam is reading ${sourceLabel(seller.website)} to propose answers for the next steps. This takes one to two ` +
-    "minutes; the setup goes on by itself when the answer is in.";
+    `SalesTeam is reading ${sourceLabel(seller.website)} to propose answers for the next steps. This usually takes about ` +
+    "a minute; please wait - the setup goes on by itself when the answer is in.";
   el("research-lines").innerHTML = "";
   el("research-cost").textContent = "";
   el("research-error").hidden = true;
   addResearchLine(null, "Starting the research…");
   setResearchButtons(true);
+  startResearchProgress();
 }
 
 function setResearchButtons(running) {
@@ -2111,8 +2155,8 @@ function setResearchButtons(running) {
 
 function addResearchLine(toolName, input) {
   let text;
-  if (toolName === "web_fetch") text = `Reading ${sourceLabel(input?.url || "a page")}…`;
-  else if (toolName === "web_search") text = `Searching: ${input?.query || "…"}`;
+  if (toolName === "web_fetch") { text = `Reading ${sourceLabel(input?.url || "a page")}…`; researchPagesRead++; }
+  else if (toolName === "web_search") { text = `Searching: ${input?.query || "…"}`; researchSearches++; }
   else text = String(input || "");
   if (!text) return;
   const li = document.createElement("li");
@@ -2173,6 +2217,7 @@ async function runSellerResearch() {
   } finally {
     clearInterval(heartbeat);
     researchController = null;
+    stopResearchProgress();
   }
   const site = sourceLabel(seller.website);
 
