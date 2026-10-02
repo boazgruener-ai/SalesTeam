@@ -5,6 +5,8 @@
 // A running batch also holds a Web Lock named after it. The browser releases that lock the moment the holder's page is
 // closed or crashes, or its background worker is stopped, so a dead batch stops counting as running at once. Where Web
 // Locks are not available, the record's heartbeat is used instead (a batch counts as dead after STALE_MS without one).
+import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
+
 const ACTIVE_BATCH_KEY = "activeBatchJob";
 export const BULK_STATE_KEY = "bulkResearchState";
 const HEARTBEAT_MS = 15000;
@@ -44,32 +46,18 @@ async function pipelineRunning() {
   return Boolean(s) && s.status === "running";
 }
 
-// A small note in the corner while the user's job waits for the pipeline to make way.
-function showWaitNote(text) {
-  if (typeof document === "undefined" || !document.body) return { remove() {} };
-  const note = document.createElement("div");
-  note.setAttribute("role", "status");
-  note.style.cssText = "position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483001;background:#fff;" +
-    "border:1px solid #c9d7e8;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);padding:8px 14px;font:13px system-ui,sans-serif;color:#1a1a1a;";
-  note.textContent = text;
-  // An open modal <dialog> sits in the browser's top layer, above any z-index: a note in <body> would be hidden
-  // behind its grey backdrop (1.2.0.1 live test - Start looked dead for up to 2.5 minutes). Put it in the dialog.
-  const modal = [...document.querySelectorAll("dialog[open]")].pop();
-  (modal || document.body).append(note);
-  return note;
-}
-
 // Step 3 touch-up U2: the automatic pipeline makes way for any job the user starts. It stops after the
 // account in progress (usually well under a minute) and stays out of the way until this job has begun.
 // Resolves with whatever still blocks the way afterwards (null when free).
 async function waitForPipelineToMakeWay(newLabel) {
   chrome.runtime.sendMessage({ type: "PIPELINE_PAUSE", forLabel: newLabel }).catch(() => {});
-  const note = showWaitNote("Waiting for SalesTeam to finish the account in progress…");
+  // In the one status bar at the top (status-bar.js), which also sits above the open dialog the user started from.
+  setStatusMessage("wait", { text: "Waiting for SalesTeam to finish the account in progress… your job starts right after." });
   const shownAt = Date.now();
   // Between two accounts the pipeline stops almost at once, and a note that flashes for a moment is not
   // seen (first live test). It stays at least NOTE_MIN_MS, saying what happened.
   const settle = async (result) => {
-    note.textContent = "SalesTeam paused its automatic account preparation for your job. It carries on by itself when your job is done.";
+    setStatusMessage("wait", { text: "SalesTeam paused its automatic account preparation for your job. It carries on by itself when your job is done." });
     const left = NOTE_MIN_MS - (Date.now() - shownAt);
     if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
     return result;
@@ -84,7 +72,7 @@ async function waitForPipelineToMakeWay(newLabel) {
     }
     return await getRunningBatch();
   } finally {
-    note.remove();
+    clearStatusMessage("wait");
   }
 }
 

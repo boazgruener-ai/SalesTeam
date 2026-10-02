@@ -42,8 +42,10 @@ import {
   getTargetAccountsWorkbook,
   parseLinkedinCompanySlug,
   normalizeCompanyName,
+  getExclusionMatcher,
 } from "./storage.js";
 import { geoUrnForCountry } from "./geo-urn-map.js";
+import { matchesExclusion } from "./company-identity.js";
 import { industryIdForName } from "./industry-id-map.js";
 import { localCountryName } from "./country-local-names.js";
 import { findIsoCountryCodeInText, COUNTRY_BY_ISO_CODE } from "./iso-country-codes.js";
@@ -356,7 +358,8 @@ async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort } = {}) {
   // unified companyExclusions) is excluded from Discovery outright, same
   // mechanics regardless of category - the category only matters for
   // *why*, shown elsewhere, not for whether a card gets skipped here.
-  const excludedSlugSet = new Set(companyExclusions.map((e) => e.slug));
+  // Matches by LinkedIn slug, and since 1.2.1 also by company name or website domain (design 3.9).
+  const exclusionMatcher = await getExclusionMatcher();
   // Reported directly, 2026-09-17: Discovery had no idea which companies
   // were already in the real Target Accounts workbook (528 ChatGPT-
   // researched rows, in the user's own real case) - it would happily
@@ -499,7 +502,7 @@ async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort } = {}) {
           if (reachedCap) break;
           if (shouldAbort && shouldAbort()) { stoppedByAbort = true; break; }
 
-          if (excludedSlugSet.has(card.slug)) { excludedByBlocklist++; continue; }
+          if (matchesExclusion(exclusionMatcher, { slug: card.slug, name: card.name })) { excludedByBlocklist++; continue; }
           // "no" excludes wholesale (same as the old binary version); "review"
           // keeps the company but tags it (organizationTypeReviewLabel, used
           // below when building the discovered-company record) instead of

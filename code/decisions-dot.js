@@ -7,9 +7,10 @@ import { getDecisionQueue } from "./storage.js";
 
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
-  "companyExclusions", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
+  "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
 ]);
-const DEBOUNCE_MS = 1500;
+const DEBOUNCE_MS = 5000; // a pipeline or research run writes every few seconds; the dot need not follow each one
+const FIRST_COUNT_DELAY_MS = 2500; // after the page has drawn its own content (1.2.0.2 load-time work)
 
 let styleAdded = false;
 
@@ -52,5 +53,5 @@ export function initDecisionsDot(buttonId = "open-decisions-btn", onCount = null
     clearTimeout(timer);
     timer = setTimeout(refresh, DEBOUNCE_MS);
   });
-  refresh();
+  setTimeout(refresh, FIRST_COUNT_DELAY_MS);
 }

@@ -846,9 +846,17 @@ const EXCLUSION_CATEGORY_INPUTS = EXCLUSION_CATEGORIES.map((category) => ({
 }));
 
 function validateExclusionsStep() {
-  companyExclusions = EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
-    parseCompetitorLines(el(inputId).value).map((slug) => ({ slug, category }))
-  );
+  // The textareas hold LinkedIn pages only. Entries named by company name or website instead (1.2.1, design
+  // 3.9) are not shown there, so they are carried over untouched - and a listed slug keeps any name/domain
+  // stored with it.
+  const bySlug = new Map(companyExclusions.filter((e) => e.slug).map((e) => [`${e.category}|${e.slug}`, e]));
+  const withoutSlug = companyExclusions.filter((e) => !e.slug);
+  companyExclusions = [
+    ...EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
+      parseCompetitorLines(el(inputId).value).map((slug) => ({ ...(bySlug.get(`${category}|${slug}`) || {}), slug, category }))
+    ),
+    ...withoutSlug,
+  ];
   return { valid: true };
 }
 
@@ -1101,7 +1109,7 @@ function renderSummaryInto(step, container) {
     case "exclusions": {
       if (companyExclusions.length) {
         for (const category of EXCLUSION_CATEGORIES) {
-          const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.slug);
+          const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.slug || e.name || e.domain).filter(Boolean);
           if (slugs.length) {
             appendPara(
               container, `Excluding ${slugs.length} ${EXCLUSION_CATEGORY_LABELS[category].toLowerCase()}${slugs.length === 1 ? "" : "s"}: `,
@@ -1754,7 +1762,7 @@ async function init() {
   el("contacts-max-per-account-input").value = targetContactProfile.maxContactsPerAccount ?? 10;
   renderSeniorityLevelPriorityRows(targetContactProfile.seniorityLevels || []);
   for (const { category, inputId, listId } of EXCLUSION_CATEGORY_INPUTS) {
-    const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.slug);
+    const slugs = companyExclusions.filter((e) => e.category === category && e.slug).map((e) => e.slug);
     el(inputId).value = slugs.map((slug) => `https://www.linkedin.com/company/${slug}/`).join("\n");
     renderExclusionParsedList(inputId, listId);
   }

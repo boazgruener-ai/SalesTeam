@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1220,6 +1220,146 @@ def test_rate_limit_backoff(ctx):
     check("garbage retry-after falls back", ctx.eval("backoffDelayMs('soon', 1)"), 30000)
 
 
+def test_company_identity(ctx):
+    """1.2.1 step 1: company-identity.js - website domains, "Web" row ids, exclusions by name and website (design 3.9, 4.4)."""
+    check("domain: scheme, www, path and case dropped", ctx.eval("websiteDomain('https://www.Nestle.com/ch/en?x=1')"), "nestle.com")
+    check("domain: a bare domain", ctx.eval("websiteDomain('ubs.com')"), "ubs.com")
+    check("domain: www2 and a port", ctx.eval("websiteDomain('http://www2.example.co.uk:8080/')"), "example.co.uk")
+    check("domain: a plain name is not a website", ctx.eval("websiteDomain('Nestle')"), None)
+    check("domain: empty", ctx.eval("websiteDomain('')"), None)
+    check("Web row id from the website", ctx.eval("webCompanyId('https://www.roche.com/', 'Roche Holding AG')"), "W-roche.com")
+    check("Web row id from the name when there is no website", ctx.eval("webCompanyId(null, 'Roche Holding AG')"), "W-roche holding")
+    check("normalizeCompanyName still strips one legal suffix", ctx.eval("normalizeCompanyName('Azqore SA')"), "azqore")
+    ctx.eval("""
+    var EXM = buildExclusionMatcher([
+      { slug: "adecco", category: "recruiter" },
+      { name: "Acme Consulting AG", category: "competitor", source: "research" },
+      { domain: "https://www.rival.ch/", category: "competitor", source: "user" },
+      null,
+    ]);
+    """)
+    check("exclusion by LinkedIn slug, as before", ctx.eval("matchesExclusion(EXM, { slug: 'adecco' })"), True)
+    check("exclusion by normalised name", ctx.eval("matchesExclusion(EXM, { name: 'ACME Consulting' })"), True)
+    check("exclusion by website domain", ctx.eval("matchesExclusion(EXM, { name: 'Rival', website: 'rival.ch/about' })"), True)
+    check("a company on none of them is not excluded", ctx.eval("matchesExclusion(EXM, { slug: 'nestle-s-a', name: 'Nestle', website: 'nestle.com' })"), False)
+    check("a slug-only entry adds no name to match", ctx.eval("matchesExclusion(EXM, { name: 'Adecco Group' })"), False)
+
+
+def test_per_field_research(ctx):
+    """1.2.1 step 1 (design 5.3): each web value carries its own source; the old plain format is still read."""
+    ctx.eval(r"""
+    var NEWD = {
+      employeesGlobal: { value: 12000, url: "https://acme.ch/annual-report-2025.pdf", year: 2025 },
+      employeesLocal: { value: 3000, url: null },
+      hqCountry: { value: "Switzerland", url: "https://acme.ch/about" },
+      revenueCurrency: "CHF",
+      revenueGlobal: { value: 2100000000, url: "not a url" },
+      website: { value: "https://acme.ch", url: "https://acme.ch" },
+    };
+    var OLDD = { employeesGlobal: 12000, hqCountry: "Switzerland", revenueCurrency: "CHF" };
+    var SRC = [{ url: "https://example.com" }];
+    """)
+    check("new format: the plain value is read", ctx.eval("WEB_FINDING_FIELDS[0].from(NEWD)"), 12000)
+    check("old format: still read", ctx.eval("WEB_FINDING_FIELDS[0].from(OLDD)"), 12000)
+    check("new format is recognised", ctx.eval("isPerFieldResearch(NEWD)"), True)
+    check("old format is recognised", ctx.eval("isPerFieldResearch(OLDD)"), False)
+    check("findings are proposed from the new format",
+          ctx.eval("computeFindingProposals({ company: 'Acme' }, {}, NEWD).map(function (p) { return p.key + '=' + p.found; }).join(',')"),
+          "globalEmployees=12000,swissEmployees=3000,globalRevenue=2100000000,revenueCurrency=CHF,globalHqCountry=Switzerland")
+    check("a value with its own url is cited, with that url as link",
+          ctx.eval("JSON.stringify(webCitationFor(NEWD, [], 'globalEmployees', 12000))"),
+          '{"cited":true,"link":"https://acme.ch/annual-report-2025.pdf"}')
+    check("a value without a url is NOT cited, even when the research cited other things",
+          ctx.eval("JSON.stringify(webCitationFor(NEWD, SRC, 'swissEmployees', 3000))"), '{"cited":false,"link":null}')
+    check("a url that is not a web address does not count",
+          ctx.eval("JSON.stringify(webCitationFor(NEWD, SRC, 'globalRevenue', 2100000000))"), '{"cited":false,"link":null}')
+    check("the research does not stand behind a DIFFERENT value", ctx.eval("webCitationFor(NEWD, SRC, 'globalEmployees', 50000)"), None)
+    check("...but does behind one within 10% (same fact, rounded)",
+          ctx.eval("webCitationFor(NEWD, [], 'globalEmployees', '12,500').cited"), True)
+    check("new format, field not in the answer: no citation", ctx.eval("webCitationFor(NEWD, SRC, 'industry', 'Food')"), None)
+    check("old format keeps the old rule: cited when the research had any source",
+          ctx.eval("JSON.stringify(webCitationFor(OLDD, SRC, 'globalEmployees', 12000))"), '{"cited":true,"link":null}')
+    check("old format without sources: no citation", ctx.eval("webCitationFor(OLDD, [], 'globalEmployees', 12000)"), None)
+    check("researchConfirms still reads the new format",
+          ctx.eval("researchConfirms({ company: 'Acme', globalEmployees: 12000 }, {}, NEWD, null, ['globalEmployees']).join(',')"),
+          "globalEmployees")
+    # deriveProvenance: storage.js hands in the per-field verdict as facts.webCitations.
+    ctx.eval(r"""
+    var dview = { company: "Acme", source: "Imported", globalEmployees: 3000, importedAt: NOW - 30 * DAY };
+    var research = { at: NOW - DAY, sources: SRC, data: NEWD };
+    """)
+    check("an overridden value the web gave without a url is web, uncited (so unverified)",
+          ctx.eval("var p = deriveProvenance(dview, 'globalEmployees', { overridden: { globalEmployees: true }, webResearch: research, webCitations: { globalEmployees: { cited: false, link: null } } }, NOW); p.src + ':' + p.cited + ':' + isGoodSource(p)"),
+          "web:false:false")
+    check("an overridden value with its own url is web, cited, with the link",
+          ctx.eval("var p = deriveProvenance(dview, 'globalEmployees', { overridden: { globalEmployees: true }, webResearch: research, webCitations: { globalEmployees: { cited: true, link: 'https://acme.ch/r' } } }, NOW); p.src + ':' + p.cited + ':' + p.link"),
+          "web:true:https://acme.ch/r")
+    check("an override the research does not stand behind is the user's own",
+          ctx.eval("deriveProvenance(dview, 'globalEmployees', { overridden: { globalEmployees: true }, webResearch: research, webCitations: { globalEmployees: null } }, NOW).src"),
+          "user")
+    check("without webCitations the old rule still applies",
+          ctx.eval("var p = deriveProvenance(dview, 'globalEmployees', { overridden: { globalEmployees: true }, webResearch: research }, NOW); p.src + ':' + p.cited"),
+          "web:true")
+    check("a Web row's unstamped value is cited by its listing",
+          ctx.eval("var p = deriveProvenance({ source: 'Web', globalHqCountry: 'Switzerland', primarySourceUrl: 'https://listing.example/top100', importedAt: NOW }, 'globalHqCountry', {}, NOW); p.src + ':' + p.cited + ':' + p.link"),
+          "web:true:https://listing.example/top100")
+
+
+def test_web_usable(ctx):
+    """1.2.1 step 1 (design 6.1): Usable without LinkedIn. Reuses test_readiness's readyView/CFG/NOW."""
+    ctx.eval(r"""
+    function webView(patch) {
+      var v = readyView({
+        source: "Web", linkedinCompanyId: null, linkedinLink: null, contacts: [],
+        website: "https://www.acme.ch", primarySourceUrl: "https://listing.example/top100",
+        globalHqCountry: "Switzerland", globalEmployees: 12000,
+      });
+      v.provenance = {
+        globalHqCountry: { src: "web", at: NOW - DAY, cited: true, link: "https://acme.ch/about", v: "Switzerland" },
+        globalEmployees: { src: "web", at: NOW - DAY, cited: true, link: "https://acme.ch/ar.pdf", v: 12000 },
+      };
+      for (var k in (patch || {})) v[k] = patch[k];
+      return v;
+    }
+    """)
+    check("a web-identified account with verified targeting fields is Usable", ctx.eval("state(webView())"), "usable")
+    check("...via the web, and not scannable",
+          ctx.eval("var a = assessAccount(webView(), CFG, NOW); a.usableVia + ':' + a.scannable"), "web:false")
+    check("a bare-domain website identifies it too", ctx.eval("state(webView({ website: 'acme.ch', primarySourceUrl: null }))"), "usable")
+    check("no website and no source url: in progress", ctx.eval("state(webView({ website: null, primarySourceUrl: null }))"), "in_progress")
+    check("no priority: in progress", ctx.eval("state(webView({ salesTeamPriority: null }))"), "in_progress")
+    check("a value without a url does not count as verified",
+          ctx.eval("var v = webView(); v.provenance.globalEmployees = { src: 'web', at: NOW - DAY, cited: false, v: 12000 }; state(v)"), "in_progress")
+    check("a targeting field missing: in progress", ctx.eval("state(webView({ globalHqCountry: null }))"), "in_progress")
+    check("a field the targeting leaves at medium is not asked for (industry)", ctx.eval("state(webView({ industry: null }))"), "usable")
+    check("deleted or excluded: never web usable", ctx.eval("webUsable(webView({ excluded: true }), CFG, NOW)"), False)
+    check("a LinkedIn-scannable account stays usable via linkedin",
+          ctx.eval("assessAccount(withProv('linkedinCompanyId', { src: 'linkedin', at: NOW, link: null, v: '1234' }), CFG, NOW).usableVia"), "linkedin")
+    check("Ready is unchanged, and has no usableVia", ctx.eval("var a = assessAccount(readyView(), CFG, NOW); a.state + ':' + a.usableVia"), "ready:null")
+    check("an existing imported account without a website stays in progress",
+          ctx.eval("state(readyView({ linkedinCompanyId: null, linkedinLink: null }))"), "in_progress")
+
+
+def test_user_retry_first(ctx):
+    """2026-09-29: an account the user gave a new Alt. name or link is tried first, once."""
+    ctx.eval(r"""
+    function rview(name, prio, edit) { return { key: name, company: name, salesTeamPriority: prio, linkedinCompanyId: null, linkedinLink: null, userIdentityEdit: edit, provenance: {}, contacts: [] }; }
+    function rentry(v, pipeline) { return { view: v, assessment: assessAccount(v, CFG, NOW), pipeline: pipeline || {} }; }
+    """)
+    check("an edited P3 account goes before an unedited P1",
+          ctx.eval("rankCandidates([rentry(rview('P1 co', 'P1', false)), rentry(rview('Rega', 'P3', true))], NOW, 2).map(function (e) { return e.view.company; }).join(',')"),
+          "Rega,P1 co")
+    check("once the pipeline has tried it, it goes back to its place",
+          ctx.eval("rankCandidates([rentry(rview('P1 co', 'P1', false)), rentry(rview('Rega', 'P3', true), { attempts: { resolve: ['2026-09-24'] } })], NOW, 2).map(function (e) { return e.view.company; }).join(',')"),
+          "P1 co,Rega")
+    check("without an edit, priority order as before",
+          ctx.eval("rankCandidates([rentry(rview('P3 co', 'P3', false)), rentry(rview('P1 co', 'P1', false))], NOW, 2).map(function (e) { return e.view.company; }).join(',')"),
+          "P1 co,P3 co")
+    ctx.eval("var EXL = buildExclusionMatcher([{ slug: 'temenos', category: 'competitor' }], ['SophiaGenetics']);")
+    check("a lifted slug is recorded, case-insensitively", ctx.eval("EXL.lifted.has('sophiagenetics')"), True)
+    check("...and is not itself an exclusion", ctx.eval("matchesExclusion(EXL, { slug: 'sophiagenetics' })"), False)
+
+
 def test_extras_merge(ctx):
     # 1.2.1 build step 0: a writer applies only what it changed; a change made meanwhile by another writer stays.
     ctx.eval("""var m1 = mergeFieldChanges({ a: 1 }, { a: 1, b: 2 }, { a: 1, c: 3 });""")
@@ -1260,6 +1400,10 @@ def main():
     test_decision_rules(ctx)
     test_rate_limit_backoff(ctx)
     test_extras_merge(ctx)
+    test_company_identity(ctx)
+    test_per_field_research(ctx)
+    test_web_usable(ctx)
+    test_user_retry_first(ctx)
 
     print()
     for f in _failures:

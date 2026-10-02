@@ -60,6 +60,7 @@ import {
   clearKeptSeparatePairs,
   getCompanyExclusions,
   isCompanyRowExcluded,
+  getExclusionMatcher,
   backfillCompanyExclusionsFromWorkbook,
   getExistingCompaniesNeedingContacts,
   getTargetUniverseConfig,
@@ -501,7 +502,7 @@ function renderGenericPieChart(containerEl, slices, { unitLabel = "", onSliceCli
         path.addEventListener("click", () => onSliceClick(slice.label));
       }
       const titleEl = document.createElementNS(svgNS, "title");
-      titleEl.textContent = `${slice.label}: ${slice.count}`;
+      titleEl.textContent = slice.title || `${slice.label}: ${slice.count}`;
       path.appendChild(titleEl);
       svg.appendChild(path);
       startAngle = endAngle;
@@ -521,7 +522,7 @@ function renderGenericPieChart(containerEl, slices, { unitLabel = "", onSliceCli
     for (const slice of nonZero) {
       const row = document.createElement("div");
       row.className = "pie-legend-row";
-      if (onSliceClick) row.title = "Click to filter";
+      if (onSliceClick || slice.title) row.title = [slice.title, onSliceClick ? "Click to filter" : ""].filter(Boolean).join(" - ");
       const swatch = document.createElement("span");
       swatch.className = "pie-legend-swatch";
       swatch.style.background = slice.color;
@@ -576,7 +577,8 @@ const COMPANY_COLUMNS = [
   { id: "globalRevenue", label: "Global Revenue", visible: true, numeric: true, currencyField: "revenueCurrency" },
 
   // --- Hidden by default: imported research-workbook fields ---
-  // "Imported" (workbook) or "Discovered" (mergeDiscoveredIntoWorkbook, storage.js).
+  // "Imported" (workbook), "Discovered" (mergeDiscoveredIntoWorkbook, storage.js) or, from 1.2.1, "Web"
+  // (found in a company listing on the web, onboarding design 4.4).
   { id: "source", label: "Source", pill: true },
   { id: "aiPriorityScore", label: "Imported Priority Score", numeric: true },
   { id: "aiPriority", label: "Imported Priority", pill: true },
@@ -804,7 +806,7 @@ function priorityPillClass(label) {
 // priority levels, and both would otherwise land in that function's shared
 // "other" (gray) fallback, defeating the point of a distinguishing badge.
 function sourcePillClass(label) {
-  return label === "Discovered" ? "priority-pill-discovered" : "priority-pill-other";
+  return label === "Discovered" ? "priority-pill-discovered" : label === "Web" ? "priority-pill-web" : "priority-pill-other";
 }
 
 // salesTeamPriority's own P1-P5 scale (Phase 8) - separate from
@@ -1045,8 +1047,17 @@ function renderCellContent(td, company, column) {
     pill.textContent = READINESS_LABELS[a.state];
     pill.title = a.state === "ready"
       ? "Ready: every field your targeting needs is present and verified."
-      : (a.scannable ? "Usable - the Scanner can search it. Still to do: " : "Not yet scannable. Still to do: ") + describeMissing(a.missing);
+      : a.usableVia === "web"
+        ? "Usable from web research - not yet on LinkedIn, so the Scanner cannot search it yet. Still to do: " + describeMissing(a.missing)
+        : (a.scannable ? "Usable - the Scanner can search it. Still to do: " : "Not yet scannable. Still to do: ") + describeMissing(a.missing);
     td.appendChild(pill);
+    if (a.usableVia === "web") {
+      const tag = document.createElement("span");
+      tag.className = "readiness-web-only-tag";
+      tag.textContent = "web only";
+      tag.title = pill.title;
+      td.appendChild(tag);
+    }
     return;
   }
   if (column.id === "accountStatus" || column.id === "contactStatus") {
@@ -2750,10 +2761,18 @@ function scheduleReadinessRefresh() {
 }
 
 function renderReadinessPie() {
+  if (readinessByCompanyId.size === 0) return; // not assessed yet (the table is drawn first) - no "0 ready" flash
   const counts = countReadiness([...readinessByCompanyId.values()]);
+  // 1.2.1 (onboarding design 6.2, D1): one Usable slice; the accounts usable from the web alone - not yet on
+  // LinkedIn, so not yet searchable by the Scanner - are named in its tooltip and the line below.
+  const webOnly = [...readinessByCompanyId.values()].filter((a) => a.usableVia === "web").length;
+  const webOnlyText = webOnly > 0 ? ` — ${webOnly} not yet on LinkedIn` : "";
   const slices = READINESS_STATES
     .filter((s) => counts[s] > 0 || s === "ready")
-    .map((s) => ({ label: READINESS_LABELS[s], count: counts[s], color: READINESS_COLORS[s] }));
+    .map((s) => ({
+      label: READINESS_LABELS[s], count: counts[s], color: READINESS_COLORS[s],
+      title: s === "usable" && webOnly > 0 ? `${counts.usable} usable${webOnlyText}` : undefined,
+    }));
   renderGenericPieChart(document.getElementById("pie-readiness"), slices, {
     unitLabel: "companies",
     // A slice is a filter on the Readiness column, set the same way the column's own menu sets it.
@@ -2767,7 +2786,7 @@ function renderReadinessPie() {
   });
   const ready = counts.ready;
   document.getElementById("pie-readiness-line").textContent =
-    `${ready} ready · ${counts.usable} usable · ${counts.in_progress} not yet scannable`;
+    `${ready} ready · ${counts.usable} usable${webOnlyText} · ${counts.in_progress} in progress`;
   // What holds the rest back, per field - so it is visible at a glance which gap is the big one (the
   // pending LinkedIn re-check, a missing contact, an old headcount), not only per row on hover.
   const gaps = {};
@@ -2838,13 +2857,13 @@ async function loadWorkbook() {
   // Dashboard entirely, which is what we do for our own excluded
   // companies") - a company the workbook's own Excluded column marks "Yes",
   // or that matches this app's own companyExclusions blocklist by LinkedIn
-  // slug (isCompanyRowExcluded checks both), is hidden the same way a soft-
+  // slug, name or website, unless the user took it off that list (isCompanyRowExcluded checks all), is hidden the same way a soft-
   // deleted account is: filtered out here, once, not per call site - never
   // actually dropped from storage, so nothing is lost if either source
   // later stops flagging it.
-  const exclusionSlugSet = new Set(companyExclusions.map((e) => e.slug));
+  const exclusionMatcher = await getExclusionMatcher();
   const excludedCompanyKeys = new Set(
-    wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionSlugSet)).map((c) => normalizeCompanyName(c.company))
+    wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionMatcher)).map((c) => normalizeCompanyName(c.company))
   );
   workbook = {
     ...wb,
@@ -2871,9 +2890,13 @@ async function loadWorkbook() {
   contactsTableScrollTopEl.hidden = !hasContacts;
   contactsStatsSectionEl.hidden = !hasContacts;
   if (hasData) {
-    await refreshReadiness();
+    // The table first, readiness right after (1.2.0.2): readiness joins every account with its contacts and
+    // the decision queue, and waiting for it kept the whole page empty for seconds.
     renderTable();
     renderAccountsStats();
+    await refreshReadiness();
+    renderReadinessPie();
+    if (!listViewEl.hidden) renderTable();
   }
   if (hasContacts) {
     renderContactsTable();
@@ -5047,6 +5070,14 @@ function bulkAccountPriority(company) {
 }
 
 // The accounts the dialog's current choices would research, with the topics each one needs.
+// "Skip accounts researched recently" (1.2.0.2): only a FULL research (not one limited to a few topics, as the
+// pipeline often runs) within the last 90 days counts. Skipping every account ever researched left nothing to
+// run, and "at most N" then re-researched the same first N accounts on every run.
+const BULK_SKIP_DAYS = 90;
+function isRecentFullResearch(research) {
+  return Boolean(research && !research.topics && research.at && Date.now() - research.at < BULK_SKIP_DAYS * 86400000);
+}
+
 function bulkSelection() {
   const dlg = document.getElementById("bulk-research-dialog");
   const priorities = new Set([...dlg.querySelectorAll(".bulk-priority:checked")].map((c) => c.value));
@@ -5058,7 +5089,7 @@ function bulkSelection() {
     const key = normalizeCompanyName(company.company);
     if (!key || webResearchRunning.has(key)) continue;
     if (!priorities.has(bulkAccountPriority(company))) continue;
-    if (skipDone && accountExtras[key]?.webResearch) continue;
+    if (skipDone && isRecentFullResearch(accountExtras[key]?.webResearch)) continue;
     const effective = { ...company, ...(accountExtras[key]?.overrides || {}) };
     if (onlyMissing) {
       const needed = topics.filter((t) => BULK_TOPICS[t].missing(effective, company));
