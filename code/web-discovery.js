@@ -18,7 +18,10 @@ import {
   getTargetContactProfile, getExclusionMatcher, getOrganizationTypeEligibility, getCompanyWebsite, getSellerCompanyName, getDiscoveryKnownAccounts,
   addWebDiscoveredCompanies, saveLastDiscoveryAdd, appendActivityLog, computeCompanyDeterministicPreScore, SIZE_PRIORITY_BUCKETS,
   getDiscoveredCompanies, getTargetAccountsWorkbook, autoMergeDiscoveryResults, normalizeCompanyName,
+  getIncludedCompanies, addOnboardingMeasure,
 } from "./storage.js";
+import { matchesExclusion } from "./company-identity.js";
+import { recordWebSpend } from "./pipeline-automation.js";
 import { findDiscoveryListings, readDiscoveryListing, fitSearchDiscovery, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
 import {
   discoveryWanted, bandTargets, targetsLargest, buildKnownCompanies, cleanListingRow, filterListingRows, dropCounts,
@@ -44,7 +47,10 @@ const LINKEDIN_FREE_WAIT_MS = 4 * 60000;
 
 let runner = null;
 
-export async function startWebDiscovery({ target, budget, useLinkedin = false }) {
+// `auto` (1.2.1 step 6): started by the wizard's Finish or by the stop rule (pipeline-runner.js) rather than from
+// Advanced tools - its cost is recorded in the monthly web budget. `quiet`: no pop-up at the end (the stop rule's
+// runs); the Activity Log line is written either way.
+export async function startWebDiscovery({ target, budget, useLinkedin = false, auto = false, quiet = false, onDone = null }) {
   if (runner) throw new Error("Finding new accounts is already running.");
   const universe = await getTargetUniverseConfig();
   const countries = orderedCountries(universe);
@@ -56,7 +62,7 @@ export async function startWebDiscovery({ target, budget, useLinkedin = false })
     status: "running", target: t, wanted: discoveryWanted(t), countries, budget: Number(budget) || 0, spent: 0, hasKey: Boolean(apiKey),
     phase: "Starting", linkedin: null, webWanted: 0, calls: [], listings: [], rowsRead: 0, kept: 0, dropped: {}, fitRows: 0,
     added: 0, addedNames: [], skipped: 0, stoppedReason: null, lastError: null,
-    startedAt: Date.now(), heartbeatAt: Date.now(), finishedAt: null, acknowledged: false,
+    startedAt: Date.now(), heartbeatAt: Date.now(), finishedAt: null, acknowledged: Boolean(quiet), auto: Boolean(auto), included: null,
   };
   const save = () => chrome.storage.local.set({ [WEB_DISCOVERY_STATE_KEY]: { ...state, heartbeatAt: Date.now() } }).catch(() => {});
   await save();
@@ -67,8 +73,14 @@ export async function startWebDiscovery({ target, budget, useLinkedin = false })
       controller.abort();
     },
   };
-  run({ apiKey, universe, state, save, signal: controller.signal, useLinkedin, stop: (r) => runner?.stop(r) }).catch(() => {});
+  run({ apiKey, universe, state, save, signal: controller.signal, useLinkedin, stop: (r) => runner?.stop(r) })
+    .catch(() => {})
+    .finally(() => { if (onDone) onDone(state); });
   return { ok: true, wanted: state.wanted, countries };
+}
+
+export function isWebDiscoveryRunning() {
+  return Boolean(runner);
 }
 
 export function stopWebDiscovery() {
@@ -101,8 +113,13 @@ async function run({ apiKey, universe, state, save, signal, useLinkedin, stop })
     // international groups (what listings rank under their group headquarters), a fixed share of the target.
     const linkedinShare = withLinkedin ? Math.max(1, Math.round(state.wanted * LINKEDIN_SHARE)) : 0;
 
+    // ---- 0. The companies the user named on the wizard's "Companies you want included" (design 3.8) ----
+    const inc = await includedPart({ state, save });
+    addedKeys.push(...inc.keys);
+    addedIds.push(...inc.companyIds);
+
     // ---- 1. The web ----
-    state.webWanted = state.wanted - linkedinShare;
+    state.webWanted = Math.max(0, state.wanted - linkedinShare - inc.keys.length);
     if (state.webWanted > 0) {
       if (!apiKey) {
         state.webSkipped = "no Anthropic API key (Settings > Anthropic API Key)";
@@ -133,6 +150,9 @@ async function run({ apiKey, universe, state, save, signal, useLinkedin, stop })
       await rescoreDerivedPriorities({ onlyCompanyIds: addedIds }).catch(() => null);
     }
     state.added = addedKeys.length;
+    if (state.included && state.included.added > 0) state.addedNames = [...state.included.names, ...(state.addedNames || [])];
+    if (state.webAdded > 0) await addOnboardingMeasure("discovery", { accounts: state.webAdded, usd: state.spent }).catch(() => {});
+    if (state.auto && state.spent > 0) await recordWebSpend(state.spent).catch(() => {});
     state.status = "done";
     state.phase = null;
     state.finishedAt = Date.now();
@@ -142,6 +162,27 @@ async function run({ apiKey, universe, state, save, signal, useLinkedin, stop })
       await appendActivityLog({ actor: "user", action: "web_discovery_finished", label: `Find new accounts: ${discoveryText(state)}` });
     } catch { /* the log entry is a convenience */ }
   }
+}
+
+// ---- Included companies ----
+
+// Added first, whatever their size or industry; an exclusion still wins (the wizard flags a company on both lists).
+// No web call: the pipeline and the web lane research them like any other "Web" account.
+async function includedPart({ state, save }) {
+  const list = await getIncludedCompanies();
+  if (list.length === 0) return { keys: [], companyIds: [] };
+  state.phase = "Adding the companies you want included";
+  await save();
+  const matcher = await getExclusionMatcher();
+  const excluded = list.filter((c) => matchesExclusion(matcher, { name: c.name, website: c.website }));
+  const rows = list.filter((c) => !excluded.includes(c)).map((c) => ({ name: c.name, website: c.website || null }));
+  const res = rows.length ? await addWebDiscoveredCompanies(rows, { runAt: state.startedAt }) : { added: [], skipped: 0 };
+  state.included = {
+    asked: list.length, added: res.added.length, alreadyIn: res.skipped, excluded: excluded.map((c) => c.name),
+    names: res.added.map((a) => a.company),
+  };
+  await save();
+  return { keys: res.added.map((a) => a.key), companyIds: res.added.map((a) => a.companyId) };
 }
 
 // ---- LinkedIn part ----

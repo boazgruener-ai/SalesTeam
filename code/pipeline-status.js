@@ -11,7 +11,7 @@ import { setStatusMessage } from "./status-bar.js";
 import { runAutoBackupIfDue } from "./backup-restore.js";
 import { getRunningBatch } from "./batch-jobs.js";
 import { timeBelowCeiling } from "./linkedin-touch-log.js";
-import { localDay, PIPELINE_TOUCH_CEILING } from "./pipeline-plan.js";
+import { localDay, PIPELINE_TOUCH_CEILING, LINKEDIN_LOGGED_OUT_KEY, LINKEDIN_LOGGED_OUT_WAIT_MS, linkedinLoggedOutRecently } from "./pipeline-plan.js";
 import { getOnboardingCompletedAt } from "./storage.js";
 import { WEB_LANE_STATE_KEY } from "./web-lane.js";
 import {
@@ -76,6 +76,7 @@ const WHY = {
   made_way: "Paused to make way for a job you started",
   busy: "Stopped because another batch process started",
   window_closed: "Stopped because its LinkedIn window was closed.",
+  linkedin_logged_out: "Stopped because LinkedIn is not logged in in this browser. Log in at linkedin.com - it tries again by itself.",
   interrupted: "It was interrupted (the browser or the extension was restarted). Everything already found is saved.",
   error: "Stopped because of an error",
 };
@@ -169,7 +170,7 @@ async function webSideText() {
 // The one line under the Pipeline status pie (design 10.2, U3) and in Settings > Automation.
 export async function pipelineStatusLine() {
   const auto = await getPipelineAutomation();
-  const store = await chrome.storage.local.get([PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY]);
+  const store = await chrome.storage.local.get([PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, LINKEDIN_LOGGED_OUT_KEY]);
   const state = store[PIPELINE_STATE_KEY];
   if (state && state.status === "running" && Date.now() - (state.heartbeatAt || 0) <= STALE_MS) {
     const what = state.auto ? "Preparing accounts" : "Pipeline run in progress";
@@ -182,6 +183,11 @@ export async function pipelineStatusLine() {
     return /^Scanner/.test(running.label) ? "Paused while you scan" : `Paused while this runs: ${running.label}`;
   }
   if ((store[PIPELINE_HOLD_KEY] || 0) > Date.now()) return "Paused while you start a job of your own";
+  // 1.2.0.32: LinkedIn work found the login wall - the one thing the user has to do.
+  const loggedOutAt = store[LINKEDIN_LOGGED_OUT_KEY];
+  if (linkedinLoggedOutRecently(loggedOutAt)) {
+    return `LinkedIn is not logged in in this browser - please log in at linkedin.com · LinkedIn work tries again around ${timeLabel(loggedOutAt + LINKEDIN_LOGGED_OUT_WAIT_MS)} · ${await webSideText()}`;
+  }
   const release = await timeBelowCeiling(PIPELINE_TOUCH_CEILING);
   if (release) return `LinkedIn limit for automation reached · resumes around ${timeLabel(release)} · ${await webSideText()}`;
   const idle = store[PIPELINE_IDLE_KEY];

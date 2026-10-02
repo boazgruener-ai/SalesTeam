@@ -844,6 +844,122 @@ box keeps the order of its lines) - a deviation from R3.1.5's ranked titles, by 
 for all 9 steps - in line with the US$0.30 estimate, which stays until more researches are measured. Boaz went through
 every step on 1.2.0.21: no further comments. **Step 5 DONE.**
 
+**As built (step 6, 1.2.0.22) - the full onboarding.** Branch `feature/onboarding-step6` (off step 5). The wizard
+now has 15 numbered steps, in the order of 3.1.
+
+- **Initiative stages** (step 11, `initiativeStagePreference`): the seven stages as a ranked checklist - tick, and
+  move up/down with arrows, each with a one-line tip. At least one must stay ticked. The web lane's prompt names the
+  ticked stages in the user's order and asks it to leave out the others (only when they differ from all seven in
+  the default order), and an initiative counts towards the target only at a ticked stage; one with no stage
+  (imported before 1.2.1) still counts (`initiativeCounts`).
+- **Companies to include** (step 12, `includedCompanies`): one per line, *"Name, https://website"*, the name alone
+  or the website alone. Each line is shown as read; one that is also on the exclusion list is flagged in red and is
+  not added (the exclusion wins). Web Discovery adds them first, before any listing, with no web call and no size or
+  industry filter; they count towards the accounts it was asked for. The run's report says how many were added,
+  already in the list, or left out as excluded.
+- **How big should your list be?** (step 15, `completionTargets`): accounts (10-2000), contacts per account (1 to the
+  Target contacts step's maximum per account) and relevant initiatives per account (0-5); an out-of-range number is
+  an error on Next. Below the fields, the live estimate from **`onboarding-estimate.js`** (new pure module): it counts
+  the accounts still to find (target minus the live accounts) and still to build (target minus Ready). Its
+  defaults are the measured figures, not section 9's first guesses: discovery US$0.02 an account, research
+  US$0.12-0.22, 25 s an account over four workers, 2.6 LinkedIn touches an account at 60 a day. For 100 accounts on a
+  clean install: *"about 4-5 days of your daily LinkedIn limit and about US$14-24 on your Anthropic API key ... usable
+  within the hour"*. Once 20 accounts have gone through a lane on this install, its own average takes over (R8.3,
+  key `onboardingMeasures`, added to by the web lane per account and by Web Discovery per run).
+- **Finish:** the web budget is pre-filled from the estimate, rounded up to whole US$5, never lowered below what is
+  set, with a note of the estimate beside it. With automatic preparation ticked, Finish sends
+  `ONBOARDING_BUILD_START`: the background (`startOnboardingBuild`, pipeline-runner.js) runs Web Discovery for the
+  accounts owed and, when it ends, the web lane for up to the accounts target, both paid from the monthly web budget;
+  with nothing to discover the web lane starts at once. The LinkedIn pipeline is kicked as before. Discovery from
+  Finish ends with its usual pop-up.
+- **The stop rule (8):** `targetsStatus` (pipeline-plan.js, pure) counts Ready, Usable and In progress accounts
+  against the targets and returns `discover` / `enrich` / `idle`. On every automatic kick (after the setup is
+  finished, not paused, web budget available) the pipeline runs Web Discovery quietly for what is owed - **once per
+  accounts target** (`discoveryMayRun`, key `autoDiscoveryLast`): again only when the target is raised (R6.5) or a
+  week later. This bounds the cost when listings have nothing more to give; without it, accounts that wait for a
+  decision would make every kick look short. Enrichment needs nothing new: the web lane and the pipeline already
+  ask only for what an account lacks, now against the user's targets instead of the defaults.
+- **Coverage lines (R6.4):** under the Target Accounts pie - *"Your targets - Accounts: 87 of 100 in the list.
+  Contacts: 52 of 87 accounts have 3. Initiatives: 40 of 87 accounts have 1 relevant initiative."* (`coverageLines`).
+- The three new keys are in the settings backup.
+
+Checked: new pure-module checks for targets, stages, the stop rule and the estimate (477 in all); the wizard in the chrome.storage stand-in - the new steps, ranking
+and unticking, the exclusion flag, the contacts cap error, the live estimate at 100 and 250 accounts, the budget
+pre-fill (US$60 for 250), the confirm summaries, and Finish sending `ONBOARDING_BUILD_START`. **Not yet run in
+Chrome:** the full onboarding in a clean profile with 100 accounts - Boaz's check.
+
+**1.2.0.23 (Boaz, 2026-10-01, during the clean-profile test):** **Use proposal** gave no sign that anything
+happened, nor whether Save was still needed. The button now turns into *"Used ✓"* with a green line: *"The proposal is
+now in the form below and saved - no need to press Save. Change it if you like, or go on with Next."* (the step saves
+itself a moment later); on About you, *"German is now your output language and saved"*. **Companies to include** could
+read as "list all your target customers here": it now says SalesTeam builds the target list itself from the setup's
+criteria, and this step is only for companies wanted in the list whether or not the research finds them.
+Also in 1.2.0.23: an automatic Web Discovery is marked done for its target (`autoDiscoveryLast`) when it **ends**, not
+when it starts - a run cut off by an extension reload is started again by the next kick for what is still owed
+(before, it would have waited a week).
+
+**1.2.0.24 (Boaz, 2026-10-01):** the Exclusions step's proposal box says what excluding does: *"An excluded company
+never shows up in your Target Accounts, and its people are never searched for leads. A post from a competitor,
+recruiter, customer or partner that a keyword scan finds is marked Irrelevant."* (Companies excluded as *Other* have no
+such post filter - a keyword-scan post from one of them still comes through; raised with Boaz.)
+
+**1.2.0.25 (Boaz, 2026-10-01):** a fifth built-in lead filter, *Other Excluded Companies* (`builtin-other-exclusions`,
+source list `others` -> category `other`, on by default, added to existing installs by the `getNegativeTopics`
+backfill), so an excluded company is never a lead whatever its category. The Exclusions note now says: *"An excluded
+company never shows up in your Target Accounts and is never scanned for leads: its people are not searched, and a post
+from it that a keyword scan finds is marked Irrelevant."*
+
+**1.2.0.26 (Boaz, 2026-10-01, on his main profile):** the Targets step said *"your list already has 100 Ready accounts"*
+with 121 Ready - it now gives the real count. In Change Settings it also says when automatic preparation or automatic
+web research is off (*"... so SalesTeam does not build the list towards these numbers until you turn it on"*): raising a
+target there otherwise did nothing, silently. (A setup completed before has no Finish button - Change Settings saves
+each setting on its own; the full onboarding is tested in a clean profile.)
+
+**1.2.0.27 (Boaz, 2026-10-01, clean profile):** Things you can offer said *"Nothing found on timetoact.ch"* and *"16
+more found without a page of their own"*: the website typed was timetoact.ch, but its pages live on the group's
+timetoact-group.ch, so every resource failed the own-domain test. `isOnDomain` (setup-proposals.js) now also accepts a
+**sibling domain of the same brand** (`sameBrandDomain`): the name parts before the ending are equal (acme.ch / acme.de)
+or one is a hyphen-part of the other (timetoact / timetoact-group), at least 4 letters; any other domain is still
+refused. A research stored before is mapped again from its saved answer when the wizard opens (local, free), so its
+dropped offers come back without a new research. 9 new checks (487).
+
+**1.2.0.28 (Boaz, 2026-10-01):** on step 15 of 15 he looked for Finish Setup - it is on the page after Next and Confirm.
+On the last step the button now reads *"Next: review and finish"*.
+
+**1.2.0.29 (Boaz, 2026-10-01) - Target contacts.** On a first setup the proposed titles sat ticked above an empty
+*Exact titles* box and read as "nothing proposed". Now, on a first setup, the proposed titles and keywords go straight
+into their boxes when the step opens, like every other step's proposal; the tick lists stay for a setup completed
+before, where a proposal must not replace what is saved (1.2.0.21). And a title's translation in brackets is dropped
+(`titleWithoutBrackets`): *"Mitglied der Geschäftsleitung (Member of Executive Board)"* would have been searched with
+the brackets and matched nobody. A stored research with bracketed titles is mapped again when the wizard opens. Things
+you can offer is unchanged (asked only for Target contacts). 4 new checks (491).
+
+**1.2.0.30 (Boaz, 2026-10-01):** Things you can offer works the same way: on a first setup the offers found go straight
+into the list box (no tick list), and the proposal box says *"They are in the list below: remove any the AI should not
+offer"*. A setup completed before keeps the tick list.
+
+**1.2.0.31 (Boaz, 2026-10-01):** the Settings menu said *"Onboarding Setup (not started)"* while he was on step 10, and he
+ended up in Change Settings (no numbers, no Finish Setup). The progress label counted 11 steps (15 since step 6) and was
+drawn only when the Settings page opened, never while the wizard ran inside it; it now uses 15 and is redrawn whenever
+the wizard saves its progress or the setup is finished.
+
+**Clean-profile run (1.2.0.30, 2026-10-01, timetoact.ch, target 100):** Web Discovery added **100 accounts for US$0.63
+(about US$0.006 each)** - five companydata.com listings (25 rows each, about US$0.065 a listing) and one fit search; 158
+rows read, 32 outside the sizes, 26 listed twice. Within the first stretch 94 of the 100 were Usable (web only). But the
+LinkedIn lookups reported *"0 found, 15 looked up but not found"* - the test browser was **not logged in to LinkedIn**.
+
+**1.2.0.32 - LinkedIn logged out.** Every lookup landed on LinkedIn's login wall and was counted as "not found" (a
+failed day each). Now a page ending on the login wall (`isLinkedinLoginWall`: /authwall, /login, /uas/login,
+/checkpoint, /signup) stops the run (*"LinkedIn is not logged in in this browser - log in at linkedin.com"*), counts
+nothing against the account (no attempt mark, no failed day, last run day unchanged), and stores
+`linkedinLoggedOutAt`: for 30 minutes LinkedIn work counts as used up (web work goes on), then one page visit tries
+again. The top bar says so with the time it tries again. 12 new checks (503).
+
+**1.2.0.33 (Boaz, 2026-10-01) - the two "Back to menu" links.** The one on the Setup complete page ran Finish Setup
+without saying so; it now reads *"Finish Setup and back to menu"*. The one at the top belongs to Change Settings, but a
+style rule (`display: inline-block`) overrode its `hidden` attribute, so it also showed during the first setup; it is
+hidden there now (`.wizard-back-link[hidden]`). The first setup leaves with *Exit to menu* or *Save & Exit*.
+
 ---
 
 ## 12. Decisions — all agreed (D1-D9 2026-09-28, D10 2026-09-29, D11 2026-09-30)

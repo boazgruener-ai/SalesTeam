@@ -90,9 +90,10 @@ import {
   exportLeads,
   importSettings,
   importLeads,
-  getAccountReadiness,
+  getAccountReadiness, getTargetsStatus,
 } from "./storage.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
+import { coverageLines } from "./pipeline-plan.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBeforeRestore } from "./backup-restore.js";
 import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
@@ -2745,21 +2746,26 @@ function computeAiPriorityRangeCounts(companies) {
 // more: an unrecognized (or missing) evidenceStatus now falls into "Not yet
 // researched" rather than disappearing, so this pie's own total always
 // equals the company count, unconditionally.
-const EVIDENCE_LEVEL_ORDER = ["Full Evidence", "Rich Evidence", "Sufficient Evidence", "Provisional Evidence", "Insufficient Evidence", "Not yet researched"];
+const EVIDENCE_LEVEL_ORDER = ["Full Evidence", "Rich Evidence", "Sufficient Evidence", "Provisional Evidence", "Insufficient Evidence", "Web researched", "Not yet researched"];
 const EVIDENCE_LEVEL_COLORS = {
   "Full Evidence": "#1b5e20",
   "Rich Evidence": "#2e7d32",
   "Sufficient Evidence": "#f9a825",
   "Provisional Evidence": "#ef6c00",
   "Insufficient Evidence": "#c62828",
+  "Web researched": "#1565c0",
   "Not yet researched": "#9e9e9e",
 };
-const KNOWN_EVIDENCE_LEVELS = new Set(EVIDENCE_LEVEL_ORDER);
+const KNOWN_EVIDENCE_LEVELS = new Set(EVIDENCE_LEVEL_ORDER.filter((k) => k !== "Web researched"));
 
+// 1.2.1: an account found or researched on the web has no workbook Evidence Status, and all of them
+// showed as "Not yet researched" (112 of 112 in the clean-profile run). A web research of its own now
+// counts as its own slice; a workbook status, when the row has one, still wins.
 function computeEvidenceLevelCounts(companies) {
   const counts = Object.fromEntries(EVIDENCE_LEVEL_ORDER.map((k) => [k, 0]));
   for (const c of companies) {
-    counts[KNOWN_EVIDENCE_LEVELS.has(c.evidenceStatus) ? c.evidenceStatus : "Not yet researched"]++;
+    counts[KNOWN_EVIDENCE_LEVELS.has(c.evidenceStatus) ? c.evidenceStatus
+      : accountExtras[normalizeCompanyName(c.company)]?.webResearch ? "Web researched" : "Not yet researched"]++;
   }
   return EVIDENCE_LEVEL_ORDER.map((label) => ({ label, count: counts[label], color: EVIDENCE_LEVEL_COLORS[label] }));
 }
@@ -2874,10 +2880,13 @@ const READINESS_COLORS = {
 };
 let readinessByCompanyId = new Map();
 let readinessRefreshTimer = null;
+// 1.2.1 step 6 (R6.4): the user's targets as coverage lines under the pie.
+let targetsCoverage = [];
 
 async function refreshReadiness() {
   const rows = await getAccountReadiness();
   readinessByCompanyId = new Map(rows.map(({ view, assessment }) => [view.companyId, assessment]));
+  targetsCoverage = await getTargetsStatus({ readiness: rows }).then(coverageLines).catch(() => []);
 }
 
 function scheduleReadinessRefresh() {
@@ -2932,6 +2941,9 @@ function renderReadinessPie() {
   }
   const gapText = Object.entries(gaps).sort((a, b) => b[1] - a[1]).map(([label, n]) => `${label}: ${n}`).join(" · ");
   document.getElementById("pie-readiness-gaps").textContent = gapText ? `Still to do - ${gapText}` : "";
+  const coverageEl = document.getElementById("pie-targets-coverage");
+  coverageEl.textContent = targetsCoverage.length ? `Your targets - ${targetsCoverage.join(" ")}` : "";
+  coverageEl.hidden = targetsCoverage.length === 0;
 }
 
 function renderAccountsStats() {

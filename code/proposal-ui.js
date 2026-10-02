@@ -59,7 +59,18 @@ export function renderProposalBanner(slot, opts) {
 
   const actions = node("div", { className: "proposal-banner-actions" });
   if (p.found && (opts.completedBefore || opts.accepted) && opts.onUse) {
-    actions.append(node("button", { type: "button", className: "step-inline-btn", text: opts.useLabel || "Use proposal", onClick: () => opts.onUse() }));
+    // 1.2.0.23 (Boaz): the click gave no sign that anything happened, nor whether Save was still needed. The step
+    // saves itself a moment later (the wizard's auto-save), so it says so.
+    const used = node("span", { className: "status-text proposal-used-status", role: "status" });
+    const btn = node("button", {
+      type: "button", className: "step-inline-btn", text: opts.useLabel || "Use proposal",
+      onClick: () => {
+        opts.onUse();
+        btn.textContent = "Used ✓";
+        used.textContent = opts.usedText || "The proposal is now in the form below and saved - no need to press Save. Change it if you like, or go on with Next.";
+      },
+    });
+    actions.append(btn, used);
   }
   if (opts.onResearchAgain) {
     const form = node("div", { className: "proposal-again-form" });

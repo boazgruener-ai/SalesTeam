@@ -46,13 +46,17 @@ import {
   getUserProfile, saveUserProfile, getOutputLanguage, saveOutputLanguage,
   getAnthropicApiKey, saveAnthropicApiKey, getSellerCompanyName, saveSellerCompanyName,
   getSetupResearch, saveSetupResearch, getOnboardingCompletedAt, appendActivityLog,
+  getCompletionTargets, saveCompletionTargets, getInitiativeStagePreference, saveInitiativeStagePreference,
+  getIncludedCompanies, saveIncludedCompanies, getOnboardingMeasures, getTargetsStatus,
 } from "./storage.js";
+import { INITIATIVE_STAGE_LABELS, normalizeInitiativeStages, normalizeCompletionTargets, TARGET_LIMITS } from "./pipeline-plan.js";
+import { onboardingEstimate } from "./onboarding-estimate.js";
 import { researchSeller, SELLER_RESEARCH_ESTIMATE_USD, sanitizeApiKey } from "./agent-shared.js";
 import {
   buildSetupProposals, PROPOSAL_STEP_KEYS, stepsRebuiltBy, initiallyTicked, mergeChecklistWithLines, offerLine, sourceLabel,
 } from "./setup-proposals.js";
 import { renderProposalBanner, mountChecklist } from "./proposal-ui.js";
-import { normalizeCompanyName, websiteDomain } from "./company-identity.js";
+import { normalizeCompanyName, websiteDomain, buildExclusionMatcher, matchesExclusion } from "./company-identity.js";
 import { startAutoBackup } from "./backup-restore.js";
 import { mountLocationPicker } from "./location-picker.js";
 import { AI_FIELD_ALIASES } from "./xlsx-lite.js";
@@ -65,15 +69,17 @@ const PRIORITY_LABELS = { 1: "Low", 2: "Medium", 3: "High" };
 
 const STEP_ORDER = [
   "about", "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
-  "icp", "contacts", "exclusions", "aliases", "finish",
+  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets", "finish",
 ];
 const STEP_TITLES = {
   about: "About you", location: "Location", size: "Size", industry: "Industry", priority: "Discovery Prioritization",
   "leads-prioritization": "Leads Prioritization",
   "company-context": "What you sell", "value-add-offers": "Things you can offer",
   icp: "Ideal customer", contacts: "Target contacts",
+  "initiative-stages": "Initiative stages", included: "Companies to include",
   exclusions: "Companies to exclude",
   aliases: "Company aliases",
+  targets: "How big is your list",
 };
 
 // Short display names for storage.js's PRIORITIZATION_RULE_CATALOG ids (used
@@ -124,6 +130,10 @@ let targetContactProfile;
 // every other wizard-array-field (see validateExclusionsStep below).
 let companyExclusions = [];
 let companyAliases = [];
+// 1.2.1 step 6: [{ id, checked }] in the user's order; [{ name, website }]; { accounts, contactsPerAccount, initiativesPerAccount }.
+let initiativeStages = normalizeInitiativeStages(null);
+let includedCompanies = [];
+let completionTargets = normalizeCompletionTargets(null);
 let organizationTypeEligibility = {};
 let keywordSearchLanguages = [];
 let prioritizationRules = [];
@@ -215,6 +225,8 @@ function updateNavBar(step, index) {
     el("nav-save-btn").hidden = false;
     // Change Settings ends at the last setting: there is no Setup complete step after it.
     el("nav-next-btn").hidden = settingsMode && index >= STEP_ORDER.length - 2;
+    // Boaz, 2026-10-01: on the last step "Next" did not say that Finish Setup comes after it.
+    el("nav-next-btn").textContent = !settingsMode && index === STEP_ORDER.length - 2 ? "Next: review and finish" : "Next";
     el("nav-back-btn").textContent = settingsMode ? "Previous" : "Back";
   }
   for (const btn of el("wizard-step-list").children) {
@@ -265,7 +277,9 @@ function showStep(index) {
   if (step === "about") renderAboutResearchBox();
   renderProposalForStep(step);
   if (step === "location") renderLocationPriorityRows();
-  if (step === "finish") renderFinishSummary();
+  if (step === "included") renderIncludedParsedList();
+  if (step === "targets") renderTargetsStep();
+  if (step === "finish") { renderFinishSummary(); prefillBudgetFromEstimate(); }
   updateNavBar(step, index);
 
   // Reported directly: a real completed run took "tens of minutes to
@@ -948,6 +962,177 @@ function validateAliasesStep() {
   return { valid: true };
 }
 
+// ---- 1.2.1 step 6: Initiative stages, Companies to include, How big is your list (design 3.7, 3.8, 3.10) ----
+
+const STAGE_TIPS = {
+  poc: "a first proof of concept is planned or running",
+  exploration: "the company is looking into the topic, no project yet",
+  pilot: "a pilot with real users",
+  early_production: "first use in production",
+  scaling: "being rolled out across the company",
+  mature: "established, now being improved",
+  tech_native: "the technology is the company's own product or core",
+};
+
+function renderInitiativeStages() {
+  const wrap = el("initiative-stages-list");
+  wrap.innerHTML = "";
+  initiativeStages.forEach((stage, i) => {
+    const row = document.createElement("div");
+    row.className = "priority-item-row" + (stage.checked ? "" : " priority-item-unchecked");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = stage.checked;
+    box.id = `initiative-stage-${stage.id}`;
+    box.addEventListener("change", () => { stage.checked = box.checked; row.classList.toggle("priority-item-unchecked", !box.checked); });
+    const name = document.createElement("label");
+    name.className = "priority-item-name";
+    name.htmlFor = box.id;
+    name.textContent = `${i + 1}. ${INITIATIVE_STAGE_LABELS[stage.id]}`;
+    const tip = document.createElement("span");
+    tip.className = "stage-tip";
+    tip.textContent = STAGE_TIPS[stage.id] || "";
+    const move = (delta, label, text) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "stage-move-btn";
+      b.textContent = text;
+      b.title = label;
+      b.disabled = i + delta < 0 || i + delta >= initiativeStages.length;
+      b.addEventListener("click", () => {
+        const [moved] = initiativeStages.splice(i, 1);
+        initiativeStages.splice(i + delta, 0, moved);
+        renderInitiativeStages();
+        scheduleAutoSave();
+      });
+      return b;
+    };
+    row.append(box, name, tip, move(-1, "Move up", "↑"), move(1, "Move down", "↓"));
+    wrap.appendChild(row);
+  });
+}
+
+function validateInitiativeStagesStep() {
+  if (!initiativeStages.some((s) => s.checked)) return { valid: false, error: "Tick at least one stage." };
+  return { valid: true };
+}
+
+// "Acme AG, https://www.acme.ch" / "Acme AG" / "https://www.acme.ch" -> { name, website }.
+function parseIncludedLine(line) {
+  const text = String(line || "").trim();
+  if (!text) return null;
+  const comma = text.lastIndexOf(",");
+  const tail = comma >= 0 ? text.slice(comma + 1).trim() : "";
+  if (tail && /\./.test(tail) && !/\s/.test(tail) && websiteDomain(tail)) {
+    const name = text.slice(0, comma).trim();
+    return { name: name || websiteDomain(tail), website: tail };
+  }
+  if (!/\s/.test(text) && /^(https?:\/\/|www\.)/i.test(text) && websiteDomain(text)) return { name: websiteDomain(text), website: text };
+  return { name: text };
+}
+
+function parseIncludedLines(value) {
+  const seen = new Set();
+  const out = [];
+  for (const line of String(value || "").split("\n")) {
+    const c = parseIncludedLine(line);
+    const key = c && (normalizeCompanyName(c.name) || websiteDomain(c.website || ""));
+    if (!c || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+  }
+  return out;
+}
+
+// Each company as read, flagged when it is also on the exclusion list (the exclusion wins, design 3.8).
+function renderIncludedParsedList() {
+  const wrap = el("included-parsed-list");
+  wrap.innerHTML = "";
+  const matcher = buildExclusionMatcher(companyExclusions);
+  for (const c of parseIncludedLines(el("included-input").value)) {
+    const row = document.createElement("div");
+    const excluded = matchesExclusion(matcher, { name: c.name, website: c.website });
+    row.className = "included-parsed-row" + (excluded ? " included-conflict" : "");
+    row.textContent = `${excluded ? "⚠ " : "✓ "}${c.name}${c.website ? ` - ${websiteDomain(c.website)}` : " (no website)"}` +
+      (excluded ? " - also on your exclusion list, so it will not be added" : "");
+    wrap.appendChild(row);
+  }
+}
+
+function validateIncludedStep() {
+  includedCompanies = parseIncludedLines(el("included-input").value);
+  return { valid: true };
+}
+
+// Contacts per account can be at most the Target contacts step's maximum per account.
+function contactsTargetMax() {
+  const cap = Math.round(Number(targetContactProfile?.maxContactsPerAccount));
+  return Math.min(Number.isFinite(cap) && cap >= 1 ? cap : Infinity, TARGET_LIMITS.contactsPerAccount[1]);
+}
+
+function validateTargetsStep() {
+  const raw = {
+    accounts: el("targets-accounts-input").value,
+    contactsPerAccount: el("targets-contacts-input").value,
+    initiativesPerAccount: el("targets-initiatives-input").value,
+  };
+  const checks = [
+    ["accounts", "Accounts", TARGET_LIMITS.accounts],
+    ["contactsPerAccount", "Contacts per account", [TARGET_LIMITS.contactsPerAccount[0], contactsTargetMax()]],
+    ["initiativesPerAccount", "Relevant initiatives per account", TARGET_LIMITS.initiativesPerAccount],
+  ];
+  for (const [key, label, [lo, hi]] of checks) {
+    const n = Number(raw[key]);
+    if (raw[key] === "" || !Number.isInteger(n) || n < lo || n > hi) return { valid: false, error: `${label} must be a whole number from ${lo} to ${hi}.` };
+  }
+  completionTargets = normalizeCompletionTargets(raw, targetContactProfile?.maxContactsPerAccount);
+  return { valid: true };
+}
+
+// The live estimate (R8.1) needs the list as it is now - read once per visit, when it is first wanted.
+let estimateBasis = null;
+async function loadEstimateBasis() {
+  if (!estimateBasis) {
+    const [status, measured] = await Promise.all([getTargetsStatus().catch(() => null), getOnboardingMeasures()]);
+    estimateBasis = { existing: status ? status.accounts : 0, ready: status ? status.ready : 0, measured };
+  }
+  return estimateBasis;
+}
+
+function currentEstimate(basis) {
+  const accounts = Number(el("targets-accounts-input").value) || completionTargets.accounts;
+  return onboardingEstimate({ accounts, ...basis });
+}
+
+async function renderTargetsStep() {
+  const max = contactsTargetMax();
+  el("targets-contacts-input").max = String(max);
+  el("targets-contacts-hint").textContent = `At most ${max} - your maximum contacts per target account (Target contacts step).`;
+  const out = el("targets-estimate");
+  if (!estimateBasis) out.textContent = "Working out the estimate…";
+  const basis = await loadEstimateBasis();
+  out.textContent = currentEstimate(basis).text +
+    (basis.existing ? ` Your list has ${basis.existing} account${basis.existing === 1 ? "" : "s"} now, ${basis.ready} of them Ready.` : "");
+  // Change Settings (Boaz, 2026-10-01): raising a target does nothing while the automation that builds the list is off.
+  if (settingsMode) {
+    const a = await getPipelineAutomation();
+    const off = !a.enabled ? "Automatic preparation is off" : !a.webEnabled ? "Automatic web research is off" : null;
+    if (off) out.textContent += ` ${off} (Settings > Automation), so SalesTeam does not build the list towards these numbers until you turn it on.`;
+  }
+}
+
+// R8.2: the web budget pre-filled from the estimate, rounded up - never lowered below what is already set.
+async function prefillBudgetFromEstimate() {
+  const note = el("finish-web-budget-note");
+  note.textContent = "";
+  if (settingsMode) return;
+  const est = currentEstimate(await loadEstimateBasis());
+  if (est.usdHigh <= 0) return;
+  const input = el("finish-web-budget");
+  if ((Number(input.value) || 0) < est.budgetUsd) input.value = String(est.budgetUsd);
+  note.textContent = ` Your list of ${est.accounts} accounts needs about US$${Math.round(est.usdLow)}-${Math.ceil(est.usdHigh)} of web research.`;
+}
+
 const STEP_VALIDATORS = {
   about: validateAboutStep,
   location: validateLocationStep,
@@ -959,8 +1144,11 @@ const STEP_VALIDATORS = {
   "value-add-offers": validateAlwaysStep,
   icp: validateAlwaysStep,
   contacts: validateContactsStep,
+  "initiative-stages": validateInitiativeStagesStep,
+  included: validateIncludedStep,
   exclusions: validateExclusionsStep,
   aliases: validateAliasesStep,
+  targets: validateTargetsStep,
 };
 
 // ---------------------------------------------------------------------
@@ -1071,6 +1259,15 @@ async function persistStep(step) {
       break;
     case "aliases":
       await saveCompanyAliases(companyAliases);
+      break;
+    case "initiative-stages":
+      await saveInitiativeStagePreference(initiativeStages);
+      break;
+    case "included":
+      await saveIncludedCompanies(includedCompanies);
+      break;
+    case "targets":
+      await saveCompletionTargets(completionTargets);
       break;
   }
 }
@@ -1222,6 +1419,26 @@ function renderSummaryInto(step, container) {
       } else {
         appendPara(container, "No companies to exclude.");
       }
+      break;
+    }
+    case "initiative-stages": {
+      const ticked = initiativeStages.filter((x) => x.checked).map((x) => INITIATIVE_STAGE_LABELS[x.id]);
+      appendPara(container, "Initiative stages, most important first: ", { strong: ticked.join(", ") || "(none)" }, ".");
+      break;
+    }
+    case "included": {
+      if (includedCompanies.length) {
+        appendPara(container, `${includedCompanies.length} compan${includedCompanies.length === 1 ? "y" : "ies"} to include: `,
+          { strong: includedCompanies.map((c) => c.name).join(", ") }, ".");
+      } else {
+        appendPara(container, "No companies named.");
+      }
+      break;
+    }
+    case "targets": {
+      const t = completionTargets;
+      appendPara(container, "Build the list to ", { strong: `${t.accounts} accounts` }, ", each with ", { strong: `${t.contactsPerAccount} contacts` },
+        " and ", { strong: `${t.initiativesPerAccount} relevant initiative${t.initiativesPerAccount === 1 ? "" : "s"}` }, ".");
       break;
     }
     case "aliases": {
@@ -1734,6 +1951,9 @@ el("finish-btn").addEventListener("click", async () => {
   const webOn = el("finish-automation-checkbox").checked && el("finish-web-checkbox").checked;
   await setWebResearchAutomation({ enabled: webOn, monthlyUsd: webOn ? Math.max(0, Number(el("finish-web-budget").value) || 0) : undefined }, "Setup wizard");
   await markOnboardingCompleted();
+  // Design 3.11 (R3.4.1): Finish starts building the list - Web Discovery, then the web lane; the LinkedIn lane is
+  // kicked. The background does it; the wizard never visits LinkedIn.
+  if (el("finish-automation-checkbox").checked) chrome.runtime.sendMessage({ type: "ONBOARDING_BUILD_START" }).catch(() => {});
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
   leaveWizard();
@@ -2035,12 +2255,18 @@ function proposalNotes(step, p) {
       proposalLine(p.value);
       break;
     case "value-add-offers":
-      notes.push("These can go into a message to a lead as a small give-away - a report, an eBook, a webinar - that gives them a reason to reply. Tick the ones the AI may offer when it drafts a message.");
+      notes.push("These can go into a message to a lead as a small give-away - a report, an eBook, a webinar - that gives them a reason to reply. " +
+        (completedBefore || setupResearch.accepted?.[step]
+          ? "Tick the ones the AI may offer when it drafts a message."
+          : "They are in the list below: remove any the AI should not offer when it drafts a message."));
       if (p.dropped) {
         notes.push(`${p.dropped} more found without a page of their own on ${sellerSite() || "the website"} - left out, since the AI may only offer what has a real page.`);
       }
       break;
     case "exclusions":
+      // Boaz, 2026-10-01: say what excluding does.
+      notes.push("An excluded company never shows up in your Target Accounts and is never scanned for leads: its people are " +
+        "not searched, and a post from it that a keyword scan finds is marked Irrelevant.");
       if (p.items?.length) notes.push("Matched by name and website - no LinkedIn page is needed for these.");
       break;
   }
@@ -2058,6 +2284,13 @@ function mountStepChecklists(step, p, accepted) {
     // there). The checklist shows only proposals not in it yet - ticked on a first setup until the step is accepted.
     const lines = textareaLines("value-add-offers-input");
     const texts = p.items.map(offerLine);
+    // 1.2.0.30 (Boaz): on a first setup the offers go straight into the box, like Target contacts (1.2.0.29).
+    if (!completedBefore && !accepted) {
+      el("value-add-offers-input").value = mergeChecklistWithLines([], [...lines, ...texts]).join("\n");
+      el("value-add-offers-checklist").hidden = true;
+      checklists[step] = null;
+      return;
+    }
     const inBox = initiallyTicked(texts, lines, true);
     const open = p.items.map((item, i) => ({ text: texts[i], sourceUrl: item.url })).filter((_, i) => !inBox[i]);
     const tickNew = !completedBefore && !accepted;
@@ -2072,6 +2305,17 @@ function mountStepChecklists(step, p, accepted) {
   } else if (step === "contacts") {
     // Same as offers (Boaz, 2026-10-01): the two boxes are the lists, ticked proposals move into them on Save.
     const tickNew = !completedBefore && !accepted;
+    // 1.2.0.29 (Boaz): on a first setup a list of ticked titles above an empty box read as "nothing proposed" - the
+    // proposals go straight into the boxes, like every other step's proposal. The tick lists stay for a setup
+    // completed before, where a proposal must not replace what is saved.
+    if (tickNew) {
+      el("contacts-exact-titles-input").value = mergeChecklistWithLines([], [...textareaLines("contacts-exact-titles-input"), ...p.exactTitles]).join("\n");
+      el("contacts-title-keywords-input").value = mergeChecklistWithLines([], [...textareaLines("contacts-title-keywords-input"), ...p.keywords]).join("\n");
+      el("contacts-titles-checklist").hidden = true;
+      el("contacts-keywords-checklist").hidden = true;
+      checklists[step] = { titles: null, keywords: null };
+      return;
+    }
     const open = (keys, lines) => {
       const inBox = initiallyTicked(keys, lines, true);
       return keys.filter((_, i) => !inBox[i]).map((text) => ({ text, checked: tickNew }));
@@ -2117,7 +2361,20 @@ function renderProposalForStep(step) {
     proposal: p, site: sellerSite(), completedBefore: completedBefore || step === "about", accepted,
     notes: proposalNotes(step, p),
     onUse: p && p.found
-      ? () => { applyProposal(step, p, { tickAll: true }); scheduleAutoSave(); if (step === "about") renderProposalForStep(step); }
+      ? () => {
+        applyProposal(step, p, { tickAll: true });
+        scheduleAutoSave();
+        if (step === "about") {
+          // The language now matches, so About you's proposal box goes away - leave a line saying what happened.
+          renderProposalForStep(step);
+          slot.hidden = false;
+          slot.innerHTML = "";
+          const done = document.createElement("p");
+          done.className = "proposal-used-status";
+          done.textContent = `${languageLabel(p.outputLanguage)} is now your output language and saved - no need to press Save.`;
+          slot.append(done);
+        }
+      }
       : null,
     useLabel: step === "about" && p ? `Use ${languageLabel(p.outputLanguage)}` : "Use proposal",
     onResearchAgain: step === "about" ? null : (hint) => researchStepAgain(step, hint),
@@ -2314,6 +2571,23 @@ async function init() {
     setupResearch = { ...setupResearch, status: "failed", error: "The research was interrupted (the page was closed or reloaded)." };
     await saveSetupResearch(setupResearch);
   }
+  // 1.2.0.27: offers on a sibling domain of the same brand now count - a research stored before is mapped again from
+  // its saved answer (local, free), so its dropped offers come back without a new research.
+  if (setupResearch.raw && setupResearch.proposals?.["value-add-offers"] && !setupResearch.proposals["value-add-offers"].found) {
+    const again = buildSetupProposals(setupResearch.raw, proposalCtx(), ["value-add-offers"])["value-add-offers"];
+    if (again && again.found) {
+      setupResearch = { ...setupResearch, proposals: { ...setupResearch.proposals, "value-add-offers": again } };
+      await saveSetupResearch(setupResearch);
+    }
+  }
+  // 1.2.0.29: titles with a translation in brackets are mapped again without it (local, free).
+  if (setupResearch.raw && (setupResearch.proposals?.contacts?.exactTitles || []).some((t) => /[([]/.test(t))) {
+    const again = buildSetupProposals(setupResearch.raw, proposalCtx(), ["contacts"]).contacts;
+    if (again) {
+      setupResearch = { ...setupResearch, proposals: { ...setupResearch.proposals, contacts: again } };
+      await saveSetupResearch(setupResearch);
+    }
+  }
   el("value-add-offers-input").value = (await getValueAddOffers()).join("\n");
   el("icp-input").value = await getIdealCustomerProfile();
   el("contacts-exact-titles-input").value = targetContactProfile.exactTitles.join("\n");
@@ -2330,6 +2604,18 @@ async function init() {
     .map((a) => `https://www.linkedin.com/company/${a.aliasSlug}/ -> https://www.linkedin.com/company/${a.canonicalSlug}/`)
     .join("\n");
   renderAliasesParsedList();
+  initiativeStages = await getInitiativeStagePreference();
+  renderInitiativeStages();
+  includedCompanies = await getIncludedCompanies();
+  el("included-input").value = includedCompanies.map((c) => (c.website ? `${c.name}, ${c.website}` : c.name)).join("\n");
+  el("included-input").addEventListener("input", renderIncludedParsedList);
+  completionTargets = await getCompletionTargets();
+  el("targets-accounts-input").value = completionTargets.accounts;
+  el("targets-contacts-input").value = completionTargets.contactsPerAccount;
+  el("targets-initiatives-input").value = completionTargets.initiativesPerAccount;
+  for (const id of ["targets-accounts-input", "targets-contacts-input", "targets-initiatives-input"]) {
+    el(id).addEventListener("input", () => { if (estimateBasis) renderTargetsStep(); });
+  }
 
   // Resume where a previous session left off, not always step 1 - see
   // showStep()'s own comment for why this matters for a run that can take

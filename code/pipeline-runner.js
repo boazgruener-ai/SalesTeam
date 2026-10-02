@@ -25,16 +25,19 @@ import {
   getAccountViews, getReadinessConfig, savePipelineAccountState, applyResolvedCompanyIds, markLinkedinResolveAttempted,
   applyEmployeeCheck, setContactLinkedinProfile, appendActivityLog, settleSafeDuplicates,
   applyPipelineWebResearch, autoResolveWebFindings, getTargetAccountsWorkbook, normalizeCompanyName,
-  getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig,
+  getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig, getCompletionTargets, getTargetsStatus,
+  getOnboardingCompletedAt,
 } from "./storage.js";
 import { researchAccountOnWeb, apiBlockedReason } from "./agent-shared.js";
 import { pageNamesAgree, cleanPageName, isEmptyPageBand } from "./decision-rules.js";
 import { assessAccount, companyLinkSlug, countReadiness, MIN_READY_TO_SCAN } from "./readiness.js";
 import { WEB_LANE_STATE_KEY, startWebLane, isWebLaneRunning } from "./web-lane.js";
+import { startWebDiscovery, isWebDiscoveryRunning } from "./web-discovery.js";
 import {
   rankCandidates, jobsNeeded, localDay, withFailedAttempt, pickProfileMatch, profileContactToTry, profileUrlFromSlug,
   parseSizeBand, sizeVerdict, nameTokens, PIPELINE_TOUCH_CEILING, autoRunBlocker, USER_JOB_HOLD_MS,
-  isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS, READY_GOAL_KEY,
+  isLinkedinJob, webPlan, WEB_JOBS, WEB_GAP_TOPICS, READY_GOAL_KEY, discoveryMayRun,
+  isLinkedinLoginWall, linkedinLoggedOutRecently, LINKEDIN_LOGGED_OUT_KEY,
 } from "./pipeline-plan.js";
 import { resolveAccountOnTab } from "./company-resolve-extraction.js";
 import { armSizeRead, disarmSizeRead, readSizeOnTab } from "./company-size-extraction.js";
@@ -73,8 +76,11 @@ const LOG_REASONS = {
   nothing_left: "nothing left to do today",
   made_way: "made way for your job",
   user: "stopped by you",
+  linkedin_logged_out: "LinkedIn is not logged in in this browser - log in at linkedin.com",
 };
 const LAST_AUTO_BACKUP_KEY = "lastAutoBackupAt"; // backup-restore.js
+// 1.2.1 step 6 (design 8): the last automatic Web Discovery, { accountsTarget, at } - see discoveryMayRun.
+const AUTO_DISCOVERY_KEY = "autoDiscoveryLast";
 
 let runner = null; // { stopRequested, pauseRequested, state }
 let kicking = false;
@@ -156,19 +162,24 @@ export async function kickPipeline(source) {
     await closeInterruptedRecord();
     const auto = await getPipelineAutomation();
     if (!auto.enabled) return { started: false, reason: "off" };
-    const store = await chrome.storage.local.get([PIPELINE_HOLD_KEY, LAST_AUTO_BACKUP_KEY]);
+    const store = await chrome.storage.local.get([PIPELINE_HOLD_KEY, LAST_AUTO_BACKUP_KEY, LINKEDIN_LOGGED_OUT_KEY]);
     const [stats, runningBatch, web] = await Promise.all([getLinkedinTouchStats(), getRunningBatch(), webBudgetState()]);
     const now = Date.now();
+    // 1.2.1 step 6 (design 8): the stop rule's discovery. Web only, so it needs the web budget, not LinkedIn.
+    if (auto.pausedDay !== localDay(now) && !web.reason) await discoverForTargets(web, { now }).catch(() => {});
     let reason = autoRunBlocker({
       enabled: auto.enabled, pausedDay: auto.pausedDay, today: localDay(now), holdUntil: store[PIPELINE_HOLD_KEY] || 0,
-      runningBatch, touches24h: stats.last24h, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now, webPossible: !web.reason,
+      runningBatch, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now, webPossible: !web.reason,
+      // Logged out a short while ago: LinkedIn counts as used up, so only web work may start a run.
+      touches24h: linkedinLoggedOutRecently(store[LINKEDIN_LOGGED_OUT_KEY], now) ? PIPELINE_TOUCH_CEILING : stats.last24h,
     });
     if (!reason) {
       // W5: settling the web findings the rules can settle is local and free, so it happens on every
       // kick that could start a run, whether or not there is LinkedIn or web work to do.
       await autoResolveWebFindings().catch(() => {});
       const { entries, counts } = await readinessNow();
-      const opts = { linkedin: stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason, ...(await planContext(counts)) };
+      const loggedOut = linkedinLoggedOutRecently(store[LINKEDIN_LOGGED_OUT_KEY], now);
+      const opts = { linkedin: !loggedOut && stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason, ...(await planContext(counts)) };
       if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts).length === 0) reason = opts.linkedin ? "nothing_left" : "budget";
     }
     if (reason) {
@@ -190,6 +201,63 @@ export async function kickPipeline(source) {
   } finally {
     kicking = false;
   }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Targets (1.2.1 step 6, design 3.11 and 8)
+// ---------------------------------------------------------------------------------------------------
+
+const webBudgetLeft = (web) => Math.max(0, (Number(web.monthlyUsd) || 0) - (Number(web.spentUsd) || 0));
+
+// While the list is short of the accounts target, Web Discovery adds what is owed (once per target: again when it
+// is raised, or a week later). When it is done, the web lane researches what the new accounts lack. `fromSetup`:
+// the wizard's Finish - always runs when accounts are owed, and ends with the usual pop-up.
+async function discoverForTargets(web, { now = Date.now(), fromSetup = false } = {}) {
+  if (isWebDiscoveryRunning()) return { started: false, reason: "running" };
+  const targets = await getCompletionTargets();
+  const last = (await chrome.storage.local.get(AUTO_DISCOVERY_KEY))[AUTO_DISCOVERY_KEY] || null;
+  if (!fromSetup && !discoveryMayRun(last, targets.accounts, now)) return { started: false, reason: "done_for_target" };
+  // Never before the setup is finished: the targets and the countries are not settled until then.
+  if (!fromSetup && !(await getOnboardingCompletedAt())) return { started: false, reason: "setup_not_done" };
+  const status = await getTargetsStatus();
+  if (status.accountsOwed <= 0) {
+    // Checked for this target: the next check comes when the target is raised, or in a week.
+    await chrome.storage.local.set({ [AUTO_DISCOVERY_KEY]: { accountsTarget: targets.accounts, at: now, enough: true } });
+    return { started: false, reason: "enough_accounts", status };
+  }
+  // The run is marked done for this target only when it ends (stopped by the user included): a run cut off by an
+  // extension reload leaves no mark, so the next kick starts it again for what is still owed.
+  const res = await startWebDiscovery({
+    target: status.accountsOwed, budget: webBudgetLeft(web), auto: true, quiet: !fromSetup,
+    onDone: async (state) => {
+      await chrome.storage.local.set({ [AUTO_DISCOVERY_KEY]: { accountsTarget: targets.accounts, at: Date.now() } }).catch(() => {});
+      if (state.stoppedReason !== "user") await startLaneForTargets().catch(() => {});
+    },
+  });
+  return { started: Boolean(res && res.ok), owed: status.accountsOwed };
+}
+
+// The web lane for the accounts below their targets, up to the accounts target in one run, under the web budget.
+async function startLaneForTargets() {
+  if (isWebLaneRunning()) return { started: false, reason: "running" };
+  const auto = await getPipelineAutomation();
+  const web = await webBudgetState();
+  if (!auto.enabled || auto.pausedDay === localDay() || web.reason) return { started: false, reason: web.reason || "off" };
+  const targets = await getCompletionTargets();
+  const lane = await startWebLane({ limit: targets.accounts, budget: webBudgetLeft(web), auto: true }).catch((err) => ({ ok: false, error: err.message }));
+  return { started: Boolean(lane && lane.ok), error: lane && lane.error };
+}
+
+// The wizard's Finish (design 3.11, R3.4.1): Web Discovery for what is owed, then the web lane; the LinkedIn lane
+// is kicked as usual. With nothing to discover the web lane starts at once. The wizard itself never visits LinkedIn.
+export async function startOnboardingBuild() {
+  const auto = await getPipelineAutomation();
+  const web = await webBudgetState();
+  let discovery = { started: false, reason: auto.enabled ? web.reason || null : "off" };
+  if (auto.enabled && !web.reason) discovery = await discoverForTargets(web, { fromSetup: true }).catch((err) => ({ started: false, error: err.message }));
+  const lane = discovery.started ? { started: false, reason: "after_discovery" } : await startLaneForTargets().catch((err) => ({ started: false, error: err.message }));
+  const pipeline = await kickPipeline("setup_finished").catch(() => null);
+  return { ok: true, discovery, lane, pipeline };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -293,7 +361,8 @@ async function run(r) {
     const underLimit = () => s.limit == null || s.done < s.limit;
     while (!r.stopRequested && !r.pauseRequested && underLimit()) {
       // W1: the LinkedIn ceiling stops the LinkedIn jobs only; web research goes on within its budget.
-      const linkedinOk = (await getLinkedinTouchStats()).last24h < PIPELINE_TOUCH_CEILING;
+      const loggedOutAt = (await chrome.storage.local.get(LINKEDIN_LOGGED_OUT_KEY))[LINKEDIN_LOGGED_OUT_KEY];
+      const linkedinOk = !linkedinLoggedOutRecently(loggedOutAt) && (await getLinkedinTouchStats()).last24h < PIPELINE_TOUCH_CEILING;
       const webOk = !(await webBudgetState()).reason;
       if (!linkedinOk && !webOk) { s.stoppedReason = "budget"; break; }
       const { cfg, entries, counts } = s.done === 0 ? first : await readinessNow();
@@ -338,6 +407,11 @@ async function run(r) {
       s.webResearches += outcome.webResearches || 0;
       s.webUsd += outcome.webUsd || 0;
       if (outcome.windowClosed) { s.stoppedReason = "window_closed"; break; }
+      if (outcome.loggedOut) {
+        s.stoppedReason = "linkedin_logged_out";
+        await chrome.storage.local.set({ [LINKEDIN_LOGGED_OUT_KEY]: Date.now() });
+        break;
+      }
       // The pause between accounts paces LinkedIn; an account that visited no LinkedIn page needs none.
       if (!r.stopRequested && !r.pauseRequested && underLimit()) await sleep(touches > 0 ? randomDelay() : 500);
     }
@@ -401,6 +475,7 @@ async function runAccount(tab, entry, cfg, r, opts) {
   // user's job gave up waiting after 2.5 (1.2.0.1 live test, 2026-09-28). An account cut short is not marked as
   // handled today, so the next run picks it up again.
   let cutShort = false;
+  let loggedOut = false; // 1.2.0.32: a LinkedIn page ended on the login wall
   while (!r.stopRequested) {
     const job = jobs.find((j) => (j === "profile" ? profileSearches < MAX_PROFILE_SEARCHES_PER_ACCOUNT : !ran.has(j)));
     if (!job) break;
@@ -440,6 +515,7 @@ async function runAccount(tab, entry, cfg, r, opts) {
       const withSize = jobs.includes("size") && Boolean(companyLinkSlug(view.linkedinLink));
       if (withSize) { ran.add("size"); attempted.add("size"); }
       const res = await doResolve(tab, view, withSize, day);
+      if (res.loggedOut) { loggedOut = true; break; }
       lines.push(...res.lines);
       if (res.pageChange) pipeline = { ...pipeline, pageChange: res.pageChange };
       if (res.idTaken) pipeline = { ...pipeline, idTaken: res.idTaken };
@@ -458,6 +534,9 @@ async function runAccount(tab, entry, cfg, r, opts) {
       lines.push(await doContacts(tab, view));
     }
 
+    // Any LinkedIn job: a page that ended on the login wall found nothing - stop, and count no failed day.
+    const pageNow = await chrome.tabs.get(tab.id).catch(() => null);
+    if (pageNow && isLinkedinLoginWall(pageNow.url)) { loggedOut = true; break; }
     view = (await freshView(key)) || view;
     const assessment = assessAccount(view, cfg, Date.now());
     jobs = jobsNeeded(view, assessment, pipeline, Date.now(), { ...opts, profileSearches });
@@ -468,6 +547,12 @@ async function runAccount(tab, entry, cfg, r, opts) {
   }
 
   if (cutShort) lines.push("Paused here to make way for your job - the rest of this account follows in a later run");
+  if (loggedOut) {
+    lines.push("Stopped: LinkedIn is not logged in in this browser - this account's LinkedIn work follows once you log in");
+    attempted.clear();
+    failed.clear();
+    cutShort = true; // keeps the account's last run day as it was, so it is taken again soon
+  }
   let attempts = pipeline.attempts || {};
   for (const j of failed) attempts = withFailedAttempt({ attempts }, j, day);
   // The whole state is written, not only what changed: when the account's inputs changed (step 4,
@@ -502,7 +587,7 @@ async function runAccount(tab, entry, cfg, r, opts) {
     newValue: { lines, state: finalState, touches, becameReady, ...(replacedLinks.length ? { replacedContactLinks: replacedLinks } : {}) },
     relatedCompanyKey: key,
   }).catch(() => {});
-  return { lines, state: finalState, becameReady, windowClosed, webResearches, webUsd };
+  return { lines, state: finalState, becameReady, windowClosed, loggedOut, webResearches, webUsd };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -527,6 +612,8 @@ async function doResolve(tab, view, withSize, day) {
   } finally {
     if (armed) await disarmSizeRead();
   }
+  // LinkedIn's login wall, not a search result: nothing is known about this account yet.
+  if (isLinkedinLoginWall(attempt.finalUrl) || isLinkedinLoginWall(attempt.fallbackFinalUrl)) return { lines: [], loggedOut: true };
   await markLinkedinResolveAttempted([view.key]);
   const oldId = view.linkedinCompanyId || null;
   // The page shows the very id already stored: the account's link and its id agree, which is the
@@ -684,7 +771,7 @@ async function doContacts(tab, view) {
   if (!slug) return "Contact discovery needs the company's LinkedIn page";
   const res = await discoverContactsForAccount(tab, {
     key: view.key, company: view.company, companyId: view.companyId, slug, contactCount: (view.contacts || []).length,
-  });
+  }, { untilTarget: true });
   if (!res.ranAnything) return "Contact discovery skipped: no contact titles are set in Setup";
   if (!res.received) return "Contact discovery: the page did not answer";
   return res.added > 0 ? `${res.added} contact${res.added === 1 ? "" : "s"} found` : "No matching contacts found";

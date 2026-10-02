@@ -3,8 +3,9 @@
 // Shared by every page that carries the Settings menu group.
 import { getOnboardingCompletedAt, getOnboardingProgressStepIndex } from "./storage.js";
 
-// STEP_ORDER (onboarding.js) has 11 real steps - kept as a constant here rather than importing that page script.
-export const ONBOARDING_TOTAL_STEPS = 11;
+// STEP_ORDER (onboarding.js) has 15 real steps since 1.2.1 step 6 - kept as a constant here rather than importing that
+// page script. Re-sync it whenever a step is added there.
+export const ONBOARDING_TOTAL_STEPS = 15;
 
 export async function getOnboardingState() {
   const [completedAt, stepIndex] = await Promise.all([getOnboardingCompletedAt(), getOnboardingProgressStepIndex()]);

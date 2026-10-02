@@ -749,7 +749,14 @@ document.querySelectorAll('#app-nav a.nav-item[href^="#"]').forEach((link) => {
 // (a self-wiring page script, not a data module - same reasoning every
 // other cross-page reference in this codebase avoids importing one page's
 // script from another). Re-sync this number if a step is ever added there.
-const ONBOARDING_TOTAL_STEPS = 11;
+// 15 since 1.2.1 step 6 (1.2.0.31: it still said 11).
+const ONBOARDING_TOTAL_STEPS = 15;
+
+// 1.2.0.31 (Boaz): the wizard runs inside this page, so the menu's "(not started)" never changed while he went through
+// it - the progress is drawn again whenever the wizard saves how far it got, or that the setup is finished.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && (changes.onboardingProgressStepIndex || changes.onboardingCompletedAt)) renderOnboardingProgress();
+});
 
 async function renderOnboardingProgress() {
   const [completedAt, stepIndex] = await Promise.all([getOnboardingCompletedAt(), getOnboardingProgressStepIndex()]);

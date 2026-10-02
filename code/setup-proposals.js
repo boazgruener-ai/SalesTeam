@@ -41,7 +41,29 @@ const list = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === "objec
 export function isOnDomain(url, domain) {
   const d = websiteDomain(url);
   if (!d || !domain) return false;
-  return d === domain || d.endsWith("." + domain);
+  return d === domain || d.endsWith("." + domain) || sameBrandDomain(d, domain);
+}
+
+// The name part of a domain, without the ending: "www.acme-group.co.uk" -> "acme-group", "timetoact.ch" -> "timetoact".
+const SECOND_LEVEL = new Set(["co", "com", "org", "net", "ac", "gov", "edu"]);
+export function brandLabel(domain) {
+  const parts = String(domain || "").toLowerCase().replace(/^www\./, "").split(".").filter(Boolean);
+  if (parts.length < 2) return "";
+  const i = parts.length >= 3 && SECOND_LEVEL.has(parts[parts.length - 2]) ? parts.length - 3 : parts.length - 2;
+  return parts[i];
+}
+
+// 1.2.0.27 (Boaz, 2026-10-01): a company's own pages often live on a sibling domain - timetoact.ch sends its visitors to
+// timetoact-group.ch, so all 16 offers found were dropped as "not on the website". Two domains are the same brand when
+// their name parts are equal or one is a hyphen-part of the other ("timetoact" in "timetoact-group"), at least 4
+// letters long; any other domain still does not count.
+export function sameBrandDomain(a, b) {
+  const x = brandLabel(a);
+  const y = brandLabel(b);
+  if (!x || !y) return false;
+  if (x === y) return x.length >= 4;
+  const within = (short, long) => short.length >= 4 && long.split("-").includes(short);
+  return within(x, y) || within(y, x);
 }
 
 // "https://www.acme.com/about/" -> "acme.com/about": how a source is named in the banner (R5.1).
@@ -273,11 +295,17 @@ export function titleKeywords(titles) {
     .slice(0, MAX_KEYWORDS).map(([w]) => display.get(w));
 }
 
+// 1.2.0.29 (Boaz): "Mitglied der Geschäftsleitung (Member of Executive Board)" would be searched as written, brackets
+// and all, and match nobody - a translation or explanation in brackets is not part of the title.
+export function titleWithoutBrackets(title) {
+  return String(title || "").replace(/\s*[(\[][^()\[\]]*[)\]]/g, "").replace(/\s{2,}/g, " ").trim();
+}
+
 function mapContacts(items) {
   const exactTitles = [];
   const sources = [];
   for (const it of list(items)) {
-    const title = cleanText(it.title, 100);
+    const title = titleWithoutBrackets(cleanText(it.title, 100));
     if (!title || exactTitles.some((t) => fold(t) === fold(title))) continue;
     exactTitles.push(title);
     if (webUrlOrNull(it.url)) sources.push(it.url);
