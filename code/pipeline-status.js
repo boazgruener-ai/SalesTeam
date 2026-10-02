@@ -172,6 +172,10 @@ async function webSideText() {
   return "no account needs web research just now";
 }
 
+function isWebLaneLive(lane) {
+  return Boolean(lane) && lane.status === "running" && Date.now() - (lane.heartbeatAt || 0) <= STALE_MS;
+}
+
 async function discoveryRunning() {
   const d = (await chrome.storage.local.get(WEB_DISCOVERY_STATE_KEY))[WEB_DISCOVERY_STATE_KEY];
   return Boolean(d) && d.status === "running" && Date.now() - (d.heartbeatAt || 0) <= STALE_MS;
@@ -180,7 +184,7 @@ async function discoveryRunning() {
 // The one line under the Pipeline status pie (design 10.2, U3) and in Settings > Automation.
 export async function pipelineStatusLine() {
   const auto = await getPipelineAutomation();
-  const store = await chrome.storage.local.get([PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, LINKEDIN_LOGGED_OUT_KEY]);
+  const store = await chrome.storage.local.get([PIPELINE_STATE_KEY, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, LINKEDIN_LOGGED_OUT_KEY, WEB_LANE_STATE_KEY]);
   const state = store[PIPELINE_STATE_KEY];
   if (state && state.status === "running" && Date.now() - (state.heartbeatAt || 0) <= STALE_MS) {
     const what = state.auto ? "Preparing accounts" : "Pipeline run in progress";
@@ -202,6 +206,9 @@ export async function pipelineStatusLine() {
   if (release) return `LinkedIn limit for automation reached · resumes around ${timeLabel(release)} · ${await webSideText()}`;
   if (await discoveryRunning()) return "Researching new target accounts on the web - preparation starts on each one as it is added.";
   const idle = store[PIPELINE_IDLE_KEY];
+  if (idle && idle.reason === "web_lane" && isWebLaneLive(store[WEB_LANE_STATE_KEY])) {
+    return `Web research is finishing ${idle.held || "some"} account${idle.held === 1 ? "" : "s"} first - the LinkedIn work (company pages, contacts) follows by itself.`;
+  }
   if (idle && idle.reason === "nothing_left") return "All accounts processed for today. Your daily LinkedIn limit is now free for scanning.";
   if (idle && idle.reason === "no_backup") return "Waiting for today's backup before starting. It is made while a SalesTeam page is open.";
   return "Automatic preparation is on. It starts on its own while Chrome is open.";

@@ -7,6 +7,10 @@ import { initPipelineStatus } from "./pipeline-status.js";
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 import { WEB_LANE_STATE_KEY, measureShortText } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryShortText } from "./discovery-report.js";
+import { getAccountReadiness } from "./storage.js";
+import { countReadiness, MIN_READY_TO_SCAN } from "./readiness.js";
+import { getPipelineAutomation } from "./pipeline-automation.js";
+import { MINUTES_PER_READY_ESTIMATE } from "./pipeline-plan.js";
 
 const STALE_MS = 180000;
 let onChange = null;
@@ -190,11 +194,39 @@ async function renderDiscovery(state) {
     if (fresh && !fresh.acknowledged) {
       await chrome.storage.local.set({ [WEB_DISCOVERY_STATE_KEY]: { ...fresh, acknowledged: true } });
       const why = fresh.stoppedReason === "user" ? "" : stopReasonText(fresh);
-      const text = ["Finding new accounts finished.", discoveryShortText(fresh), why, "The details are in the Activity Log."].filter(Boolean).join("\n\n");
+      const next = await discoveryNextSteps().catch(() => "");
+      const text = ["Finding new accounts finished.", discoveryShortText(fresh), why, next || "The details are in the Activity Log."].filter(Boolean).join("\n\n");
       await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
     }
     discoveryAnnouncing = false;
   }
+}
+
+// 1.2.0.57 (Boaz): the finish pop-up said only "The details are in the Activity Log" - it should say how many accounts
+// are Ready to scan for leads and what the user does next.
+async function discoveryNextSteps() {
+  const rows = await getAccountReadiness();
+  const c = countReadiness(rows.map((r) => r.assessment));
+  const auto = await getPipelineAutomation();
+  const lines = [`Ready to scan for leads: ${c.ready} of ${rows.length} accounts (Usable: ${c.usable}).`];
+  if (c.ready < MIN_READY_TO_SCAN) {
+    const minutes = Math.max(5, (MIN_READY_TO_SCAN - c.ready) * MINUTES_PER_READY_ESTIMATE);
+    lines.push(`The Leads Scanner needs ${MIN_READY_TO_SCAN} Ready accounts${c.ready ? " (with fewer it asks first)" : ""}. ` +
+      "An account is Ready once SalesTeam has its LinkedIn company page and a contact.");
+    lines.push(auto.enabled
+      ? "Next: nothing to do - automatic preparation now looks these up, first on the web, then in a small LinkedIn " +
+        `window of its own. Keep Chrome open and logged in to LinkedIn; the top bar shows its progress. About ${minutes} ` +
+        `minutes to the first ${MIN_READY_TO_SCAN} Ready accounts.`
+      : "Next: turn on Automatic preparation in Settings > Automation - it looks up each account's LinkedIn page and " +
+        "contacts, which makes accounts Ready.");
+  } else {
+    lines.push("Next: open the Leads Scanner and start a scan.");
+  }
+  if (c.needs_decision) {
+    lines.push(`${c.needs_decision} account${c.needs_decision === 1 ? " needs" : "s need"} your decision - open Decisions in the menu on the left.`);
+  }
+  lines.push("The details are in the Activity Log.");
+  return lines.join("\n");
 }
 
 function initDiscoveryStatus() {
