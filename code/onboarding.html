@@ -311,11 +311,18 @@
       <div class="proposal-slot" id="proposal-value-add-offers" hidden></div>
       <div id="value-add-offers-checklist" hidden></div>
       <p class="step-intro">
-        Something you can offer a lead (post) in a message, as a reason to reply - one per line, real resources only: an
+        Something you can offer a lead (post) in a message, as a reason to reply - one per row, real resources only: an
         article link, a report, "free 20-min demo". The AI only ever offers what is listed here (and what is ticked
         above), never anything it invents.
       </p>
-      <textarea id="value-add-offers-input" placeholder="https://yourcompany.com/ai-readiness-report&#10;Free 20-minute demo at their convenience"></textarea>
+      <!-- 1.2.0.47 (Boaz): a numbered table, one offer per row, so it is clear how many there are and where each
+           ends. The textarea stays as the stored value (one "Offer - link" per line), hidden; the table writes it. -->
+      <table id="value-add-offers-table" class="offers-table">
+        <thead><tr><th>#</th><th>Offer</th><th>Link (optional)</th><th></th></tr></thead>
+        <tbody id="value-add-offers-tbody"></tbody>
+      </table>
+      <button type="button" id="value-add-offers-add-btn" class="step-inline-btn">+ Add offer</button>
+      <textarea id="value-add-offers-input" hidden></textarea>
     </section>
 
     <!-- Step 7: Ideal Customer Profile -->

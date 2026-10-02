@@ -857,3 +857,15 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 .lp-part-heading { margin: 22px 0 4px; padding-bottom: 4px; border-bottom: 2px solid #d3e2f3; font-size: 16px; }
 .lp-rules-heading { margin: 14px 0 4px; font-size: 13px; }
 #jobs-min-confidence-select { max-width: 260px; }
+
+/* 1.2.0.47: Things you can offer as a numbered table. */
+.offers-table { width: 100%; max-width: 900px; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.offers-table th { text-align: left; font-size: 12px; color: var(--gray); padding: 4px 6px; border-bottom: 1px solid #d3e2f3; }
+.offers-table td { padding: 4px 6px; border-bottom: 1px solid #eef2f7; vertical-align: middle; }
+.offers-table td.offer-n { width: 28px; color: var(--gray); font-weight: 600; }
+.offers-table input { width: 100%; box-sizing: border-box; }
+.offers-table td:nth-child(2) { width: 45%; }
+.offers-table .offer-remove { border: none; background: transparent; color: #b3261e; cursor: pointer; font-size: 14px; }
+.confirm-offers-list { margin: 4px 0 8px; padding-left: 22px; }
+.confirm-offers-list li { margin: 3px 0; word-break: break-all; }
+.confirm-offers-list li strong { word-break: normal; }

@@ -1389,8 +1389,24 @@ function renderSummaryInto(step, container) {
     }
     case "value-add-offers": {
       const offers = currentValueAddOffers();
-      if (offers.length) appendPara(container, `${offers.length} offer${offers.length === 1 ? "" : "s"}: `, { strong: offers.join(", ") }, ".");
-      else appendPara(container, "(left blank)");
+      if (offers.length) {
+        // 1.2.0.47 (Boaz): one numbered line per offer, not one long comma list.
+        appendPara(container, `${offers.length} offer${offers.length === 1 ? "" : "s"}:`);
+        const ol = document.createElement("ol");
+        ol.className = "confirm-offers-list";
+        for (const offer of offers) {
+          const { text, link } = splitOfferLine(offer);
+          const li = document.createElement("li");
+          const strong = document.createElement("strong");
+          strong.textContent = text || link;
+          li.append(strong);
+          if (text && link) li.append(document.createTextNode(` - ${link}`));
+          ol.append(li);
+        }
+        container.appendChild(ol);
+      } else {
+        appendPara(container, "(left blank)");
+      }
       break;
     }
     case "icp": {
@@ -2387,6 +2403,7 @@ function mountStepChecklists(step, p, accepted) {
     // 1.2.0.30 (Boaz): on a first setup the offers go straight into the box, like Target contacts (1.2.0.29).
     if (!completedBefore && !accepted) {
       el("value-add-offers-input").value = mergeChecklistWithLines([], [...lines, ...texts]).join("\n");
+      renderOffersTable();
       el("value-add-offers-checklist").hidden = true;
       checklists[step] = null;
       return;
@@ -2522,6 +2539,78 @@ function boxThenTicked(lines, list) {
   return mergeChecklistWithLines([], [...lines, ...list.getItems().filter((i) => i.checked).map((i) => i.text)]);
 }
 
+// ---- Things you can offer: a numbered table over the stored lines (1.2.0.47) ----
+// Each stored line is "Offer - https://link", or just one of the two. The table is drawn from the hidden textarea
+// and writes back to it on every keystroke (its "input" event drives the wizard's auto-save, as before).
+function splitOfferLine(line) {
+  const m = String(line).match(/^(.*?)\s+-\s+(https?:\/\/\S+)$/);
+  if (m) return { text: m[1].trim(), link: m[2] };
+  if (/^https?:\/\/\S+$/.test(line.trim())) return { text: "", link: line.trim() };
+  return { text: String(line).trim(), link: "" };
+}
+
+function joinOfferLine({ text, link }) {
+  const t = text.trim();
+  const l = link.trim();
+  return t && l ? `${t} - ${l}` : t || l;
+}
+
+function writeOffersFromTable() {
+  const rows = [...el("value-add-offers-tbody").querySelectorAll("tr")];
+  const lines = rows.map((tr) => joinOfferLine({
+    text: tr.querySelector(".offer-text").value, link: tr.querySelector(".offer-link").value,
+  })).filter(Boolean);
+  const box = el("value-add-offers-input");
+  box.value = lines.join("\n");
+  box.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function renumberOffers() {
+  el("value-add-offers-tbody").querySelectorAll("tr").forEach((tr, i) => { tr.querySelector(".offer-n").textContent = `${i + 1}.`; });
+}
+
+function addOfferRow(offer = { text: "", link: "" }) {
+  const tr = document.createElement("tr");
+  const n = document.createElement("td");
+  n.className = "offer-n";
+  const textTd = document.createElement("td");
+  const text = document.createElement("input");
+  text.type = "text";
+  text.className = "offer-text";
+  text.placeholder = "e.g. Free 20-minute demo";
+  text.value = offer.text;
+  textTd.append(text);
+  const linkTd = document.createElement("td");
+  const link = document.createElement("input");
+  link.type = "url";
+  link.className = "offer-link";
+  link.placeholder = "https://…";
+  link.value = offer.link;
+  linkTd.append(link);
+  const xTd = document.createElement("td");
+  const x = document.createElement("button");
+  x.type = "button";
+  x.className = "offer-remove";
+  x.textContent = "\u2715";
+  x.title = "Remove this offer";
+  x.addEventListener("click", () => { tr.remove(); renumberOffers(); writeOffersFromTable(); });
+  xTd.append(x);
+  for (const input of [text, link]) input.addEventListener("input", (e) => { e.stopPropagation(); writeOffersFromTable(); });
+  tr.append(n, textTd, linkTd, xTd);
+  el("value-add-offers-tbody").append(tr);
+  renumberOffers();
+  return tr;
+}
+
+function renderOffersTable() {
+  el("value-add-offers-tbody").innerHTML = "";
+  const lines = textareaLines("value-add-offers-input");
+  for (const line of lines) addOfferRow(splitOfferLine(line));
+  if (lines.length === 0) addOfferRow();
+}
+
+el("value-add-offers-add-btn").addEventListener("click", () => addOfferRow().querySelector(".offer-text").focus());
+
 function currentValueAddOffers() {
   return boxThenTicked(textareaLines("value-add-offers-input"), checklists["value-add-offers"]);
 }
@@ -2533,6 +2622,7 @@ function foldProposalsIntoBoxes(step) {
   if (!c) return;
   if (step === "value-add-offers") {
     el("value-add-offers-input").value = currentValueAddOffers().join("\n");
+    renderOffersTable();
   } else if (step === "contacts") {
     el("contacts-exact-titles-input").value = boxThenTicked(textareaLines("contacts-exact-titles-input"), c.titles).join("\n");
     el("contacts-title-keywords-input").value = boxThenTicked(textareaLines("contacts-title-keywords-input"), c.keywords).join("\n");
@@ -2690,6 +2780,7 @@ async function init() {
     }
   }
   el("value-add-offers-input").value = (await getValueAddOffers()).join("\n");
+  renderOffersTable();
   el("icp-input").value = await getIdealCustomerProfile();
   el("contacts-exact-titles-input").value = targetContactProfile.exactTitles.join("\n");
   el("contacts-title-keywords-input").value = targetContactProfile.titleKeywords.join("\n");
