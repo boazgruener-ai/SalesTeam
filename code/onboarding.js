@@ -2346,6 +2346,44 @@ function researchMeasures(result) {
     `${result.searches || 0} searches`;
 }
 
+// 1.2.0.55 (Boaz): the one research call spreads its few searches over every step and came back with 1 competitor;
+// "Research again" with the tip "search for any company in the target country offering similar services - about 10"
+// found about 10. The user should not have to know that, so a short competitors-only call with that same tip follows
+// automatically when the first answer names fewer than COMPETITORS_ENOUGH. Its competitors are added to the first.
+const COMPETITORS_ENOUGH = 5;
+const COMPETITORS_HINT = "Search for every company in this company's own country (and the countries it serves) that " +
+  "offers similar products or services to similar customers - typically about 10. List all of them.";
+
+async function researchMoreCompetitors(seller, first) {
+  const before = Array.isArray(first.data.competitors) ? first.data.competitors : [];
+  if (before.length >= COMPETITORS_ENOUGH) return first;
+  addResearchLine(null, `Found ${before.length} competitor${before.length === 1 ? "" : "s"} - searching for more…`);
+  let more;
+  try {
+    more = await researchSeller(
+      seller,
+      { only: ["competitors"], hint: COMPETITORS_HINT, sectors: CONFIRMED_INDUSTRIES, outputLanguage: el("about-language-select").value },
+      { apiKey: await getAnthropicApiKey() },
+      {
+        signal: researchController?.signal,
+        onTool: addResearchLine,
+        onCost: (cost) => { el("research-cost").textContent = `Cost so far: about ${usd((first.costUsd || 0) + cost)}`; },
+      },
+    );
+  } catch {
+    return first; // the first answer stands; the extra search is a bonus
+  }
+  const added = Array.isArray(more?.data?.competitors) ? more.data.competitors : [];
+  return {
+    ...first,
+    data: { ...first.data, competitors: [...before, ...added] },
+    costUsd: (first.costUsd || 0) + (more.costUsd || 0),
+    ms: (first.ms || 0) + (more.ms || 0),
+    fetches: (first.fetches || 0) + (more.fetches || 0),
+    searches: (first.searches || 0) + (more.searches || 0),
+  };
+}
+
 async function runSellerResearch() {
   const seller = { name: el("about-company-input").value.trim(), website: el("about-website-input").value.trim() };
   showResearchScreen(seller);
@@ -2372,6 +2410,7 @@ async function runSellerResearch() {
         onCost: (cost) => { el("research-cost").textContent = `Cost so far: about ${usd(cost)}`; },
       },
     );
+    if (result?.data && !researchSkipRequested) result = await researchMoreCompetitors(seller, result);
   } catch (err) {
     failure = err;
   } finally {
