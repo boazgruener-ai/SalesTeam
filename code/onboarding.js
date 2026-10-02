@@ -2230,10 +2230,13 @@ function renderSettingsResearchOffer() {
 // ---- The progress screen (design 3.6) ----
 
 // The research is one AI call that decides itself how many pages to read, so there are no fixed steps to count. The
-// screen shows time instead: a bar and "about N seconds left" against the measured duration (45-60 s, design 3.6),
-// and what it has read so far. Past that time it says it is still working, and that it ends by itself at 4 minutes.
-const SELLER_RESEARCH_EXPECTED_MS = 60000;
+// screen shows time instead: a bar and "about N seconds left" against the expected duration, and what it has read so
+// far. Past that time it says it is still working, and that it ends by itself at 4 minutes. The expected duration is
+// the last measured run on this computer (Research again), else 40 s - live runs took 30-60 s (design 3.6 said 45-60,
+// the 1.2.0.51 clean-profile run took 30 and the old 60 s estimate looked twice too slow).
+const SELLER_RESEARCH_DEFAULT_MS = 40000;
 const SELLER_RESEARCH_CUTOFF_MS = 4 * 60000;
+let researchExpectedMs = SELLER_RESEARCH_DEFAULT_MS;
 let researchProgressTimer = null;
 let researchStartedAt = 0;
 let researchPagesRead = 0;
@@ -2241,11 +2244,11 @@ let researchSearches = 0;
 
 function renderResearchProgress() {
   const elapsed = Date.now() - researchStartedAt;
-  const fraction = Math.min(elapsed / SELLER_RESEARCH_EXPECTED_MS, 1);
+  const fraction = Math.min(elapsed / researchExpectedMs, 1);
   // Up to 90% on the expected time, then creeping towards 99% - the bar never fills before the answer is in.
-  const pct = fraction < 1 ? fraction * 90 : 90 + 9 * Math.min((elapsed - SELLER_RESEARCH_EXPECTED_MS) / (SELLER_RESEARCH_CUTOFF_MS - SELLER_RESEARCH_EXPECTED_MS), 1);
+  const pct = fraction < 1 ? fraction * 90 : 90 + 9 * Math.min((elapsed - researchExpectedMs) / (SELLER_RESEARCH_CUTOFF_MS - researchExpectedMs), 1);
   el("research-progress-fill").style.width = `${pct.toFixed(1)}%`;
-  const left = Math.ceil((SELLER_RESEARCH_EXPECTED_MS - elapsed) / 1000);
+  const left = Math.ceil((researchExpectedMs - elapsed) / 1000);
   const read = [
     researchPagesRead ? `${researchPagesRead} page${researchPagesRead === 1 ? "" : "s"} read` : "",
     researchSearches ? `${researchSearches} search${researchSearches === 1 ? "" : "es"}` : "",
@@ -2257,6 +2260,8 @@ function renderResearchProgress() {
 }
 
 function startResearchProgress() {
+  const lastMs = Number(setupResearch?.ms) || 0;
+  researchExpectedMs = lastMs >= 15000 && lastMs < SELLER_RESEARCH_CUTOFF_MS ? lastMs : SELLER_RESEARCH_DEFAULT_MS;
   researchStartedAt = Date.now();
   researchPagesRead = 0;
   researchSearches = 0;
@@ -2282,7 +2287,7 @@ function showResearchScreen(seller) {
   el("step-progress").textContent = "";
   el("enter-research").hidden = false;
   el("research-intro").textContent =
-    `SalesTeam is reading ${sourceLabel(seller.website)} to propose answers for the next steps. This usually takes about ` +
+    `SalesTeam is reading ${sourceLabel(seller.website)} to propose answers for the next steps. This usually takes under ` +
     "a minute; please wait - the setup goes on by itself when the answer is in.";
   el("research-lines").innerHTML = "";
   el("research-cost").textContent = "";
