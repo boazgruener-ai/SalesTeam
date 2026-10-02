@@ -118,7 +118,22 @@ export function sizeBucketKey(value, buckets) {
 export function illogicalReasons(proposal, ctx, limits) {
   const lim = { ...DEFAULT_ARBITRATION_SETTINGS.illogical, ...(limits || {}) };
   const out = [];
-  const add = (side, text) => out.push({ side, text });
+  let currencyMissing = false;
+  const add = (side, text) => {
+    out.push({ side, text: currencyMissing ? `${text} (the currency is not known)` : text });
+    currencyMissing = false;
+  };
+  // An amount with its currency, in plain units: "CHF 62,030", or "CHF 62 billion" with `big`. The found side's
+  // currency is the research's own where it reported one; the current side's is the account's.
+  const money = (side, revKey, n, big = false) => {
+    const curKey = revKey === "swissRevenue" ? "swissRevenueCurrency" : "revenueCurrency";
+    const cur = side === "found"
+      ? (ctx?.found?.[curKey] || ctx?.researched?.[curKey] || ctx?.effective?.[curKey])
+      : ctx?.effective?.[curKey];
+    const amount = big ? bigLabel(n) : formatNum(n);
+    if (!cur) currencyMissing = true;
+    return cur ? `${String(cur).trim()} ${amount}` : amount;
+  };
   const key = proposal.key;
   const sides = [
     { side: "found", raw: proposal.found },
@@ -151,13 +166,16 @@ export function illogicalReasons(proposal, ctx, limits) {
     if (f !== null && c !== null) {
       const lo = Math.min(f, c), hi = Math.max(f, c);
       if (lo > 0 && lo < lim.revenueUnitsFloor && hi >= lim.revenueUnitsCeil) {
-        add(lo === c ? "current" : "found", `${formatNum(lo)} against ${formatNum(hi)} looks like a units mistake (millions written as units)`);
+        const loSide = lo === c ? "current" : "found", hiSide = lo === c ? "found" : "current";
+        add(loSide, `${money(loSide, key, lo)} against ${money(hiSide, key, hi)} looks like a units mistake (millions written as units)`);
       } else if (lo > 0 && hi / lo >= 200000 && hi / lo <= 5000000) {
         // 1.2.0.59 (Gunvor: 62,030 stored, 144,000,000,000 found): about a million times smaller, allowing for a
         // currency and a year apart - the smaller one is almost certainly written in millions.
-        add(lo === c ? "current" : "found",
-          `${lo === c ? "the current" : "the found"} revenue ${formatNum(lo)} looks like it is written in millions ` +
-          `(${formatNum(lo)} million = ${bigLabel(lo * 1e6)}, close to the ${bigLabel(hi)} on the other side)`);
+        const loSide = lo === c ? "current" : "found", hiSide = lo === c ? "found" : "current";
+        add(loSide,
+          `${loSide === "current" ? "the current" : "the found"} revenue ${money(loSide, key, lo)} looks like it is written in millions ` +
+          `(${money(loSide, key, lo)} million = ${money(loSide, key, lo * 1e6, true)}, close to the ` +
+          `${money(hiSide, key, hi, true)} ${hiSide === "found" ? "found on the web" : "the account holds"})`);
       }
     }
   }
@@ -209,7 +227,10 @@ export function illogicalReasons(proposal, ctx, limits) {
       // Already explained as a millions mistake on this side: the per-employee figure would only repeat it.
       if (out.some((r) => r.side === side && /written in millions/.test(r.text))) continue;
       // 1.2.0.59 (Boaz: "39 what?"): name both numbers and what is wrong with the result.
-      const pair = `revenue ${formatNum(revenue)} with ${formatNum(employees)} employees is ${formatNum(Math.round(rpe))} per employee`;
+      // 1.2.0.60 (Boaz): always with the currency, in plain units ("CHF 39", not "39").
+      const revKey = REVENUE_FIELDS.has(key) ? key : "globalRevenue";
+      const pair = `revenue ${money(side, revKey, revenue)} with ${formatNum(employees)} employees is ` +
+        `${money(side, revKey, rpe < 10 ? Math.round(rpe * 100) / 100 : Math.round(rpe))} per employee`;
       if (rpe < lim.revPerEmployeeMin) {
         add(side, `${pair} - far less than any real company earns per person` +
           `${rpe * 1e6 >= lim.revPerEmployeeMin && rpe * 1e6 <= lim.revPerEmployeeMax ? "; the revenue is probably written in millions" : ""}`);
