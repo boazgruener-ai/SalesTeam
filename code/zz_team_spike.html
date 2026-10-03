@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SalesTeam - Team folder test</title>
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; font-size: 14px; color: #1f2937; background: #fff; margin: 24px; max-width: 920px; }
+    h1 { color: #122b4a; font-size: 22px; margin: 0 0 4px; }
+    h2 { color: #1155cc; font-size: 16px; margin: 0 0 6px; }
+    section { border: 1px solid #d6dde8; border-radius: 8px; padding: 14px 16px; margin: 14px 0; }
+    button { padding: 7px 14px; border: 1px solid #1155cc; border-radius: 6px; background: #1155cc; color: #fff; font-weight: 600; cursor: pointer; margin: 4px 6px 4px 0; }
+    button.secondary { background: #fff; color: #1155cc; }
+    input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+    .hint { color: #5b6573; font-size: 13px; margin: 4px 0 8px; }
+    pre { background: #f4f6fa; border-radius: 6px; padding: 10px; white-space: pre-wrap; font-size: 12.5px; margin: 8px 0 0; max-height: 320px; overflow: auto; }
+    .ok { color: #137333; font-weight: 600; }
+    .bad { color: #b3261e; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Team folder test (1.2.2 step 0)</h1>
+  <p class="hint">A developer test page. It only writes into the folder you pick and into its own test entries — your accounts, contacts and leads are not touched.</p>
+
+  <section>
+    <h2>1. Who is this?</h2>
+    <p class="hint">Give each Chrome profile a different name, e.g. "Boaz" and "Test".</p>
+    <input id="member-name" placeholder="Name of this member"> <button id="save-name">Save name</button>
+    <pre id="member-out"></pre>
+  </section>
+
+  <section>
+    <h2>2. The team folder</h2>
+    <p class="hint">Pick the same OneDrive folder in both profiles ("SalesTeam Team Test").</p>
+    <button id="pick">Pick folder</button> <button id="reconnect" class="secondary">Reconnect</button>
+    <pre id="folder-out"></pre>
+  </section>
+
+  <section>
+    <h2>3. Write and read</h2>
+    <p class="hint">Writes one change file for this member, then lists and reads every member's files.</p>
+    <button id="write-one">Write a change file</button> <button id="read-all" class="secondary">Read everyone's files</button>
+    <pre id="rw-out"></pre>
+  </section>
+
+  <section>
+    <h2>4. Race: both claim the same account at the same moment</h2>
+    <p class="hint">Click in BOTH profiles within the same minute. Both write their claim at the next full minute; 10 seconds later each shows the winner. Both must show the same winner.</p>
+    <button id="race">Claim at the next full minute</button>
+    <pre id="race-out"></pre>
+  </section>
+
+  <section>
+    <h2>5. Many files</h2>
+    <p class="hint">Writes 300 small files, then reads every member's files, and looks for leftover temporary files (".crswap"). Afterwards, check the OneDrive cloud icon for errors.</p>
+    <button id="bulk">Write 300 files and read all</button>
+    <pre id="bulk-out"></pre>
+  </section>
+
+  <section>
+    <h2>6. Background, with no page open</h2>
+    <p class="hint">"Close page and test" closes this tab; 10 seconds later the background tries to write into the folder. Wait 20 seconds, open this page again and read the result here.</p>
+    <button id="bg-close">Close page and test</button> <button id="bg-open" class="secondary">Test with page open</button>
+    <pre id="bg-out"></pre>
+  </section>
+
+  <script type="module" src="zz_team_spike.js"></script>
+</body>
+</html>

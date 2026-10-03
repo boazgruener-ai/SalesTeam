@@ -1,0 +1,384 @@
+# SalesTeam — Team Use: Design
+
+Target release: **1.2.2** (test builds 1.2.1.2 …; 1.2.1.1 was the Setup styling fix)
+Status: **Design — agreed 2026-10-03.** Boaz agreed to D1–D6 as proposed (section 12). Step 0 on one laptop
+is done (findings in 2.6); OneDrive's delay between two PCs is measured at the end.
+Date: 2026-10-02
+Builds on: `TEAM_USE_REQUIREMENTS.md` (agreed 2026-10-02). Requirement numbers (R3.3, R6.5 …) refer to it.
+
+---
+
+## 1. The design in one page
+
+1. **The team folder holds append-only change files, one writer per file.** Each member's SalesTeam
+   writes only into its own sub-folder, and never changes a file once written. OneDrive therefore never
+   sees two PCs writing the same file, so it never makes a conflict copy (section 3).
+2. **Every member rebuilds the same picture from everyone's files.** A change is a small record —
+   "Anna set field X of account Y to Z at time T". Merging is by fixed rules that give the same result on
+   every PC, whatever order the files arrive in: for the same field, the later change wins (section 4).
+3. **The existing code does not change.** `chrome.storage.local` stays the local copy every page reads
+   and writes today. A new **sync layer** watches it (`chrome.storage.onChanged`, which already reports
+   the old and the new value of every write), turns local changes into change records, and writes others'
+   changes back into it. The pages already redraw on `onChanged`, so remote changes appear by themselves.
+   None of the ~170 write sites in `storage.js` is touched (section 5).
+4. **Claims are change records too.** "Anna claims account Y" is written like any other change. The
+   earliest claim wins. A claim is *confirmed* as soon as every active colleague's heartbeat shows they
+   have written something after it — if they had claimed earlier, it would have arrived with that
+   (section 6). Typically that is a few seconds; meanwhile the screen says "Checking with the team…".
+5. **An assignment is a claim that does not expire.** "Assign to me" and "Release" reuse the same
+   mechanism (section 7).
+6. **Local first, folder second.** Changes go into a local outbox at once and are written to the folder
+   whenever it is connected. A missing reconnect click after a browser restart delays sharing; it never
+   loses work (R3.12, section 8).
+7. **The format is ready for Microsoft Graph later.** Immutable files with unique names are exactly what
+   a server API handles well; Option B would replace the folder adapter only (section 3.4).
+
+---
+
+## 2. What the code review found
+
+### 2.1 Shared data is a handful of storage keys, mostly whole maps
+The data the team must share sits in a known list of `chrome.storage.local` keys (section 5.1). The big
+ones are `targetAccountsWorkbook` (`companies[]` with `companyId`, `contacts[]` with `contactId` and
+`companyId`), `targetAccounts` (keyed by normalised company name), `targetAccountExtras` and
+`targetContactExtras` (keyed by company / contact key) and `results` (the leads, keyed by lead key). Every
+row already has a stable id — the basis for per-entity records.
+
+### 2.2 Writers rewrite whole maps
+A writer reads a whole map, changes a few rows and writes the whole map back (protected within one
+browser by `withAccountWriteLock`). The sync layer must therefore find *which rows* changed itself, by
+comparing old and new value — the writers don't say.
+
+### 2.3 `onChanged` is already the redraw signal
+Pages (dashboard, target accounts, decisions dot, batch status, activity log …) and the background worker
+listen to `chrome.storage.onChanged`. Writing a remote change into local storage is enough for every open
+page to show it.
+
+### 2.4 The folder mechanism exists
+`backup-folder.js` keeps a folder handle in IndexedDB, checks `queryPermission`, and asks
+`requestPermission` from a click (the "click to resume" banner). The team folder reuses the same pattern
+with its own handle.
+
+### 2.5 Open technical points for step 0
+- Whether the background service worker may use a folder handle whose permission was granted on a page
+  *[step 0]*. If not, the folder work runs in an open SalesTeam page (section 8.2).
+- Whether Chrome keeps the folder permission across restarts for an extension ("allow on every visit")
+  *[step 0]*. The backup folder suggests it does not.
+- OneDrive's real delay for a small new file between two PCs *[step 0]*.
+
+### 2.6 Step 0 findings so far (2026-10-03, one laptop, two Chrome profiles, 1.2.1.2)
+- **Claim race: passed.** Both profiles claimed the same account at the same full minute; both showed the
+  same winner (the earlier stamp). The merge rule of 6.2 works on real files.
+- **Writing into the OneDrive folder is slow: about 2–2.6 s per new file**, even with only one profile
+  writing (a local folder takes milliseconds). Chrome writes via a temporary file and a rename, OneDrive
+  picks up every new file, and the virus scanner checks it.
+- **A write can fail while OneDrive handles the file:** after 143 files, Chrome reported
+  `InvalidStateError` ("the state had changed since it was read from disk") and left `bulk-143.json`
+  **empty (0 bytes)**. No temporary (`.crswap`) files and no conflict copies were left behind.
+- **Background worker: works only while a SalesTeam page is open.** With the test page open, the
+  background saw permission `granted` and wrote into the folder. Ten seconds after the page was closed,
+  it saw `prompt` and failed (`NotAllowedError`): Chrome withdraws the folder permission when the last
+  SalesTeam page closes. So section 8.2 becomes: the background does the folder work **while any SalesTeam
+  page is open** (it then holds the permission); with none open, changes wait in the outbox and are written
+  when a page opens again. **The side panel alone is enough** (19:21: tab closed, side panel open ->
+  `granted`, background wrote), so a member who keeps the SalesTeam side panel open shares continuously.
+- **After a browser restart: `granted` without asking** — confirmed with `chrome://restart` (a guaranteed
+  full restart), 2026-10-03. The reconnect click of R3.12 stays as a fallback only, rarely seen.
+- **Consequences for the design (firm rules):**
+  1. **Few, bundled files.** One change file per flush (at most every 5 s), heartbeat folded into the same
+     write where possible; never one file per change.
+  2. **Every write is retried** (re-open the handles, back off 1 s, 3 s, 10 s), and stays in the outbox
+     until a read-back confirms the file is complete.
+  3. **Readers tolerate incomplete files:** an empty or unparsable file is "not finished yet", skipped and
+     read again next round — never an error, never treated as data.
+
+---
+
+## 3. The team folder
+
+### 3.1 Layout
+
+```
+SalesTeam Team/                      (the folder Boaz creates and shares)
+  team.json                          team id, name, format version, created by — written once by the creator
+  admins/<memberId>.json             one file per admin grant (written by an admin)
+  members/<memberId>/
+    profile.json                     name, e-mail, joined at, SalesTeam version
+    heartbeat-<n>.json               "last seen" + highest change number written (see 6.3)
+    changes/c-<n>.json               change files, numbered 1, 2, 3 … per member, never rewritten
+    snapshots/s-<n>.json             this member's compacted state up to change n (section 3.3)
+  base/base-<time>.json              the starting data the creator brought in (R3.9)
+```
+
+`memberId` is a random id created on joining, stored locally (personal), so two people with the same name
+or two PCs of the same person never collide. A person on two PCs is two members with the same name.
+
+### 3.2 A change file
+A change file holds the changes collected over a few seconds (flush every 5 s while there are changes,
+section 8.1):
+
+```json
+{ "member": "m-7f3a", "n": 412, "written": "2026-10-03T09:41:07.120Z",
+  "changes": [
+    { "t": "1759484467011-0-m-7f3a", "e": "account", "id": "c-1042",
+      "op": "set", "f": { "status": "Contacted", "nextAction": "Call 7 Oct" } },
+    { "t": "1759484467950-0-m-7f3a", "e": "account", "id": "c-1042",
+      "op": "claim", "kind": "edit" }
+  ] }
+```
+
+- `t` is a **hybrid logical clock** stamp (wall-clock ms, counter, member) — orders changes the same way on
+  every PC even when two PCs' clocks differ by a few seconds, and never goes backwards on one PC.
+- `e` / `id` name the entity (section 4.1); `op` is `set`, `delete`, `claim`, `release`, `assign`,
+  `unassign`, `touch` (an outreach, R3.6), `dnc` (do-not-contact, R6.8).
+- `f` holds only the fields that changed (top-level fields of the row; nested values travel whole).
+
+### 3.3 Keeping the folder small
+Change files are small but many. Each member compacts **its own** files: once a day it writes
+`snapshots/s-<n>.json` (its latest value per field it has written, with stamps) and deletes its change
+files ≤ n that are older than 7 days. Readers that are behind fall back to the snapshot. Nobody ever
+deletes another member's files.
+
+### 3.4 Why this format survives a later move to Microsoft Graph (Option B)
+Every file has a unique name and is written once — the case Graph handles atomically (create with
+"fail if exists"). Moving to Option B replaces the folder adapter (`team-folder.js`) and nothing else;
+the claim rule could then also be tightened to a server-decided lock.
+
+---
+
+## 4. Merging: the same picture on every PC
+
+### 4.1 Entities
+| Entity `e` | id | Comes from (local storage) |
+|---|---|---|
+| `account` | `companyId` | `targetAccountsWorkbook.companies[]`, `targetAccounts[normalised name]`, `targetAccountExtras[companyKey]` |
+| `contact` | `contactId` (belongs to an account by `companyId`) | `targetAccountsWorkbook.contacts[]`, `targetContactExtras[contactKey]` |
+| `lead` | lead key | `results[key]` minus personal fields (draft, Sales Mentor history) |
+| `setting` | storage key | each shared setting key (section 5.1), whole value |
+| `team` | fixed ids | members, admins, the do-not-contact list |
+
+An account's three local homes are joined by the mapping the 1.2 pipeline already uses (company key ↔
+`companyId`, `getAccountViews`). Each local home's fields are kept in their own namespace in `f`
+(`wb.`, `ta.`, `x.`) so writing back is exact.
+
+### 4.2 Rules (`team-merge.js`, pure, tested in `test_pure_modules.py`)
+- **Same field, two values:** the change with the later stamp wins. The losing value is kept in the team
+  log (R3.11), so nothing disappears silently.
+- **Delete vs. change:** a delete wins over earlier changes and loses to later ones (a later edit
+  "revives" the row — the safer side for sales data).
+- **Claims:** section 6. **Assignments:** section 7.
+- **Order-free:** applying the same set of changes in any order gives the same result. This is the
+  property the tests check most (shuffle the changes, compare results).
+
+### 4.3 Who changed what (R3.11)
+Every merged field remembers the stamp and member of its winning change. "Last changed by Anna, 3 Oct
+09:41" on an account is read from there; the team log in the Activity Log page is built from the change
+files themselves — no separate log to keep in sync.
+
+---
+
+## 5. The sync layer
+
+### 5.1 Shared and personal keys (R3.6)
+
+| Shared (synced) | Personal (never leaves the PC) |
+|---|---|
+| `targetAccountsWorkbook`, `targetAccounts`, `targetAccountExtras`, `targetContactExtras`, `keptSeparateAccountPairs`, `discoveryNameDecisions`, `companyLocationSizeCache` | `anthropicApiKey`, `userProfile`, `outputLanguage`, `mentorPersona`, `customerPersona` |
+| `results` (leads), except draft and Sales Mentor fields | `advisorHistory`, `customerVoiceHistory`, drafts |
+| Seller setup: `companyContext`, `companyWebsite`, `sellerCompanyName`, `setupResearch`, `idealCustomerProfile`, `targetUniverseConfig`, `targetContactProfile`, `accountPriorityGuidelines`, `completionTargets`, `initiativeStagePreference`, `includedCompanies`, `valueAddOffers`, `messageTemplates` | Activity Log, `lastBulkChange`, `lastWebDiscoveryAdd` (undo stays personal), `onboardingMeasures`, onboarding progress |
+| Rules: `companyExclusions` (+ lifted), `organizationTypeEligibility`, `companyAliases`, `negativeTopics`, `prioritizationRuleOverrides`, `postPrioritizationRules`, `webFindingsArbitration`, `revenueNormalization`, `targetAccountScoreThreshold`, `jobRulesMinConfidence`, `keywordSearchLanguages` | Scanner settings: topics, timeframe, author titles, job search (**D2**); LinkedIn limits and counters; web budget; `discoveredCompanies` / `discoveredContacts` staging |
+
+The list lives in one place (`team-keys.js`) so a new storage key has to be classified once, deliberately.
+
+### 5.2 Local → team (`team-sync.js`)
+1. The background worker listens to `chrome.storage.onChanged` for shared keys only.
+2. It compares the **new value with its shadow copy** — the last state it knows the team has — row by row
+   (by id; a per-row fingerprint makes unchanged rows cheap to skip), and emits `set`/`delete` changes
+   for the fields that differ.
+3. Changes go to the **outbox** (a local storage key) at once — written before anything else happens, so
+   a reload loses nothing ("persist as you go").
+4. The shadow is updated.
+
+Comparing against the shadow, not against `oldValue`, is what stops echoes: when the sync layer itself
+writes a colleague's change into local storage, the shadow already holds it, so no change is re-emitted.
+
+### 5.3 Team → local
+1. Every 15 s while connected (and right after a reconnect), read each member's new change files.
+2. Merge them into the shadow by the rules of section 4.
+3. Write the affected rows back into the local keys **inside `withAccountWriteLock`**, so a remote change
+   queues behind a local writer instead of racing it.
+4. Pages redraw by themselves (2.3).
+
+### 5.4 Cost of the comparison *[measure in step 2]*
+`targetAccountsWorkbook` is the largest value (a few MB with ~600 accounts). Comparing it on every write
+is fine for a few writes a second; the pipeline writes more often in bursts. If the comparison shows in
+the measurements, the fallback is to debounce (compare at most once per second per key, against the
+latest value) — still without touching the writers.
+
+---
+
+## 6. Claims: claim, then confirm (R3.3–R3.5)
+
+### 6.1 Taking a claim
+Before a member edits an account (first change on the account page) or the pipeline starts work on it,
+SalesTeam writes a `claim` change and flushes at once. Locally the account shows **"Checking with the
+team…"**; edits are possible but held in the outbox, not yet sent.
+
+### 6.2 Who wins
+Among the unexpired claims on an entity, the **earliest stamp wins** (ties by member id). Every PC applies
+the same rule to the same files, so all reach the same winner.
+
+### 6.3 When a claim is confirmed
+Each member's heartbeat (every 60 s, and with every flush) records the highest change number it has
+written. A claim made at time T is **confirmed** once, for every *active* colleague (heartbeat seen in
+the last 10 minutes), a heartbeat or change written after T has been read. Anything that colleague
+claimed before T was written before that file, so it would already have been seen. With OneDrive's usual
+delay this takes seconds. Then:
+- **won:** "Checking…" disappears; held edits are sent; the account shows "Anna is updating (since 09:41)"
+  on colleagues' screens.
+- **lost:** "Ben started on this account a few seconds before you — your changes are kept aside." The held
+  edits stay in a "kept aside" list for that account and can be re-applied when Ben is done (R3.3).
+
+### 6.4 Expiry and release (R3.4)
+An edit claim ends when the member leaves the account page, after 5 minutes without a change, or when the
+member's heartbeat is more than 5 minutes old (browser closed, PC asleep). Release is a `release`
+change, written like any other. Anyone can see who holds a claim and since when.
+
+### 6.5 The pipeline (R3.5)
+- It skips accounts claimed or assigned by others.
+- It works only its **own share of the unassigned accounts**: each active member gets the accounts for
+  which "this member's id + the account id" scores highest (rendezvous hashing). When a member joins or
+  leaves, only that member's share moves.
+- It claims an account before research and starts only once the claim is confirmed (a few seconds, against
+  a research run of ~20 s).
+- A rare double research inside the sync window costs ~US$0.08 and merges harmlessly by field.
+
+### 6.6 The accepted edge case
+A member whose PC was offline without SalesTeam noticing could, on reconnecting, deliver an older claim that
+beats one already confirmed. SalesTeam prevents most of it by refusing claims while "not in sync" (R3.8 —
+no colleague's file read for 10 minutes while colleagues are active); what remains is reported to both
+members as a lost claim, never as silent data loss.
+
+---
+
+## 7. Assign to me / release (R6.1–R6.4)
+
+- **Assign to me** writes `assign` on the account; **Release** writes `unassign`. Assignment uses the
+  confirmation of 6.3 (two members assigning within seconds: the earlier one keeps it, R6.1).
+- An assignment does not expire. The Team Admin can unassign or reassign anyone's account (R6.4);
+  members only their own.
+- **Assigned accounts are off-limits** to colleagues: their edits, scans, research, pipeline and outreach
+  are blocked, reading stays open (R6.2, Q6).
+- **Badge (R6.5):** "Assigned to Anna since 3 Oct" / "Anna is updating (since 09:41)" on account and contact
+  rows and detail pages, and as a small badge injected on LinkedIn company and profile pages by the
+  existing LinkedIn content script (looked up by company id / profile slug).
+- **Filter (R6.3):** Mine / Unassigned / Everyone's on Target Accounts, remembered per member.
+- **Team-wide check (R6.6):** scans, discovery and imports look the candidate up in the merged picture
+  (normalised name, `companyId`, LinkedIn URL) before adding; what a colleague holds is flagged, not
+  duplicated. Before drafting or logging outreach to a contact, the `touch` history and the assignment are
+  checked — no second approach.
+- **Do-not-contact (R6.8):** `companyExclusions` becomes team data; members add (`dnc`), only an admin
+  removes.
+
+---
+
+## 8. Where the code runs, and reconnecting
+
+### 8.1 Timers
+Flush the outbox every 5 s while non-empty; read colleagues every 15 s; heartbeat every 60 s; compact
+once a day. In the background worker these run on `chrome.alarms` plus the pipeline's existing wake-ups.
+
+### 8.2 Background or page *[step 0 decides]*
+- **Preferred:** the background worker holds the folder handle (from IndexedDB) and does all folder work,
+  so sharing continues with no SalesTeam page open.
+- **Fallback:** if the worker cannot use the handle, the folder work runs in whichever SalesTeam page is
+  open, with a Web Lock (`salesteam-team-sync`) so exactly one page does it. The outbox still fills from
+  the background; it is written out when a page is open.
+
+### 8.3 Reconnect (R3.12)
+When the folder permission is missing (after a browser restart), the top bar shows one message: **"Click
+to reconnect to the team folder"** — the existing top-bar message slot, not a pop-up. One click grants it;
+the outbox is written out and colleagues' changes are read in.
+
+### 8.4 Not in sync (R3.8)
+If the folder is unreachable, or no colleague's new file has been read for 10 minutes while their
+heartbeats said they were active, SalesTeam shows **"Not in sync — showing team data from 09:41"** and
+blocks edits to shared entities. Personal work (drafts, settings that are personal) continues.
+
+---
+
+## 9. Starting and joining a team (R3.9, R6.7)
+
+### 9.1 Create (the future admin)
+1. Settings > Team > **Create a team**. Numbered instructions: create a folder in OneDrive, share it with
+   the team ("Can edit"), make sure it is "Always keep on this device".
+2. Pick the folder (must be empty). SalesTeam takes a **full backup first** (existing backup code).
+3. It writes `team.json`, the creator's member folder and `base/base-<time>.json` (all shared keys as they
+   are), and marks the creator as admin.
+
+### 9.2 Join
+1. Settings > Team > **Join a team**: same instructions (accept the share, "Add shortcut to My files",
+   "Always keep on this device"), then pick the folder (must contain `team.json`).
+2. Full backup of the member's own data first.
+3. SalesTeam reads base + all change files and builds the team picture.
+4. **Overlap check (R6.7):** accounts the member holds that the team does not are offered for adding (the
+   member ticks which); accounts both hold where the member has worked (status, contacts touched) are
+   written as **join proposals** — the Team Admin sees them in Decisions and decides who keeps each one,
+   with the proposed owner preselected.
+5. The member's shared keys are replaced by the team picture; personal keys stay as they are.
+
+### 9.3 Leave
+Settings > Team > **Leave**: the local copy stays as a solo copy; SalesTeam stops syncing. The member's
+files stay in the folder for the record (the admin can remove the member).
+
+---
+
+## 10. What the user sees (summary)
+
+- **Top bar:** team state — "Team: 3 online" / "Click to reconnect to the team folder" / "Not in sync —
+  showing team data from 09:41" (one place, strong, per the messaging rule).
+- **Settings > Team:** folder, members (name, last seen, admin), create / join / leave, admin actions.
+- **Accounts and contacts:** Assigned / Updating badges, Assign to me / Release, Mine / Unassigned /
+  Everyone's filter, "Last changed by".
+- **Notices:** lost claim ("Ben started a few seconds before you"), flagged duplicates on scan / add.
+- **Decisions:** join proposals for the admin.
+- **LinkedIn:** the assignment badge on company and profile pages.
+- **Help, privacy policy, store listing, website:** a team paragraph — data in the team's own OneDrive,
+  visible to every team member; no SalesTeam server (messaging rules apply: no ToS claims).
+
+---
+
+## 11. Build steps
+
+| Step | Content | Build |
+|---|---|---|
+| 0 | **Two-PC test** (no product code): sync delay over a day, simultaneous claims, no conflict copies, folder handle in the background worker, permission after restart | 1.2.1.2 (test page `zz_team_spike.html` + background probe) |
+| 1 | `team-merge.js` (pure): stamps, change records, merge rules, claims, confirmation, rendezvous shares — with tests in `test_pure_modules.py` | 1.2.1.3 |
+| 2 | `team-folder.js` + `team-sync.js`: folder adapter, outbox, shadow, local→team and team→local, heartbeat, compaction; `team-keys.js`; measure comparison cost | 1.2.1.4 |
+| 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync | 1.2.1.5 |
+| 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) | 1.2.1.6 |
+| 5 | Assign to me / release, badges, filter, admin rights, team-wide check, do-not-contact, outreach check | 1.2.1.7 |
+| 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.8 |
+| 7 | Help, privacy, listing, website, release notes, PRD; test with the real team → **1.2.2** | 1.2.2 |
+
+Each step is tested by Reload on the live install and on a second PC sharing the folder.
+
+---
+
+## 12. Decisions (all agreed 2026-10-03, as proposed)
+
+- **D1 — Step 0 hardware.** *Answered 2026-10-03: one laptop with two Chrome profiles now (done); the
+  OneDrive delay between two PCs is tested at the end, with Boaz's wife.* Original question: The test needs two PCs on one OneDrive folder. The simplest: two PCs of yours,
+  both signed in to **your** OneDrive (same account, so no sharing is needed for the test — each PC's
+  SalesTeam is a separate member). Do you have two? Otherwise your PC + your wife's with a shared folder
+  (needs a personal Microsoft account on her side; see the note in the chat on sharing).
+- **D2 — Scanner settings (topics, timeframe, author titles, job search): personal or team?** Proposal:
+  **personal** for 1.2.2 — each member scans their own LinkedIn feed with their own focus; the leads found
+  are shared either way.
+- **D3 — Who may change the shared seller setup and rules** (offers, ideal customer, exclusions, targets,
+  prioritisation)? Proposal: **Team Admin only**; members see them read-only, and can add to do-not-contact.
+- **D4 — Message templates: shared (team voice) or personal?** Proposal: **shared**, with the member's own
+  name and signature filled in from their personal profile.
+- **D5 — Timings:** edit claim expires after 5 min idle; "not in sync" after 10 min without colleagues'
+  news; reading every 15 s. Agree as starting values, to be tuned after step 0?
+- **D6 — A person on two PCs** counts as two members with the same name (simplest, safe). Agree?
