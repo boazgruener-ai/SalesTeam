@@ -84,6 +84,12 @@ with its own handle.
   `granted`, background wrote), so a member who keeps the SalesTeam side panel open shares continuously.
 - **After a browser restart: `granted` without asking** — confirmed with `chrome://restart` (a guaranteed
   full restart), 2026-10-03. The reconnect click of R3.12 stays as a fallback only, rarely seen.
+- **This depends on the choice in Chrome's permission dialog** (live test of step 2, 2026-10-04). With
+  **"Allow this time"**, closing every SalesTeam page leaves the folder at `prompt` even after a page is opened
+  again: nothing syncs until a Reconnect click (changes wait locally, nothing is lost). With **"Allow on every
+  visit"**, all pages closed, a change made meanwhile by a colleague, page reopened with no click: `granted`, and
+  the change arrived. So the create / join instructions (step 3) must say: choose **"Allow on every visit"**;
+  the "Click to reconnect" top-bar message is for whoever chose "this time".
 - **Consequences for the design (firm rules):**
   1. **Few, bundled files.** One change file per flush (at most every 5 s), heartbeat folded into the same
      write where possible; never one file per change.
@@ -91,6 +97,33 @@ with its own handle.
      until a read-back confirms the file is complete.
   3. **Readers tolerate incomplete files:** an empty or unparsable file is "not finished yet", skipped and
      read again next round — never an error, never treated as data.
+
+### 2.7 Step 2 as built (1.2.1.4, 2026-10-03)
+- **Files:** `team-keys.js` (which keys are shared — pure), `team-rows.js` (local values ↔ rows ↔ changes —
+  pure), `team-folder.js` (the folder adapter: retried writes with read-back, tolerant reads, IndexedDB),
+  `team-sync.js` (the engine, in the background worker). `team-merge.js` gained `compactChanges` and a clock
+  that borrows the next millisecond after 9,999 stamps in one (a team's base stamps every row at once).
+- **Rows per local home** instead of one joined account record — see 4.1.
+- **Heartbeat:** one `heartbeat.json` per member, rewritten by its only writer (one writer per file, so no
+  conflict copies), written only when the member has sent no change file for 60 s. A heartbeat counts for
+  "read up to" (6.3) only once every change file it vouches for has been read.
+- **Clobber guard:** a writer outside the account lock (e.g. `saveResults`) that read a map before a colleague's
+  change was written back, and saved it after, would put the old row back. A row that returns to exactly its
+  pre-write-back value within 15 s is written again and **not** sent to the team.
+- **Never overwrites its own numbering:** a member whose local state was lost continues after the highest
+  change file it finds in its folder.
+- **Timers:** a 30 s `chrome.alarms` alarm (new permission `alarms` — shows no warning) plus in-worker timers
+  (flush 5 s, read 15 s) while the folder is usable; none while it is not, so the worker can sleep.
+- **Comparison cost (5.4), measured** with 600 accounts × 30 fields, 3,000 contacts and 2,000 leads (2.2 MB +
+  1.4 MB): one edited field → about 0.2 s for compare + save, including copying the values, on a 1 s debounce.
+  Creating the team: base file 3.8 MB, 0.4 s; joining from it: 0.8 s (plus OneDrive's ~2.5 s per file write).
+  The live measurements are on the test page.
+- **Tests:** `test_pure_modules.py` (row mapping, compaction, clock — 568 checks) and the new
+  `test_team_sync.py`, which runs the real `team-sync.js` for three simulated members on a fake storage and an
+  in-memory shared folder: create, join, edit, concurrent edits, lead delete vs draft, clobber, failed write
+  (empty file) and retry, status, compaction and joining after it (35 checks).
+- **Developer test page:** `zz_team_sync.html` — pick folder, create / join / leave, sync now, status with
+  colleagues and measurements, unclassified storage keys. Settings > Team replaces it in step 3.
 
 ---
 
@@ -104,7 +137,7 @@ SalesTeam Team/                      (the folder Boaz creates and shares)
   admins/<memberId>.json             one file per admin grant (written by an admin)
   members/<memberId>/
     profile.json                     name, e-mail, joined at, SalesTeam version
-    heartbeat-<n>.json               "last seen" + highest change number written (see 6.3)
+    heartbeat.json                   "last seen" + highest change number written (see 6.3); rewritten by its one writer
     changes/c-<n>.json               change files, numbered 1, 2, 3 … per member, never rewritten
     snapshots/s-<n>.json             this member's compacted state up to change n (section 3.3)
   base/base-<time>.json              the starting data the creator brought in (R3.9)
@@ -130,7 +163,8 @@ section 8.1):
 - `t` is a **hybrid logical clock** stamp (wall-clock ms, counter, member) — orders changes the same way on
   every PC even when two PCs' clocks differ by a few seconds, and never goes backwards on one PC.
 - `e` / `id` name the entity (section 4.1); `op` is `set`, `delete`, `claim`, `release`, `assign`,
-  `unassign`, `touch` (an outreach, R3.6), `dnc` (do-not-contact, R6.8).
+  `unassign`, `touch` (an outreach, R3.6). The do-not-contact list (R6.8) needs no op of its own: it is a
+  `team` entity whose fields are the entries, set and cleared with `set` (built in step 1, `team-merge.js`).
 - `f` holds only the fields that changed (top-level fields of the row; nested values travel whole).
 
 ### 3.3 Keeping the folder small
@@ -157,9 +191,13 @@ the claim rule could then also be tightened to a server-decided lock.
 | `setting` | storage key | each shared setting key (section 5.1), whole value |
 | `team` | fixed ids | members, admins, the do-not-contact list |
 
-An account's three local homes are joined by the mapping the 1.2 pipeline already uses (company key ↔
-`companyId`, `getAccountViews`). Each local home's fields are kept in their own namespace in `f`
-(`wb.`, `ta.`, `x.`) so writing back is exact.
+*Originally planned:* an account's three local homes joined into one record by company key ↔ `companyId`,
+with namespaced fields (`wb.`, `ta.`, `x.`). *Replaced in step 2, because a join breaks on duplicate company
+names, rows with no workbook match and renames.* **As built (2.7):** each local home is its own
+row, with the home in the id — `account|wb:<companyId>`, `account|ta:<company key>`, `account|x:<company key>`,
+`contact|wb:<contactId>`, `contact|x:<contact key>`, `lead|<lead key>`, `setting|<storage key>`. Writing back is
+exact without any join, and a renamed company simply moves its `ta:`/`x:` rows, as it does locally. Claims and
+assignments (steps 4–5) use the bare `companyId` (`account|c-1042`), which is never a data row.
 
 ### 4.2 Rules (`team-merge.js`, pure, tested in `test_pure_modules.py`)
 - **Same field, two values:** the change with the later stamp wins. The losing value is kept in the team
@@ -195,8 +233,10 @@ The list lives in one place (`team-keys.js`) so a new storage key has to be clas
 2. It compares the **new value with its shadow copy** — the last state it knows the team has — row by row
    (by id; a per-row fingerprint makes unchanged rows cheap to skip), and emits `set`/`delete` changes
    for the fields that differ.
-3. Changes go to the **outbox** (a local storage key) at once — written before anything else happens, so
-   a reload loses nothing ("persist as you go").
+3. Changes go to the **outbox** at once — written before anything else happens, so a reload loses nothing
+   ("persist as you go"). *As built:* the outbox, the shadow and the merged state live in IndexedDB
+   (`salesteam-team`), saved in one transaction, not in `chrome.storage.local` — the merged state is several MB
+   and must not wake every page's `onChanged` listener.
 4. The shadow is updated.
 
 Comparing against the shadow, not against `oldValue`, is what stops echoes: when the sync layer itself
@@ -209,7 +249,7 @@ writes a colleague's change into local storage, the shadow already holds it, so 
    queues behind a local writer instead of racing it.
 4. Pages redraw by themselves (2.3).
 
-### 5.4 Cost of the comparison *[measure in step 2]*
+### 5.4 Cost of the comparison *[measured in step 2 — see 2.7: no fallback needed]*
 `targetAccountsWorkbook` is the largest value (a few MB with ~600 accounts). Comparing it on every write
 is fine for a few writes a second; the pipeline writes more often in bursts. If the comparison shows in
 the measurements, the fallback is to debounce (compare at most once per second per key, against the
@@ -354,11 +394,11 @@ files stay in the folder for the record (the admin can remove the member).
 |---|---|---|
 | 0 | **Two-PC test** (no product code): sync delay over a day, simultaneous claims, no conflict copies, folder handle in the background worker, permission after restart | 1.2.1.2 (test page `zz_team_spike.html` + background probe) |
 | 1 | `team-merge.js` (pure): stamps, change records, merge rules, claims, confirmation, rendezvous shares — with tests in `test_pure_modules.py` | 1.2.1.3 |
-| 2 | `team-folder.js` + `team-sync.js`: folder adapter, outbox, shadow, local→team and team→local, heartbeat, compaction; `team-keys.js`; measure comparison cost | 1.2.1.4 |
-| 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync | 1.2.1.5 |
-| 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) | 1.2.1.6 |
-| 5 | Assign to me / release, badges, filter, admin rights, team-wide check, do-not-contact, outreach check | 1.2.1.7 |
-| 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.8 |
+| 2 | `team-folder.js` + `team-sync.js`: folder adapter, outbox, shadow, local→team and team→local, heartbeat, compaction; `team-keys.js`; measure comparison cost | 1.2.1.4 (message-routing fix: 1.2.1.5) |
+| 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync | 1.2.1.6 |
+| 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) | 1.2.1.7 |
+| 5 | Assign to me / release, badges, filter, admin rights, team-wide check, do-not-contact, outreach check | 1.2.1.8 |
+| 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.9 |
 | 7 | Help, privacy, listing, website, release notes, PRD; test with the real team → **1.2.2** | 1.2.2 |
 
 Each step is tested by Reload on the live install and on a second PC sharing the folder.

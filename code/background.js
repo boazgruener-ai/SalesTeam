@@ -7,6 +7,7 @@
 // worker as idle mid-scan. Results are merged, deduped, ranked, and negative
 // topics are (re-)applied before saving.
 import { probeTeamFolderFromBackground } from "./team-folder-probe.js";
+import { initTeamSync, handleTeamMessage } from "./team-sync.js";
 import {
   getTopics,
   getJobTopics,
@@ -116,6 +117,8 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Chrome starts. 20 s later, so the network is up (a lookup that times out counts as a failed day), and
 // still inside the 30 s a background worker lives without an event.
 chrome.runtime.onStartup.addListener(() => { setTimeout(() => { kickPipeline("startup").catch(() => {}); }, 20000); });
+// Team use 1.2.2 build step 2: the sync layer. Does nothing unless this browser has joined a team.
+initTeamSync();
 // A batch job ended (its record is removed on release, wherever it ran): a user's job ending frees the
 // pipeline to resume (U2). The pipeline's own per-account releases are ignored.
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -1005,6 +1008,9 @@ async function logScanTouches(startedAt) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Team use 1.2.2 (team-sync.js): create / join / leave, sync now, status.
+  const team = handleTeamMessage(message, sendResponse);
+  if (team !== null) return team;
   if (message?.type === "TEAM_SPIKE_SW_PROBE") {
     // Team use step 0: try the team folder from here after a delay, so the page can close itself first.
     setTimeout(() => { probeTeamFolderFromBackground(message.tag || "x").catch(() => {}); }, message.delayMs || 0);
