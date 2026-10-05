@@ -3020,6 +3020,35 @@ async function init() {
 
 // The page stays hidden until init() has chosen what to show, so the default first step never flashes on screen
 // (reported 2026-09-21: Change Settings briefly showed a setup step before its own list).
+// Team use 1.2.2 step 5 (D3): the setup is shared with the whole team and changed by the Team Admin only. A member
+// sees it read-only; only their own name, API key and language (About you) stay editable.
+async function applyTeamMemberReadOnly() {
+  const membership = (await chrome.storage.local.get("teamMembership")).teamMembership;
+  if (!membership || membership.role === "admin") return;
+  document.body.classList.add("team-member-readonly");
+  const note = document.getElementById("team-member-setup-note");
+  note.textContent = `You are a member of the team "${membership.teamName}". This setup is shared with the whole team and only the ` +
+    "Team Admin can change it - you can look at every step here, but changes are not possible. Your own name, Anthropic API key and " +
+    "language (About you) are yours to change.";
+  note.hidden = false;
+  // Pointer clicks are off by CSS; this catches the keyboard.
+  const shared = (t) => t instanceof Element && t.closest(".wizard-step") && !t.closest(".team-member-own");
+  for (const type of ["keydown", "focusin"]) {
+    document.addEventListener(type, (event) => {
+      if (!shared(event.target) || !event.target.closest("input, select, textarea, button, [contenteditable]")) return;
+      if (type === "keydown" && ["Tab", "Escape"].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (type === "focusin" && event.target.blur) event.target.blur();
+    }, true);
+  }
+  for (const id of ["about-name-input", "about-api-key-wrap", "about-language-select"]) {
+    const e = document.getElementById(id);
+    if (e) e.classList.add("team-member-own");
+  }
+}
+
+applyTeamMemberReadOnly().catch(() => {});
 init().finally(() => document.documentElement.classList.add("wizard-ready"));
 
 // Inside the Settings page the menu is already on the left, so this page's own "SalesTeam menu" button is not needed.

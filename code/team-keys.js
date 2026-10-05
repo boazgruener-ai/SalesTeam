@@ -59,7 +59,7 @@ export const TEAM_PERSONAL_KEYS = [
   "targetAccountsImportedAt", "targetAccountsImportedFileName", "targetAccountsWorkbookImportedAt",
   "companyExclusionsMigrated", "locationHeuristicV2Migrated", "locationHeuristicV3Migrated",
   // the team layer's own state
-  "teamMembership", "teamSyncStatus",
+  "teamMembership", "teamSyncStatus", "teamAccountStates",
 ];
 
 export function teamKeyKind(key) {

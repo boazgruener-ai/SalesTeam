@@ -280,7 +280,7 @@ the other is told.
 by its assignee. The pipeline does not touch another member's assigned accounts (except shared,
 non-personal research — **Q6**). **Decided 2026-10-02: no** — an assigned account is off-limits to
 every other member's pipeline as well.
-**R6.3** — Target Accounts gets a quick filter **Mine / Unassigned / Everyone's**.
+**R6.3** — Target Accounts gets a quick filter **Mine / Others / Unassigned / All** (Others = assigned to a colleague; changed 2026-10-05).
 **R6.4** — Roles at their simplest: the member who created the team store is Team Admin; the admin can
 release or reassign any account and remove a member. Everything else (queues, rules, dashboards, finer
 rights) is advanced mode.

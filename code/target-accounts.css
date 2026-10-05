@@ -2073,3 +2073,26 @@ thead .actions-col {
 /* A colleague holds the account: its controls take no clicks; links still do (reading is never blocked). */
 .team-blocked { pointer-events: none; opacity: 0.75; }
 .team-blocked a[href] { pointer-events: auto; }
+
+/* Team use 1.2.2 step 5 (design 7): the assignment line on the account / contact page, list badges, the owner filter. */
+.team-claim-notice:not(.team-claim-blocked):not(.team-claim-checking):not(.team-claim-aside) {
+  background: #f6f8fb; border: 1px solid var(--border); font-weight: 400; padding: 8px 14px;
+}
+.team-assign-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; font-weight: 400; color: #333; }
+.team-assign-row:last-child { margin-bottom: 0; }
+.team-assign-label { font-weight: 600; margin-right: 4px; }
+.team-assign-row button { padding: 3px 10px; font-size: 12px; }
+.team-assign-row button.secondary { background: #fff; color: #333; border: 1px solid var(--border); }
+.team-assign-row select { font-size: 12px; padding: 2px 4px; }
+.team-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  white-space: nowrap; vertical-align: middle; border: 1px solid transparent;
+}
+.team-badge-mine { background: #e6f4ea; color: #1e6b34; border-color: #a8d5b5; }
+.team-badge-other { background: #eef1f6; color: #3c4a5e; border-color: #c9d1dd; }
+.team-badge-busy { background: #fff4e0; color: #7a4800; border-color: #e8c27a; }
+.team-owner-filter[hidden] { display: none; }
+.team-owner-filter { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-right: 8px; vertical-align: middle; }
+.team-owner-filter button { border: none; border-right: 1px solid var(--border); background: #fff; color: #333; padding: 4px 10px; font-size: 12px; border-radius: 0; cursor: pointer; }
+.team-owner-filter button:last-child { border-right: none; }
+.team-owner-filter button.active { background: #1a56c4; color: #fff; }

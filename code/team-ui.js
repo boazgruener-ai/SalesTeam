@@ -375,14 +375,40 @@ export async function renderTeamSettings() {
       ];
       if (st.lastError) lines.push(`Last problem: ${st.lastError}${st.errorSince ? ` (since ${timeText(st.errorSince)})` : ""}. SalesTeam tries again by itself.`);
       setText("team-member-sync", lines.join("\n"), Boolean(st.lastError));
+      // Step 5 (R6.4): how many accounts each member has, and the admin's "release all" (someone who left).
+      let counts = {};
+      try { counts = (await send({ type: "TEAM_ASSIGN_COUNTS" })).counts || {}; } catch { /* the column stays empty */ }
+      const isAdmin = m.role === "admin";
       const table = $("team-members-table");
-      table.replaceChildren(memberRow(["Name", "Role", "Last seen", ""]));
+      table.replaceChildren(memberRow(["Name", "Role", "Last seen", "", "Accounts assigned", ""]));
       table.firstChild.classList.add("team-members-head");
-      table.append(memberRow([`${m.name} (you)`, role, "now", connected ? "online" : "not connected"]));
+      table.append(memberRow([`${m.name} (you)`, role, "now", connected ? "online" : "not connected", String(counts[m.memberId] || 0), ""]));
       for (const c of st.members || []) {
-        table.append(memberRow([c.name, c.admin ? "Team Admin" : "Member", timeText(c.lastSeen), c.online ? "online" : ""]));
+        const row = memberRow([c.name, c.admin ? "Team Admin" : "Member", timeText(c.lastSeen), c.online ? "online" : "", String(counts[c.id] || 0)]);
+        const td = document.createElement("td");
+        if (isAdmin && counts[c.id]) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "secondary";
+          b.textContent = "Release all";
+          b.title = `Unassign all ${counts[c.id]} accounts of ${c.name} - e.g. when ${c.name} has left the team`;
+          b.addEventListener("click", async () => {
+            if (!(await askConfirm(`Release all ${counts[c.id]} accounts assigned to ${c.name}?
+
+They become unassigned - anyone in the team can then take them.`, { okLabel: "Release all", cancelLabel: "Cancel" }))) return;
+            b.disabled = true;
+            try {
+              const r = await send({ type: "TEAM_UNASSIGN_ALL", member: c.id });
+              setText("team-member-sync", r.ok ? `${r.count} account${r.count === 1 ? "" : "s"} of ${c.name} released.` : "Could not release them - the team folder is not connected or not in sync.", !r.ok);
+            } catch (err) { setText("team-member-sync", err.message, true); }
+            renderTeamSettings();
+          });
+          td.append(b);
+        }
+        row.append(td);
+        table.append(row);
       }
-      if (!(st.members || []).length) table.append(memberRow(["No colleague has joined yet.", "", "", ""]));
+      if (!(st.members || []).length) table.append(memberRow(["No colleague has joined yet.", "", "", "", "", ""]));
       if (badge) badge.textContent = connected ? `${st.online} online` : "!";
     } else if (badge) {
       badge.textContent = connected ? "" : "!";

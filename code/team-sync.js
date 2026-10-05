@@ -18,15 +18,20 @@ import { TEAM_SHARED_KEYS, isTeamSharedKey } from "./team-keys.js";
 import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchValue, rowTarget, rowKey, splitRowKey, canonicalRow } from "./team-rows.js";
 import {
   newState, applyChange, createClock, tick, observe, formatStamp, compactChanges, stampWall, priorOf, retractChanges,
-  pipelineOwner, DEFAULT_CLAIM_IDLE_MS,
+  pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed,
 } from "./team-merge.js";
-import { claimIdFor, accountKeyOfChange, activeMembersOf, claimView } from "./team-claims.js";
+import {
+  claimIdFor, accountKeyOfChange, activeMembersOf, claimView, assignmentView, offLimitsFor, teamAccountSummary,
+} from "./team-claims.js";
 import {
   teamDbGetAll, teamDbPutAll, teamDbClear, getTeamFolder, clearTeamFolder, teamFolderPermission,
   readTeamJson, writeTeamJson, listTeamNames, removeTeamFile, listTeamFolderTop,
 } from "./team-folder.js";
 
 export const TEAM_MEMBERSHIP_KEY = "teamMembership";
+// Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
+// (team-claims.js teamAccountSummary + who I am). Personal, rewritten only when it changes.
+export const TEAM_ACCOUNTS_KEY = "teamAccountStates";
 const FORMAT = 1;
 const ALARM = "team-sync";
 const DIFF_DEBOUNCE_MS = 1000;
@@ -82,7 +87,9 @@ async function loadMembership() {
   return membership;
 }
 
-const emptyClaims = () => ({ mine: {}, held: {}, aside: {} });
+// assigning: { key: { to, at } } - my assign records not yet confirmed; assignLost: { key: { to, winner, at } } - an
+// assignment of mine that a colleague's earlier one beat (shown once on the account page, R6.1).
+const emptyClaims = () => ({ mine: {}, held: {}, aside: {}, assigning: {}, assignLost: {} });
 
 function emptyMeta() {
   return {
@@ -246,7 +253,7 @@ async function applyRemote(records) {
   for (const r of records) {
     if (!applyChange(mem.state, r)) continue;
     observe(mem.clock, r.t);
-    if (r.op === "claim") ackDue = true;
+    if (r.op === "claim" || r.op === "assign") ackDue = true;
     if (rowTarget(r.e, r.id)) affected.add(rowKey(r.e, r.id));
   }
   await save(["state"]);
@@ -462,6 +469,7 @@ export async function runTick(reason = "alarm") {
     return { ok: false, error: lastError };
   } finally {
     ticking = false;
+    if (membership && mem) await enqueue(publishSummary).catch(() => {});
     if (membership && folderState === "granted") {
       scheduleTick(mem && claimsPending() ? CLAIM_READ_EVERY_MS : mem?.outbox?.length ? FLUSH_DELAY_MS : READ_EVERY_MS);
     }
@@ -498,8 +506,24 @@ function claimContext(now = Date.now()) {
   return { me, now, lastSeen, readUpTo, activeMembers: activeMembersOf(lastSeen, now, ACTIVE_MS), idleMs: DEFAULT_CLAIM_IDLE_MS };
 }
 
-const memberName = (m) => (m === membership?.memberId ? membership.name : mem.meta.profiles[m]?.name || "A colleague");
+const memberName = (m) => (m === membership?.memberId ? membership.name : mem.meta.profiles[m]?.name || mem.meta.hb[m]?.name || "A colleague");
 const inSyncNow = () => !(lastError && errorSince && Date.now() - errorSince >= NOT_IN_SYNC_AFTER_MS);
+const isAdmin = () => Boolean(membership) && (membership.role === "admin" || (mem?.meta.admins || []).includes(membership.memberId));
+
+// Inside the queue. The pages' copy of every account's assignment and active claim (TEAM_ACCOUNTS_KEY).
+let lastSummaryJson = null;
+async function publishSummary() {
+  if (!membership || !mem) return;
+  const ctx = claimContext();
+  const accounts = teamAccountSummary(mem.state, ctx);
+  const names = {};
+  for (const e of Object.values(accounts)) for (const m of [e.a, e.h]) if (m && !names[m]) names[m] = memberName(m);
+  const value = { me: ctx.me, admin: isAdmin(), inSync: folderState === "granted" && inSyncNow(), folder: folderState, names, accounts };
+  const json = JSON.stringify(value);
+  if (json === lastSummaryJson) return;
+  lastSummaryJson = json;
+  await chrome.storage.local.set({ [TEAM_ACCOUNTS_KEY]: value });
+}
 
 // My own record: into the outbox and the merged state at once.
 function pushOwn(record) {
@@ -539,7 +563,7 @@ function holdOrSend(records) {
 
 function claimsPending() {
   const { claims } = mem;
-  if (Object.keys(claims.held).length) return true;
+  if (Object.keys(claims.held).length || Object.keys(claims.assigning).length) return true;
   const keys = Object.keys(claims.mine);
   if (!keys.length || !membership) return false;
   const ctx = claimContext();
@@ -556,11 +580,32 @@ async function resolveClaims() {
   if (!membership) return;
   const { claims } = mem;
   const keys = [...new Set([...Object.keys(claims.mine), ...Object.keys(claims.held)])];
-  if (!keys.length) return;
+  const assignKeys = Object.keys(claims.assigning);
+  if (!keys.length && !assignKeys.length) return;
   const ctx = claimContext();
   const now = ctx.now;
   const rewrite = new Set();
   let changed = false;
+  // Assignments (R6.1): two members assigning within seconds - the earlier keeps it; the later one is withdrawn
+  // (it would otherwise become the assignee the moment the winner releases) and told once.
+  for (const key of assignKeys) {
+    const { to } = claims.assigning[key];
+    const list = activeAssignments(mem.state, "account", claimIdFor(key));
+    const first = list[0];
+    const stillActive = list.some((a) => a.member === to);
+    if (!stillActive) {
+      delete claims.assigning[key]; // released or reassigned meanwhile
+    } else if (first.member !== to) {
+      pushOwn({ t: tick(mem.clock, now), e: "account", id: claimIdFor(key), op: "unassign", ...(to === ctx.me ? {} : { member: to }) });
+      claims.assignLost[key] = { to, winner: first.member, at: now };
+      delete claims.assigning[key];
+    } else if (isClaimConfirmed(first.since, { me: ctx.me, activeMembers: ctx.activeMembers, readUpTo: ctx.readUpTo })) {
+      delete claims.assigning[key];
+    } else {
+      continue;
+    }
+    changed = true;
+  }
   for (const key of keys) {
     const v = claimView(mem.state, key, ctx);
     const held = claims.held[key];
@@ -598,12 +643,25 @@ async function resolveClaims() {
 function describeClaim(key) {
   const ctx = claimContext();
   const v = claimView(mem.state, key, ctx);
+  const a = assignmentView(mem.state, key, ctx);
   const aside = mem.claims.aside[key];
+  const lost = mem.claims.assignLost[key];
+  const admin = isAdmin();
   return {
     member: true,
     key,
     state: v.state,
     holder: v.holder ? { name: memberName(v.holder.member), me: v.holder.member === ctx.me, since: v.holder.sinceWall } : null,
+    // Step 5 (design 7): the assignment, and what this member may do about it.
+    assignee: a.assignee ? {
+      id: a.assignee.member, name: memberName(a.assignee.member), me: a.mine, since: a.assignee.sinceWall,
+      checking: a.mine && !a.confirmed || Boolean(mem.claims.assigning[key]),
+    } : null,
+    assignLost: lost ? { winner: memberName(lost.winner), at: lost.at, forMe: lost.to === ctx.me, to: memberName(lost.to) } : null,
+    admin,
+    // Admin: the members it can reassign to (itself included).
+    team: admin ? [ctx.me, ...Object.keys({ ...mem.meta.cursors, ...mem.meta.hb, ...mem.meta.profiles }).filter((m) => m !== ctx.me).sort()]
+      .map((m) => ({ id: m, name: memberName(m) })) : null,
     held: mem.claims.held[key]?.records.length || 0,
     aside: aside ? {
       changes: aside.records.reduce((n, r) => n + (r.op === "set" ? Object.keys(r.f || {}).length : 1), 0),
@@ -620,7 +678,10 @@ async function claimInner(key, kind) {
   if (!key) return { ok: false, reason: "no_key" };
   if (!(await connectedRoot())) return { ok: false, reason: "offline", ...describeClaim(key) };
   if (!inSyncNow()) return { ok: false, reason: "not_in_sync", ...describeClaim(key) };
-  const v = claimView(mem.state, key, claimContext());
+  const ctx = claimContext();
+  const a = assignmentView(mem.state, key, ctx);
+  if (a.assignee && !a.mine) return { ok: false, reason: "assigned", ...describeClaim(key) };
+  const v = claimView(mem.state, key, ctx);
   if (v.state === "other" || v.state === "lost") return { ok: false, reason: "held", ...describeClaim(key) };
   const now = Date.now();
   const m = mem.claims.mine[key];
@@ -712,6 +773,123 @@ export function discardKeptAside(key) {
   });
 }
 
+// --------------------------------------------------------------------------
+// Assign to me / release (build step 5, design 7, R6.1-R6.4)
+// --------------------------------------------------------------------------
+// "Assign to me" writes `assign`, "Release" writes `unassign`. An assignment does not expire. A member assigns only
+// a free account to itself and releases only its own; the Team Admin can also release or reassign anyone's. Nobody
+// assigns an account a colleague is updating right now (the claim says so) - try again when they are done.
+
+async function assignInner(key, to) {
+  if (!key) return { ok: false, reason: "no_key" };
+  if (!(await connectedRoot())) return { ok: false, reason: "offline", ...describeClaim(key) };
+  if (!inSyncNow()) return { ok: false, reason: "not_in_sync", ...describeClaim(key) };
+  const ctx = claimContext();
+  const me = ctx.me;
+  const target = to || me;
+  const admin = isAdmin();
+  if (target !== me && !admin) return { ok: false, reason: "not_admin", ...describeClaim(key) };
+  const a = assignmentView(mem.state, key, ctx);
+  const current = a.assignee?.member || null;
+  if (current === target) return { ok: true, ...describeClaim(key) };
+  if (current && current !== me && !admin) return { ok: false, reason: "assigned", ...describeClaim(key) };
+  const c = claimView(mem.state, key, ctx);
+  if (c.state === "other" || c.state === "lost") return { ok: false, reason: "held", ...describeClaim(key) };
+  const now = Date.now();
+  const id = claimIdFor(key);
+  if (current) pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "unassign", ...(current === me ? {} : { member: current }) });
+  pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "assign", ...(target === me ? {} : { member: target }) });
+  mem.claims.assigning[key] = { to: target, at: now };
+  delete mem.claims.assignLost[key];
+  await save(["state", "outbox", "claims"]);
+  await publishSummary();
+  scheduleTick(0);
+  return { ok: true, ...describeClaim(key) };
+}
+
+export function assignAccount(key, { to = null } = {}) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    return assignInner(key, to);
+  });
+}
+
+export function unassignAccount(key) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!(await connectedRoot())) return { ok: false, reason: "offline", ...describeClaim(key) };
+    if (!inSyncNow()) return { ok: false, reason: "not_in_sync", ...describeClaim(key) };
+    const ctx = claimContext();
+    // The admin clears every active assignment - the winner's and any not yet withdrawn - so nothing is left to
+    // take over; a member releases its own.
+    const list = activeAssignments(mem.state, "account", claimIdFor(key));
+    if (!list.length) return { ok: true, ...describeClaim(key) };
+    const admin = isAdmin();
+    if (list[0].member !== ctx.me && !admin) return { ok: false, reason: "not_admin", ...describeClaim(key) };
+    const now = Date.now();
+    for (const x of admin ? list : list.filter((y) => y.member === ctx.me)) {
+      pushOwn({ t: tick(mem.clock, now), e: "account", id: claimIdFor(key), op: "unassign", ...(x.member === ctx.me ? {} : { member: x.member }) });
+    }
+    delete mem.claims.assigning[key];
+    delete mem.claims.assignLost[key];
+    await save(["state", "outbox", "claims"]);
+    await publishSummary();
+    scheduleTick(0);
+    return { ok: true, ...describeClaim(key) };
+  });
+}
+
+export function dismissAssignNotice(key) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false };
+    await ensureLoaded();
+    delete mem.claims.assignLost[key];
+    await save(["claims"]);
+    return { ok: true, ...describeClaim(key) };
+  });
+}
+
+// Admin, Settings > Team: release every account assigned to one member (someone who left the team, R6.4).
+export function unassignAllOf(member) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!isAdmin()) return { ok: false, reason: "not_admin" };
+    if (!(await connectedRoot()) || !inSyncNow()) return { ok: false, reason: "offline" };
+    const now = Date.now();
+    let count = 0;
+    for (const id of Object.keys(mem.state.entities.account || {})) {
+      if (!id.startsWith("@")) continue;
+      if (!activeAssignments(mem.state, "account", id).some((x) => x.member === member)) continue;
+      pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "unassign", ...(member === membership.memberId ? {} : { member }) });
+      count++;
+    }
+    if (count) {
+      await save(["state", "outbox"]);
+      await publishSummary();
+      scheduleTick(0);
+    }
+    return { ok: true, count };
+  });
+}
+
+// For pages: how many accounts each member has assigned (Settings > Team).
+export function assignmentCounts() {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false };
+    await ensureLoaded();
+    const counts = {};
+    for (const id of Object.keys(mem.state.entities.account || {})) {
+      if (!id.startsWith("@")) continue;
+      const first = activeAssignments(mem.state, "account", id)[0];
+      if (first) counts[first.member] = (counts[first.member] || 0) + 1;
+    }
+    return { ok: true, counts };
+  });
+}
+
 // The pipeline and the web lane (design 6.5, R3.5): null when not in a team. Otherwise `connected` (no automatic
 // work while the team cannot see it) and mayWork(key): not held by a colleague, and in this member's share of the
 // accounts (rendezvous over the members active now - a joining or leaving member moves only its own share).
@@ -726,10 +904,19 @@ export async function teamWorkGate() {
       connected,
       mayWork(key) {
         if (!connected || !key) return false;
-        const state = claimView(mem.state, key, claimContext()).state;
-        if (state === "other" || state === "lost") return false;
+        const now = claimContext();
+        // Step 5 (R6.2, Q6): a colleague's assigned account is off-limits; my own assigned ones are always mine.
+        if (offLimitsFor(mem.state, key, now)) return false;
+        if (assignmentView(mem.state, key, now).mine) return true;
+        const state = claimView(mem.state, key, now).state;
         // An account I already hold is mine to finish, whatever the share says now.
         return state === "mine" || state === "checking" || pipelineOwner(key, members) === ctx.me;
+      },
+      // Work the member started itself (bulk research of chosen accounts): no shares, only R6.2.
+      offLimits(key) {
+        if (!connected) return { reason: "offline" };
+        const o = key ? offLimitsFor(mem.state, key, claimContext()) : null;
+        return o && { ...o, name: memberName(o.member) };
       },
     };
   });
@@ -874,6 +1061,8 @@ export function leaveTeam() {
     await setMembership(null);
     await teamDbClear();
     await clearTeamFolder();
+    await chrome.storage.local.remove(TEAM_ACCOUNTS_KEY);
+    lastSummaryJson = null;
     mem = null;
     recentWriteBack.clear();
     lastError = null;
@@ -980,6 +1169,11 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_CLAIM_STATUS": return reply(getClaimStatus(message.key));
     case "TEAM_ASIDE_APPLY": return reply(applyKeptAside(message.key));
     case "TEAM_ASIDE_DISCARD": return reply(discardKeptAside(message.key));
+    case "TEAM_ASSIGN": return reply(assignAccount(message.key, { to: message.to || null }));
+    case "TEAM_UNASSIGN": return reply(unassignAccount(message.key));
+    case "TEAM_ASSIGN_DISMISS": return reply(dismissAssignNotice(message.key));
+    case "TEAM_UNASSIGN_ALL": return reply(unassignAllOf(message.member));
+    case "TEAM_ASSIGN_COUNTS": return reply(assignmentCounts());
     default: return null;
   }
 }

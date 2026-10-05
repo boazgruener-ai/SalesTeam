@@ -21,6 +21,7 @@ the test.
 import io
 import os
 import re
+import json
 import sys
 
 try:
@@ -2212,6 +2213,43 @@ def test_team_claims(ctx):
     """)
     check("claims: a held delete hides the row meanwhile", e("deletedMeanwhile"), False)
     check("claims: ... and retracting it brings the row back", e("entityView(D, 'contact', 'x:acme ag::ann').exists"), True)
+
+    # Step 5 - assignments (design 7): who has it, a race, off-limits, the pages' summary.
+    e("""
+      var ACTX = {me: 'anna', now: T0 + 20000, lastSeen: {ben: T0 + 15000}, readUpTo: {ben: T0 + 12000}, activeMembers: ['ben'], idleMs: 300000};
+      var A = newState();
+      applyChange(A, {t: st2(T0 + 10000, 0, 'anna'), e: 'account', id: claimIdFor('acme ag'), op: 'assign'});
+      var A2 = JSON.parse(JSON.stringify(A));
+      applyChange(A2, {t: st2(T0 + 9000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'assign'});
+      var A3 = JSON.parse(JSON.stringify(A2));
+      applyChange(A3, {t: st2(T0 + 11000, 0, 'anna'), e: 'account', id: claimIdFor('acme ag'), op: 'unassign'});
+      var B = newState();
+      applyChange(B, {t: st2(T0 + 10000, 0, 'ben'), e: 'account', id: claimIdFor('beta sa'), op: 'claim'});
+      applyChange(B, {t: st2(T0 + 10000, 1, 'anna'), e: 'account', id: claimIdFor('gamma ag'), op: 'assign', member: 'cleo'});
+      applyChange(B, {t: st2(T0 + 10000, 2, 'anna'), e: 'account', id: claimIdFor('delta ag'), op: 'claim'});
+      function av(s, k, c) { var v = assignmentView(s, k, c || ACTX); return [v.assignee && v.assignee.member, v.mine, v.confirmed, v.lostTo]; }
+    """)
+    check("assign: Anna's own, confirmed once Ben wrote after it", e("JSON.stringify(av(A, 'acme ag'))"), '["anna",true,true,null]')
+    check("assign: ... checking while Ben has not",
+          e("JSON.stringify(av(A, 'acme ag', Object.assign({}, ACTX, {readUpTo: {ben: T0 + 9000}})))"), '["anna",true,false,null]')
+    check("assign: Ben assigned earlier - his; Anna lost to him", e("JSON.stringify(av(A2, 'acme ag'))"), '["ben",false,false,"ben"]')
+    check("assign: Anna's withdrawn assignment is no longer a lost one", e("JSON.stringify(av(A3, 'acme ag'))"), '["ben",false,false,null]')
+    check("assign: unassigned account", e("JSON.stringify(av(newState(), 'acme ag'))"), '[null,false,false,null]')
+    check("off-limits: a colleague's assigned account", e("JSON.stringify(offLimitsFor(A2, 'acme ag', ACTX))"),
+          json.dumps({"reason": "assigned", "member": "ben", "sinceWall": 1759480009000}, separators=(",", ":")))
+    check("off-limits: my own assigned account is not", e("offLimitsFor(A, 'acme ag', ACTX)"), None)
+    check("off-limits: a colleague updating it", e("offLimitsFor(B, 'beta sa', ACTX).reason"), "held")
+    check("off-limits: assigned by the admin to someone else", e("offLimitsFor(B, 'gamma ag', ACTX).member"), "cleo")
+    check("summary: assignments and claims, nothing else",
+          e("JSON.stringify(teamAccountSummary(B, ACTX))"),
+          json.dumps({"beta sa": {"h": "ben", "hs": 1759480010000}, "gamma ag": {"a": "cleo", "as": 1759480010000},
+                      "delta ag": {"h": "anna", "hs": 1759480010000}}, separators=(",", ":")))
+    check("summary: my unconfirmed assignment is flagged",
+          e("JSON.stringify(teamAccountSummary(A, Object.assign({}, ACTX, {readUpTo: {ben: 0}})))"),
+          json.dumps({"acme ag": {"a": "anna", "as": 1759480010000, "ac": False}}, separators=(",", ":")))
+    check("summary off-limits: mine / colleague's / held / my own claim",
+          e("JSON.stringify([summaryOffLimits({a: 'anna'}, 'anna'), summaryOffLimits({a: 'ben', as: 5}, 'anna').reason, summaryOffLimits({h: 'ben'}, 'anna').reason, summaryOffLimits({h: 'anna'}, 'anna'), summaryOffLimits(null, 'anna')])"),
+          '[null,"assigned","held",null,null]')
 
 
 def main():

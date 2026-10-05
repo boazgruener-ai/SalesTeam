@@ -193,6 +193,59 @@ with its own handle.
   with kept-aside and apply after release; pipeline shares disjoint and covering; a held account refused to a
   colleague's pipeline).
 
+### 2.11 Added to 5b by Boaz (2026-10-05): removing accounts
+- **Remove is admin-only in a team** - the row menu, the account page and bulk edit. (Removal is shared: it takes the
+  account off every member's list.) Not in a team: unchanged.
+- **Bulk edit:** the "Remove these N accounts from the list" checkbox moves into a collapsed **Advanced** part of the
+  dialog (removing many rows at once is the dangerous one).
+- **Every removal stays a soft delete** (`deletedAt` on the extras row - already true for Remove, bulk remove, undo of
+  a discovery run and merge).
+- **Removed accounts view:** lists every removed account with its **removal date** (and, in a team, who removed it),
+  checkboxes, select-all, sortable by date, and a bulk **Restore** - so a removal done on a given day can be undone
+  in one go. Team Admin only in a team; anyone when solo. Accounts removed by a *merge* are shown as "merged into X"
+  and restored only by undoing the merge, not here (restoring one alone would bring back a duplicate) - *agreed*.
+- **Contacts too** (agreed 2026-10-05): the view has an **Accounts / Contacts** switch; removed contacts the same way
+  (date, who, checkboxes, bulk Restore), and Remove of a contact is admin-only in a team as well. A contact whose
+  account is itself removed is restored with a hint to restore the account too.
+
+### 2.10 Step 5a as built (1.2.1.8, 2026-10-05)
+- **Step 5 split in two builds** so each is live-testable: 5a = assignments (this), 5b = team-wide check,
+  do-not-contact, outreach check (1.2.1.9). Step 6 moves to 1.2.1.10.
+- **Assignments** live on the claim's record (`account|@<company key>`). `team-merge.js activeAssignments` lists the
+  active ones, earliest first; `team-claims.js assignmentView` / `offLimitsFor` / `teamAccountSummary` (pure) say who
+  has an account, whether my assignment is confirmed or lost, and why an account is off-limits to me (*assigned* to a
+  colleague, or *held* - a colleague updating it).
+- **team-sync:** `TEAM_ASSIGN` (to me; the admin may pass `to`), `TEAM_UNASSIGN` (own; the admin: anyone's - every
+  active assignment, so nothing is left to take over), `TEAM_UNASSIGN_ALL` (admin, Settings > Team "Release all"),
+  `TEAM_ASSIGN_COUNTS`, `TEAM_ASSIGN_DISMISS`. Refused when the folder is not connected / not in sync, or while a
+  colleague is updating the account. A race (R6.1): the earlier assignment wins; the later one is **withdrawn** by its
+  author's sync (an `unassign`, else it would take over when the winner releases) and shown once ("Ben assigned this
+  account to themselves a few seconds before you"). Reading an `assign` triggers the ack heartbeat like a claim, so
+  confirmation is as fast. A claim on a colleague's assigned account is refused (`assigned`).
+  **Changed after the first live try (Boaz, 2026-10-05):** "checking with the team" took ~10 s on OneDrive (write,
+  colleague's 15 s read, ack, our 5 s read) - too long. Assign to me now checks only that the account is unassigned
+  (and nobody is updating it) and shows **"Assigned to you" at once**. The confirmation still runs in the background:
+  in the rare same-second race the later assignment is withdrawn and its member sees the notice on the account page.
+  Edits stay protected by claims (held until confirmed), so nothing is lost either way.
+- **Pipeline / web lane (Q6):** `mayWork` refuses a colleague's assigned account and always allows my own (outside
+  my rendezvous share too). **Bulk research** (user-started) leaves out off-limits accounts before the start, claims
+  each account while researching it, and reports how many were left out.
+- **Pages** read `teamAccountStates` (personal key, written by the background only when it changes; excluded from
+  backups): `team-accounts-ui.js` gives badges ("Anna", "Mine", "Anna is updating"; "Assigned to Anna since 3 Oct" in the tooltip), the owner filter and off-limits
+  checks. Account / contact page: an assignment line under the title (Assign to me / Release; admin: Release
+  (unassign) and Reassign to…); a colleague's assigned account is blocked like a held one. Target Accounts list:
+  badge after the company name (accounts and contacts lists), Mine / Others / Unassigned / All (Boaz 2026-10-05: Others added, Everyone's renamed All; remembered in the
+  browser profile = per member), row menu Assign to me / Release, and Edit / Merge / Remove / Review findings disabled
+  on a colleague's account with the reason as tooltip; bulk bar Assign to me / Release; bulk edit skips a colleague's
+  accounts (and their contacts) and says how many.
+- **D3 enforced:** a member sees Setup / Change Settings read-only with a strong note; only their own name, API key
+  and language stay editable. The exclusion list can therefore only be changed by the admin until 5b gives members a
+  "do not contact" action.
+- **Settings > Team:** an "Accounts assigned" column; admin "Release all" per colleague.
+- **Tests:** `test_pure_modules.py` +12 = 604; `test_team_sync.py` +20 = 95 (assign → confirmed; refused claim /
+  assign / release for the colleague; gate off-limits; badge data; a two-member race with withdrawal; release;
+  admin reassign, counts and release all).
+
 ---
 
 ## 3. The team folder
@@ -380,7 +433,7 @@ members as a lost claim, never as silent data loss.
 - **Badge (R6.5):** "Assigned to Anna since 3 Oct" / "Anna is updating (since 09:41)" on account and contact
   rows and detail pages, and as a small badge injected on LinkedIn company and profile pages by the
   existing LinkedIn content script (looked up by company id / profile slug).
-- **Filter (R6.3):** Mine / Unassigned / Everyone's on Target Accounts, remembered per member.
+- **Filter (R6.3):** Mine / Others / Unassigned / All on Target Accounts, remembered per member.
 - **Team-wide check (R6.6):** scans, discovery and imports look the candidate up in the merged picture
   (normalised name, `companyId`, LinkedIn URL) before adding; what a colleague holds is flagged, not
   duplicated. Before drafting or logging outreach to a contact, the `touch` history and the assignment are
@@ -447,8 +500,8 @@ files stay in the folder for the record (the admin can remove the member).
 - **Top bar:** team state — "Team: 3 online" / "Click to reconnect to the team folder" / "Not in sync —
   showing team data from 09:41" (one place, strong, per the messaging rule).
 - **Settings > Team:** folder, members (name, last seen, admin), create / join / leave, admin actions.
-- **Accounts and contacts:** Assigned / Updating badges, Assign to me / Release, Mine / Unassigned /
-  Everyone's filter, "Last changed by".
+- **Accounts and contacts:** Assigned / Updating badges, Assign to me / Release, Mine / Others /
+  Unassigned / All filter, "Last changed by".
 - **Notices:** lost claim ("Ben started a few seconds before you"), flagged duplicates on scan / add.
 - **Decisions:** join proposals for the admin.
 - **LinkedIn:** the assignment badge on company and profile pages.
@@ -466,8 +519,9 @@ files stay in the folder for the record (the admin can remove the member).
 | 2 | `team-folder.js` + `team-sync.js`: folder adapter, outbox, shadow, local→team and team→local, heartbeat, compaction; `team-keys.js`; measure comparison cost | 1.2.1.4 (message-routing fix: 1.2.1.5) |
 | 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync (as built: 2.8) | 1.2.1.6 |
 | 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) (as built: 2.9) | 1.2.1.7 |
-| 5 | Assign to me / release, badges, filter, admin rights, team-wide check, do-not-contact, outreach check | 1.2.1.8 |
-| 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.9 |
+| 5a | Assign to me / release, admin reassign / release all, badges, Mine / Others / Unassigned / All filter, off-limits checks on list row actions, bulk edit and bulk research, setup read-only for members (D3) (as built: 2.10) | 1.2.1.8 |
+| 5b | Team-wide check on scan / discovery / import, do-not-contact as team data (members add, admin removes), outreach check on the Leads Dashboard; **Remove admin-only** + Removed accounts view with bulk restore (Boaz 2026-10-05, see below) | 1.2.1.9 |
+| 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.10 |
 | 7 | Help, privacy, listing, website, release notes, PRD; test with the real team → **1.2.2** | 1.2.2 |
 
 Each step is tested by Reload on the live install and on a second PC sharing the folder.

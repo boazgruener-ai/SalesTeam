@@ -359,6 +359,13 @@
       </section>
 
       <div id="explorer-controls" hidden>
+        <!-- 1.2.2 step 5 (R6.3): shown only in a team -->
+        <span id="team-owner-filter" class="team-owner-filter" hidden>
+          <button type="button" data-owner="mine" title="Accounts assigned to you">Mine</button>
+          <button type="button" data-owner="others" title="Accounts assigned to a colleague">Others</button>
+          <button type="button" data-owner="unassigned" title="Accounts nobody has taken yet">Unassigned</button>
+          <button type="button" data-owner="all" title="Every account">All</button>
+        </span>
         <input id="search-input" type="text" placeholder="Search company or industry…" />
         <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="result-count"></span>
@@ -369,6 +376,8 @@
       <div id="accounts-bulk-bar" class="bulk-bar" hidden>
         <span id="accounts-bulk-count" class="bulk-bar-count"></span>
         <button id="accounts-bulk-edit-btn" type="button">Bulk edit…</button>
+        <button id="accounts-bulk-assign-btn" type="button" hidden>Assign to me</button>
+        <button id="accounts-bulk-release-btn" type="button" hidden>Release</button>
         <button id="accounts-bulk-extend" type="button" class="text-link-btn" hidden></button>
         <button id="accounts-bulk-clear-btn" type="button" class="text-link-btn">Clear selection</button>
       </div>

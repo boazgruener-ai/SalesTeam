@@ -14,6 +14,13 @@ const MEMBERSHIP_KEY = "teamMembership"; // team-sync.js TEAM_MEMBERSHIP_KEY
 const POLL_MS = 5000;
 const CLAIM_AGAIN_MS = 30000; // the background renews at most once a minute anyway
 const EDITABLE = "button, select, input, textarea, [contenteditable], [tabindex]";
+const REFUSALS = {
+  offline: "The team folder is not connected on this PC - see the top bar.",
+  not_in_sync: "Not in sync with the team - see the top bar.",
+  held: "A colleague is updating this account right now - try again when they are done.",
+  assigned: "A colleague already has this account.",
+  not_admin: "Only the Team Admin can release or reassign a colleague's account.",
+};
 
 async function send(msg) {
   const r = await chrome.runtime.sendMessage(msg);
@@ -44,12 +51,15 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
   let claimedAt = 0;
   let pollTimer = null;
   let busy = false;
+  let refusal = ""; // why the last Assign / Release did not go through
   const notice = document.createElement("div");
   notice.className = "team-claim-notice";
   notice.hidden = true;
   afterEl.insertAdjacentElement("afterend", notice);
 
-  const blocked = () => Boolean(status && status.member && (status.state === "other" || status.state === "lost" || !status.inSync));
+  // Step 5 (R6.2): a colleague's assigned account is blocked like one they are updating.
+  const blocked = () => Boolean(status && status.member &&
+    (status.state === "other" || status.state === "lost" || !status.inSync || (status.assignee && !status.assignee.me)));
   const inRegion = (el) => regions().some((r) => r && r.contains(el));
 
   function paintBlock() {
@@ -80,6 +90,9 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
       lines.push(s.folder === "granted"
         ? "Not in sync with the team - changes to this account are blocked until the team folder works again (see the top bar). Reading stays open."
         : "The team folder is not connected on this PC - changes to this account are blocked until it is (see the top bar). Reading stays open.");
+    } else if (s.assignee && !s.assignee.me) {
+      tone = "blocked";
+      lines.push(`Only ${s.assignee.name} can edit this account - you can still read it.`);
     } else if (s.state === "other" || s.state === "lost") {
       tone = "blocked";
       lines.push(`${s.holder?.name || "A colleague"} is updating this account (since ${timeText(s.holder?.since)}). You can read it; changes are possible again when ${s.holder?.name || "they"} ${s.holder?.name ? "is" : "are"} done.`);
@@ -94,8 +107,14 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
       const n = s.aside.changes;
       lines.push(`${s.aside.lostTo || "A colleague"} started on this account a few seconds before you - your ${n} change${n === 1 ? " was" : "s were"} kept aside (${timeText(s.aside.at)}), not sent to the team.`);
     }
-    if (!lines.length) { notice.hidden = true; return; }
-    notice.classList.add(`team-claim-${tone}`);
+    if (s.assignLost) {
+      tone = tone || "aside";
+      lines.push(s.assignLost.forMe
+        ? `${s.assignLost.winner} assigned this account to themselves a few seconds before you - it is theirs.`
+        : `${s.assignLost.winner} was assigned this account a few seconds before ${s.assignLost.to} - it stays with ${s.assignLost.winner}.`);
+    }
+    if (tone) notice.classList.add(`team-claim-${tone}`);
+    notice.appendChild(assignmentRow(s));
     for (const text of lines) {
       const p = document.createElement("p");
       p.textContent = text;
@@ -118,12 +137,63 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
     notice.hidden = false;
   }
 
-  async function act(type) {
+  async function act(type, extra = {}) {
     if (!key || busy) return;
     busy = true;
+    refusal = "";
     paint();
-    try { status = await send({ type, key }); } catch { /* repainted below */ } finally { busy = false; }
+    try {
+      const r = await send({ type, key, ...extra });
+      status = r;
+      if (r && r.ok === false) refusal = REFUSALS[r.reason] || "That did not go through - try again in a moment.";
+    } catch { refusal = "That did not go through - try again in a moment."; } finally { busy = false; }
     paint();
+  }
+
+  // Step 5 (design 7, R6.1, R6.4): "Assigned to Anna since 3 Oct" / "Unassigned", and what this member may do.
+  function assignmentRow(s) {
+    const row = document.createElement("div");
+    row.className = "team-assign-row";
+    const label = document.createElement("span");
+    label.className = "team-assign-label";
+    const a = s.assignee;
+    if (!a) label.textContent = "Unassigned";
+    else if (a.me) label.textContent = `Assigned to you since ${timeText(a.since)}`; // at once - a lost race is told below
+    else label.textContent = `Assigned to ${a.name} since ${timeText(a.since)}`;
+    row.appendChild(label);
+    const usable = s.inSync;
+    const colleagueBusy = s.state === "other" || s.state === "lost";
+    if (!a) {
+      row.appendChild(button("Assign to me", () => act("TEAM_ASSIGN"), { disabled: !usable || colleagueBusy }));
+    } else if (a.me || s.admin) {
+      row.appendChild(button(a.me ? "Release" : `Release (unassign ${a.name})`, () => act("TEAM_UNASSIGN"), { secondary: true, disabled: !usable }));
+    }
+    if (s.admin && Array.isArray(s.team) && s.team.length > 1) {
+      const sel = document.createElement("select");
+      sel.className = "team-reassign";
+      sel.disabled = !usable || colleagueBusy || busy;
+      const first = document.createElement("option");
+      first.value = "";
+      first.textContent = a ? "Reassign to…" : "Assign to…";
+      sel.appendChild(first);
+      for (const m of s.team) {
+        if (a && m.id === a.id) continue;
+        const o = document.createElement("option");
+        o.value = m.id;
+        o.textContent = m.id === s.team[0].id ? `${m.name} (you)` : m.name;
+        sel.appendChild(o);
+      }
+      sel.addEventListener("change", () => { if (sel.value) act("TEAM_ASSIGN", { to: sel.value }); });
+      row.appendChild(sel);
+    }
+    if (s.assignLost) row.appendChild(button("OK", () => act("TEAM_ASSIGN_DISMISS"), { secondary: true }));
+    if (refusal) {
+      const hint = document.createElement("span");
+      hint.className = "field-hint";
+      hint.textContent = refusal;
+      row.appendChild(hint);
+    }
+    return row;
   }
 
   async function refresh() {

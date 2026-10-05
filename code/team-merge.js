@@ -325,14 +325,20 @@ export function retractChanges(state, records, prior = {}) {
 // assignment wins (two members assigning within seconds: the earlier keeps it).
 
 export function assignee(state, e, id) {
+  return activeAssignments(state, e, id)[0] || null;
+}
+
+// Every active assignment, earliest first: [{ member, since, sinceWall }]. Only the first counts; a later one is a
+// member who lost a race and has not withdrawn yet (team-sync withdraws it).
+export function activeAssignments(state, e, id) {
   const rec = getRecord(state, e, id);
-  if (!rec) return null;
-  let best = null;
+  if (!rec) return [];
+  const out = [];
   for (const [member, stamps] of Object.entries(rec.as)) {
     const start = activeStart(stamps, rec.ua[member]);
-    if (start && (!best || start < best.since)) best = { member, since: start, sinceWall: stampWall(start) };
+    if (start) out.push({ member, since: start, sinceWall: stampWall(start) });
   }
-  return best;
+  return out.sort((a, b) => compareStamps(a.since, b.since));
 }
 
 // --------------------------------------------------------------------------

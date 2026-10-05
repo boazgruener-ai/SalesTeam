@@ -9,6 +9,7 @@ import { researchAccountOnWeb, sanitizeApiKey, apiBlockedReason } from "./agent-
 import { computeFindingProposals } from "./web-research-apply.js";
 import { acquireBatch, BULK_STATE_KEY } from "./batch-jobs.js";
 import { isRateLimited, backoffDelayMs, MAX_RATE_LIMITS_IN_A_ROW } from "./rate-limit.js";
+import { teamWorkGate, claimAccount, releaseAccount } from "./team-sync.js";
 // Accounts researched at a time. Measured throughput is ~18s per account per worker, so this is
 // the main lever on how long a big run takes. Raising it also raises the chance of an HTTP 429
 // from the Anthropic API - which pauses every worker and retries the account (see the catch below).
@@ -16,8 +17,15 @@ const WORKERS = 4;
 
 let runner = null; // { stop(reason) }
 
-export async function startBulkResearch({ items, budget, autofill }) {
+export async function startBulkResearch({ items: chosen, budget, autofill }) {
   if (runner) throw new Error("A bulk web research is already running.");
+  // Team use 1.2.2 step 5 (R6.2): a colleague's accounts (assigned, or being updated) are left out; each account is
+  // claimed while it is researched, so colleagues see it.
+  const gate = await teamWorkGate().catch(() => null);
+  if (gate && !gate.connected) throw new Error("The team folder is not connected on this PC (or not in sync) - in a team, web research runs only while colleagues can see what it works on.");
+  const items = gate ? chosen.filter((item) => !gate.offLimits(item.key)) : chosen;
+  const skippedTeam = chosen.length - items.length;
+  if (items.length === 0) throw new Error(`Nothing to research - ${chosen.length === 1 ? "the chosen account belongs" : `all ${chosen.length} chosen accounts belong`} to a colleague (assigned, or being updated right now).`);
   // Backstop for the dialog's own check: no key means every account would fail at once, so do not start at all.
   if (!sanitizeApiKey((await getAnthropicApiKey()) || "")) throw new Error("Add your Anthropic API key first (Settings > Anthropic API Key) - web research runs on your own key.");
   const label = `Web research of ${items.length} account${items.length === 1 ? "" : "s"}`;
@@ -25,6 +33,8 @@ export async function startBulkResearch({ items, budget, autofill }) {
   const state = {
     status: "running", label, total: items.length, done: 0, failed: 0, spent: 0, runningKeys: [], stoppedReason: null,
     filled: 0, initiatives: 0, toReview: 0, lastError: null, budget: budget || 0, startedAt: Date.now(), heartbeatAt: Date.now(),
+    skippedTeam, // left out before the start: a colleague's accounts
+
     pausedUntil: null, // set while the run waits out an Anthropic rate limit (batch-status.js shows it)
     finishedAt: null, acknowledged: false,
   };
@@ -39,7 +49,7 @@ export async function startBulkResearch({ items, budget, autofill }) {
       for (const c of controllers.values()) c.abort();
     },
   };
-  run(items, { autofill: !!autofill, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r), release }).catch(() => {});
+  run(items, { autofill: !!autofill, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r), release, team: Boolean(gate) }).catch(() => {});
   return { ok: true };
 }
 
@@ -48,9 +58,10 @@ export function stopBulkResearch() {
   return { ok: !!runner };
 }
 
-async function run(items, { autofill, state, save, controllers, isStopping, stop, release }) {
+async function run(items, { autofill, state, save, controllers, isStopping, stop, release, team }) {
   // Keeps the background worker awake, and the "still alive" stamp fresh for the pages.
   let beat = 0;
+  let skippedInRun = 0; // team: a colleague took the account after the start
   const keepAlive = setInterval(() => {
     chrome.storage.local.get("keepAlive").catch(() => {});
     if (++beat % 4 === 0) save();
@@ -92,6 +103,9 @@ async function run(items, { autofill, state, save, controllers, isStopping, stop
         const wb = await getTargetAccountsWorkbook();
         const company = (wb.companies || []).find((c) => normalizeCompanyName(c.company) === item.key);
         if (!company) { state.done++; continue; }
+        // In a team: claimed first; one a colleague took since the start is skipped (counted as done).
+        const claimed = team ? await claimAccount(item.key, { kind: "research" }).catch(() => ({ ok: false })) : { ok: true };
+        if (!claimed.ok) { state.done++; state.skippedTeam = (state.skippedTeam || 0) + 1; skippedInRun++; await save(); continue; }
         const own = new AbortController();
         controllers.set(item.key, own);
         state.runningKeys = [...state.runningKeys, item.key];
@@ -144,6 +158,7 @@ async function run(items, { autofill, state, save, controllers, isStopping, stop
           if (blocked) stop(blocked);
           else if (consecutiveFailures >= 3 || [401, 402, 403].includes(err.status)) stop("errors");
         } finally {
+          if (team && !requeued) await releaseAccount(item.key).catch(() => {});
           controllers.delete(item.key);
           state.runningKeys = state.runningKeys.filter((k) => k !== item.key);
           if (!requeued) state.done++;
@@ -165,10 +180,11 @@ async function run(items, { autofill, state, save, controllers, isStopping, stop
     await save();
     await release();
     runner = null;
-    const completed = state.done - state.failed;
+    const completed = state.done - state.failed - skippedInRun;
     try {
       const spentText = `$${state.spent.toFixed(2)}`;
-      const got = `${completed} of ${state.total} accounts were researched (about ${spentText} spent on your own Anthropic API key)`;
+      const teamNote = state.skippedTeam ? `; ${state.skippedTeam} left out - a colleague's account` : "";
+      const got = `${completed} of ${state.total} accounts were researched (about ${spentText} spent on your own Anthropic API key${teamNote})`;
       const label = state.stoppedReason === "credit"
         ? `Web research stopped - your Anthropic API credit balance is empty. ${got}. Add credits in the Anthropic Console under Plans & Billing, then start the research again - everything found so far is saved.`
         : state.stoppedReason === "limit"

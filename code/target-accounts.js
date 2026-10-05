@@ -15,7 +15,7 @@
 // moved here from Settings the same day.
 import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
-import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { askConfirm, askChoice, mirrorStatusToPopup, showNotice } from "./confirm-dialog.js";
 import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
@@ -124,6 +124,7 @@ import {
 } from "./agent-shared.js";
 import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
+import { teamAccounts } from "./team-accounts-ui.js";
 
 const emptyStateEl = document.getElementById("empty-state");
 const controlsEl = document.getElementById("explorer-controls");
@@ -1133,7 +1134,8 @@ function matchesColumnFilters(company) {
 function sortedFilteredCompanies() {
   const query = searchInputEl.value.trim().toLowerCase();
   const sortCol = COMPANY_COLUMNS.find((c) => c.id === sortField);
-  const filtered = workbook.companies.filter((c) => matchesGlobalSearch(c, query) && matchesColumnFilters(c));
+  const filtered = workbook.companies.filter((c) => matchesGlobalSearch(c, query) && matchesColumnFilters(c)
+    && teamAccounts.ownerFilter(normalizeCompanyName(c.company), teamOwnerFilter));
   if (sortCol) {
     filtered.sort((a, b) => {
       const va = sortValue(a, sortCol);
@@ -1708,6 +1710,9 @@ function renderBulkBar(scope) {
   const noun = (count) => scope === "accounts" ? (count === 1 ? "account" : "accounts") : (count === 1 ? "contact" : "contacts");
   bar.hidden = n === 0;
   countEl.textContent = `${n} ${noun(n)} selected`;
+  if (scope === "accounts") {
+    for (const id of ["accounts-bulk-assign-btn", "accounts-bulk-release-btn"]) document.getElementById(id).hidden = !teamAccounts.inTeam();
+  }
   if (!extendEl) return;
 
   // Gmail's second step. Offered only once this page is fully ticked and the filter actually reaches
@@ -1800,6 +1805,16 @@ function buildBulkPatch(scope, key, { status, priority, dueMode, dueMs, remove }
 }
 
 document.getElementById("accounts-bulk-edit-btn").addEventListener("click", () => openBulkEditDialog("accounts"));
+for (const [id, type] of [["accounts-bulk-assign-btn", "TEAM_ASSIGN"], ["accounts-bulk-release-btn", "TEAM_UNASSIGN"]]) {
+  document.getElementById(id).addEventListener("click", async () => {
+    const keys = [...selectionSet("accounts")];
+    // Release only touches accounts that are assigned at all - the rest would count as "released" for nothing.
+    const work = type === "TEAM_UNASSIGN" ? keys.filter((k) => teamAccounts.entry(k)?.a) : keys.filter((k) => !teamAccounts.entry(k)?.a || teamAccounts.offLimits(k));
+    if (!work.length) { showNotice(type === "TEAM_ASSIGN" ? "Nothing to do - every selected account is already assigned to you." : "Nothing to do - none of the selected accounts is assigned."); return; }
+    await teamAssignKeys(work, type);
+    clearSelection("accounts");
+  });
+}
 document.getElementById("contacts-bulk-edit-btn").addEventListener("click", () => openBulkEditDialog("contacts"));
 document.getElementById("accounts-bulk-clear-btn").addEventListener("click", () => clearSelection("accounts"));
 document.getElementById("contacts-bulk-clear-btn").addEventListener("click", () => clearSelection("contacts"));
@@ -1845,9 +1860,19 @@ document.getElementById("bulk-edit-apply-btn").addEventListener("click", async (
   ))) return;
 
   const dueMs = dueValue ? new Date(`${dueValue}T00:00:00`).getTime() : null;
+  // Team use 1.2.2 step 5 (R6.2): a colleague's accounts (and their contacts) are skipped, and said so.
+  const accountKeyOf = (key) => (scope === "accounts" ? key : String(key).split("::")[0]);
+  const offLimitsKeys = keys.filter((key) => teamAccounts.offLimits(accountKeyOf(key)));
+  if (offLimitsKeys.length === keys.length) {
+    statusEl.textContent = teamAccounts.offLimits(accountKeyOf(keys[0]))?.reason === "offline"
+      ? teamAccounts.offLimits(accountKeyOf(keys[0])).text
+      : "Nothing changed - every selected row belongs to a colleague's account.";
+    return;
+  }
   const patchByKey = {};
-  for (const key of keys) patchByKey[key] = buildBulkPatch(scope, key, { status, priority, dueMode, dueMs, remove });
+  for (const key of keys) if (!offLimitsKeys.includes(key)) patchByKey[key] = buildBulkPatch(scope, key, { status, priority, dueMode, dueMs, remove });
   const changed = await bulkPatchExtras(scope, patchByKey);
+  if (offLimitsKeys.length) showNotice(`${changed} changed; ${offLimitsKeys.length} skipped - ${offLimitsKeys.length === 1 ? "it belongs" : "they belong"} to a colleague's account (assigned, or being updated right now).`);
 
   const parts = [];
   if (status) parts.push(status === "__auto__" ? "status back to auto from leads" : `status to ${status}`);
@@ -2088,12 +2113,82 @@ function onContactFiltersChanged() {
   renderContactsTable();
 }
 
+// --------------------------------------------------------------------------
+// Team use 1.2.2 step 5 (TEAM_USE_DESIGN.md 7): badges, the owner filter, off-limits row actions, bulk assign
+// --------------------------------------------------------------------------
+const TEAM_OWNER_FILTER_STORAGE_KEY = "salesteam-team-owner-filter"; // per browser profile = per member
+let teamOwnerFilter = (() => { try { return localStorage.getItem(TEAM_OWNER_FILTER_STORAGE_KEY) || "all"; } catch { return "all"; } })();
+
+function appendTeamBadge(td, companyKey) {
+  const badge = teamAccounts.badge(companyKey);
+  if (badge) td.appendChild(badge);
+}
+
+// Menu items marked `change` are disabled on a colleague's account, with the reason as their tooltip.
+function offLimitsItems(companyKey, items) {
+  const off = teamAccounts.offLimits(companyKey);
+  if (!off) return items;
+  return items.map((item) => (item.change ? { ...item, disabled: true, title: off.text } : item));
+}
+
+function teamAssignMenuItems(companyKey) {
+  if (!teamAccounts.inTeam()) return [];
+  const e = teamAccounts.entry(companyKey);
+  const mine = e?.a && e.a === teamAccounts.me();
+  if (!e?.a) {
+    const off = teamAccounts.offLimits(companyKey);
+    return [{ label: "Assign to me", disabled: Boolean(off), title: off?.text, onClick: () => teamAssignKeys([companyKey], "TEAM_ASSIGN") }];
+  }
+  if (mine || teamAccounts.isAdmin()) return [{ label: mine ? "Release" : "Release (unassign)", onClick: () => teamAssignKeys([companyKey], "TEAM_UNASSIGN") }];
+  return [];
+}
+
+const TEAM_REFUSAL_TEXT = {
+  offline: "the team folder is not connected on this PC", not_in_sync: "not in sync with the team",
+  held: "a colleague is updating it", assigned: "a colleague already has it", not_admin: "only the Team Admin can release a colleague's account",
+};
+
+// Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
+async function teamAssignKeys(keys, type) {
+  let done = 0;
+  const refused = {};
+  for (const key of keys) {
+    let r = null;
+    try { r = await chrome.runtime.sendMessage({ type, key }); } catch { /* counted as refused */ }
+    if (r && r.ok !== false) done++;
+    else { const why = r?.reason || "offline"; refused[why] = (refused[why] || 0) + 1; }
+  }
+  const verb = type === "TEAM_ASSIGN" ? "assigned to you" : "released";
+  const skipped = Object.entries(refused).map(([why, n]) => `${n} not (${TEAM_REFUSAL_TEXT[why] || why})`).join(", ");
+  if (keys.length > 1 || skipped) {
+    showNotice(`${done} account${done === 1 ? "" : "s"} ${verb}${skipped ? `; ${skipped}` : ""}.`, { error: done === 0 });
+  }
+  appendActivityLog({ actor: "user", action: type === "TEAM_ASSIGN" ? "team_assigned" : "team_released", label: `${done} account${done === 1 ? "" : "s"} ${verb}` });
+}
+
+function paintTeamOwnerFilter() {
+  const el = document.getElementById("team-owner-filter");
+  if (!el) return;
+  el.hidden = !teamAccounts.inTeam();
+  for (const b of el.querySelectorAll("button")) b.classList.toggle("active", b.dataset.owner === teamOwnerFilter);
+}
+document.getElementById("team-owner-filter")?.addEventListener("click", (event) => {
+  const b = event.target.closest("button[data-owner]");
+  if (!b) return;
+  teamOwnerFilter = b.dataset.owner;
+  try { localStorage.setItem(TEAM_OWNER_FILTER_STORAGE_KEY, teamOwnerFilter); } catch { /* remembered for this visit only */ }
+  paintTeamOwnerFilter();
+  onAccountFiltersChanged();
+});
+
 function renderTable() {
+  paintTeamOwnerFilter();
   const companies = sortedFilteredCompanies();
   const accountChips = tableFilterChips(searchInputEl, columnFilters, COMPANY_COLUMNS);
   renderFilterChipsBar(document.getElementById("accounts-active-filters-bar"), accountChips, onAccountFiltersChanged,
     () => clearTableFilters(searchInputEl, columnFilters));
-  resultCountEl.textContent = `${companies.length} of ${workbook.companies.length} companies`;
+  const ownerNote = teamAccounts.inTeam() && teamOwnerFilter !== "all" ? ` (${{ mine: "assigned to you", others: "assigned to colleagues", unassigned: "unassigned" }[teamOwnerFilter] || "all"} only)` : "";
+  resultCountEl.textContent = `${companies.length} of ${workbook.companies.length} companies${ownerNote}`;
   const cols = visibleColumns();
 
   const totalPages = Math.max(1, Math.ceil(companies.length / pageSize));
@@ -2143,21 +2238,24 @@ function renderTable() {
     for (const column of cols) {
       const td = document.createElement("td");
       renderCellContent(td, company, column);
+      if (column.id === "company") appendTeamBadge(td, companyKey);
       tr.appendChild(td);
     }
 
     // Offered only when the row actually has open findings - a permanently visible entry that does
     // nothing on most rows teaches the user to ignore the menu.
     const openFindingCount = annotatedProposals(company, accountExtras[companyKey] || {}).filter((p) => !p.dismissed).length;
-    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `account-${companyKey}`, [
+    // Team use 1.2.2 step 5 (R6.2): a colleague's account (assigned, or being updated) opens for reading only.
+    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `account-${companyKey}`, offLimitsItems(companyKey, [
       { label: "Open", onClick: () => openAccount(companyKey) },
       ...(openFindingCount > 0
-        ? [{ label: `Review web findings (${openFindingCount})…`, onClick: () => reviewFindingsFromTable(companyKey) }]
+        ? [{ label: `Review web findings (${openFindingCount})…`, change: true, onClick: () => reviewFindingsFromTable(companyKey) }]
         : []),
-      { label: "Edit", onClick: () => { pendingAccountEditKey = companyKey; openAccount(companyKey); } },
-      { label: "Merge…", onClick: () => openMergeAccountsDialog(companyKey) },
-      { label: "Remove", danger: true, onClick: () => removeAccount(companyKey, company.company) },
-    ]));
+      { label: "Edit", change: true, onClick: () => { pendingAccountEditKey = companyKey; openAccount(companyKey); } },
+      { label: "Merge…", change: true, onClick: () => openMergeAccountsDialog(companyKey) },
+      ...teamAssignMenuItems(companyKey),
+      { label: "Remove", danger: true, change: true, onClick: () => removeAccount(companyKey, company.company) },
+    ])));
 
     tr.addEventListener("click", (event) => {
       if (event.target.closest("a") || event.target.closest(".long-text-cell") || event.target.closest(".kebab-btn") || event.target.closest(".select-cell") || event.target.closest(".findings-review-link")) return;
@@ -2608,17 +2706,20 @@ function renderContactsTable() {
     }
     tr.appendChild(flagTd);
 
+    const contactCompanyKey = normalizeCompanyName(contact.company || "");
     for (const column of cols) {
       const td = document.createElement("td");
       renderCellContent(td, contact, column);
+      if (column.id === "company") appendTeamBadge(td, contactCompanyKey);
       tr.appendChild(td);
     }
 
-    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `contact-${contactKey}`, [
+    // Team use 1.2.2 step 5: a contact is its account's - a colleague's account's contacts are read-only.
+    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `contact-${contactKey}`, offLimitsItems(contactCompanyKey, [
       { label: "Open", onClick: () => openContact(contactKey) },
-      { label: "Edit", onClick: () => { pendingContactEditKey = contactKey; openContact(contactKey); } },
-      { label: "Remove", danger: true, onClick: () => removeContact(contactKey, contact.fullName) },
-    ]));
+      { label: "Edit", change: true, onClick: () => { pendingContactEditKey = contactKey; openContact(contactKey); } },
+      { label: "Remove", danger: true, change: true, onClick: () => removeContact(contactKey, contact.fullName) },
+    ])));
 
     tr.addEventListener("click", (event) => {
       if (event.target.closest("a") || event.target.closest(".long-text-cell") || event.target.closest(".kebab-btn") || event.target.closest(".select-cell")) return;
@@ -6818,6 +6919,12 @@ async function init() {
   if (hiddenColumns.has(sortField)) sortField = "salesTeamPriorityScore";
   loadContactHiddenColumns();
   loadContactFilterSortState();
+  await teamAccounts.ready();
+  // Assignments and claims arrive from the team in the background: repaint the lists' badges and filter.
+  teamAccounts.onChange(() => {
+    if (!listViewEl.hidden) renderTable();
+    if (!contactsListViewEl.hidden) renderContactsTable();
+  });
   await loadWorkbook();
   await route();
   openActionFromHash();

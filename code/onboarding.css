@@ -880,3 +880,11 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 #finish-findings { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3e8ef; }
 #finish-findings-rules .checkbox-label { display: block; margin: 4px 0; font-size: 13px; }
 .wizard-step-list-group { flex-basis: 100%; margin: 8px 0 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gray); }
+
+/* Team use 1.2.2 step 5 (D3): a member sees the shared setup read-only (their own name, key and language stay open). */
+.team-member-setup-note { background: #fff4e0; border: 2px solid #b26a00; color: #7a4800; font-weight: 600; }
+.team-member-readonly .wizard-step :is(input, select, textarea, button, [contenteditable], label, .chip, .proposal-slot):not(.team-member-own):not(.team-member-own *) {
+  pointer-events: none;
+}
+.team-member-readonly .wizard-step :is(input, select, textarea):not(.team-member-own):not(.team-member-own *) { opacity: 0.6; }
+.team-member-readonly .wizard-step button:not(.team-member-own *) { opacity: 0.5; }
