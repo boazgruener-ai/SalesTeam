@@ -84,15 +84,20 @@ export async function getTeamFolder() {
   }
 }
 
+export async function saveTeamFolder(handle) {
+  await tx(HANDLES, "readwrite", (s) => { s.put(handle, FOLDER_KEY); });
+}
+
 export async function clearTeamFolder() {
   await tx(HANDLES, "readwrite", (s) => { s.delete(FOLDER_KEY); });
 }
 
-// Page only, from a click. Resolves to the handle, or null if the user cancelled the picker.
-export async function pickTeamFolder() {
+// Page only, from a click. Resolves to the handle, or null if the user cancelled the picker. `save: false` leaves the
+// stored folder as it is (Settings > Team checks the folder first and saves it with saveTeamFolder).
+export async function pickTeamFolder({ save = true } = {}) {
   try {
     const handle = await window.showDirectoryPicker({ id: "salesteam-team", mode: "readwrite", startIn: "documents" });
-    await tx(HANDLES, "readwrite", (s) => { s.put(handle, FOLDER_KEY); });
+    if (save) await saveTeamFolder(handle);
     return handle;
   } catch (err) {
     if (err && err.name === "AbortError") return null;

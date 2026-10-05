@@ -610,3 +610,17 @@ textarea {
 #profile-about-you-note button { margin-top: 8px; }
 #seller-research-offer { margin: 0 0 16px; padding: 12px 16px; background: #eef4fb; border: 1px solid #9cc0e8; border-left: 4px solid #1155cc; border-radius: 8px; font-size: 13px; line-height: 1.5; max-width: 900px; }
 #seller-research-offer p { margin: 0 0 8px; }
+
+/* Settings > Team (1.2.2 step 3, team-ui.js) */
+#team-section input[type="text"] { display: block; width: 100%; max-width: 360px; box-sizing: border-box; margin-bottom: 10px; }
+.team-steps { margin: 8px 0 14px; padding-left: 22px; font-size: 13px; line-height: 1.55; }
+.team-steps li { margin-bottom: 4px; }
+.team-warning { margin: 6px 0 10px; padding: 10px 14px; background: #fff4e5; border: 1px solid #f0c48a; border-radius: 8px; font-size: 12.5px; line-height: 1.5; }
+.team-status { white-space: pre-line; }
+.team-status.team-error { color: #b3261e; font-weight: 600; }
+.settings-buttons-row button.team-primary-btn { background: #1155cc; border-color: #1155cc; color: #fff; }
+.settings-buttons-row button.team-primary-btn:disabled { background: #9db6e0; border-color: #9db6e0; cursor: default; }
+#team-member-who { font-weight: 600; margin: 0 0 4px; }
+#team-members-table { border-collapse: collapse; font-size: 12.5px; margin: 4px 0 14px; }
+#team-members-table td { border-bottom: 1px solid #e3e8ef; padding: 5px 14px 5px 0; }
+#team-members-table tr.team-members-head td { font-weight: 600; color: var(--gray-light); }

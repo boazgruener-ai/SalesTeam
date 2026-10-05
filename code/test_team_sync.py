@@ -94,7 +94,9 @@ var ROOT = { root: true };
 function teamDbGetAll(keys) { var out = {}; keys.forEach(function (k) { out[k] = clone(DB[k]); }); return Promise.resolve(out); }
 function teamDbPutAll(entries) { Object.keys(entries).forEach(function (k) { DB[k] = clone(entries[k]); }); return Promise.resolve(); }
 function teamDbClear() { DB = {}; return Promise.resolve(); }
+var FOLDER_CLEARED = false;
 function getTeamFolder() { return Promise.resolve(ROOT); }
+function clearTeamFolder() { FOLDER_CLEARED = true; return Promise.resolve(); }
 function teamFolderPermission() { return Promise.resolve('granted'); }
 function pathOf(parts, name) { return parts.concat([name]).join('/'); }
 function readTeamJson(root, parts, name) {
@@ -341,6 +343,12 @@ def main():
     check("status: Ben sees Anna", [m["name"] for m in st["members"]], ["Anna"])
     check("status: Ben has read everything Anna wrote", st["members"][0]["cursor"], anna.status()["lastWrittenN"])
     check("status: comparison cost is measured", any(x["kind"] == "diff" for x in st["measures"]), True)
+    # Step 3 (Settings > Team): roles, online, what joining does to the setup.
+    check("status: Ben sees Anna as Team Admin", st["members"][0]["admin"], True)
+    check("status: Anna counts as online (written just now)", (st["members"][0]["online"], st["online"]), (True, 1))
+    check("status: a good round is remembered, no error", (st["lastOkAt"] > 0, st["errorSince"], st["lastError"]), (True, 0, None))
+    check("join: Ben's setup counts as done (it came with the team)", bool(ben.local("onboardingCompletedAt")), True)
+    check("status: Anna sees Ben as a member, not an admin", [m["admin"] for m in anna.status()["members"]], [False])
 
     # 9. Eight days later Anna compacts; a new member still gets the full picture.
     anna.e("NOW += 8 * 24 * 3600 * 1000; DB.meta.lastCompactDay = null; if (mem) mem.meta.lastCompactDay = null;")
@@ -358,6 +366,15 @@ def main():
     check("compact: Cleo joining after compaction has the same picture as Anna",
           same({k: v for k, v in picture(cleo).items() if k != "results"}, {k: v for k, v in picture(anna).items() if k != "results"}), True)
     check("compact: ... and as Ben", same(picture(cleo), picture(ben)), True)
+
+    # 10. Cleo leaves: sync stops, her data stays, the folder is forgotten on her PC, her files stay in the folder.
+    me = cleo.status()["me"]["memberId"]
+    r, folder = cleo.call("leaveTeam()", folder)
+    check("leave: ok", r, {"ok": True})
+    check("leave: no longer a member", cleo.status(), {"member": False})
+    check("leave: her data stays", same(picture(cleo)["targetAccounts"], picture(ben)["targetAccounts"]), True)
+    check("leave: the team folder is forgotten on her PC", cleo.e("FOLDER_CLEARED"), True)
+    check("leave: her files stay in the folder", any(p.startswith("members/%s/" % me) for p in folder), True)
 
     print()
     for f in _failures:

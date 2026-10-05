@@ -4,6 +4,7 @@
 import { askConfirm } from "./confirm-dialog.js";
 import { BULK_STATE_KEY, getRunningBatch } from "./batch-jobs.js";
 import { initPipelineStatus } from "./pipeline-status.js";
+import { initTeamBar } from "./team-ui.js";
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 import { WEB_LANE_STATE_KEY, measureShortText } from "./web-lane.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryShortText } from "./discovery-report.js";
@@ -108,6 +109,7 @@ export async function initBatchStatus(changed) {
   if (window.self !== window.top) return; // an embedded page: the page around it already shows the bar and the pop-up
   onChange = changed || null;
   initPipelineStatus(); // the data pipeline's status in the top bar, on the same pages
+  initTeamBar(); // 1.2.2: "Click to reconnect to the team folder" / "Not in sync" - only for a team member
   const read = async () => (await chrome.storage.local.get(BULK_STATE_KEY))[BULK_STATE_KEY] || null;
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes[BULK_STATE_KEY]) render(changes[BULK_STATE_KEY].newValue || null);

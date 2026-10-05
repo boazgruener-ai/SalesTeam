@@ -14,8 +14,10 @@ import { workbookCsvFiles, leadsToCsv } from "./csv-export.js";
 import { withAccountWriteLock } from "./storage.js";
 
 // Never written to a backup file: the API key (a backup is plain text - re-enter it after a reinstall),
-// this feature's own bookkeeping, transient scan state, and a re-derivable cache.
-const EXCLUDED_EXACT = new Set(["anthropicApiKey", "lastAutoBackupAt", "lastBackupInfo", "scanAbortRequested", "companyLocationSizeCache"]);
+// this feature's own bookkeeping, transient scan state, and a re-derivable cache. teamMembership (1.2.2) belongs with
+// the team's sync state in IndexedDB and the folder permission, neither of which a backup holds - restoring it alone
+// would make a browser believe it is a team member it no longer is.
+const EXCLUDED_EXACT = new Set(["anthropicApiKey", "lastAutoBackupAt", "lastBackupInfo", "scanAbortRequested", "companyLocationSizeCache", "teamMembership"]);
 const EXCLUDED_PREFIXES = ["currentScan", "currentJobScan"];
 
 // category id -> { label, detail, keys | test }. A stored key belongs to the first category that claims

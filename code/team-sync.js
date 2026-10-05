@@ -18,7 +18,7 @@ import { TEAM_SHARED_KEYS, isTeamSharedKey } from "./team-keys.js";
 import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchValue, rowTarget, rowKey, splitRowKey, canonicalRow } from "./team-rows.js";
 import { newState, applyChange, createClock, tick, observe, formatStamp, compactChanges } from "./team-merge.js";
 import {
-  teamDbGetAll, teamDbPutAll, teamDbClear, getTeamFolder, teamFolderPermission,
+  teamDbGetAll, teamDbPutAll, teamDbClear, getTeamFolder, clearTeamFolder, teamFolderPermission,
   readTeamJson, writeTeamJson, listTeamNames, removeTeamFile, listTeamFolderTop,
 } from "./team-folder.js";
 
@@ -34,6 +34,7 @@ const MAX_RECORDS_PER_FILE = 5000;
 const MAX_FILES_PER_ROUND = 300;
 const CLOBBER_WINDOW_MS = 15000;
 const MEASURES_KEPT = 30;
+const ONLINE_MS = 3 * 60000; // a colleague with a SalesTeam page open writes at least once a minute
 
 let membership = null;      // { memberId, name, teamId, teamName, role, joinedAt } or null
 let membershipLoaded = false;
@@ -45,6 +46,8 @@ let tickTimer = null;
 let ticking = false;
 let lastError = null;
 let folderState = "none";   // "none" | "granted" | "prompt" | "denied" | "error"
+let lastOkAt = 0;           // last folder round that went through (step 3: "not in sync" is judged from it)
+let errorSince = 0;         // first failed round since the last good one
 // Rows this layer just wrote into local storage: { before, after, at }. A writer outside the account lock that
 // read the map before our write and saved it after would put the OLD row back; seen within a few seconds, that
 // is undone (the row is written again) instead of being sent to the team as a change.
@@ -70,7 +73,7 @@ async function loadMembership() {
 
 function emptyMeta() {
   return {
-    nextN: 1, lastWrittenN: 0, clockLast: null, cursors: {}, lastFileWall: {}, hb: {}, profiles: {},
+    nextN: 1, lastWrittenN: 0, clockLast: null, cursors: {}, lastFileWall: {}, hb: {}, profiles: {}, admins: [],
     basesApplied: [], ownFiles: [], snapN: 0, lastFlushAt: 0, lastReadAt: 0, lastHeartbeatAt: 0,
     lastCompactDay: null, measures: [],
   };
@@ -242,6 +245,8 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
   const meta = mem.meta;
   const records = [];
   const update = { cursors: {}, lastFileWall: {}, hb: {}, profiles: {}, basesApplied: [], files: 0, bytes: 0 };
+  update.admins = (await listTeamNames(root, ["admins"], "file"))
+    .map((n) => (/^(.+)\.json$/.exec(n) || [])[1]).filter(Boolean);
   for (const name of await listTeamNames(root, ["base"], "file")) {
     if (meta.basesApplied.includes(name)) continue;
     const r = await readTeamJson(root, ["base"], name);
@@ -296,6 +301,7 @@ function commitReadUpdate(update) {
   Object.assign(meta.hb, update.hb);
   Object.assign(meta.profiles, update.profiles);
   meta.basesApplied = [...new Set([...meta.basesApplied, ...update.basesApplied])];
+  if (update.admins) meta.admins = update.admins;
   meta.lastReadAt = Date.now();
 }
 
@@ -426,9 +432,12 @@ export async function runTick(reason = "alarm") {
     }
     await enqueue(() => save([]));
     lastError = null;
+    lastOkAt = Date.now();
+    errorSince = 0;
     return { ok: true };
   } catch (err) {
     lastError = `${reason}: ${errText(err)}`;
+    if (!errorSince) errorSince = Date.now();
     folderState = folderState === "granted" ? "error" : folderState;
     return { ok: false, error: lastError };
   } finally {
@@ -500,8 +509,11 @@ export function createTeam({ name, teamName }) {
     measure({ kind: "create", records: base.length, bytes: w.bytes, ms: Math.round(performance.now() - t0) });
     await save(["state", "shadow", "outbox", "inflight"]);
     await setMembership(m);
+    lastOkAt = Date.now();
+    errorSince = 0;
+    lastError = null;
     await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 });
-    return { ok: true, memberId, records: base.length, bytes: w.bytes };
+    return { ok: true, memberId, records: base.length, bytes: w.bytes, counts: localCounts(values) };
   });
 }
 
@@ -544,11 +556,26 @@ export function joinTeam({ name }) {
     });
     await writeProfile(root, m);
     await heartbeat(root, memberId);
+    // The seller setup came with the team (it is shared), so this member does not walk the Setup wizard - only the
+    // personal parts (API key, User Profile) are theirs to fill in. Live test of step 2: without this, every page
+    // showed "complete your setup" after joining.
+    if (!(await chrome.storage.local.get("onboardingCompletedAt")).onboardingCompletedAt) {
+      await chrome.storage.local.set({ onboardingCompletedAt: Date.now() });
+    }
     measure({ kind: "join", files: update.files, bytes: update.bytes, records: records.length, ms: Math.round(performance.now() - t0) });
     await save([]);
+    lastOkAt = Date.now();
+    errorSince = 0;
+    lastError = null;
     await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 });
-    return { ok: true, memberId, files: update.files, records: records.length };
+    const after = await chrome.storage.local.get(["targetAccountsWorkbook", "results"]);
+    return { ok: true, memberId, files: update.files, records: records.length, counts: localCounts(after) };
   });
+}
+
+function localCounts(values) {
+  const wb = values.targetAccountsWorkbook || {};
+  return { accounts: (wb.companies || []).length, contacts: (wb.contacts || []).length, leads: Object.keys(values.results || {}).length };
 }
 
 // The local copy stays as it is (a solo copy); this member's files stay in the folder for the record.
@@ -557,8 +584,13 @@ export function leaveTeam() {
     await chrome.alarms.clear(ALARM);
     await setMembership(null);
     await teamDbClear();
+    await clearTeamFolder();
     mem = null;
     recentWriteBack.clear();
+    lastError = null;
+    lastOkAt = 0;
+    errorSince = 0;
+    folderState = "none";
     return { ok: true };
   });
 }
@@ -577,11 +609,14 @@ export async function getTeamSyncStatus() {
       const hb = meta.hb[m];
       const cursor = meta.cursors[m] || 0;
       const fileWall = meta.lastFileWall[m] || 0;
+      const lastSeen = Math.max(hb?.at || 0, fileWall);
       return {
         id: m,
         name: meta.profiles[m]?.name || hb?.name || m,
+        admin: (meta.admins || []).includes(m),
+        online: Date.now() - lastSeen <= ONLINE_MS,
         cursor,
-        lastSeen: Math.max(hb?.at || 0, fileWall),
+        lastSeen,
         // Design 6.3: a heartbeat counts only once every change it vouches for has been read.
         readUpTo: hb && cursor >= (hb.lastN || 0) ? Math.max(hb.at, fileWall) : fileWall,
       };
@@ -598,6 +633,9 @@ export async function getTeamSyncStatus() {
     lastReadAt: meta.lastReadAt,
     lastHeartbeatAt: meta.lastHeartbeatAt,
     members,
+    online: members.filter((m) => m.online).length,
+    lastOkAt,
+    errorSince,
     entities: Object.fromEntries(Object.entries(mem.state.entities).map(([e, byId]) => [e, Object.keys(byId).length])),
     measures: meta.measures,
     lastError,

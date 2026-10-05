@@ -91,6 +91,7 @@
         <a href="#profile-section" class="nav-item" id="nav-profile-section">User Profile</a>
         <a href="#language-section" class="nav-item" id="nav-language-section">Message / Response Language</a>
         <a href="#api-key-section" class="nav-item" id="nav-api-key-section">Anthropic API Key</a>
+        <a href="#team-section" class="nav-item" id="nav-team-section" title="Share accounts, contacts and leads with colleagues through a OneDrive folder">Team <span id="nav-team-badge" class="nav-item-badge"></span></a>
         <a href="#backup-section" class="nav-item" id="nav-backup-section">Backup</a>
         <a href="#restore-section" class="nav-item" id="nav-restore-section">Restore</a>
         <a href="#billing-section" class="nav-item" id="nav-billing-section" title="What SalesTeam's AI features and web research have used on your Anthropic API key">Billing</a>
@@ -382,6 +383,103 @@
       </p>
       <div class="settings-buttons-row">
         <button type="button" id="billing-reset-btn">Reset the counters…</button>
+      </div>
+    </section>
+
+    <!-- Team use 1.2.2, build step 3 (TEAM_USE_DESIGN.md 9, 10): create / join / leave and the team's state.
+         Wired by team-ui.js. -->
+    <section class="settings-card" id="team-section">
+      <h3>Team</h3>
+      <div id="team-solo">
+        <p class="field-hint">
+          Work as a team: colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder your
+          team owns. Every member's SalesTeam reads and writes that folder - there is no SalesTeam server and no sign-in.
+          Your API key, User Profile, drafts, scanner settings and LinkedIn limits stay personal.
+        </p>
+        <p class="field-hint">One person creates the team (and becomes its Team Admin); the others join it.</p>
+        <div class="settings-buttons-row">
+          <button type="button" id="team-show-create-btn">Create a team…</button>
+          <button type="button" id="team-show-join-btn">Join a team…</button>
+        </div>
+      </div>
+
+      <div id="team-create" hidden>
+        <h4>Create a team</h4>
+        <p class="field-hint">You become the Team Admin. Your accounts, contacts, leads (posts), Setup and rules become the team's
+          starting data. Everyone in the team sees the shared data, including who contacted whom.</p>
+        <ol class="team-steps">
+          <li>Open <b>File Explorer</b> and click <b>OneDrive</b> in the list on the left (with a work account it is called
+            "OneDrive - <i>your company</i>").</li>
+          <li>Right-click an empty spot, choose <b>New &gt; Folder</b> and name it, for example, <b>SalesTeam Team</b>. Leave it empty.</li>
+          <li>Right-click the new folder and choose <b>Always keep on this device</b> (on Windows 11 you may first need
+            <b>Show more options</b>).</li>
+          <li>Right-click the folder again, choose <b>Share</b>, type your colleagues' e-mail addresses, check that they
+            <b>can edit</b>, and click <b>Send</b>. You can also do this later.</li>
+          <li>Here: enter your name and the team's name below, click <b>Pick the team folder…</b> and choose the new folder.</li>
+          <li>If Chrome asks whether SalesTeam may view and edit the files in the folder, choose <b>Allow on every visit</b>.
+            ("Allow this time" works too, but then SalesTeam asks you to reconnect every time you open it again.)</li>
+          <li>Click <b>Back up and create the team</b>. SalesTeam first saves a full backup of your data, then copies it into
+            the folder. This can take a minute.</li>
+        </ol>
+        <label for="team-create-name">Your name</label>
+        <input type="text" id="team-create-name" placeholder="e.g. Jane Doe" />
+        <label for="team-create-team">Team name</label>
+        <input type="text" id="team-create-team" placeholder="e.g. Sales Switzerland" />
+        <div class="settings-buttons-row">
+          <button type="button" id="team-create-pick-btn">Pick the team folder…</button>
+          <button type="button" id="team-create-btn" class="team-primary-btn" disabled>Back up and create the team</button>
+          <button type="button" class="team-cancel-btn">Cancel</button>
+        </div>
+        <p class="field-hint team-status" id="team-create-status" role="status"></p>
+      </div>
+
+      <div id="team-join" hidden>
+        <h4>Join a team</h4>
+        <div class="team-warning">
+          Joining <b>replaces</b> the accounts, contacts, leads (posts), Setup and rules in this browser with the team's.
+          Anything you have that the team does not is removed here - it stays in the backup SalesTeam saves first.
+          Your API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn limits and Activity Log stay as they are.
+          Everyone in the team sees the shared data, including who contacted whom.
+        </div>
+        <ol class="team-steps">
+          <li>Open the e-mail in which your colleague shared the team folder and click <b>Open</b>. The folder opens in
+            OneDrive in your browser. (No e-mail? Open OneDrive in the browser and click <b>Shared</b> on the left.)</li>
+          <li>Click <b>Add shortcut to My files</b> (at the top, or under <b>…</b> next to the folder's name).</li>
+          <li>Open <b>File Explorer &gt; OneDrive</b>. After a minute the folder appears there. Right-click it and choose
+            <b>Always keep on this device</b>, then wait until its files show a green tick.</li>
+          <li>If the bar at the top of SalesTeam says it is preparing accounts ("working on …"), click <b>Pause for today</b> first.</li>
+          <li>Here: enter your name below, click <b>Pick the team folder…</b> and choose that folder.</li>
+          <li>If Chrome asks whether SalesTeam may view and edit the files in the folder, choose <b>Allow on every visit</b>.</li>
+          <li>Click <b>Back up and join the team</b>. SalesTeam first saves a full backup of your data, then loads the team's.</li>
+        </ol>
+        <label for="team-join-name">Your name</label>
+        <input type="text" id="team-join-name" placeholder="e.g. Jane Doe" />
+        <div class="settings-buttons-row">
+          <button type="button" id="team-join-pick-btn">Pick the team folder…</button>
+          <button type="button" id="team-join-btn" class="team-primary-btn" disabled>Back up and join the team</button>
+          <button type="button" class="team-cancel-btn">Cancel</button>
+        </div>
+        <p class="field-hint team-status" id="team-join-status" role="status"></p>
+      </div>
+
+      <div id="team-member" hidden>
+        <p id="team-member-who"></p>
+        <p class="field-hint team-status" id="team-member-folder"></p>
+        <div class="settings-buttons-row">
+          <button type="button" id="team-reconnect-btn" hidden>Reconnect</button>
+          <button type="button" id="team-repick-btn" hidden>Pick the team folder again…</button>
+        </div>
+        <h4>Sharing</h4>
+        <p class="field-hint team-status" id="team-member-sync"></p>
+        <p class="field-hint">SalesTeam shares while a SalesTeam page or the side panel is open. With none open, your changes
+          wait on this PC and go out when you open SalesTeam again - nothing is lost.</p>
+        <h4>Members</h4>
+        <table id="team-members-table"></table>
+        <div class="settings-buttons-row">
+          <button type="button" id="team-sync-now-btn">Sync now</button>
+          <button type="button" id="team-leave-btn" class="danger-btn">Leave the team…</button>
+        </div>
+        <p class="field-hint team-status" id="team-member-status" role="status"></p>
       </div>
     </section>
 

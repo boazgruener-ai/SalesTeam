@@ -125,6 +125,32 @@ with its own handle.
 - **Developer test page:** `zz_team_sync.html` — pick folder, create / join / leave, sync now, status with
   colleagues and measurements, unclassified storage keys. Settings > Team replaces it in step 3.
 
+### 2.8 Step 3 as built (1.2.1.6, 2026-10-04)
+- **Settings > Team** (`team-ui.js`, card in `settings.html`, menu item "Team" with an "N online" badge): *Create a
+  team…* and *Join a team…*, each with numbered click-by-click instructions (OneDrive folder, "Always keep on this
+  device", sharing, and **"Allow on every visit"** in Chrome's dialog — 2.6). The picked folder is checked before
+  anything is saved (create: empty; join: `team.json` present and readable) and stored only when the action runs.
+  Then a full backup, then create / join. In a team: who you are and your role, the folder (connected / Reconnect /
+  pick again — must be the same team), what waits to be written, last written / read, the last problem, members with
+  role, last seen and "online" (anything written in the last 3 minutes), *Sync now*, *Leave the team…*.
+- **Join** marks the Setup as done (`onboardingCompletedAt`): the seller setup came with the team. Afterwards the member
+  is told what is still personal to fill in (API key, User Profile). Join refuses while automatic preparation is running
+  ("Pause for today" first).
+- **Leave** also forgets the folder on this PC.
+- **Top bar** (`initTeamBar`, on every page): only when something needs doing — "Click to reconnect to the team folder"
+  (button *Reconnect*), "SalesTeam cannot use the team folder … pick it again" (permission denied / no folder), or "Not in
+  sync" (button *Try again*). The status bar gained **priority** messages so these stay above the pipeline's line. A
+  healthy team shows nothing in the bar (the "online" count is on the menu item) — the bar stays the pipeline's.
+- **"Not in sync" is judged from this PC's side only:** folder rounds failing for 2 minutes. *Deviation from 8.4:* the
+  colleague-silence rule ("no news for 10 minutes while their heartbeats said they were active") cannot tell a paused
+  OneDrive from a colleague who closed the laptop lid or quit Chrome — none of these leaves a sign-off — and a false
+  "not in sync" would block work. Colleagues' silence is shown as their "last seen" instead. Blocking edits while not in
+  sync comes with the claims in step 4, where it matters (6.6).
+- **Backups and restore:** `teamMembership` is no longer written into backups (it belongs with the sync state in
+  IndexedDB and the folder permission). A restore while in a team asks first — what it puts back is sent to every
+  colleague.
+- **Tests:** `test_team_sync.py` 45 checks (+ roles, online, join marks Setup done, leave).
+
 ---
 
 ## 3. The team folder
@@ -344,6 +370,7 @@ the outbox is written out and colleagues' changes are read in.
 If the folder is unreachable, or no colleague's new file has been read for 10 minutes while their
 heartbeats said they were active, SalesTeam shows **"Not in sync — showing team data from 09:41"** and
 blocks edits to shared entities. Personal work (drafts, settings that are personal) continues.
+*As built in step 3 (2.8): judged from this PC's folder rounds only; colleagues' silence is shown as "last seen".*
 
 ---
 
@@ -395,7 +422,7 @@ files stay in the folder for the record (the admin can remove the member).
 | 0 | **Two-PC test** (no product code): sync delay over a day, simultaneous claims, no conflict copies, folder handle in the background worker, permission after restart | 1.2.1.2 (test page `zz_team_spike.html` + background probe) |
 | 1 | `team-merge.js` (pure): stamps, change records, merge rules, claims, confirmation, rendezvous shares — with tests in `test_pure_modules.py` | 1.2.1.3 |
 | 2 | `team-folder.js` + `team-sync.js`: folder adapter, outbox, shadow, local→team and team→local, heartbeat, compaction; `team-keys.js`; measure comparison cost | 1.2.1.4 (message-routing fix: 1.2.1.5) |
-| 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync | 1.2.1.6 |
+| 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync (as built: 2.8) | 1.2.1.6 |
 | 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) | 1.2.1.7 |
 | 5 | Assign to me / release, badges, filter, admin rights, team-wide check, do-not-contact, outreach check | 1.2.1.8 |
 | 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.9 |

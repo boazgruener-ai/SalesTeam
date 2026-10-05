@@ -68,6 +68,7 @@ import { runCompanyDiscoveryPhase } from "./company-discovery-extraction.js";
 import { runContactDiscoveryPhase } from "./contact-discovery-extraction.js";
 import { getLinkedinTouchStats, formatTouchRelease } from "./linkedin-touch-log.js";
 import { initDecisionsDot } from "./decisions-dot.js";
+import { initTeamSettings } from "./team-ui.js";
 
 // Logs one activity-log entry per real edit (focus -> blur, value actually
 // changed), not per keystroke - the field's own existing "input" listener
@@ -701,6 +702,7 @@ async function renderLinkedinTouchStat() {
 // the hash is empty or doesn't match any known section.
 const SETTINGS_SECTION_IDS = [
   "setup-section", "automation-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
+  "team-section",
   "discovery-queue-section", "company-discovery-section", "contact-discovery-section",
   // 1.2.0.49: these two were missing, so they showed under whichever card was open.
   "revenue-currency-section", "web-findings-section",
@@ -1000,6 +1002,7 @@ billingWarningSaveBtn.addEventListener("click", async () => {
 });
 loadWarningLimit();
 initBatchStatus();
+initTeamSettings();
 
 // ---- Automation (1.2 data pipeline, build step 3) ----
 const automationCheckbox = document.getElementById("automation-enabled-checkbox");
