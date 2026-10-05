@@ -773,8 +773,10 @@ window.addEventListener("hashchange", routeSettings);
 // "none"). Either way the action stays under User Profile > Open About you.
 async function renderSellerResearchOffer() {
   const offerEl = document.getElementById("seller-research-offer");
-  const [completedAt, research] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch()]);
-  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings);
+  const [completedAt, research, team] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch(), chrome.storage.local.get("teamMembership")]);
+  // Team use (D3): the seller setup is the Team Admin's - a member is not offered to research it.
+  const member = team.teamMembership && team.teamMembership.role !== "admin";
+  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings) || Boolean(member);
   document.getElementById("seller-research-offer-text").textContent =
     "SalesTeam can research your company's website and propose improvements to the setup " +
     `(about US$${SELLER_RESEARCH_ESTIMATE_USD.toFixed(2)}). The proposals are shown next to the current settings; ` +
@@ -782,7 +784,7 @@ async function renderSellerResearchOffer() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (changes.setupResearch || changes.onboardingCompletedAt)) renderSellerResearchOffer();
+  if (area === "local" && (changes.setupResearch || changes.onboardingCompletedAt || changes.teamMembership)) renderSellerResearchOffer();
 });
 document.getElementById("seller-research-offer-yes-btn").addEventListener("click", () => {
   if (location.hash === "#change-settings-research") routeSettings();

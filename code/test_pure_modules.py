@@ -30,7 +30,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2128,6 +2128,92 @@ def test_team_rows(ctx):
     check("team clock: ... and strictly increasing", e("ordered"), True)
 
 
+def test_team_claims(ctx):
+    """1.2.2 step 4 (TEAM_USE_DESIGN.md 6): which account a change belongs to, claim states, held edits retracted."""
+    e = lambda x: ctx.eval(x)
+    e("""
+      var T0 = 1759480000000;
+      function st2(wall, counter, member) { return formatStamp(wall, counter, member); }
+      var norm = function (n) { return String(n).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+      var CS = newState();
+      applyChanges(CS, [
+        {t: st2(T0, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {companyId: 'c-1', company: 'Acme AG', status: 'New'}},
+        {t: st2(T0, 1, 'anna'), e: 'contact', id: 'wb:p-1', op: 'set', f: {contactId: 'p-1', companyId: 'c-1', fullName: 'Ann'}},
+      ]);
+    """)
+    k = lambda ch: e("accountKeyOfChange(CS, %s, norm)" % ch)
+    check("claims: targetAccounts row -> its key", k("{e:'account', id:'ta:acme ag', f:{}}"), "acme ag")
+    check("claims: extras row -> its key", k("{e:'account', id:'x:acme ag', f:{}}"), "acme ag")
+    check("claims: workbook company (name from the state)", k("{e:'account', id:'wb:c-1', f:{status:'Won'}}"), "acme ag")
+    check("claims: workbook company (name in the change)", k("{e:'account', id:'wb:c-9', f:{company:'Beta SA'}}"), "beta sa")
+    check("claims: contact extras -> the company part of its key", k("{e:'contact', id:'x:acme ag::ann muster', f:{}}"), "acme ag")
+    check("claims: workbook contact without a company name -> its company row", k("{e:'contact', id:'wb:p-1', f:{title:'CEO'}}"), "acme ag")
+    check("claims: a lead belongs to no account claim", k("{e:'lead', id:'lead-1', f:{company:'Acme AG'}}"), None)
+    check("claims: a setting neither", k("{e:'setting', id:'negativeTopics', f:{}}"), None)
+    check("claims: active members = seen in the window", e("JSON.stringify(activeMembersOf({ben: T0 - 1000, cleo: T0 - 11*60000}, T0, 10*60000))"), '["ben"]')
+
+    # Claim states seen by Anna: Ben active, then Ben's claim earlier/later than hers.
+    e("""
+      function view(s, readBen) {
+        var ctx = {me: 'anna', now: T0 + 20000, lastSeen: {ben: T0 + 15000}, readUpTo: {ben: readBen}, activeMembers: ['ben'], idleMs: 300000};
+        return claimView(s, 'acme ag', ctx).state;
+      }
+      var C1 = newState();
+      applyChange(C1, {t: st2(T0 + 10000, 0, 'anna'), e: 'account', id: claimIdFor('acme ag'), op: 'claim'});
+    """)
+    check("claims: free when nobody claimed", e("view(newState(), 0)"), "free")
+    check("claims: checking until Ben has written after Anna's claim", e("view(C1, T0 + 9000)"), "checking")
+    check("claims: mine once Ben has written after it", e("view(C1, T0 + 12000)"), "mine")
+    e("var C2 = JSON.parse(JSON.stringify(C1)); applyChange(C2, {t: st2(T0 + 8000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'claim'});")
+    check("claims: lost when Ben claimed earlier", e("view(C2, T0 + 12000)"), "lost")
+    e("var C3 = newState(); applyChange(C3, {t: st2(T0 + 8000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'claim'});")
+    check("claims: other when only Ben claimed", e("view(C3, T0 + 12000)"), "other")
+    e("var C4 = JSON.parse(JSON.stringify(C2)); applyChange(C4, {t: st2(T0 + 9000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'release'});")
+    check("claims: Ben released -> Anna's claim is the earliest again", e("view(C4, T0 + 12000)"), "mine")
+    check("claims: a claim is not a data row", e("rowTarget('account', claimIdFor('acme ag'))"), None)
+
+    # Held edits of a lost claim are taken back out; a colleague's later change stays.
+    e("""
+      var R = newState();
+      applyChange(R, {t: st2(T0, 0, 'ben'), e: 'account', id: 'x:acme ag', op: 'set', f: {status: 'New', note: 'ben-1'}});
+      var held = [
+        {t: st2(T0 + 1000, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {status: 'Contacted', city: 'Bern'}},
+        {t: st2(T0 + 2000, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {status: 'Meeting'}},
+      ];
+      var prior = {'account|x:acme ag': priorOf(R, held[0])};
+      held.forEach(function (h) { applyChange(R, h); });
+      // Ben's later change to the note arrives while Anna's edits are held.
+      applyChange(R, {t: st2(T0 + 3000, 0, 'ben'), e: 'account', id: 'x:acme ag', op: 'set', f: {note: 'ben-2'}});
+      var heldShown = entityView(R, 'account', 'x:acme ag').values;
+      retractChanges(R, held, prior);
+      var afterRetract = entityView(R, 'account', 'x:acme ag').values;
+      var lostAfterRetract = lostValues(R, {e: 'account', id: 'x:acme ag'});
+      // Re-applied later (Apply my changes) with new stamps: they win again.
+      var again = held.map(function (h, i) { return Object.assign({}, h, {t: st2(T0 + 9000 + i, 0, 'anna')}); });
+      applyChanges(R, again);
+      var afterApply = entityView(R, 'account', 'x:acme ag').values;
+    """)
+    check("claims: held edits show on Anna's PC meanwhile", e("heldShown.status + '|' + heldShown.city"), "Meeting|Bern")
+    check("claims: retracted - status back to Ben's value", e("afterRetract.status"), "New")
+    check("claims: retracted - a field only Anna set is gone", e("'city' in afterRetract"), False)
+    check("claims: retracted - Ben's later note stays", e("afterRetract.note"), "ben-2")
+    check("claims: retracted - only Ben's overwritten note is left as a lost value",
+          e("JSON.stringify(lostAfterRetract.map(function (x) { return x.field + '=' + x.v; }))"), '["note=ben-1"]')
+    check("claims: applying the kept-aside edits later wins again", e("afterApply.status + '|' + afterApply.city"), "Meeting|Bern")
+    # A held delete is retracted too.
+    e("""
+      var D = newState();
+      applyChange(D, {t: st2(T0, 0, 'ben'), e: 'contact', id: 'x:acme ag::ann', op: 'set', f: {title: 'CEO'}});
+      var hd = [{t: st2(T0 + 1000, 0, 'anna'), e: 'contact', id: 'x:acme ag::ann', op: 'delete'}];
+      var pd = {'contact|x:acme ag::ann': priorOf(D, hd[0])};
+      applyChange(D, hd[0]);
+      var deletedMeanwhile = entityView(D, 'contact', 'x:acme ag::ann').exists;
+      retractChanges(D, hd, pd);
+    """)
+    check("claims: a held delete hides the row meanwhile", e("deletedMeanwhile"), False)
+    check("claims: ... and retracting it brings the row back", e("entityView(D, 'contact', 'x:acme ag::ann').exists"), True)
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -2169,6 +2255,7 @@ def main():
     test_login_wall(ctx)
     test_team_merge(ctx)
     test_team_rows(ctx)
+    test_team_claims(ctx)
 
     print()
     for f in _failures:

@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["team-merge.js", "team-keys.js", "team-rows.js", "team-sync.js"]
+REAL = ["team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -87,6 +87,7 @@ var chrome = {
 
 // storage.js stub: one writer at a time is all the test needs.
 function withAccountWriteLock(fn) { return fn(); }
+function normalizeCompanyName(n) { return String(n || '').toLowerCase().trim(); }
 
 // team-folder.js stub: FOLDER is the shared folder (path -> text), DB the sync layer's IndexedDB.
 var FOLDER = {}, DB = {}, FAIL_NEXT_WRITES = 0;
@@ -375,6 +376,120 @@ def main():
     check("leave: her data stays", same(picture(cleo)["targetAccounts"], picture(ben)["targetAccounts"]), True)
     check("leave: the team folder is forgotten on her PC", cleo.e("FOLDER_CLEARED"), True)
     check("leave: her files stay in the folder", any(p.startswith("members/%s/" % me) for p in folder), True)
+
+    # 11. Step 4 - claims (design 6). Two fresh members on a fresh folder, clocks aligned.
+    folder = {}
+    dora = Member("dora")
+    dora.set_local({
+        "targetAccountsWorkbook": {"companies": [
+            {"companyId": "c-1", "company": "Acme AG"}, {"companyId": "c-2", "company": "Beta SA"}], "contacts": []},
+        "targetAccountExtras": {"acme ag": {"status": "New"}, "beta sa": {"status": "New"}},
+    })
+    r, folder = dora.call("createTeam({ name: 'Dora', teamName: 'Claims' })", folder)
+    eli = Member("eli")
+    r, folder = eli.call("joinTeam({ name: 'Eli' })", folder)
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    dora_id = dora.status()["me"]["memberId"]
+    eli_id = eli.status()["me"]["memberId"]
+
+    def files_of(member_id):
+        return [json.loads(v) for k, v in sorted(folder.items()) if k.startswith("members/%s/changes/" % member_id) and v]
+
+    def sent_values(member_id, row_id, field):
+        return [c["f"][field] for f in files_of(member_id) for c in f["changes"]
+                if c.get("id") == row_id and c.get("op") == "set" and field in c.get("f", {})]
+
+    def extras(m, key):
+        return (m.local("targetAccountExtras") or {}).get(key, {})
+
+    # A. Dora claims Acme: "checking" while Eli has not written since; her edit is held, the claim goes out.
+    r, folder = dora.call("claimAccount('acme ag')", folder)
+    check("claim: Dora's claim is taken", (r.get("ok"), r.get("state")), (True, "checking"))
+    x = dora.local("targetAccountExtras"); x["acme ag"]["status"] = "Contacted"; dora.set_local({"targetAccountExtras": x})
+    r, folder = dora.sync(folder)
+    check("claim: the claim is in Dora's change file", any(c.get("op") == "claim" for f in files_of(dora_id) for c in f["changes"]), True)
+    check("claim: Dora's edit is held, not sent", sent_values(dora_id, "x:acme ag", "status"), [])
+    check("claim: Dora's own screen shows her edit", extras(dora, "acme ag").get("status"), "Contacted")
+    r, folder = eli.call("getClaimStatus('acme ag')", folder)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("getClaimStatus('acme ag')", folder)
+    check("claim: Eli sees Dora updating Acme", (r.get("state"), (r.get("holder") or {}).get("name")), ("other", "Dora"))
+    r, folder = eli.call("claimAccount('acme ag')", folder)
+    check("claim: Eli cannot claim it meanwhile", (r.get("ok"), r.get("reason")), (False, "held"))
+    check("claim: Eli answered the claim with a heartbeat at once", "clock" in json.loads(folder["members/%s/heartbeat.json" % eli_id]), True)
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("getClaimStatus('acme ag')", folder)
+    check("claim: confirmed once Eli's heartbeat is read", r.get("state"), "mine")
+    check("claim: ... and the held edit went out", sent_values(dora_id, "x:acme ag", "status"), ["Contacted"])
+    r, folder = eli.sync(folder)
+    check("claim: Eli gets Dora's edit", extras(eli, "acme ag").get("status"), "Contacted")
+    r, folder = dora.call("releaseAccount('acme ag')", folder)
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("getClaimStatus('acme ag')", folder)
+    check("claim: released - Acme is free for Eli", r.get("state"), "free")
+
+    # B. A race on Beta: Eli claims first, Dora a second later, neither has seen the other's claim yet.
+    t = max(dora.e("NOW"), eli.e("NOW")) + 1000
+    dora.e("NOW = %d" % t)
+    eli.e("NOW = %d" % t)
+    r, folder = eli.call("claimAccount('beta sa')", folder)
+    xe = eli.local("targetAccountExtras"); xe["beta sa"]["status"] = "Lost"; eli.set_local({"targetAccountExtras": xe})
+    dora.e("NOW += 1000")
+    r, folder = dora.call("claimAccount('beta sa')", folder)
+    check("race: Dora's claim is taken too (she cannot know yet)", r.get("ok"), True)
+    xd = dora.local("targetAccountExtras"); xd["beta sa"]["status"] = "Won"; xd["beta sa"]["note"] = "Dora"
+    dora.set_local({"targetAccountExtras": xd})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("getClaimStatus('beta sa')", folder)
+    check("race: Eli's earlier claim wins", r.get("state"), "mine")
+    check("race: Eli's held edit went out", sent_values(eli_id, "x:beta sa", "status"), ["Lost"])
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("getClaimStatus('beta sa')", folder)
+    check("race: Dora sees she lost - Eli is updating", (r.get("state"), (r.get("holder") or {}).get("name")), ("other", "Eli"))
+    check("race: Dora's two changes are kept aside", ((r.get("aside") or {}).get("changes"), (r.get("aside") or {}).get("lostTo")), (2, "Eli"))
+    check("race: Dora's screen shows Eli's values again", (extras(dora, "beta sa").get("status"), "note" in extras(dora, "beta sa")), ("Lost", False))
+    check("race: Dora's held edit was never sent", sent_values(dora_id, "x:beta sa", "status"), [])
+    r, folder = eli.sync(folder)
+    check("race: Eli never sees Dora's edit", (extras(eli, "beta sa").get("status"), "note" in extras(eli, "beta sa")), ("Lost", False))
+    r, folder = dora.call("applyKeptAside('beta sa')", folder)
+    check("race: applying is refused while Eli holds it", (r.get("ok"), r.get("reason")), (False, "held"))
+
+    # C. Eli is done; Dora applies her kept-aside changes - held under her new claim, then sent.
+    r, folder = eli.call("releaseAccount('beta sa')", folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("applyKeptAside('beta sa')", folder)
+    check("apply: Dora's changes are back on her screen", (r.get("ok"), extras(dora, "beta sa").get("status"), extras(dora, "beta sa").get("note")), (True, "Won", "Dora"))
+    check("apply: nothing kept aside any more", r.get("aside"), None)
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("apply: Eli gets Dora's changes", (extras(eli, "beta sa").get("status"), extras(eli, "beta sa").get("note")), ("Won", "Dora"))
+    check("apply: both have the same picture", same(picture(dora), picture(eli)), True)
+
+    # D. The pipeline's shares (design 6.5): every account to exactly one active member; none that a colleague holds.
+    keys = ["acct %d" % i for i in range(40)]
+    js = "teamWorkGate().then(function (g) { return { connected: g.connected, may: %s.map(function (k) { return g.mayWork(k); }) }; })" % json.dumps(keys)
+    rd, folder = dora.call(js, folder)
+    re_, folder = eli.call(js, folder)
+    check("shares: the gate is connected", (rd.get("connected"), re_.get("connected")), (True, True))
+    check("shares: every account goes to exactly one of them", all(a != b for a, b in zip(rd["may"], re_["may"])), True)
+    check("shares: both get some", (sum(rd["may"]) > 5, sum(re_["may"]) > 5), (True, True))
+    r, folder = eli.call("claimAccount('beta sa', { kind: 'pipeline' })", folder)
+    check("shares: Eli's pipeline may not claim Beta while Dora still holds it", (r.get("ok"), r.get("reason")), (False, "held"))
+    r, folder = dora.call("releaseAccount('beta sa')", folder)
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("claimAccount('beta sa', { kind: 'pipeline' })", folder)
+    check("shares: once Dora released it, Eli's pipeline claims it", r.get("ok"), True)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    rd, folder = dora.call("teamWorkGate().then(function (g) { return g.mayWork('beta sa'); })", folder)
+    check("shares: an account Eli holds is not Dora's to work", rd, False)
 
     print()
     for f in _failures:

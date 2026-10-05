@@ -45,6 +45,7 @@ import { searchCompanyPeopleByName, discoverContactsForAccount } from "./contact
 import { getLinkedinTouchStats, countTouchesSince, recordLinkedinTouch } from "./linkedin-touch-log.js";
 import { withBatch, BatchBusyError, getRunningBatch, busyMessage } from "./batch-jobs.js";
 import { rescoreDerivedPriorities } from "./auto-score.js";
+import { teamWorkGate, claimAccount, releaseAccount } from "./team-sync.js";
 import {
   getPipelineAutomation, PIPELINE_IDLE_KEY, PIPELINE_HOLD_KEY, webBudgetState, recordWebSpend, setWebBlocked, apiKeyTail,
 } from "./pipeline-automation.js";
@@ -77,7 +78,10 @@ const LOG_REASONS = {
   made_way: "made way for your job",
   user: "stopped by you",
   linkedin_logged_out: "LinkedIn is not logged in in this browser - log in at linkedin.com",
+  team_offline: "the team folder is not connected",
 };
+// Team use 1.2.2 step 4: how often a running account's claim is renewed (a claim runs out after 5 idle minutes).
+const TEAM_CLAIM_RENEW_MS = 60000;
 const LAST_AUTO_BACKUP_KEY = "lastAutoBackupAt"; // backup-restore.js
 // 1.2.1 step 6 (design 8): the last automatic Web Discovery, { accountsTarget, at } - see discoveryMayRun.
 const AUTO_DISCOVERY_KEY = "autoDiscoveryLast";
@@ -365,6 +369,7 @@ async function run(r) {
     const first = await readinessNow();
     s.readyBefore = first.counts.ready;
     const underLimit = () => s.limit == null || s.done < s.limit;
+    const teamRefused = new Set(); // accounts a colleague claimed between the gate and our claim
     while (!r.stopRequested && !r.pauseRequested && underLimit()) {
       // W1: the LinkedIn ceiling stops the LinkedIn jobs only; web research goes on within its budget.
       const loggedOutAt = (await chrome.storage.local.get(LINKEDIN_LOGGED_OUT_KEY))[LINKEDIN_LOGGED_OUT_KEY];
@@ -376,7 +381,11 @@ async function run(r) {
       const now = Date.now();
       const opts = { linkedin: linkedinOk, web: webOk, ...(await planContext(counts)) };
       await trackReadyGoal(counts.ready, null);
-      const ranked = rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts);
+      // Team use (design 6.5, R3.5): skip what a colleague holds, work only this member's share of the rest.
+      const gate = await teamWorkGate().catch(() => null);
+      if (gate && !gate.connected) { s.stoppedReason = "team_offline"; break; }
+      const workable = gate ? entries.filter((e) => !teamRefused.has(e.view.key) && gate.mayWork(e.view.key)) : entries;
+      const ranked = rankCandidates(workable, now, TYPICAL_CONTACT_CHUNKS, opts);
       s.remaining = ranked.length;
       const next = ranked[0];
       // At the LinkedIn limit with web research allowed, an empty list means no account needs web research
@@ -392,6 +401,13 @@ async function run(r) {
       }
       if (needsLinkedin && !(await workerAlive(worker))) { s.stoppedReason = "window_closed"; break; }
 
+      // Claimed before any work; its writes are held until the claim is confirmed (team-sync.js), so no wait here.
+      const teamKey = next.view.key;
+      if (gate) {
+        const claimed = await claimAccount(teamKey, { kind: "pipeline" }).catch(() => ({ ok: false }));
+        if (!claimed.ok) { teamRefused.add(teamKey); continue; }
+      }
+      const renew = gate ? setInterval(() => claimAccount(teamKey, { kind: "pipeline" }).catch(() => {}), TEAM_CLAIM_RENEW_MS) : null;
       s.current = next.view.company;
       await save();
       const started = Date.now();
@@ -402,6 +418,9 @@ async function run(r) {
       } catch (err) {
         if (err instanceof BatchBusyError) { s.stoppedReason = "busy"; s.busyLabel = err.running?.label || null; break; }
         throw err;
+      } finally {
+        if (renew) clearInterval(renew);
+        if (gate) await releaseAccount(teamKey).catch(() => {});
       }
       const touches = await countTouchesSince(started);
       s.touches += touches;

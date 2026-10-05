@@ -2052,3 +2052,24 @@ thead .actions-col {
   color: var(--gray);
   margin-top: 2px;
 }
+
+/* Team use 1.2.2 step 4 (team-claims-ui.js): who is updating this account, held / kept-aside changes. */
+.team-claim-notice {
+  margin: 8px 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 2px solid;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.team-claim-notice p { margin: 0 0 4px; }
+.team-claim-notice p:last-of-type { margin-bottom: 0; }
+.team-claim-blocked { background: #fdeaea; border-color: #b3261e; color: #8c1d18; }
+.team-claim-checking { background: #e8f0fe; border-color: #1a56c4; color: #133f8f; }
+.team-claim-aside { background: #fff4e0; border-color: #b26a00; color: #7a4800; }
+.team-claim-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-weight: 400; }
+.team-claim-actions button.secondary { background: #fff; color: #333; border: 1px solid var(--border); }
+/* A colleague holds the account: its controls take no clicks; links still do (reading is never blocked). */
+.team-blocked { pointer-events: none; opacity: 0.75; }
+.team-blocked a[href] { pointer-events: auto; }

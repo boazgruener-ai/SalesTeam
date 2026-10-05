@@ -151,6 +151,48 @@ with its own handle.
   colleague.
 - **Tests:** `test_team_sync.py` 45 checks (+ roles, online, join marks Setup done, leave).
 
+### 2.9 Step 4 as built (1.2.1.7, 2026-10-05)
+- **Claims are named by company key** (the normalised company name), `account|@<key>` — *deviation from 4.1's bare
+  `companyId`*. Every local home already resolves to the key without a join: `ta:`/`x:` rows carry it in their id, a
+  contact's extras key begins with it, a workbook row has its company name (a workbook contact without one: its
+  company row). The account page and the pipeline both work by that key. Leads and settings belong to no claim.
+  Pure helpers in the new `team-claims.js`: which account a change belongs to, and the claim state as one member sees
+  it — *free*, *checking*, *mine* (confirmed), *other* (a colleague holds it), *lost* (a colleague claimed first).
+- **Held edits (6.1, 6.3):** while my claim is *checking*, my changes to that account's account and contact rows are
+  applied on my PC but kept out of the change files. Confirmed → they go out at once. Lost → they are taken back out
+  of the merged state (`retractChanges` in `team-merge.js`: each field goes back to the later of its value before the
+  held edits and any colleague value they overwrote; a colleague's later change is untouched), the rows on my PC get
+  the winner's values again, and the edits are **kept aside**. My lost claim is withdrawn (a `release`), so it cannot
+  become the holder when the winner is done. Held and kept-aside edits live in IndexedDB with the rest of the sync
+  state — a reload loses nothing.
+- **Confirmation is fast:** a member that reads a colleague's claim writes its heartbeat at once (an "ack"), and the
+  heartbeat carries the member's clock stamp — that clock has seen every claim the member had read, so it proves
+  "nothing earlier from me" even if the two PCs' clocks differ. While a claim of mine is checking, the folder is read
+  every 5 s instead of 15 s. With no colleague active (seen in the last 10 minutes, D5) a claim is confirmed at once.
+- **Account and contact pages** (`team-claims-ui.js`): the first touch of an editable control (the overview, the ⋮
+  menu, the contacts list, the web research card) claims the account; renewed at most once a minute while the member
+  works; released when the page shows something else (a claim also runs out after 5 idle minutes, R3.4). A strong
+  notice under the title shows what the team sees: "Anna is updating this account (since 09:41)" — the editable parts
+  then take no clicks or focus, links still work (reading is never blocked); "Checking with the team…"; a lost claim
+  with "your N changes were kept aside" and **Apply my changes now** (possible once the account is free — stamped
+  anew under a new claim) / **Discard them**; and **not in sync / folder not connected**: changes blocked (R3.8, 6.6).
+  A contact's claim is its account's.
+- **Pipeline and web lane (6.5):** each round asks the gate — not connected or not in sync: the run stops ("team
+  folder not connected"; in a team, automatic work runs only while colleagues can see what it works on). Otherwise it
+  works only accounts no colleague holds and that fall in this member's rendezvous share of the members active now.
+  It claims an account before starting on it and renews the claim every minute; it does **not** wait for the
+  confirmation — its writes are held like anyone's, so a lost race costs at most the research (~US$0.08), never data.
+  Released when done. The web lane filters its list the same way and claims each account before researching it.
+- **Rendezvous hash fixed:** FNV-1a alone ordered two members almost identically for every account — two real ids
+  made in the same session split 40 accounts 40:0. A murmur3 finaliser on the score fixed it (19:21 in the test).
+- **Not yet (step 5):** the Target Accounts list's row actions, bulk edit, the Leads Dashboard and the user-started
+  bulk research do not ask for claims yet; they get the off-limits checks together with assignments.
+- **Also:** the once-only "research your company website" offer in Settings is no longer shown to members (D3).
+- **Tests:** `test_pure_modules.py` +24 (account key of every row kind, the five claim states, retracting held sets and
+  deletes, re-applying) = 592; `test_team_sync.py` +30 = 75 (claim → held → ack → confirmed → sent; a two-member race
+  with kept-aside and apply after release; pipeline shares disjoint and covering; a held account refused to a
+  colleague's pipeline).
+
 ---
 
 ## 3. The team folder
@@ -423,7 +465,7 @@ files stay in the folder for the record (the admin can remove the member).
 | 1 | `team-merge.js` (pure): stamps, change records, merge rules, claims, confirmation, rendezvous shares — with tests in `test_pure_modules.py` | 1.2.1.3 |
 | 2 | `team-folder.js` + `team-sync.js`: folder adapter, outbox, shadow, local→team and team→local, heartbeat, compaction; `team-keys.js`; measure comparison cost | 1.2.1.4 (message-routing fix: 1.2.1.5) |
 | 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync (as built: 2.8) | 1.2.1.6 |
-| 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) | 1.2.1.7 |
+| 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) (as built: 2.9) | 1.2.1.7 |
 | 5 | Assign to me / release, badges, filter, admin rights, team-wide check, do-not-contact, outreach check | 1.2.1.8 |
 | 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.9 |
 | 7 | Help, privacy, listing, website, release notes, PRD; test with the real team → **1.2.2** | 1.2.2 |

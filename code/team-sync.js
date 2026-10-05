@@ -13,10 +13,14 @@
 //   30 s alarm and, while the folder is usable, by in-worker timers. The folder is usable only while a SalesTeam
 //   page or the side panel is open (step 0); otherwise changes wait in the outbox.
 
-import { withAccountWriteLock } from "./storage.js";
+import { withAccountWriteLock, normalizeCompanyName } from "./storage.js";
 import { TEAM_SHARED_KEYS, isTeamSharedKey } from "./team-keys.js";
 import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchValue, rowTarget, rowKey, splitRowKey, canonicalRow } from "./team-rows.js";
-import { newState, applyChange, createClock, tick, observe, formatStamp, compactChanges } from "./team-merge.js";
+import {
+  newState, applyChange, createClock, tick, observe, formatStamp, compactChanges, stampWall, priorOf, retractChanges,
+  pipelineOwner, DEFAULT_CLAIM_IDLE_MS,
+} from "./team-merge.js";
+import { claimIdFor, accountKeyOfChange, activeMembersOf, claimView } from "./team-claims.js";
 import {
   teamDbGetAll, teamDbPutAll, teamDbClear, getTeamFolder, clearTeamFolder, teamFolderPermission,
   readTeamJson, writeTeamJson, listTeamNames, removeTeamFile, listTeamFolderTop,
@@ -35,6 +39,12 @@ const MAX_FILES_PER_ROUND = 300;
 const CLOBBER_WINDOW_MS = 15000;
 const MEASURES_KEPT = 30;
 const ONLINE_MS = 3 * 60000; // a colleague with a SalesTeam page open writes at least once a minute
+// Step 4 (claims, design 6): colleagues seen in the last 10 minutes count (D5); while a claim of mine is being
+// checked the folder is read every 5 s; a held claim is renewed at most once a minute; "not in sync" as team-ui.js.
+const ACTIVE_MS = 10 * 60000;
+const CLAIM_READ_EVERY_MS = 5000;
+const CLAIM_REFRESH_MS = 60000;
+const NOT_IN_SYNC_AFTER_MS = 2 * 60000;
 
 let membership = null;      // { memberId, name, teamId, teamName, role, joinedAt } or null
 let membershipLoaded = false;
@@ -48,6 +58,7 @@ let lastError = null;
 let folderState = "none";   // "none" | "granted" | "prompt" | "denied" | "error"
 let lastOkAt = 0;           // last folder round that went through (step 3: "not in sync" is judged from it)
 let errorSince = 0;         // first failed round since the last good one
+let ackDue = false;         // a colleague's claim was just read: answer with a heartbeat at once (design 6.3)
 // Rows this layer just wrote into local storage: { before, after, at }. A writer outside the account lock that
 // read the map before our write and saved it after would put the OLD row back; seen within a few seconds, that
 // is undone (the row is written again) instead of being sent to the team as a change.
@@ -71,6 +82,8 @@ async function loadMembership() {
   return membership;
 }
 
+const emptyClaims = () => ({ mine: {}, held: {}, aside: {} });
+
 function emptyMeta() {
   return {
     nextN: 1, lastWrittenN: 0, clockLast: null, cursors: {}, lastFileWall: {}, hb: {}, profiles: {}, admins: [],
@@ -81,13 +94,16 @@ function emptyMeta() {
 
 async function ensureLoaded() {
   if (mem) return mem;
-  const got = await teamDbGetAll(["state", "shadow", "outbox", "inflight", "meta"]);
+  const got = await teamDbGetAll(["state", "shadow", "outbox", "inflight", "meta", "claims"]);
   mem = {
     state: got.state || newState(),
     shadow: got.shadow || {},
     outbox: got.outbox || [],
     inflight: got.inflight || null,
     meta: { ...emptyMeta(), ...(got.meta || {}) },
+    // mine: { key: { kind, at, releaseWhenDone } } - my claims; held: { key: { records, prior } } - my edits waiting
+    // for a claim to be confirmed; aside: { key: { records, at, lostTo } } - held edits of a lost claim (R3.3).
+    claims: { ...emptyClaims(), ...(got.claims || {}) },
   };
   mem.clock = createClock(membership?.memberId || "?", mem.meta.clockLast);
   return mem;
@@ -151,12 +167,9 @@ async function diffKeys(keys, values = null) {
   const rewrite = new Set();
   let rowCount = 0;
   for (const key of keys) rowCount += diffKeyInto(key, values[key], records, rewrite);
-  if (records.length) {
-    for (const r of records) applyChange(mem.state, r);
-    mem.outbox.push(...records);
-  }
+  if (records.length) holdOrSend(records);
   measure({ kind: "diff", keys: keys.join(","), rows: rowCount, records: records.length, ms: Math.round(performance.now() - t0) });
-  await save(["state", "shadow", "outbox"]);
+  await save(["state", "shadow", "outbox", "claims"]);
   if (records.length) scheduleTick(FLUSH_DELAY_MS);
   return rewrite;
 }
@@ -233,6 +246,7 @@ async function applyRemote(records) {
   for (const r of records) {
     if (!applyChange(mem.state, r)) continue;
     observe(mem.clock, r.t);
+    if (r.op === "claim") ackDue = true;
     if (rowTarget(r.e, r.id)) affected.add(rowKey(r.e, r.id));
   }
   await save(["state"]);
@@ -259,7 +273,7 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
   for (const m of await listTeamNames(root, ["members"], "directory")) {
     if (m === me && !includeSelf) continue;
     const hb = await readTeamJson(root, ["members", m], "heartbeat.json");
-    if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0 };
+    if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0, clock: hb.data.clock || null };
     if (!meta.profiles[m]) {
       const p = await readTeamJson(root, ["members", m], "profile.json");
       if (p.status === "ok") update.profiles[m] = p.data;
@@ -271,7 +285,8 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
       if (r.status === "ok") {
         records.push(...(r.data.changes || []));
         cursor += 1;
-        update.lastFileWall[m] = Date.parse(r.data.written) || Date.now();
+        // The newest stamp counts too: it follows the writer's clock, which has seen every claim it had read.
+        update.lastFileWall[m] = Math.max(Date.parse(r.data.written) || 0, ...(r.data.changes || []).map((c) => stampWall(c && c.t)));
         update.files += 1;
         update.bytes += r.bytes;
         continue;
@@ -349,8 +364,9 @@ async function readRound(root, me) {
 
 async function heartbeat(root, me) {
   await writeTeamJson(root, ["members", me], "heartbeat.json",
-    { member: me, name: membership.name, at: Date.now(), lastN: mem.meta.lastWrittenN, version: chrome.runtime.getManifest().version });
+    { member: me, name: membership.name, at: Date.now(), lastN: mem.meta.lastWrittenN, clock: tick(mem.clock, Date.now()), version: chrome.runtime.getManifest().version });
   mem.meta.lastHeartbeatAt = Date.now();
+  ackDue = false;
 }
 
 // Design 3.3: once a day, this member's change files older than 7 days are folded into one snapshot.
@@ -422,8 +438,12 @@ export async function runTick(reason = "alarm") {
     }
     while (await flush(root, me)) { /* everything waiting goes out */ }
     const now = Date.now();
-    if (reason === "now" || now - mem.meta.lastReadAt >= READ_EVERY_MS - 1000) await readRound(root, me);
-    if (now - Math.max(mem.meta.lastHeartbeatAt, mem.meta.lastFlushAt) >= HEARTBEAT_EVERY_MS) await heartbeat(root, me);
+    const readEvery = claimsPending() ? CLAIM_READ_EVERY_MS : READ_EVERY_MS;
+    if (reason === "now" || now - mem.meta.lastReadAt >= readEvery - 1000) await readRound(root, me);
+    // Answer a colleague's claim at once: their claim is confirmed when we have written something after it (6.3).
+    if (ackDue || now - Math.max(mem.meta.lastHeartbeatAt, mem.meta.lastFlushAt) >= HEARTBEAT_EVERY_MS) await heartbeat(root, me);
+    await enqueue(resolveClaims);
+    while (await flush(root, me)) { /* held edits of a confirmed claim, and our releases, go out at once */ }
     const today = new Date().toISOString().slice(0, 10);
     if (mem.meta.lastCompactDay !== today) {
       const result = await compact(root, me);
@@ -442,8 +462,277 @@ export async function runTick(reason = "alarm") {
     return { ok: false, error: lastError };
   } finally {
     ticking = false;
-    if (membership && folderState === "granted") scheduleTick(mem?.outbox?.length ? FLUSH_DELAY_MS : READ_EVERY_MS);
+    if (membership && folderState === "granted") {
+      scheduleTick(mem && claimsPending() ? CLAIM_READ_EVERY_MS : mem?.outbox?.length ? FLUSH_DELAY_MS : READ_EVERY_MS);
+    }
   }
+}
+
+// --------------------------------------------------------------------------
+// Claims (build step 4, design 6): claim, then confirm; held edits; kept aside
+// --------------------------------------------------------------------------
+// A claim is on an account (team-claims.js names it by company key). While my claim is being checked, my edits to
+// that account's rows (account and contact homes) are applied here but HELD - not sent. Confirmed: they go out.
+// Lost (a colleague claimed first): they are taken back out of the merged state, the rows on this PC get the
+// winner's values again, and the edits are KEPT ASIDE until I apply or discard them (R3.3 - nothing lost silently).
+
+// Design 6.3: a colleague's heartbeat counts only once every change file it vouches for has been read. Its clock has
+// seen every claim that colleague had read, so a heartbeat stamped after my claim proves they have nothing earlier.
+function readUpToOf(hb, cursor, fileWall) {
+  if (!hb || cursor < (hb.lastN || 0)) return fileWall;
+  return Math.max(hb.at || 0, stampWall(hb.clock), fileWall);
+}
+
+function claimContext(now = Date.now()) {
+  const meta = mem.meta;
+  const me = membership.memberId;
+  const lastSeen = {};
+  const readUpTo = {};
+  for (const m of Object.keys({ ...meta.cursors, ...meta.hb, ...meta.profiles })) {
+    if (m === me) continue;
+    const hb = meta.hb[m];
+    const fileWall = meta.lastFileWall[m] || 0;
+    lastSeen[m] = Math.max(hb?.at || 0, fileWall);
+    readUpTo[m] = readUpToOf(hb, meta.cursors[m] || 0, fileWall);
+  }
+  return { me, now, lastSeen, readUpTo, activeMembers: activeMembersOf(lastSeen, now, ACTIVE_MS), idleMs: DEFAULT_CLAIM_IDLE_MS };
+}
+
+const memberName = (m) => (m === membership?.memberId ? membership.name : mem.meta.profiles[m]?.name || "A colleague");
+const inSyncNow = () => !(lastError && errorSince && Date.now() - errorSince >= NOT_IN_SYNC_AFTER_MS);
+
+// My own record: into the outbox and the merged state at once.
+function pushOwn(record) {
+  applyChange(mem.state, record);
+  mem.outbox.push(record);
+}
+
+// Inside the queue (diffKeys). New local records go out, except those of an account whose claim of mine is still
+// being checked (or lost, until resolveClaims has dealt with it): those are held. Both are applied to the state.
+function holdOrSend(records) {
+  const { claims } = mem;
+  const views = new Map();
+  let ctx = null;
+  for (const r of records) {
+    const key = accountKeyOfChange(mem.state, r, normalizeCompanyName);
+    let hold = false;
+    if (key && claims.mine[key]) {
+      if (claims.held[key]) hold = true;
+      else {
+        if (!views.has(key)) views.set(key, claimView(mem.state, key, ctx || (ctx = claimContext())).state);
+        hold = views.get(key) === "checking" || views.get(key) === "lost";
+      }
+    }
+    if (hold) {
+      const h = claims.held[key] || (claims.held[key] = { records: [], prior: {} });
+      const rk = rowKey(r.e, r.id);
+      const before = priorOf(mem.state, r);
+      if (!h.prior[rk]) h.prior[rk] = before;
+      else for (const [f, v] of Object.entries(before.f)) if (!(f in h.prior[rk].f)) h.prior[rk].f[f] = v;
+      h.records.push(r);
+      applyChange(mem.state, r);
+    } else {
+      pushOwn(r);
+    }
+  }
+}
+
+function claimsPending() {
+  const { claims } = mem;
+  if (Object.keys(claims.held).length) return true;
+  const keys = Object.keys(claims.mine);
+  if (!keys.length || !membership) return false;
+  const ctx = claimContext();
+  return keys.some((k) => claimView(mem.state, k, ctx).state === "checking");
+}
+
+function releaseOwn(key, now) {
+  pushOwn({ t: tick(mem.clock, now), e: "account", id: claimIdFor(key), op: "release" });
+  delete mem.claims.mine[key];
+}
+
+// Inside the queue. Settles every claim of mine that the latest read decided.
+async function resolveClaims() {
+  if (!membership) return;
+  const { claims } = mem;
+  const keys = [...new Set([...Object.keys(claims.mine), ...Object.keys(claims.held)])];
+  if (!keys.length) return;
+  const ctx = claimContext();
+  const now = ctx.now;
+  const rewrite = new Set();
+  let changed = false;
+  for (const key of keys) {
+    const v = claimView(mem.state, key, ctx);
+    const held = claims.held[key];
+    if (v.state === "lost" || (v.state === "other" && held)) {
+      if (held) {
+        retractChanges(mem.state, held.records, held.prior);
+        for (const r of held.records) rewrite.add(rowKey(r.e, r.id));
+        const prev = claims.aside[key];
+        claims.aside[key] = { records: [...(prev?.records || []), ...held.records], at: now, lostTo: v.holder?.member || null };
+        delete claims.held[key];
+      }
+      // A lost claim is withdrawn: it would otherwise become the holder the moment the winner is done.
+      if (claims.mine[key]) releaseOwn(key, now);
+      changed = true;
+      continue;
+    }
+    if (v.state === "mine" || v.state === "free") {
+      if (held) {
+        mem.outbox.push(...held.records);
+        delete claims.held[key];
+        changed = true;
+      }
+      // Free with a claim of mine: it ran out (5 minutes without a sign of life) - nothing to hold any more.
+      if (claims.mine[key] && (claims.mine[key].releaseWhenDone || v.state === "free")) {
+        if (v.state === "free") delete claims.mine[key];
+        else releaseOwn(key, now);
+        changed = true;
+      }
+    }
+  }
+  if (changed) await save(["state", "outbox", "claims"]);
+  if (rewrite.size) await writeBack(rewrite);
+}
+
+function describeClaim(key) {
+  const ctx = claimContext();
+  const v = claimView(mem.state, key, ctx);
+  const aside = mem.claims.aside[key];
+  return {
+    member: true,
+    key,
+    state: v.state,
+    holder: v.holder ? { name: memberName(v.holder.member), me: v.holder.member === ctx.me, since: v.holder.sinceWall } : null,
+    held: mem.claims.held[key]?.records.length || 0,
+    aside: aside ? {
+      changes: aside.records.reduce((n, r) => n + (r.op === "set" ? Object.keys(r.f || {}).length : 1), 0),
+      at: aside.at,
+      lostTo: aside.lostTo ? memberName(aside.lostTo) : null,
+    } : null,
+    inSync: folderState === "granted" && inSyncNow(),
+    folder: folderState,
+  };
+}
+
+// Inside the queue. Refuses while the folder is not usable or not in sync (6.6: a claim nobody can see is no claim).
+async function claimInner(key, kind) {
+  if (!key) return { ok: false, reason: "no_key" };
+  if (!(await connectedRoot())) return { ok: false, reason: "offline", ...describeClaim(key) };
+  if (!inSyncNow()) return { ok: false, reason: "not_in_sync", ...describeClaim(key) };
+  const v = claimView(mem.state, key, claimContext());
+  if (v.state === "other" || v.state === "lost") return { ok: false, reason: "held", ...describeClaim(key) };
+  const now = Date.now();
+  const m = mem.claims.mine[key];
+  if (!m || v.state === "free" || now - m.at >= CLAIM_REFRESH_MS) {
+    // Also a renewal: the claim's 5-minute idle clock runs from my latest claim record (team-merge activeClaims).
+    pushOwn({ t: tick(mem.clock, now), e: "account", id: claimIdFor(key), op: "claim", kind });
+    mem.claims.mine[key] = { kind, at: now, releaseWhenDone: false };
+    await save(["state", "outbox", "claims"]);
+    scheduleTick(0);
+  } else if (m.releaseWhenDone) {
+    m.releaseWhenDone = false;
+    await save(["claims"]);
+  }
+  return { ok: true, ...describeClaim(key) };
+}
+
+// Before a member edits an account (the account page) or the pipeline starts on it. Not in a team: always ok.
+export function claimAccount(key, { kind = "edit" } = {}) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: true };
+    await ensureLoaded();
+    return claimInner(key, kind);
+  });
+}
+
+// Leaving the account page, or the pipeline done with it. Edits still held wait for the outcome first.
+export function releaseAccount(key) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: true };
+    await ensureLoaded();
+    const m = mem.claims.mine[key];
+    if (!m) return { ok: true };
+    if (mem.claims.held[key]) m.releaseWhenDone = true;
+    else releaseOwn(key, Date.now());
+    await save(["state", "outbox", "claims"]);
+    scheduleTick(FLUSH_DELAY_MS);
+    return { ok: true };
+  });
+}
+
+export function getClaimStatus(key) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false };
+    await ensureLoaded();
+    await connectedRoot();
+    await resolveClaims();
+    return describeClaim(key);
+  });
+}
+
+// "Apply my changes": the kept-aside edits, stamped anew, under a new claim - held until it is confirmed.
+export function applyKeptAside(key) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false };
+    await ensureLoaded();
+    const aside = mem.claims.aside[key];
+    if (!aside) return { ok: true, ...describeClaim(key) };
+    const claimed = await claimInner(key, "edit");
+    if (!claimed.ok) return claimed;
+    const now = Date.now();
+    const h = mem.claims.held[key] || (mem.claims.held[key] = { records: [], prior: {} });
+    const rows = new Set();
+    for (const r of aside.records) {
+      const nr = { ...r, t: tick(mem.clock, now) };
+      const rk = rowKey(nr.e, nr.id);
+      const before = priorOf(mem.state, nr);
+      if (!h.prior[rk]) h.prior[rk] = before;
+      else for (const [f, v] of Object.entries(before.f)) if (!(f in h.prior[rk].f)) h.prior[rk].f[f] = v;
+      h.records.push(nr);
+      applyChange(mem.state, nr);
+      rows.add(rk);
+    }
+    delete mem.claims.aside[key];
+    await save(["state", "claims"]);
+    await writeBack(rows);
+    await resolveClaims();
+    scheduleTick(0);
+    return { ok: true, ...describeClaim(key) };
+  });
+}
+
+export function discardKeptAside(key) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false };
+    await ensureLoaded();
+    delete mem.claims.aside[key];
+    await save(["claims"]);
+    return { ok: true, ...describeClaim(key) };
+  });
+}
+
+// The pipeline and the web lane (design 6.5, R3.5): null when not in a team. Otherwise `connected` (no automatic
+// work while the team cannot see it) and mayWork(key): not held by a colleague, and in this member's share of the
+// accounts (rendezvous over the members active now - a joining or leaving member moves only its own share).
+export async function teamWorkGate() {
+  if (!(await loadMembership())) return null;
+  return enqueue(async () => {
+    await ensureLoaded();
+    const connected = Boolean(await connectedRoot()) && inSyncNow();
+    const ctx = claimContext();
+    const members = [ctx.me, ...ctx.activeMembers];
+    return {
+      connected,
+      mayWork(key) {
+        if (!connected || !key) return false;
+        const state = claimView(mem.state, key, claimContext()).state;
+        if (state === "other" || state === "lost") return false;
+        // An account I already hold is mine to finish, whatever the share says now.
+        return state === "mine" || state === "checking" || pipelineOwner(key, members) === ctx.me;
+      },
+    };
+  });
 }
 
 // --------------------------------------------------------------------------
@@ -460,7 +749,7 @@ async function requireRoot() {
 
 async function startFresh(memberId) {
   await teamDbClear();
-  mem = { state: newState(), shadow: {}, outbox: [], inflight: null, meta: emptyMeta() };
+  mem = { state: newState(), shadow: {}, outbox: [], inflight: null, meta: emptyMeta(), claims: emptyClaims() };
   mem.clock = createClock(memberId);
   recentWriteBack.clear();
 }
@@ -507,7 +796,7 @@ export function createTeam({ name, teamName }) {
     const w = await writeTeamJson(root, ["base"], baseName, { member: memberId, written: m.joinedAt, kind: "base", changes: base });
     mem.meta.basesApplied = [baseName];
     measure({ kind: "create", records: base.length, bytes: w.bytes, ms: Math.round(performance.now() - t0) });
-    await save(["state", "shadow", "outbox", "inflight"]);
+    await save(["state", "shadow", "outbox", "inflight", "claims"]);
     await setMembership(m);
     lastOkAt = Date.now();
     errorSince = 0;
@@ -549,7 +838,7 @@ export function joinTeam({ name }) {
         if (next === undefined) { if (values[key] !== undefined) toRemove.push(key); }
         else toSet[key] = next;
       }
-      await save(["state", "shadow", "outbox", "inflight"]);
+      await save(["state", "shadow", "outbox", "inflight", "claims"]);
       await setMembership(m);
       if (Object.keys(toSet).length) await chrome.storage.local.set(toSet);
       if (toRemove.length) await chrome.storage.local.remove(toRemove);
@@ -618,7 +907,7 @@ export async function getTeamSyncStatus() {
         cursor,
         lastSeen,
         // Design 6.3: a heartbeat counts only once every change it vouches for has been read.
-        readUpTo: hb && cursor >= (hb.lastN || 0) ? Math.max(hb.at, fileWall) : fileWall,
+        readUpTo: readUpToOf(hb, cursor, fileWall),
       };
     });
   return {
@@ -686,6 +975,11 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_LEAVE": return reply(leaveTeam());
     case "TEAM_SYNC_NOW": return reply(runTick("now"));
     case "TEAM_SYNC_STATUS": return reply(getTeamSyncStatus());
+    case "TEAM_CLAIM": return reply(claimAccount(message.key, { kind: message.kind || "edit" }));
+    case "TEAM_RELEASE": return reply(releaseAccount(message.key));
+    case "TEAM_CLAIM_STATUS": return reply(getClaimStatus(message.key));
+    case "TEAM_ASIDE_APPLY": return reply(applyKeptAside(message.key));
+    case "TEAM_ASIDE_DISCARD": return reply(discardKeptAside(message.key));
     default: return null;
   }
 }

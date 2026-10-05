@@ -270,6 +270,55 @@ export function isClaimConfirmed(claimStamp, { me, activeMembers = [], readUpTo 
 }
 
 // --------------------------------------------------------------------------
+// Held edits of a lost claim (design 6.3, step 4): taken back out of the state
+// --------------------------------------------------------------------------
+// A member's edits on an account whose claim is still being checked are applied to its own state (so its screen
+// shows them) but not sent. If the claim is lost, they are retracted: every field they won goes back to the best
+// other value known - what it was before they were held (`prior`) or a colleague's value they overwrote, whichever
+// is later. Nothing else is touched, so a colleague's later change stays exactly as it is.
+
+// What a record is about to overwrite: { f: { field: {v, t} | null }, del }. Taken before the record is applied.
+export function priorOf(state, ch) {
+  const rec = getRecord(state, ch?.e, ch?.id);
+  const f = {};
+  for (const field of Object.keys(ch?.f || {})) f[field] = rec?.f[field] ? { ...rec.f[field] } : null;
+  return { f, del: rec?.del ?? null };
+}
+
+// prior: { "<e>|<id>": priorOf(...) of the FIRST held record on that row }.
+export function retractChanges(state, records, prior = {}) {
+  const stamps = new Set((records || []).map((r) => r && r.t));
+  for (const r of records || []) {
+    if (!r || !r.t) continue;
+    delete state.seen[`${r.t}|${r.e}|${r.id}`];
+    const rec = getRecord(state, r.e, r.id);
+    if (!rec) continue;
+    const before = prior[`${r.e}|${r.id}`] || { f: {}, del: null };
+    if (r.op === "set") {
+      for (const field of Object.keys(r.f || {})) {
+        const prefix = `${r.e}|${r.id}|${field}|`;
+        const lostKeys = Object.keys(state.lost).filter((k) => k.startsWith(prefix));
+        for (const k of lostKeys) if (stamps.has(state.lost[k].t)) delete state.lost[k];
+        if (!rec.f[field] || !stamps.has(rec.f[field].t)) continue;
+        let best = before.f[field] && !stamps.has(before.f[field].t) ? before.f[field] : null;
+        for (const k of lostKeys) {
+          const x = state.lost[k];
+          if (x && (!best || x.t > best.t)) best = { v: x.v, t: x.t };
+        }
+        if (best) {
+          rec.f[field] = { v: best.v, t: best.t };
+          delete state.lost[prefix + best.t];
+        } else {
+          delete rec.f[field];
+        }
+      }
+    } else if (r.op === "delete" && rec.del === r.t) {
+      rec.del = before.del && !stamps.has(before.del) ? before.del : null;
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
 // Assignments (design section 7) - a claim that does not expire
 // --------------------------------------------------------------------------
 // Assigned from the first assign stamp after the latest unassign of that member; the earliest active
@@ -332,6 +381,13 @@ function fnv1a(text) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
+  // murmur3's finaliser. Without it, FNV-1a orders two members almost the same way for every account: real ids
+  // made in the same session (same "...osg" time suffix) split 40 accounts 40:0 (step 4 test).
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
   return h >>> 0;
 }
 

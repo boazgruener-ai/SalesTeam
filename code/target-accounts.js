@@ -123,6 +123,7 @@ import {
   prioritizeCompanies,
 } from "./agent-shared.js";
 import { initDecisionsDot } from "./decisions-dot.js";
+import { createClaimGuard } from "./team-claims-ui.js";
 
 const emptyStateEl = document.getElementById("empty-state");
 const controlsEl = document.getElementById("explorer-controls");
@@ -509,6 +510,17 @@ navCollapseBtn.addEventListener("click", () => {
 const listViewEl = document.getElementById("list-view");
 const accountViewEl = document.getElementById("account-view");
 const contactViewEl = document.getElementById("contact-view");
+// Team use 1.2.2 step 4: claims on the account and contact pages (a contact's claim is its account's).
+const accountClaimGuard = createClaimGuard({
+  viewEl: accountViewEl,
+  afterEl: document.getElementById("account-title-row"),
+  regions: () => ["account-overview", "account-actions-btn", "account-detail-lists", "account-web-research"].map((id) => document.getElementById(id)),
+});
+const contactClaimGuard = createClaimGuard({
+  viewEl: contactViewEl,
+  afterEl: document.getElementById("contact-title-row"),
+  regions: () => ["contact-overview", "contact-actions-btn"].map((id) => document.getElementById(id)),
+});
 
 // Target Contacts Dashboard (PRD 6.19) - a second list view in this same
 // page, deliberately its own parallel set of DOM refs/state/render
@@ -6129,16 +6141,20 @@ async function route() {
   // embedded has to close the embedded page, or the route runs against content that stays hidden.
   if (!embeddedPageWrapEl.hidden) hideEmbeddedPage();
   const { view, key } = parseHash();
+  if (view !== "account") accountClaimGuard.hide();
+  if (view !== "contact") contactClaimGuard.hide();
   if (view === "account" && key) {
     showView("account");
     const startInEdit = pendingAccountEditKey === key;
     pendingAccountEditKey = null;
+    accountClaimGuard.show(key);
     await renderAccountView(key, { startInEdit });
   } else if (view === "contact" && key) {
     showView("contact");
     const startInEdit = pendingContactEditKey === key;
     pendingContactEditKey = null;
     await renderContactView(key, { startInEdit });
+    contactClaimGuard.show(normalizeCompanyName(currentContactRow().company || "") || null);
   } else if (view === "contactsList") {
     showView("contactsList");
   } else {
