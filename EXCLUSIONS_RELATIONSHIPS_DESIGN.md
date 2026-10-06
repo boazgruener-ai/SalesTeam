@@ -1,7 +1,7 @@
 # SalesTeam — Exclusions & Relationships: Design
 
 Target release: **1.2.3** (test builds 1.2.2.1, 1.2.2.2 …)
-Status: **Design — draft for Boaz's review.** Decisions D1–D8 in section 11 await his answers.
+Status: **Design — agreed 2026-10-06.** Boaz agreed to D1–D8 as proposed (section 11).
 Date: 2026-10-06
 Builds on: `EXCLUSIONS_RELATIONSHIPS_REQUIREMENTS.md` (agreed 2026-10-06). Requirement numbers (R2.3, R5.4 …)
 refer to it.
@@ -364,7 +364,7 @@ the live install.
 
 ---
 
-## 11. Decisions for Boaz
+## 11. Decisions (all agreed 2026-10-06, as proposed)
 
 - **D1 — A separate list, not a category in the same list.** `companyRelationships` is a new key rather than
   keeping customer / partner entries inside `companyExclusions`. Reason: every hiding place reads that list
