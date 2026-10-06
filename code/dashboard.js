@@ -64,6 +64,7 @@ import {
 import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
 import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
 import { initDecisionsDot } from "./decisions-dot.js";
+import { teamAccounts } from "./team-accounts-ui.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -722,6 +723,69 @@ function creatorCell(td, lead) {
 
 function companyCell(td, lead) {
   td.textContent = lead.company || "—";
+  // 1.2.2 step 5b (R6.5): whose account the lead's company is.
+  const badge = lead.company ? teamAccounts.badge(normalizeCompanyName(lead.company)) : null;
+  if (badge) td.appendChild(badge);
+}
+
+// --------------------------------------------------------------------------
+// Team use 1.2.2 step 5b (design 7, R6.2, R6.6): the outreach check
+// --------------------------------------------------------------------------
+// A lead whose company is assigned to a colleague is theirs to contact: drafting, copying and changing its status are
+// blocked (reading stays open). And before anyone approaches a person a colleague already contacted (from another
+// lead of the same person), they are asked first - no second approach by accident.
+const CONTACTED_STATUSES = ["Contacted", "Responded", "Converted"];
+
+function outreachBlock(lead) {
+  if (!lead || !teamAccounts.inTeam()) return null;
+  const off = teamAccounts.offLimits(lead.company ? normalizeCompanyName(lead.company) : "");
+  if (!off) return null;
+  if (off.reason === "offline") return off.text.replace("changes are blocked", "outreach is blocked");
+  if (off.reason === "assigned") return `${lead.company} is assigned to ${off.name} - only ${off.name} contacts it. You can read this lead.`;
+  return null; // a colleague updating the account does not stop outreach on its leads
+}
+
+const samePerson = (a, b) => (a.profileUrl && b.profileUrl ? a.profileUrl === b.profileUrl
+  : Boolean(leadCreatorName(a)) && leadCreatorName(a) === leadCreatorName(b) && normalizeCompanyName(a.company || "") === normalizeCompanyName(b.company || ""));
+
+function colleagueContact(lead) {
+  if (!lead || !teamAccounts.inTeam()) return null;
+  const me = teamAccounts.myName();
+  return allLeads.find((l) => l.key !== lead.key && l.contactedBy && l.contactedBy !== me
+    && CONTACTED_STATUSES.includes(l.status) && samePerson(l, lead)) || null;
+}
+
+async function confirmNoSecondApproach(lead) {
+  const prior = colleagueContact(lead);
+  if (!prior) return true;
+  return askConfirm(
+    `${prior.contactedBy} already contacted ${leadCreatorName(lead) || "this person"}${prior.contactedAt ? ` on ${formatDateTime(prior.contactedAt)}` : ""} (from another lead, now "${prior.status}").\n\nContact them again anyway?`,
+    { okLabel: "Contact anyway", cancelLabel: "Cancel" },
+  );
+}
+
+function paintTeamNotice(lead) {
+  let el = document.getElementById("detail-team-notice");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "detail-team-notice";
+    el.className = "detail-team-notice";
+    document.getElementById("detail-meta").insertAdjacentElement("afterend", el);
+  }
+  const block = outreachBlock(lead);
+  const prior = block ? null : colleagueContact(lead);
+  el.textContent = block || (prior ? `${prior.contactedBy} already contacted this person${prior.contactedAt ? ` on ${formatDateTime(prior.contactedAt)}` : ""} (another lead, "${prior.status}").` : "");
+  el.classList.toggle("blocked", Boolean(block));
+  el.hidden = !el.textContent;
+  // Everything that works the lead: status, priority, the draft, the Sales Mentor (Boaz, 2026-10-05). Reading stays.
+  for (const id of ["detail-status-select", "detail-priority-select", "detail-template-select", "detail-draft-btn", "detail-copy-btn",
+    "detail-save-btn", "detail-mentor-input", "detail-mentor-send-btn", "detail-mentor-clear-btn", "mentor-quick-summary-btn",
+    "mentor-quick-openers-btn"]) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    if (block) { b.disabled = true; b.title = block; }
+    else if (id !== "detail-save-btn") { b.disabled = false; b.removeAttribute("title"); }
+  }
 }
 
 // Reported directly: a metro-only location ("Greater Hamburg Area") gives no
@@ -879,15 +943,19 @@ function openRowMenu(anchorEl, rowKey, items) {
 // button's own look) is shared - see actions-column.js's own header
 // comment. Only this table's real menu items stay here.
 function buildLeadActionsMenu(lead) {
+  const block = outreachBlock(lead);
   return [
-    { label: "Open / Edit", onClick: () => openDetail(lead.key) },
-    { label: "Consult Mentor", onClick: () => openDetail(lead.key, "mentor") },
-    { label: "Send Message", onClick: () => openDetail(lead.key, "draft") },
-    { label: "Assign Company", onClick: () => openAssignCompanyDialog(lead) },
-    { label: "Assign Location", onClick: () => openAssignLocationDialog(lead) },
+    // A colleague's lead (Boaz, 2026-10-05): only Open - everything else works the lead.
+    { label: block ? "Open" : "Open / Edit", onClick: () => openDetail(lead.key) },
+    { label: "Consult Mentor", disabled: Boolean(block), title: block || undefined, onClick: () => openDetail(lead.key, "mentor") },
+    { label: "Send Message", disabled: Boolean(block), title: block || undefined, onClick: () => openDetail(lead.key, "draft") },
+    { label: "Assign Company", disabled: Boolean(block), title: block || undefined, onClick: () => openAssignCompanyDialog(lead) },
+    { label: "Assign Location", disabled: Boolean(block), title: block || undefined, onClick: () => openAssignLocationDialog(lead) },
     {
       label: "Dismiss",
       danger: true,
+      disabled: Boolean(block),
+      title: block || undefined,
       onClick: async () => {
         const prevValue = lead.status || "New";
         await updateLeadStatus(lead.key, "Dismissed");
@@ -1834,6 +1902,7 @@ function renderDetail(lead) {
 
   renderMentorHistory();
   document.getElementById("detail-mentor-status").textContent = "";
+  paintTeamNotice(lead);
 }
 
 // Message template editing (moved here from settings.html, 2026-09-16 - the
@@ -1935,7 +2004,12 @@ detailSaveBtn.addEventListener("click", async () => {
   const priorityValue = document.getElementById("detail-priority-select").value;
   const newPriority = priorityValue ? Number(priorityValue) : null;
   if (newPriority !== prevPriority) await setLeadPriority(key, newPriority);
-  if (newStatus !== prevStatus) await updateLeadStatus(key, newStatus);
+  if (newStatus !== prevStatus && CONTACTED_STATUSES.includes(newStatus) && !CONTACTED_STATUSES.includes(prevStatus)
+    && !(await confirmNoSecondApproach(currentDetailLead))) {
+    detailSaveBtn.disabled = false;
+    return;
+  }
+  if (newStatus !== prevStatus) await updateLeadStatus(key, newStatus, { by: teamAccounts.myName() });
   await loadLeads();
   currentDetailLead = allLeads.find((l) => l.key === key) || currentDetailLead;
   renderAllPieCharts();
@@ -1965,6 +2039,7 @@ document.getElementById("detail-draft-btn").addEventListener("click", async () =
   const statusEl = document.getElementById("detail-draft-status");
   const textarea = document.getElementById("detail-draft-textarea");
   const templateId = document.getElementById("detail-template-select").value;
+  if (outreachBlock(currentDetailLead) || !(await confirmNoSecondApproach(currentDetailLead))) return;
   btn.disabled = true;
   statusEl.textContent = "Drafting…";
   try {
@@ -1983,6 +2058,7 @@ document.getElementById("detail-draft-btn").addEventListener("click", async () =
 document.getElementById("detail-copy-btn").addEventListener("click", async () => {
   const textarea = document.getElementById("detail-draft-textarea");
   if (!textarea.value.trim()) return;
+  if (outreachBlock(currentDetailLead)) return;
   await navigator.clipboard.writeText(textarea.value);
   const statusEl = document.getElementById("detail-draft-status");
   statusEl.textContent = "Copied — paste it into LinkedIn's message box and review before sending.";
@@ -1996,7 +2072,7 @@ document.getElementById("detail-copy-btn").addEventListener("click", async () =>
   // someone already set on purpose (Dismissed, Responded, Converted, or an
   // already-"Contacted" lead being copied again).
   if (currentDetailLead && currentDetailLead.status === "New") {
-    await updateLeadStatus(currentDetailLead.key, "Contacted");
+    await updateLeadStatus(currentDetailLead.key, "Contacted", { by: teamAccounts.myName() });
     currentDetailLead.status = "Contacted";
     document.getElementById("detail-status-select").value = "Contacted";
     await loadLeads();
@@ -2828,6 +2904,12 @@ function runActionFromHash() {
 
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+  await teamAccounts.ready();
+  // Assignments arrive from the team in the background: repaint the badges and the open lead's notice.
+  teamAccounts.onChange(() => {
+    renderTable();
+    if (currentDetailLead && !document.getElementById("detail-view").hidden) paintTeamNotice(currentDetailLead);
+  });
   loadColumnWidths();
   loadHiddenColumns();
   loadPageSize();

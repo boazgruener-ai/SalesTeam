@@ -1593,3 +1593,17 @@ thead th.actions-col {
   color: #666;
   pointer-events: none;
 }
+
+/* Team use 1.2.2 step 5b: whose account a lead's company is, and the outreach check. */
+.team-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  white-space: nowrap; vertical-align: middle; border: 1px solid transparent;
+}
+.team-badge-mine { background: #e6f4ea; color: #1e6b34; border-color: #a8d5b5; }
+.team-badge-other { background: #eef1f6; color: #3c4a5e; border-color: #c9d1dd; }
+.team-badge-busy { background: #fff4e0; color: #7a4800; border-color: #e8c27a; }
+.detail-team-notice { margin: 8px 0; padding: 8px 12px; border-radius: 8px; border: 2px solid #b26a00; background: #fff4e0; color: #7a4800; font-weight: 600; font-size: 13px; }
+.detail-team-notice.blocked { border-color: #b3261e; background: #fdeaea; color: #8c1d18; }
+.detail-team-notice[hidden] { display: none; }
+/* A blocked lead (team): disabled buttons must look disabled - the primary ones kept their colour. */
+#detail-view button:disabled, #detail-view select:disabled, #detail-view textarea:disabled { opacity: 0.45; cursor: not-allowed; }

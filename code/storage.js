@@ -3206,12 +3206,18 @@ export async function updateResultDraft(key, { draftMessage, draftTemplateId }) 
 // action. Silently no-ops on an unknown key or status value rather than
 // throwing, since this is always called from a UI that already has the
 // current lead list in front of it.
-export async function updateLeadStatus(key, status) {
+// `by` (1.2.2 step 5b): in a team, the member who marked the lead Contacted - the Leads Dashboard warns a colleague
+// before a second approach to the same person.
+export async function updateLeadStatus(key, status, { by = null } = {}) {
   if (!LEAD_STATUSES.includes(status)) return;
   const results = await getResults();
   if (results[key]) {
     results[key].status = status;
     results[key].statusUpdatedAt = Date.now();
+    if (status === "Contacted" && by) {
+      results[key].contactedBy = by;
+      results[key].contactedAt = Date.now();
+    }
     await saveResults(results);
   }
 }

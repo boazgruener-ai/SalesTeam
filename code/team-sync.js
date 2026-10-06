@@ -18,7 +18,7 @@ import { TEAM_SHARED_KEYS, isTeamSharedKey } from "./team-keys.js";
 import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchValue, rowTarget, rowKey, splitRowKey, canonicalRow } from "./team-rows.js";
 import {
   newState, applyChange, createClock, tick, observe, formatStamp, compactChanges, stampWall, priorOf, retractChanges,
-  pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed,
+  pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed, stampMember,
 } from "./team-merge.js";
 import {
   claimIdFor, accountKeyOfChange, activeMembersOf, claimView, assignmentView, offLimitsFor, teamAccountSummary,
@@ -32,6 +32,8 @@ export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 // Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
 // (team-claims.js teamAccountSummary + who I am). Personal, rewritten only when it changes.
 export const TEAM_ACCOUNTS_KEY = "teamAccountStates";
+// Step 5b (Boaz): "the Team Admin reassigned / released your account" - shown in the top bar until OK. Personal.
+export const TEAM_NOTICES_KEY = "teamNotices";
 const FORMAT = 1;
 const ALARM = "team-sync";
 const DIFF_DEBOUNCE_MS = 1000;
@@ -248,8 +250,27 @@ async function writeBack(rks) {
 }
 
 // Inside the queue. Records read from colleagues -> merged state -> local storage.
+// The account's display name for a notice: the company name of one of its rows, else the key.
+function accountDisplayName(key) {
+  for (const [id, rec] of Object.entries(mem.state.entities.account || {})) {
+    if (id.startsWith("@")) continue;
+    const v = rec.f.company?.v;
+    if (typeof v === "string" && normalizeCompanyName(v) === key) return v;
+  }
+  return key;
+}
+
 async function applyRemote(records) {
   const affected = new Set();
+  // A colleague (the Team Admin) took one of my accounts away: remember whether it was mine before this batch.
+  const me = membership?.memberId;
+  const takenFrom = new Map(); // "@key" -> author
+  for (const r of records) {
+    if (r.op !== "unassign" || r.e !== "account" || !String(r.id).startsWith("@")) continue;
+    const author = stampMember(r.t);
+    if (author === me || (r.member || author) !== me) continue;
+    if (activeAssignments(mem.state, "account", r.id).some((a) => a.member === me)) takenFrom.set(r.id, author);
+  }
   for (const r of records) {
     if (!applyChange(mem.state, r)) continue;
     observe(mem.clock, r.t);
@@ -258,6 +279,20 @@ async function applyRemote(records) {
   }
   await save(["state"]);
   if (affected.size) await writeBack(affected);
+  if (takenFrom.size) {
+    const now = Date.now();
+    const added = [];
+    for (const [id, author] of takenFrom) {
+      const list = activeAssignments(mem.state, "account", id);
+      if (list.some((a) => a.member === me)) continue; // given back meanwhile
+      const key = id.slice(1);
+      added.push({ key, name: accountDisplayName(key), by: memberName(author), to: list[0] ? memberName(list[0].member) : null, at: now });
+    }
+    if (added.length) {
+      const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
+      await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...added].slice(-50) });
+    }
+  }
   return affected.size;
 }
 
@@ -1061,7 +1096,7 @@ export function leaveTeam() {
     await setMembership(null);
     await teamDbClear();
     await clearTeamFolder();
-    await chrome.storage.local.remove(TEAM_ACCOUNTS_KEY);
+    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY]);
     lastSummaryJson = null;
     mem = null;
     recentWriteBack.clear();

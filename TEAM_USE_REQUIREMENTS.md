@@ -306,6 +306,10 @@ each one who keeps it (or accepts a proposed owner — the member who already as
 **R6.8 — One shared "do not contact" list.** Exclusions (companies and people not to approach) are team
 data, not personal: one list for the whole team, which every member's scans, discovery and drafts respect.
 Members can add to it; removing an entry is the Team Admin's. (Expandi's company-wide blacklist.)
+*Changed 2026-10-05 (Boaz):* re-classifying a company (normal → competitor, customer, partner, recruiter, or back) is
+the **Team Admin's only**, in Setup; a member who thinks an account is wrongly classified asks the admin (email,
+Teams, a call). "Do not contact" in the sense of *keeping colleagues away from an account during a critical phase* is
+covered by **Assign to me** (R6.2 blocks colleagues' outreach); a lock on a single contact is left out for now.
 
 ---
 

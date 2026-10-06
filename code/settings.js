@@ -1092,15 +1092,7 @@ function buildWebFindingsRuleRows() {
     wrap.appendChild(label);
     wrap.appendChild(detail);
     box.addEventListener("change", async () => {
-      await saveWebFindingsArbitration({ [rule.setting]: box.checked });
-      flashSaved();
-      appendActivityLog({
-        actor: "user",
-        action: "web_findings_arbitration_changed",
-        label: `Web findings arbitration: "${rule.label}" turned ${box.checked ? "on" : "off"}`,
-        prevValue: String(!box.checked),
-        newValue: String(box.checked),
-      });
+      findingsSaver?.stage({ [rule.setting]: box.checked });
     });
   }
 }
@@ -1120,15 +1112,106 @@ function fillWebFindingsForm(settings) {
   webFindingsEl("web-findings-linkedin-authoritative").checked = Boolean(settings.linkedinAuthoritative);
 }
 
+// A Save button for the two Advanced cards (Boaz, 2026-10-06): a change stays on screen as "Unsaved changes" until
+// Save writes all of them at once (and logs one Activity Log entry). The "back to the defaults" buttons still save
+// at once - they ask first.
+function isPlainObj(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
+function mergePatch(a, b) {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = isPlainObj(v) && isPlainObj(out[k]) ? mergePatch(out[k], v) : v;
+  return out;
+}
+function createCardSaver({ card, saveFn, statusId, label, onSaved }) {
+  let pending = {};
+  const row = document.createElement("div");
+  row.className = "settings-buttons-row card-save-row";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "Save";
+  btn.disabled = true;
+  const note = document.createElement("span");
+  note.className = "status-text";
+  row.append(btn, note);
+  document.getElementById(card)?.appendChild(row);
+  const paint = () => {
+    const dirty = Object.keys(pending).length > 0;
+    btn.disabled = !dirty || btn.dataset.teamDisabled === "1";
+    note.textContent = dirty ? "Unsaved changes" : "";
+  };
+  btn.addEventListener("click", async () => {
+    if (!Object.keys(pending).length) return;
+    const patch = pending;
+    btn.disabled = true;
+    note.textContent = "Saving…";
+    const next = await saveFn(patch);
+    pending = {};
+    paint();
+    note.textContent = "Saved ✓";
+    setTimeout(() => { if (note.textContent === "Saved ✓") note.textContent = ""; }, 2500);
+    flashSaved();
+    appendActivityLog({ actor: "user", action: "settings_card_saved", label: `${label} saved (${Object.keys(patch).join(", ")})`, newValue: patch });
+    if (onSaved) onSaved(next);
+    const status = document.getElementById(statusId);
+    if (status) status.textContent = "";
+  });
+  return {
+    stage(patch) { pending = mergePatch(pending, patch); paint(); },
+    clear() { pending = {}; paint(); },
+  };
+}
+
+// "How to handle research findings" and "Revenue & Currency" open from Change Settings > Advanced (1.2.1.9 test):
+// they had no Save / Next - and no way back. A back link and a hint on top; a Save button at the bottom.
+// Both are shared team settings: a team member sees them read-only (D3, like the setup).
+async function decorateAdvancedCards() {
+  const membership = (await chrome.storage.local.get("teamMembership")).teamMembership;
+  const member = Boolean(membership && membership.role !== "admin");
+  for (const id of ["web-findings-section", "revenue-currency-section"]) {
+    const card = document.getElementById(id);
+    if (!card) continue;
+    let bar = card.querySelector(".advanced-card-nav");
+    if (!bar) {
+      // The way back sits above the card's box (Boaz: under the title it was easy to miss); it belongs to the card so it
+      // shows and hides with it. The hint stays under the title.
+      const back = document.createElement("a");
+      back.href = "#change-settings";
+      back.className = "advanced-card-back";
+      back.textContent = "← Back to Change Settings";
+      card.classList.add("has-advanced-back");
+      card.prepend(back);
+      bar = document.createElement("div");
+      bar.className = "advanced-card-nav";
+      const hint = document.createElement("span");
+      hint.className = "field-hint advanced-card-hint";
+      bar.append(hint);
+      card.querySelector("h3")?.insertAdjacentElement("afterend", bar);
+    }
+    bar.querySelector(".advanced-card-hint").textContent = member
+      ? `Shared with the team "${membership.teamName}" - only the Team Admin can change it. You can look at it here.`
+      : "Change what you need, then click Save at the bottom of this card.";
+    card.classList.toggle("team-member-readonly-card", member);
+    for (const c of card.querySelectorAll("input, select, textarea, button")) {
+      if (member) { c.dataset.teamDisabled = "1"; c.disabled = true; }
+      else if (c.dataset.teamDisabled) { delete c.dataset.teamDisabled; c.disabled = false; }
+    }
+  }
+}
+chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.teamMembership) decorateAdvancedCards().catch(() => {}); });
+
+let findingsSaver = null;
 async function initWebFindingsArbitration() {
   if (!webFindingsEl("web-findings-rules")) return;
+  findingsSaver = createCardSaver({
+    card: "web-findings-section", saveFn: saveWebFindingsArbitration, statusId: "web-findings-status",
+    label: "Research findings settings", onSaved: (next) => fillWebFindingsForm(next),
+  });
   buildWebFindingsRuleRows();
   const findingsSettings = await getWebFindingsArbitration();
   fillWebFindingsForm(findingsSettings);
   document.getElementById(findingsSettings.askEveryDifference ? "findings-mode-ask" : "findings-mode-auto").checked = true;
   for (const id of ["findings-mode-auto", "findings-mode-ask"]) {
     document.getElementById(id).addEventListener("change", () =>
-      saveWebFindingsArbitration({ askEveryDifference: document.getElementById("findings-mode-ask").checked }));
+      findingsSaver.stage({ askEveryDifference: document.getElementById("findings-mode-ask").checked }));
   }
 
   for (const f of webFindingsNumberFields) {
@@ -1146,25 +1229,16 @@ async function initWebFindingsArbitration() {
       if (f.max !== undefined) value = Math.min(f.max, value);
       el.value = value;
       const patch = f.path.length === 2 ? { [f.path[0]]: { [f.path[1]]: value } } : { [f.path[0]]: value };
-      await saveWebFindingsArbitration(patch);
-      flashSaved();
+      findingsSaver.stage(patch);
     });
   }
 
   webFindingsEl("web-findings-preference").addEventListener("change", async (e) => {
-    await saveWebFindingsArbitration({ sourcePreference: e.target.value });
-    flashSaved();
-    appendActivityLog({
-      actor: "user",
-      action: "web_findings_arbitration_changed",
-      label: `Web findings arbitration: on a tie, prefer "${e.target.value === "web" ? "new web research" : "existing/imported data"}"`,
-      newValue: e.target.value,
-    });
+    findingsSaver.stage({ sourcePreference: e.target.value });
   });
 
   webFindingsEl("web-findings-linkedin-authoritative").addEventListener("change", async (e) => {
-    await saveWebFindingsArbitration({ linkedinAuthoritative: e.target.checked });
-    flashSaved();
+    findingsSaver.stage({ linkedinAuthoritative: e.target.checked });
   });
 
   webFindingsEl("web-findings-reset-btn").addEventListener("click", async () => {
@@ -1173,6 +1247,7 @@ async function initWebFindingsArbitration() {
       { okLabel: "Put back the defaults", cancelLabel: "Cancel" }
     ))) return;
     const next = await saveWebFindingsArbitration(DEFAULT_ARBITRATION_SETTINGS);
+    findingsSaver.clear();
     fillWebFindingsForm(next);
     webFindingsEl("web-findings-status").textContent = "Back to the defaults.";
     flashSaved();
@@ -1180,7 +1255,7 @@ async function initWebFindingsArbitration() {
   });
 }
 
-initWebFindingsArbitration();
+initWebFindingsArbitration().finally(() => decorateAdvancedCards().catch(() => {}));
 
 // ---- Revenue & Currency ----
 // The rates grid is generated from SUPPORTED_CURRENCIES for the same reason the rule rows are
@@ -1192,6 +1267,11 @@ async function initRevenueCurrency() {
   const grid = document.getElementById("revenue-rates-grid");
   const asOfInput = document.getElementById("revenue-rates-asof-input");
   const statusEl = document.getElementById("revenue-currency-status");
+  let fill = null;
+  const revenueSaver = createCardSaver({
+    card: "revenue-currency-section", saveFn: saveRevenueNormalization, statusId: "revenue-currency-status",
+    label: "Revenue & Currency", onSaved: (next) => fill(next),
+  });
 
   select.innerHTML = "";
   for (const code of SUPPORTED_CURRENCIES) {
@@ -1201,7 +1281,7 @@ async function initRevenueCurrency() {
     select.appendChild(option);
   }
 
-  const fill = (settings) => {
+  fill = (settings) => {
     select.value = settings.targetCurrency;
     asOfInput.value = settings.asOf || "";
     document.getElementById("revenue-rates-asof").textContent =
@@ -1224,9 +1304,7 @@ async function initRevenueCurrency() {
           statusEl.textContent = "A rate has to be a number greater than zero.";
           return;
         }
-        await saveRevenueNormalization({ rates: { [code]: value } });
-        statusEl.textContent = `Saved - 1 ${code} = ${value} USD.`;
-        flashSaved();
+        revenueSaver.stage({ rates: { [code]: value } });
       });
       grid.appendChild(label);
       grid.appendChild(input);
@@ -1236,21 +1314,11 @@ async function initRevenueCurrency() {
   fill(await getRevenueNormalization());
 
   select.addEventListener("change", async () => {
-    const next = await saveRevenueNormalization({ targetCurrency: select.value });
-    fill(next);
-    flashSaved();
-    appendActivityLog({
-      actor: "user",
-      action: "revenue_currency_changed",
-      label: `Revenue is now shown and compared in ${select.value}`,
-      newValue: select.value,
-    });
+    revenueSaver.stage({ targetCurrency: select.value });
   });
 
   asOfInput.addEventListener("change", async () => {
-    const next = await saveRevenueNormalization({ asOf: asOfInput.value });
-    fill(next);
-    flashSaved();
+    revenueSaver.stage({ asOf: asOfInput.value });
   });
 
   document.getElementById("revenue-rates-reset-btn").addEventListener("click", async () => {
@@ -1259,10 +1327,11 @@ async function initRevenueCurrency() {
       { okLabel: "Put back the defaults", cancelLabel: "Cancel" }
     ))) return;
     const next = await saveRevenueNormalization({ rates: DEFAULT_EXCHANGE_RATES.rates, asOf: DEFAULT_EXCHANGE_RATES.asOf });
+    revenueSaver.clear();
     fill(next);
     statusEl.textContent = "Rates back to the defaults.";
     flashSaved();
   });
 }
 
-initRevenueCurrency();
+initRevenueCurrency().finally(() => decorateAdvancedCards().catch(() => {}));

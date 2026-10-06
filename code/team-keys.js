@@ -5,6 +5,7 @@
 // How a shared key is cut into rows (team-rows.js):
 //   workbook - targetAccountsWorkbook: one row per company / contact / AI initiative (by its id), the rest whole
 //   map      - an object keyed by something stable: one row per entry
+//   list     - an array of entries known by their content: one row per entry (TEAM_LIST_KEYS)
 //   whole    - one row holding the whole value (field "$v"): the later change wins the whole setting
 
 export const TEAM_WORKBOOK_KEY = "targetAccountsWorkbook";
@@ -38,12 +39,23 @@ export const TEAM_WHOLE_KEYS = [
   "targetUniverseConfig", "targetContactProfile", "accountPriorityGuidelines", "completionTargets",
   "initiativeStagePreference", "includedCompanies", "valueAddOffers", "messageTemplates",
   // rules
-  "companyExclusions", "companyExclusionsLifted", "organizationTypeEligibility", "companyAliases",
+  "companyExclusionsLifted", "organizationTypeEligibility", "companyAliases",
   "negativeTopics", "prioritizationRuleOverrides", "postPrioritizationRules", "webFindingsArbitration",
   "revenueNormalization", "targetAccountScoreThreshold", "jobRulesMinConfidence", "keywordSearchLanguages",
 ];
 
-export const TEAM_SHARED_KEYS = [TEAM_WORKBOOK_KEY, ...TEAM_MAP_KEYS.map((m) => m.key), ...TEAM_WHOLE_KEYS];
+// list - an array whose entries are known by their content (step 5b): one row per entry, so two members adding at the
+// same time both keep theirs - as a whole key only the later list would survive. The exclusion list (competitors,
+// customers, partners, recruiters): changed by the Team Admin only (Setup is the admin's, D3; R6.8 as changed 2026-10-05).
+export const TEAM_LIST_KEYS = [
+  { key: "companyExclusions", e: "setting", prefix: "companyExclusions:", identity: ["category", "slug", "name", "domain"] },
+];
+// The row id of one list entry: its identity fields, lower-cased (an entry that is not an object: its JSON).
+export function listEntryId(spec, entry) {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return `=${JSON.stringify(entry)}`;
+  return spec.identity.map((f) => String(entry[f] ?? "").trim().toLowerCase()).join("|");
+}
+export const TEAM_SHARED_KEYS = [TEAM_WORKBOOK_KEY, ...TEAM_MAP_KEYS.map((m) => m.key), ...TEAM_LIST_KEYS.map((l) => l.key), ...TEAM_WHOLE_KEYS];
 
 // Never synced. Not exhaustive by necessity - anything not shared stays local - but listing them makes an
 // unclassified key stand out on the dev page.
@@ -59,12 +71,13 @@ export const TEAM_PERSONAL_KEYS = [
   "targetAccountsImportedAt", "targetAccountsImportedFileName", "targetAccountsWorkbookImportedAt",
   "companyExclusionsMigrated", "locationHeuristicV2Migrated", "locationHeuristicV3Migrated",
   // the team layer's own state
-  "teamMembership", "teamSyncStatus", "teamAccountStates",
+  "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices",
 ];
 
 export function teamKeyKind(key) {
   if (key === TEAM_WORKBOOK_KEY) return "workbook";
   if (TEAM_MAP_KEYS.some((m) => m.key === key)) return "map";
+  if (TEAM_LIST_KEYS.some((l) => l.key === key)) return "list";
   if (TEAM_WHOLE_KEYS.includes(key)) return "whole";
   return null;
 }

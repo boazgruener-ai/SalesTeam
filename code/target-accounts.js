@@ -515,12 +515,12 @@ const contactViewEl = document.getElementById("contact-view");
 const accountClaimGuard = createClaimGuard({
   viewEl: accountViewEl,
   afterEl: document.getElementById("account-title-row"),
-  regions: () => ["account-overview", "account-actions-btn", "account-detail-lists", "account-web-research"].map((id) => document.getElementById(id)),
+  regions: () => ["account-overview", "account-detail-lists", "account-web-research"].map((id) => document.getElementById(id)),
 });
 const contactClaimGuard = createClaimGuard({
   viewEl: contactViewEl,
   afterEl: document.getElementById("contact-title-row"),
-  regions: () => ["contact-overview", "contact-actions-btn"].map((id) => document.getElementById(id)),
+  regions: () => ["contact-overview"].map((id) => document.getElementById(id)),
 });
 
 // Target Contacts Dashboard (PRD 6.19) - a second list view in this same
@@ -1772,6 +1772,8 @@ async function openBulkEditDialog(scope) {
   bulkEditEl("bulk-edit-due-date").value = "";
   bulkEditEl("bulk-edit-due-date").disabled = true;
   bulkEditEl("bulk-edit-remove").checked = false;
+  bulkEditEl("bulk-edit-advanced").open = false;
+  bulkEditEl("bulk-edit-advanced").hidden = !teamAccounts.canRemove();
   bulkEditEl("bulk-edit-status-text").textContent = "";
   const undoBtn = bulkEditEl("bulk-edit-undo-btn");
   const record = await getLastBulkExtrasChange();
@@ -1800,7 +1802,7 @@ function buildBulkPatch(scope, key, { status, priority, dueMode, dueMs, remove }
   }
   if (dueMode === "set") patch.nextActionDueAt = dueMs;
   else if (dueMode === "clear") patch.nextActionDueAt = null;
-  if (remove) patch.deletedAt = Date.now();
+  if (remove) { patch.deletedAt = Date.now(); patch.deletedBy = teamAccounts.myName(); }
   return patch;
 }
 
@@ -1841,7 +1843,7 @@ document.getElementById("bulk-edit-apply-btn").addEventListener("click", async (
   const priority = bulkEditEl("bulk-edit-priority").value;
   const dueMode = bulkEditEl("bulk-edit-due-mode").value;
   const dueValue = bulkEditEl("bulk-edit-due-date").value;
-  const remove = bulkEditEl("bulk-edit-remove").checked;
+  const remove = bulkEditEl("bulk-edit-remove").checked && teamAccounts.canRemove();
   const statusEl = bulkEditEl("bulk-edit-status-text");
 
   if (!status && !priority && !dueMode && !remove) {
@@ -1871,7 +1873,12 @@ document.getElementById("bulk-edit-apply-btn").addEventListener("click", async (
   }
   const patchByKey = {};
   for (const key of keys) if (!offLimitsKeys.includes(key)) patchByKey[key] = buildBulkPatch(scope, key, { status, priority, dueMode, dueMs, remove });
-  const changed = await bulkPatchExtras(scope, patchByKey);
+  // Feedback at once (1.2.1.9 test: a write could wait several seconds for other work, with nothing on screen).
+  const applyBtn = bulkEditEl("bulk-edit-apply-btn");
+  applyBtn.disabled = true;
+  statusEl.textContent = "Applying…";
+  let changed = 0;
+  try { changed = await bulkPatchExtras(scope, patchByKey); } finally { applyBtn.disabled = false; }
   if (offLimitsKeys.length) showNotice(`${changed} changed; ${offLimitsKeys.length} skipped - ${offLimitsKeys.length === 1 ? "it belongs" : "they belong"} to a colleague's account (assigned, or being updated right now).`);
 
   const parts = [];
@@ -1888,7 +1895,7 @@ document.getElementById("bulk-edit-apply-btn").addEventListener("click", async (
 
   bulkEditEl("bulk-edit-dialog").close();
   selectionSet(scope).clear();
-  await loadWorkbook();
+  await refreshAfterExtrasChange();
   rerenderForScope(scope);
 });
 
@@ -2131,16 +2138,75 @@ function offLimitsItems(companyKey, items) {
   return items.map((item) => (item.change ? { ...item, disabled: true, title: off.text } : item));
 }
 
-function teamAssignMenuItems(companyKey) {
+// ONE menu per account and one per contact (Boaz, 2026-10-05): the ⋮ at the end of a list row and the ⋮ next to the
+// title on the account / contact page offer the same actions, in the same order. "Open" only where there is something
+// to open (the list). Items that change the account are disabled on a colleague's account, with the reason as tooltip.
+function accountMenuItems(companyKey, company, { onDetailPage = false } = {}) {
+  if (!company) return [];
+  // Offered only when the account actually has open findings - an entry that does nothing teaches users to ignore it.
+  const openFindingCount = annotatedProposals(company, accountExtras[companyKey] || {}).filter((p) => !p.dismissed).length;
+  const afterSave = () => (onDetailPage ? renderAccountView(companyKey) : rerenderForScope("accounts"));
+  return offLimitsItems(companyKey, [
+    ...(onDetailPage ? [] : [{ label: "Open", onClick: () => openAccount(companyKey) }]),
+    { label: "Edit", change: true, onClick: () => {
+      if (onDetailPage) { accountEditMode = true; renderAccountView(companyKey); }
+      else { pendingAccountEditKey = companyKey; openAccount(companyKey); }
+    } },
+    ...(openFindingCount > 0
+      ? [{ label: `Review web findings (${openFindingCount})…`, change: true, onClick: () => openWebFindingsReview(companyKey, { onSaved: afterSave }) }]
+      : []),
+    { label: "Merge…", change: true, onClick: () => openMergeAccountsDialog(companyKey) },
+    ...teamAssignMenuItems(companyKey, { onDetailPage }),
+    ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, onClick: () => removeAccount(companyKey, company.company, { onDetailPage }) }] : []),
+  ]);
+}
+
+function contactMenuItems(contactKey, contact, { onDetailPage = false } = {}) {
+  if (!contact) return [];
+  // A contact is its account's - a colleague's account's contacts are read-only.
+  return offLimitsItems(normalizeCompanyName(contact.company || ""), [
+    ...(onDetailPage ? [] : [{ label: "Open", onClick: () => openContact(contactKey) }]),
+    { label: "Edit", change: true, onClick: () => {
+      if (onDetailPage) { contactEditMode = true; renderContactView(contactKey); }
+      else { pendingContactEditKey = contactKey; openContact(contactKey); }
+    } },
+    ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, onClick: () => removeContact(contactKey, contact.fullName, { onDetailPage }) }] : []),
+  ]);
+}
+
+// Assign to me / Release, and for the Team Admin Reassign… - in the menus only; the line under the account's title
+// just says who has it.
+function teamAssignMenuItems(companyKey, { onDetailPage = false } = {}) {
   if (!teamAccounts.inTeam()) return [];
   const e = teamAccounts.entry(companyKey);
-  const mine = e?.a && e.a === teamAccounts.me();
+  const mine = Boolean(e?.a) && e.a === teamAccounts.me();
+  const admin = teamAccounts.isAdmin();
+  const done = () => { if (onDetailPage) accountClaimGuard.refresh(); };
+  const run = (type) => teamAssignKeys([companyKey], type).then(done);
+  const items = [];
   if (!e?.a) {
     const off = teamAccounts.offLimits(companyKey);
-    return [{ label: "Assign to me", disabled: Boolean(off), title: off?.text, onClick: () => teamAssignKeys([companyKey], "TEAM_ASSIGN") }];
+    items.push({ label: "Assign to me", disabled: Boolean(off), title: off?.text, onClick: () => run("TEAM_ASSIGN") });
+  } else if (mine || admin) {
+    items.push({ label: mine ? "Release" : "Release (unassign)", onClick: () => run("TEAM_UNASSIGN") });
   }
-  if (mine || teamAccounts.isAdmin()) return [{ label: mine ? "Release" : "Release (unassign)", onClick: () => teamAssignKeys([companyKey], "TEAM_UNASSIGN") }];
-  return [];
+  if (admin) items.push({ label: e?.a ? "Reassign to…" : "Assign to…", onClick: () => teamReassign(companyKey).then(done) });
+  return items;
+}
+
+// Team Admin: pick the member an account goes to.
+async function teamReassign(companyKey) {
+  let st = null;
+  try { st = await chrome.runtime.sendMessage({ type: "TEAM_SYNC_STATUS" }); } catch { /* handled below */ }
+  if (!st?.member) { showNotice("The team status could not be read - try again in a moment.", { error: true }); return; }
+  const current = teamAccounts.entry(companyKey)?.a || null;
+  const choices = [{ value: st.me.memberId, label: `${st.me.name} (you)` }, ...(st.members || []).map((m) => ({ value: m.id, label: m.name }))]
+    .filter((c) => c.value !== current);
+  const to = await askChoice("Assign this account to:", choices);
+  if (!to) return;
+  let r = null;
+  try { r = await chrome.runtime.sendMessage({ type: "TEAM_ASSIGN", key: companyKey, to }); } catch { /* handled below */ }
+  if (!r || r.ok === false) showNotice(`Not reassigned - ${TEAM_REFUSAL_TEXT[r?.reason] || "try again in a moment"}.`, { error: true });
 }
 
 const TEAM_REFUSAL_TEXT = {
@@ -2166,7 +2232,169 @@ async function teamAssignKeys(keys, type) {
   appendActivityLog({ actor: "user", action: type === "TEAM_ASSIGN" ? "team_assigned" : "team_released", label: `${done} account${done === 1 ? "" : "s"} ${verb}` });
 }
 
+let rawWorkbook = { companies: [], contacts: [] };
+
+// Removing took 10-15 s with nothing on screen (1.2.1.9 test): the pop-up shows at once, and the list refresh only
+// redraws what changed (refreshAfterExtrasChange).
+async function accountWriteWithFeedback(workingText, write) {
+  showNotice(workingText, { working: true });
+  const result = await write();
+  await refreshAfterExtrasChange();
+  return result;
+}
+
+// --------------------------------------------------------------------------
+// Removed accounts and contacts (1.2.2 step 5b, design 2.11): every removal is soft - list them with their date and
+// who removed them, and restore the ticked ones. Admin-only in a team.
+// --------------------------------------------------------------------------
+let removedScope = "accounts";
+let removedSortDesc = true;
+const removedSelected = new Set();
+
+function removedRows(scope) {
+  if (scope === "accounts") {
+    const names = new Map(rawWorkbook.companies.map((c) => [normalizeCompanyName(c.company), c.company]));
+    for (const [k, v] of Object.entries(removedNameHints)) if (!names.has(k)) names.set(k, v);
+    return Object.entries(accountExtras).filter(([, x]) => x?.deletedAt).map(([key, x]) => ({
+      key, name: names.get(key) || key, company: "", at: x.deletedAt, by: x.deletedBy || "",
+      // A merged-away account comes back only by undoing the merge - alone it would be a duplicate again.
+      note: x.mergedInto ? `Merged into ${names.get(x.mergedInto) || x.mergedInto} - not restorable here` : "",
+      restorable: !x.mergedInto,
+    }));
+  }
+  const byKey = new Map(rawWorkbook.contacts.map((c) => [contactKeyFor(c.company, c.fullName), c]));
+  return Object.entries(contactExtras).filter(([, x]) => x?.deletedAt).map(([key, x]) => {
+    const c = byKey.get(key);
+    const companyKey = normalizeCompanyName(c?.company || String(key).split("::")[0]);
+    return {
+      key, name: c?.fullName || String(key).split("::")[1] || key, company: c?.company || companyKey, at: x.deletedAt, by: x.deletedBy || "",
+      note: isAccountDeleted(companyKey) ? "Its account is removed too - restore the account to see it in the lists" : "",
+      restorable: true,
+    };
+  });
+}
+
+function renderRemovedDialog() {
+  const rows = removedRows(removedScope).sort((a, b) => (removedSortDesc ? b.at - a.at : a.at - b.at));
+  for (const k of [...removedSelected]) if (!rows.some((r) => r.key === k && r.restorable)) removedSelected.delete(k);
+  for (const b of document.querySelectorAll("#removed-dialog [data-removed-scope]")) b.classList.toggle("active", b.dataset.removedScope === removedScope);
+  const wrap = document.getElementById("removed-table-wrap");
+  wrap.innerHTML = "";
+  if (!rows.length) {
+    const p = document.createElement("p");
+    p.className = "removed-empty";
+    p.textContent = `No ${removedScope} have been removed.`;
+    wrap.appendChild(p);
+  } else {
+    const table = document.createElement("table");
+    const head = document.createElement("tr");
+    const allTh = document.createElement("th");
+    const all = document.createElement("input");
+    all.type = "checkbox";
+    const restorable = rows.filter((r) => r.restorable);
+    all.checked = restorable.length > 0 && restorable.every((r) => removedSelected.has(r.key));
+    all.title = "Select all";
+    all.addEventListener("change", () => {
+      for (const r of restorable) {
+        if (all.checked) removedSelected.add(r.key);
+        else removedSelected.delete(r.key);
+      }
+      renderRemovedDialog();
+    });
+    allTh.appendChild(all);
+    head.appendChild(allTh);
+    const labels = removedScope === "accounts" ? ["Account"] : ["Contact", "Company"];
+    for (const l of labels) { const th = document.createElement("th"); th.textContent = l; head.appendChild(th); }
+    const dateTh = document.createElement("th");
+    dateTh.textContent = `Removed ${removedSortDesc ? "▼" : "▲"}`;
+    dateTh.title = "Sort by date";
+    dateTh.addEventListener("click", () => { removedSortDesc = !removedSortDesc; renderRemovedDialog(); });
+    head.appendChild(dateTh);
+    for (const l of ["By", ""]) { const th = document.createElement("th"); th.textContent = l; head.appendChild(th); }
+    table.appendChild(head);
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      const td0 = document.createElement("td");
+      if (r.restorable) {
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = removedSelected.has(r.key);
+        cb.addEventListener("change", () => {
+          if (cb.checked) removedSelected.add(r.key);
+          else removedSelected.delete(r.key);
+          renderRemovedDialog();
+        });
+        td0.appendChild(cb);
+      }
+      tr.appendChild(td0);
+      const cells = removedScope === "accounts" ? [r.name] : [r.name, r.company];
+      cells.push(r.at ? formatDateTime(r.at) : "—", r.by || "—");
+      for (const text of cells) { const td = document.createElement("td"); td.textContent = text; tr.appendChild(td); }
+      const note = document.createElement("td");
+      note.className = "removed-note";
+      note.textContent = r.note;
+      tr.appendChild(note);
+      table.appendChild(tr);
+    }
+    wrap.appendChild(table);
+  }
+  const btn = document.getElementById("removed-restore-btn");
+  btn.disabled = removedSelected.size === 0;
+  btn.textContent = removedSelected.size ? `Restore ${removedSelected.size}` : "Restore";
+}
+
+// Names of rows a merge took out of the workbook: the targetAccounts map often still has them.
+let removedNameHints = {};
+async function openRemovedDialog() {
+  try {
+    const map = await getTargetAccounts();
+    removedNameHints = {};
+    for (const [k, v] of Object.entries(map || {})) if (v?.company) removedNameHints[normalizeCompanyName(v.company)] = v.company;
+  } catch { removedNameHints = {}; }
+  removedSelected.clear();
+  document.getElementById("removed-status-text").textContent = "";
+  renderRemovedDialog();
+  document.getElementById("removed-dialog").showModal();
+}
+
+document.getElementById("removed-btn").addEventListener("click", openRemovedDialog);
+for (const b of document.querySelectorAll("#removed-dialog [data-removed-scope]")) {
+  b.addEventListener("click", () => { removedScope = b.dataset.removedScope; removedSelected.clear(); renderRemovedDialog(); });
+}
+let restoring = false;
+document.getElementById("removed-restore-btn").addEventListener("click", async () => {
+  if (restoring || !teamAccounts.canRemove() || removedSelected.size === 0) return;
+  restoring = true;
+  const btn = document.getElementById("removed-restore-btn");
+  const statusEl = document.getElementById("removed-status-text");
+  btn.disabled = true;
+  btn.textContent = "Restoring…";
+  statusEl.textContent = btn.textContent;
+  const scope = removedScope;
+  const noun = scope === "accounts" ? "account" : "contact";
+  try {
+    const patchByKey = {};
+    for (const key of removedSelected) patchByKey[key] = { deletedAt: null, deletedBy: null };
+    // The dialog is modal: the pop-up would sit behind it, so progress shows in the dialog itself.
+    const restored = await bulkPatchExtras(scope, patchByKey);
+    appendActivityLog({ actor: "user", action: `target_${noun}s_restored`, label: `Restored ${restored} removed ${noun}${restored === 1 ? "" : "s"}` });
+    removedSelected.clear();
+    await refreshAfterExtrasChange();
+    rerenderForScope("accounts");
+    rerenderForScope("contacts");
+    renderRemovedDialog();
+    statusEl.textContent = `${restored} ${noun}${restored === 1 ? "" : "s"} restored.`;
+  } catch (err) {
+    statusEl.textContent = `Could not restore: ${err.message}`;
+    renderRemovedDialog();
+  } finally {
+    restoring = false;
+  }
+});
+
 function paintTeamOwnerFilter() {
+  const removedBtn = document.getElementById("removed-btn");
+  if (removedBtn) removedBtn.hidden = !teamAccounts.canRemove();
   const el = document.getElementById("team-owner-filter");
   if (!el) return;
   el.hidden = !teamAccounts.inTeam();
@@ -2242,20 +2470,7 @@ function renderTable() {
       tr.appendChild(td);
     }
 
-    // Offered only when the row actually has open findings - a permanently visible entry that does
-    // nothing on most rows teaches the user to ignore the menu.
-    const openFindingCount = annotatedProposals(company, accountExtras[companyKey] || {}).filter((p) => !p.dismissed).length;
-    // Team use 1.2.2 step 5 (R6.2): a colleague's account (assigned, or being updated) opens for reading only.
-    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `account-${companyKey}`, offLimitsItems(companyKey, [
-      { label: "Open", onClick: () => openAccount(companyKey) },
-      ...(openFindingCount > 0
-        ? [{ label: `Review web findings (${openFindingCount})…`, change: true, onClick: () => reviewFindingsFromTable(companyKey) }]
-        : []),
-      { label: "Edit", change: true, onClick: () => { pendingAccountEditKey = companyKey; openAccount(companyKey); } },
-      { label: "Merge…", change: true, onClick: () => openMergeAccountsDialog(companyKey) },
-      ...teamAssignMenuItems(companyKey),
-      { label: "Remove", danger: true, change: true, onClick: () => removeAccount(companyKey, company.company) },
-    ])));
+    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `account-${companyKey}`, accountMenuItems(companyKey, company)));
 
     tr.addEventListener("click", (event) => {
       if (event.target.closest("a") || event.target.closest(".long-text-cell") || event.target.closest(".kebab-btn") || event.target.closest(".select-cell") || event.target.closest(".findings-review-link")) return;
@@ -2714,12 +2929,7 @@ function renderContactsTable() {
       tr.appendChild(td);
     }
 
-    // Team use 1.2.2 step 5: a contact is its account's - a colleague's account's contacts are read-only.
-    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `contact-${contactKey}`, offLimitsItems(contactCompanyKey, [
-      { label: "Open", onClick: () => openContact(contactKey) },
-      { label: "Edit", change: true, onClick: () => { pendingContactEditKey = contactKey; openContact(contactKey); } },
-      { label: "Remove", danger: true, change: true, onClick: () => removeContact(contactKey, contact.fullName) },
-    ])));
+    appendActionsTd(tr, (kebabBtn) => openRowActionMenu(kebabBtn, `contact-${contactKey}`, contactMenuItems(contactKey, contact)));
 
     tr.addEventListener("click", (event) => {
       if (event.target.closest("a") || event.target.closest(".long-text-cell") || event.target.closest(".kebab-btn") || event.target.closest(".select-cell")) return;
@@ -3196,6 +3406,29 @@ function isContactDeleted(contact) {
   return isAccountDeleted(normalizeCompanyName(contact.company));
 }
 
+let lastExcludedCompanyKeys = new Set(); // loadWorkbook's exclusion result, reused by refreshAfterExtrasChange
+
+// After a change that only touches account / contact extras (remove, restore, bulk edit - 1.2.1.9): re-read the two
+// extras maps, filter the workbook already in memory, redraw both tables, and let readiness follow in the background.
+// A full loadWorkbook re-reads and re-checks everything (measured 8-14 s on a 560-account team list, every step ~1 s
+// on the 2 MB data) for a one-field change; this takes ~1.5 s.
+async function refreshAfterExtrasChange() {
+  if (!rawWorkbook.companies.length && !rawWorkbook.contacts.length) return loadWorkbook();
+  const [extras, cExtras] = await Promise.all([getTargetAccountExtras(), getTargetContactExtras()]);
+  accountExtras = extras;
+  contactExtras = cExtras;
+  const kept = (c) => !lastExcludedCompanyKeys.has(normalizeCompanyName(c.company));
+  workbook = {
+    ...workbook,
+    companies: rawWorkbook.companies.filter((c) => !isAccountDeleted(normalizeCompanyName(c.company)) && kept(c)),
+    contacts: rawWorkbook.contacts.filter((c) => !isContactDeleted(c) && kept(c)),
+  };
+  renderTable();
+  renderAccountsStats();
+  renderContactsTable();
+  renderContactsStats();
+  scheduleReadinessRefresh();
+}
 async function loadWorkbook() {
   // Before the read, not after: copies any linkedinLink the resolver stored in the lightweight
   // targetAccounts map into the workbook row that has none (2026-09-22). The two are separate storage
@@ -3211,6 +3444,7 @@ async function loadWorkbook() {
   moneySettings = { targetCurrency: money.targetCurrency, rates: { rates: money.rates } };
   accountExtras = extras;
   contactExtras = cExtras;
+  rawWorkbook = wb; // the Removed dialog needs the rows the lists hide
   // Excluded (added 2026-09-17, the user's own confirmed design: "Hide from
   // Dashboard entirely, which is what we do for our own excluded
   // companies") - a company the workbook's own Excluded column marks "Yes",
@@ -3223,6 +3457,7 @@ async function loadWorkbook() {
   const excludedCompanyKeys = new Set(
     wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionMatcher)).map((c) => normalizeCompanyName(c.company))
   );
+  lastExcludedCompanyKeys = excludedCompanyKeys;
   workbook = {
     ...wb,
     companies: wb.companies.filter((c) =>
@@ -3444,6 +3679,9 @@ function showMergeDiscoveredDialog(preview) {
         const name = document.createElement("span");
         name.textContent = `${c.name} — ${c.company}`;
         li.appendChild(name);
+        // 1.2.2 step 5b (R6.6): a contact of a colleague's account is flagged - it goes to their account.
+        const badge = teamAccounts.badge(normalizeCompanyName(c.company || ""));
+        if (badge) li.appendChild(badge);
       }
     );
     if (contactsSection) previewEl.appendChild(contactsSection);
@@ -3454,11 +3692,14 @@ function showMergeDiscoveredDialog(preview) {
     // shown explicitly so a wrong name match can actually be caught here,
     // not discovered later.
     const matchedSection = buildMergePreviewSection(
-      `Already in your list (${preview.matchedCompanies.length})`, preview.matchedCompanies,
+      `Already in ${teamAccounts.inTeam() ? "the team's" : "your"} list (${preview.matchedCompanies.length})`, preview.matchedCompanies,
       (li, m) => {
         const name = document.createElement("span");
         name.textContent = `${m.discoveredName} → ${m.existingName} (matched by ${m.matchedBy === "id" ? "LinkedIn ID" : "name"})`;
         li.appendChild(name);
+        // 1.2.2 step 5b (R6.6): not added twice - and whose it is, when a colleague has it.
+        const badge = teamAccounts.badge(normalizeCompanyName(m.existingName || ""));
+        if (badge) li.appendChild(badge);
         if (m.linkedinLink) {
           const a = document.createElement("a");
           a.href = m.linkedinLink;
@@ -6236,6 +6477,8 @@ function showView(view) {
   navGroupContactsEl.open = onContactsSide;
 }
 
+const teamListsStale = { accounts: false, contacts: false };
+
 async function route() {
   closeColumnMenu();
   // Mirrors settings.js's own routeSettings: routing to this page's content while another page is
@@ -6258,8 +6501,10 @@ async function route() {
     contactClaimGuard.show(normalizeCompanyName(currentContactRow().company || "") || null);
   } else if (view === "contactsList") {
     showView("contactsList");
+    if (teamListsStale.contacts) { teamListsStale.contacts = false; renderContactsTable(); }
   } else {
     showView("list");
+    if (teamListsStale.accounts) { teamListsStale.accounts = false; renderTable(); }
   }
 }
 
@@ -6774,29 +7019,31 @@ function openMergeAccountsDialog(companyKey) {
 async function removeAccount(companyKey, companyName, { onDetailPage = false } = {}) {
   if (!companyName) return;
   if (!(await askConfirm(`Remove "${companyName}" from your Target Accounts list?\n\nIt won't show up anywhere after this, but nothing is permanently erased.`, { okLabel: "Remove", cancelLabel: "Cancel", danger: true }))) return;
-  await saveTargetAccountExtra(companyKey, { deletedAt: Date.now() });
+  if (onDetailPage) location.hash = "";
+  await accountWriteWithFeedback(`Removing "${companyName}"…`,
+    () => saveTargetAccountExtra(companyKey, { deletedAt: Date.now(), deletedBy: teamAccounts.myName() }));
   appendActivityLog({
     actor: "user",
     action: "target_account_removed",
     label: `Removed Target Account "${companyName}" from the list`,
     newValue: { companyKey },
   });
-  if (onDetailPage) location.hash = "";
-  await loadWorkbook();
+  showNotice(`"${companyName}" removed.${teamAccounts.inTeam() ? " The Team Admin can bring it back with Removed…." : " Removed… brings it back."}`);
 }
 
 async function removeContact(contactKey, fullName, { onDetailPage = false } = {}) {
   if (!fullName) return;
   if (!(await askConfirm(`Remove "${fullName}" from your Target Accounts list?\n\nIt won't show up anywhere after this, but nothing is permanently erased.`, { okLabel: "Remove", cancelLabel: "Cancel", danger: true }))) return;
-  await saveTargetContactExtra(contactKey, { deletedAt: Date.now() });
+  if (onDetailPage) location.hash = "";
+  await accountWriteWithFeedback(`Removing "${fullName}"…`,
+    () => saveTargetContactExtra(contactKey, { deletedAt: Date.now(), deletedBy: teamAccounts.myName() }));
   appendActivityLog({
     actor: "user",
     action: "target_contact_removed",
     label: `Removed Target Contact "${fullName}" from the list`,
     newValue: { contactKey },
   });
-  if (onDetailPage) location.hash = "";
-  await loadWorkbook();
+  showNotice(`"${fullName}" removed.${teamAccounts.inTeam() ? " The Team Admin can bring it back with Removed…." : " Removed… brings it back."}`);
 }
 
 // PRD 6.20 Phase 10 (2026-09-17) - the detail page's own kebab, replacing
@@ -6806,22 +7053,12 @@ async function removeContact(contactKey, fullName, { onDetailPage = false } = {}
 // once they ship.
 document.getElementById("account-actions-btn").addEventListener("click", (event) => {
   event.stopPropagation();
-  const company = currentAccountCompanyRow();
-  openRowActionMenu(event.currentTarget, `detail-account-${currentAccountKey}`, [
-    { label: "Edit", onClick: () => { accountEditMode = true; renderAccountView(currentAccountKey); } },
-    { label: "Merge…", onClick: () => openMergeAccountsDialog(currentAccountKey) },
-    { label: "Merge", disabled: true, title: "Coming soon" },
-    { label: "Remove", danger: true, onClick: () => removeAccount(currentAccountKey, company.company, { onDetailPage: true }) },
-  ]);
+  openRowActionMenu(event.currentTarget, `detail-account-${currentAccountKey}`, accountMenuItems(currentAccountKey, currentAccountCompanyRow(), { onDetailPage: true }));
 });
 
 document.getElementById("contact-actions-btn").addEventListener("click", (event) => {
   event.stopPropagation();
-  const contact = currentContactRow();
-  openRowActionMenu(event.currentTarget, `detail-contact-${currentContactKey}`, [
-    { label: "Edit", onClick: () => { contactEditMode = true; renderContactView(currentContactKey); } },
-    { label: "Remove", danger: true, onClick: () => removeContact(currentContactKey, contact.fullName, { onDetailPage: true }) },
-  ]);
+  openRowActionMenu(event.currentTarget, `detail-contact-${currentContactKey}`, contactMenuItems(currentContactKey, currentContactRow(), { onDetailPage: true }));
 });
 
 // 23rd round of direct feedback (2026-09-19), same-day follow-up: "it
@@ -6921,9 +7158,11 @@ async function init() {
   loadContactFilterSortState();
   await teamAccounts.ready();
   // Assignments and claims arrive from the team in the background: repaint the lists' badges and filter.
+  // A list hidden behind an account page is marked stale and redrawn when it is shown again (route) - otherwise
+  // "Back to Target Accounts" showed the badge from before (Nestlé still "Mine" after reassigning it, 1.2.1.9 test).
   teamAccounts.onChange(() => {
-    if (!listViewEl.hidden) renderTable();
-    if (!contactsListViewEl.hidden) renderContactsTable();
+    if (!listViewEl.hidden) renderTable(); else teamListsStale.accounts = true;
+    if (!contactsListViewEl.hidden) renderContactsTable(); else teamListsStale.contacts = true;
   });
   await loadWorkbook();
   await route();

@@ -71,6 +71,9 @@ import { getDiscoveryQueueState, resetDiscoveryQueue } from "./discovery-queue.j
 // same Low/Medium/High labels, same numeric values, everywhere it's used.
 const PRIORITY_LABELS = { 1: "Low", 2: "Medium", 3: "High" };
 
+// Team member (1.2.2 step 5, D3): the shared setup is read-only on this PC (applyTeamMemberReadOnly).
+let teamMemberReadOnly = false;
+
 const ALL_STEPS = [
   "about", "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
   "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets",
@@ -246,6 +249,9 @@ function updateNavBar(step, index) {
     el("nav-exit-btn").hidden = !settingsMode;
     el("nav-save-exit-btn").hidden = false;
     el("nav-save-btn").hidden = false;
+    // A team member can change only About you (their name, key, language) - Save is off everywhere else.
+    el("nav-save-btn").disabled = teamMemberReadOnly && step !== "about";
+    el("nav-save-btn").title = el("nav-save-btn").disabled ? "Only the Team Admin can change this setting" : "";
     // Change Settings ends at the last setting: there is no Setup complete step after it.
     el("nav-next-btn").hidden = settingsMode && index >= STEP_ORDER.length - 2;
     // Boaz, 2026-10-01: on the last step "Next" did not say that Finish Setup comes after it.
@@ -1315,6 +1321,17 @@ async function offerRescoreIfRulesChanged() {
 }
 
 async function persistStep(step) {
+  // Team member (1.2.2 step 5b, D3): the shared setup is never written from this PC - only their own name, language
+  // and API key. (Saving a step rebuilds its whole value, e.g. the do-not-contact list, from the read-only boxes.)
+  if (teamMemberReadOnly) {
+    if (step !== "about") return;
+    const profile = await getUserProfile();
+    await saveUserProfile({ ...profile, name: el("about-name-input").value.trim() });
+    await saveOutputLanguage(el("about-language-select").value);
+    const key = sanitizeApiKey(el("about-api-key-input").value || "");
+    if (!el("about-api-key-wrap").hidden && key) await saveAnthropicApiKey(key);
+    return;
+  }
   await markProposalAccepted(step);
   switch (step) {
     case "about": {
@@ -2185,7 +2202,8 @@ el("about-research-btn").addEventListener("click", async () => {
 // a finished setup whose research never ran, and not declined.
 function renderSettingsResearchOffer() {
   let box = el("settings-research-offer");
-  const show = completedBefore && setupResearch.status === "none" && !setupResearch.declinedInSettings;
+  // Not for a team member (D3): the research proposes changes to the shared setup, which is the Team Admin's.
+  const show = completedBefore && setupResearch.status === "none" && !setupResearch.declinedInSettings && !teamMemberReadOnly;
   if (!show) {
     if (box) box.hidden = true;
     return;
@@ -3025,7 +3043,12 @@ async function init() {
 async function applyTeamMemberReadOnly() {
   const membership = (await chrome.storage.local.get("teamMembership")).teamMembership;
   if (!membership || membership.role === "admin") return;
+  teamMemberReadOnly = true;
   document.body.classList.add("team-member-readonly");
+  const offer = document.getElementById("settings-research-offer");
+  if (offer) offer.hidden = true;
+  const save = document.getElementById("nav-save-btn");
+  if (save && STEP_ORDER[currentStepIndex] !== "about") { save.disabled = true; save.title = "Only the Team Admin can change this setting"; }
   const note = document.getElementById("team-member-setup-note");
   note.textContent = `You are a member of the team "${membership.teamName}". This setup is shared with the whole team and only the ` +
     "Team Admin can change it - you can look at every step here, but changes are not possible. Your own name, Anthropic API key and " +
@@ -3035,7 +3058,7 @@ async function applyTeamMemberReadOnly() {
   const shared = (t) => t instanceof Element && t.closest(".wizard-step") && !t.closest(".team-member-own");
   for (const type of ["keydown", "focusin"]) {
     document.addEventListener(type, (event) => {
-      if (!shared(event.target) || !event.target.closest("input, select, textarea, button, [contenteditable]")) return;
+      if (!shared(event.target) || !event.target.closest("input, select, textarea, button, [contenteditable], [tabindex]")) return;
       if (type === "keydown" && ["Tab", "Escape"].includes(event.key)) return;
       event.preventDefault();
       event.stopPropagation();

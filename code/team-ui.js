@@ -116,8 +116,30 @@ async function paintTeamBar() {
   clearStatusMessage(BAR_ID);
 }
 
+// Step 5b (Boaz): an account of mine that the Team Admin reassigned or released - so it does not just "disappear".
+// Its own message, below a folder problem (which is a priority message); stays until OK.
+const NOTICES_KEY = "teamNotices"; // team-sync.js TEAM_NOTICES_KEY
+const NOTICE_BAR_ID = "team-notices";
+
+async function paintTeamNotices() {
+  const notices = (await chrome.storage.local.get(NOTICES_KEY))[NOTICES_KEY] || [];
+  if (!notices.length) { clearStatusMessage(NOTICE_BAR_ID); return; }
+  // "Boaz took over your account Amcor" when the admin reassigned it to themselves - not "… to Boaz" (1.2.1.9 test).
+  const one = (n) => `${n.name} (${!n.to ? "now unassigned" : n.to === n.by ? `taken over by ${n.by}` : `now ${n.to}'s`})`;
+  const byWho = [...new Set(notices.map((n) => n.by))].join(" and ");
+  const single = (n) => (!n.to ? `${n.by} released your account ${n.name} - it is unassigned now`
+    : n.to === n.by ? `${n.by} took over your account ${n.name}` : `${n.by} reassigned your account ${n.name} to ${n.to}`);
+  const text = notices.length === 1
+    ? `${single(notices[0])}.`
+    : `${byWho} changed ${notices.length} of your accounts: ${notices.slice(0, 6).map(one).join(", ")}${notices.length > 6 ? ", …" : ""}.`;
+  setStatusMessage(NOTICE_BAR_ID, { text, action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
+}
+
 export function initTeamBar() {
   const paint = () => paintTeamBar().catch(() => {});
+  const paintNotices = () => paintTeamNotices().catch(() => {});
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[NOTICES_KEY]) paintNotices(); });
+  paintNotices();
   chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[MEMBERSHIP_KEY]) paint(); });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") paint(); });
   setInterval(paint, 15000);

@@ -107,17 +107,22 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
       const n = s.aside.changes;
       lines.push(`${s.aside.lostTo || "A colleague"} started on this account a few seconds before you - your ${n} change${n === 1 ? " was" : "s were"} kept aside (${timeText(s.aside.at)}), not sent to the team.`);
     }
-    if (s.assignLost) {
-      tone = tone || "aside";
-      lines.push(s.assignLost.forMe
-        ? `${s.assignLost.winner} assigned this account to themselves a few seconds before you - it is theirs.`
-        : `${s.assignLost.winner} was assigned this account a few seconds before ${s.assignLost.to} - it stays with ${s.assignLost.winner}.`);
-    }
+    if (s.assignLost) tone = tone || "aside";
     if (tone) notice.classList.add(`team-claim-${tone}`);
     notice.appendChild(assignmentRow(s));
     for (const text of lines) {
       const p = document.createElement("p");
       p.textContent = text;
+      notice.appendChild(p);
+    }
+    if (s.assignLost) {
+      // Its own line with its own OK - the OK dismisses this line only (Boaz, 2026-10-05).
+      const p = document.createElement("p");
+      p.className = "team-assign-lost";
+      p.textContent = s.assignLost.forMe
+        ? `${s.assignLost.winner} assigned this account to themselves a few seconds before you - it is theirs. `
+        : `${s.assignLost.winner} was assigned this account a few seconds before ${s.assignLost.to} - it stays with ${s.assignLost.winner}. `;
+      p.appendChild(button("OK", () => act("TEAM_ASSIGN_DISMISS"), { secondary: true }));
       notice.appendChild(p);
     }
     if (s.aside) {
@@ -161,32 +166,7 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
     else if (a.me) label.textContent = `Assigned to you since ${timeText(a.since)}`; // at once - a lost race is told below
     else label.textContent = `Assigned to ${a.name} since ${timeText(a.since)}`;
     row.appendChild(label);
-    const usable = s.inSync;
-    const colleagueBusy = s.state === "other" || s.state === "lost";
-    if (!a) {
-      row.appendChild(button("Assign to me", () => act("TEAM_ASSIGN"), { disabled: !usable || colleagueBusy }));
-    } else if (a.me || s.admin) {
-      row.appendChild(button(a.me ? "Release" : `Release (unassign ${a.name})`, () => act("TEAM_UNASSIGN"), { secondary: true, disabled: !usable }));
-    }
-    if (s.admin && Array.isArray(s.team) && s.team.length > 1) {
-      const sel = document.createElement("select");
-      sel.className = "team-reassign";
-      sel.disabled = !usable || colleagueBusy || busy;
-      const first = document.createElement("option");
-      first.value = "";
-      first.textContent = a ? "Reassign to…" : "Assign to…";
-      sel.appendChild(first);
-      for (const m of s.team) {
-        if (a && m.id === a.id) continue;
-        const o = document.createElement("option");
-        o.value = m.id;
-        o.textContent = m.id === s.team[0].id ? `${m.name} (you)` : m.name;
-        sel.appendChild(o);
-      }
-      sel.addEventListener("change", () => { if (sel.value) act("TEAM_ASSIGN", { to: sel.value }); });
-      row.appendChild(sel);
-    }
-    if (s.assignLost) row.appendChild(button("OK", () => act("TEAM_ASSIGN_DISMISS"), { secondary: true }));
+    // Assign to me / Release / Reassign to… are in the ⋮ menu next to the title (one menu, the same as the list's).
     if (refusal) {
       const hint = document.createElement("span");
       hint.className = "field-hint";
@@ -256,6 +236,8 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
       await refresh();
       if (!pollTimer) pollTimer = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, POLL_MS);
     },
+    // After an Assign / Release from the menu: show the new state now, not at the next 5 s poll.
+    refresh() { return refresh(); },
     hide() {
       release(key);
       key = null;

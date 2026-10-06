@@ -13,7 +13,8 @@
 
 import { entityView, getRecord } from "./team-merge.js";
 import {
-  TEAM_WORKBOOK_KEY, TEAM_WORKBOOK_SHEETS, TEAM_WORKBOOK_REST_ID, TEAM_MAP_KEYS, TEAM_WHOLE_KEYS, teamKeyKind,
+  TEAM_WORKBOOK_KEY, TEAM_WORKBOOK_SHEETS, TEAM_WORKBOOK_REST_ID, TEAM_MAP_KEYS, TEAM_WHOLE_KEYS, TEAM_LIST_KEYS, listEntryId,
+  teamKeyKind,
 } from "./team-keys.js";
 
 // A field that was removed from a row. Sent as a value so it is ordered like any other change (later wins).
@@ -45,6 +46,7 @@ export function canonicalRow(fields) {
 }
 
 const mapSpec = (key) => TEAM_MAP_KEYS.find((m) => m.key === key) || null;
+const listSpec = (key) => TEAM_LIST_KEYS.find((l) => l.key === key) || null;
 
 // Splits one workbook sheet into rows addressable by id and the rest (no id, or an id an earlier row already has).
 function splitSheet(rows, idField) {
@@ -74,6 +76,12 @@ export function extractRows(key, value) {
   if (value === undefined || !kind) return rows;
   if (kind === "whole") {
     rows.set(rowKey("setting", key), { $v: value });
+    return rows;
+  }
+  if (kind === "list") {
+    const spec = listSpec(key);
+    if (!Array.isArray(value)) return rows;
+    for (const entry of value) rows.set(rowKey(spec.e, `${spec.prefix}${listEntryId(spec, entry)}`), asFields(entry));
     return rows;
   }
   if (kind === "map") {
@@ -117,6 +125,9 @@ export function rowTarget(e, id) {
     if (m.e === e && id.startsWith(m.prefix) && id.length > m.prefix.length) {
       return { key: m.key, localId: id.slice(m.prefix.length) };
     }
+  }
+  for (const l of TEAM_LIST_KEYS) {
+    if (l.e === e && id.startsWith(l.prefix) && id.length > l.prefix.length) return { key: l.key, localId: id.slice(l.prefix.length) };
   }
   if (e === "setting" && TEAM_WHOLE_KEYS.includes(id)) return { key: id };
   return null;
@@ -203,6 +214,29 @@ export function patchValue(key, current, updates) {
     if (!updates.has(rowKey("setting", key))) return current;
     const fields = updates.get(rowKey("setting", key));
     return fields ? fromFields(fields) : undefined;
+  }
+  if (kind === "list") {
+    // Entries keep their place; a removed one goes, a new one is added at the end (in id order, the same on every PC).
+    const spec = listSpec(key);
+    const list = Array.isArray(current) ? [...current] : [];
+    const mine = new Map();
+    for (const [rk, fields] of updates) {
+      const { e, id } = splitRowKey(rk);
+      const target = rowTarget(e, id);
+      if (target && target.key === key) mine.set(target.localId, fields);
+    }
+    if (!mine.size) return current;
+    const out = [];
+    const present = new Set();
+    for (const entry of list) {
+      const id = listEntryId(spec, entry);
+      if (present.has(id)) continue; // a duplicate entry is one row
+      present.add(id);
+      if (!mine.has(id)) out.push(entry);
+      else if (mine.get(id)) out.push(fromFields(mine.get(id)));
+    }
+    for (const id of [...mine.keys()].filter((x) => !present.has(x) && mine.get(x)).sort()) out.push(fromFields(mine.get(id)));
+    return current === undefined && !out.length ? undefined : out;
   }
   if (kind === "map") {
     const spec = mapSpec(key);

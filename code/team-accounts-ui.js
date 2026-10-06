@@ -48,6 +48,9 @@ export const teamAccounts = {
   inTeam: () => Boolean(membership),
   isAdmin: () => Boolean(membership && (membership.role === "admin" || summary?.admin)),
   me: () => membership?.memberId || null,
+  myName: () => membership?.name || null,
+  // Step 5b (design 2.11): removing accounts or contacts is the Team Admin's in a team - it empties every member's list.
+  canRemove() { return !membership || this.isAdmin(); },
   entry: (key) => (membership && key ? summary?.accounts?.[key] || null : null),
 
   // Everything that changes, researches, scans or contacts an account asks this first. Reading is never blocked.

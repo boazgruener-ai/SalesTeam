@@ -2129,6 +2129,41 @@ def test_team_rows(ctx):
     check("team clock: ... and strictly increasing", e("ordered"), True)
 
 
+def test_team_list_rows(ctx):
+    """1.2.2 step 5b: companyExclusions is one row per entry - two members adding at once both keep theirs."""
+    e = lambda x: ctx.eval(x)
+    e("""
+      var EX0 = [{slug: 'adecco', category: 'recruiter'}, {name: 'Rival AG', category: 'competitor'}];
+      var exRows = extractRows('companyExclusions', EX0);
+      var T1 = 1759480000000;
+      function stL(w, c, m) { return formatStamp(w, c, m); }
+      // Anna and Ben each add one entry to the same list, a second apart, neither having seen the other's.
+      var EA = EX0.concat([{name: 'Foo GmbH', category: 'customer', source: 'team'}]);
+      var EB = EX0.concat([{slug: 'bar-sa', category: 'partner'}]);
+      function setsOf(rows, member, w) {
+        var out = []; var c = 0;
+        rows.forEach(function (f, rk) { var sp = splitRowKey(rk); out.push({t: stL(w, c++, member), e: sp.e, id: sp.id, op: 'set', f: f}); });
+        return out;
+      }
+      var LS = newState();
+      applyChanges(LS, setsOf(extractRows('companyExclusions', EA), 'anna', T1));
+      applyChanges(LS, setsOf(extractRows('companyExclusions', EB), 'ben', T1 + 1000));
+      var merged = patchValue('companyExclusions', EA, projectKey(LS, 'companyExclusions'));
+      // The admin removes Rival AG: its row is deleted, the others stay in place.
+      var gone = new Map([[rowKey('setting', 'companyExclusions:' + listEntryId(TEAM_LIST_KEYS[0], EX0[1])), null]]);
+      var afterRemove = patchValue('companyExclusions', merged, gone);
+    """)
+    check("list: one row per entry", e("exRows.size"), 2)
+    check("list: row id from the entry's identity", e("listEntryId(TEAM_LIST_KEYS[0], {name: ' Rival AG ', category: 'competitor'})"), "competitor||rival ag|")
+    check("list: the key is a list, not a whole setting", e("teamKeyKind('companyExclusions')"), "list")
+    check("list: a list row goes back to companyExclusions", e("rowTarget('setting', 'companyExclusions:x').key"), "companyExclusions")
+    check("list: the old whole row is no longer a home", e("rowTarget('setting', 'companyExclusions')"), None)
+    check("list: both concurrent additions survive", e("merged.length + '|' + merged.map(function (x) { return x.name || x.slug; }).join(',')"),
+          "4|adecco,Rival AG,Foo GmbH,bar-sa")
+    check("list: removing one keeps the others in place", e("afterRemove.map(function (x) { return x.name || x.slug; }).join(',')"), "adecco,Foo GmbH,bar-sa")
+    check("list: no rows touching it leaves the value alone", e("patchValue('companyExclusions', EX0, new Map()) === EX0"), True)
+
+
 def test_team_claims(ctx):
     """1.2.2 step 4 (TEAM_USE_DESIGN.md 6): which account a change belongs to, claim states, held edits retracted."""
     e = lambda x: ctx.eval(x)
@@ -2293,6 +2328,7 @@ def main():
     test_login_wall(ctx)
     test_team_merge(ctx)
     test_team_rows(ctx)
+    test_team_list_rows(ctx)
     test_team_claims(ctx)
 
     print()

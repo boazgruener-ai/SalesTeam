@@ -2096,3 +2096,21 @@ thead .actions-col {
 .team-owner-filter button { border: none; border-right: 1px solid var(--border); background: #fff; color: #333; padding: 4px 10px; font-size: 12px; border-radius: 0; cursor: pointer; }
 .team-owner-filter button:last-child { border-right: none; }
 .team-owner-filter button.active { background: #1a56c4; color: #fff; }
+
+/* Team use 1.2.2 step 5b: bulk edit's Advanced part; the Removed dialog. */
+.bulk-edit-advanced { margin: 4px 0 8px; }
+.bulk-edit-advanced summary { cursor: pointer; color: #555; font-size: 12.5px; }
+.bulk-edit-advanced[hidden] { display: none; }
+.removed-dialog { width: min(900px, 92vw); }
+.removed-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin: 6px 0 10px; }
+.removed-tabs button { border: none; border-right: 1px solid var(--border); background: #fff; color: #333; padding: 4px 12px; font-size: 12.5px; border-radius: 0; cursor: pointer; }
+.removed-tabs button:last-child { border-right: none; }
+.removed-tabs button.active { background: #1a56c4; color: #fff; }
+.removed-table-wrap { max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.removed-table-wrap table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.removed-table-wrap th { position: sticky; top: 0; background: #f6f8fb; text-align: left; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+.removed-table-wrap td { border-top: 1px solid #eef0f3; padding: 5px 8px; vertical-align: top; }
+.removed-table-wrap td.removed-note { color: #777; }
+.removed-table-wrap .removed-empty { padding: 14px; color: #777; }
+#removed-btn[hidden] { display: none; }
+.team-assign-lost button { margin-left: 6px; padding: 1px 10px; font-size: 12px; background: #fff; color: #333; border: 1px solid var(--border); }

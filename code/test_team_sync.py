@@ -560,6 +560,30 @@ def main():
     check("admin: Eli sees Epsilon unassigned", r.get("assignee"), None)
     r, folder = eli.call("getClaimStatus('delta ag')", folder)
     check("admin: Eli sees Delta with Dora", (r.get("assignee") or {}).get("name"), "Dora")
+    notices = sorted((n["key"], n["by"], n["to"]) for n in (eli.local("teamNotices") or []))
+    check("notice: Eli is told which accounts the admin took (reassigned / released)",
+          notices, [("delta ag", "Dora", "Dora"), ("epsilon ag", "Dora", None)])
+    check("notice: nothing for Dora - she did it herself", dora.local("teamNotices"), None)
+
+    # F. Step 5b - the do-not-contact list is one row per entry (R6.8): two members adding at once both keep theirs.
+    base = [{"slug": "adecco", "category": "recruiter"}]
+    dora.set_local({"companyExclusions": base})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("dnc: Eli has Dora's list", eli.local("companyExclusions"), base)
+    dora.set_local({"companyExclusions": base + [{"name": "Foo GmbH", "category": "customer", "addedBy": "Dora"}]})
+    eli.set_local({"companyExclusions": base + [{"name": "Bar SA", "category": "competitor", "addedBy": "Eli"}]})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    names = lambda m: sorted(x.get("name") or x.get("slug") for x in (m.local("companyExclusions") or []))
+    check("dnc: both additions survive on Dora's PC", names(dora), ["Bar SA", "Foo GmbH", "adecco"])
+    check("dnc: ... and on Eli's", names(eli), ["Bar SA", "Foo GmbH", "adecco"])
+    dora.advance(20000)  # past the clobber window: a removal seconds after a row arrived looks like a stale writer
+    dora.set_local({"companyExclusions": [x for x in dora.local("companyExclusions") if x.get("name") != "Bar SA"]})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("dnc: the admin's removal reaches Eli", names(eli), ["Foo GmbH", "adecco"])
 
     print()
     for f in _failures:

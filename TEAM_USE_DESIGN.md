@@ -193,6 +193,60 @@ with its own handle.
   with kept-aside and apply after release; pipeline shares disjoint and covering; a held account refused to a
   colleague's pipeline).
 
+### 2.12 Step 5b as built (1.2.1.9, 2026-10-05)
+- **Remove admin-only** (2.11): the Remove items in the list and page menus are not shown to a member; bulk edit's
+  remove checkbox sits in a collapsed **Advanced** part, hidden for members. Removals record `deletedBy` (team).
+- **Removed… dialog** (button next to Columns; admin / solo only): Accounts | Contacts, removal date (sortable),
+  who, a note (merged into X - no checkbox; a contact whose account is removed too), select-all, **Restore N** -
+  `deletedAt`/`deletedBy` cleared through `bulkPatchExtras` (so the bulk-edit Undo can also take a restore back).
+- **Do-not-contact as team data (R6.8):** `companyExclusions` is a new key kind **list** (`team-keys.js`
+  `TEAM_LIST_KEYS`, `listEntryId` = category|slug|name|domain): one row per entry, so two members adding at once both
+  keep theirs (a whole key kept only the later list). Existing teams move over on the first diff after the update:
+  the entries go out as rows, the old whole row is deleted (no home reads it any more). New account-page menu item
+  ~~Do not contact…~~ - built, then **dropped after the live test** (Boaz): re-classifying an account is not "do not
+  contact" (an existing customer is still sold to and researched) and is the Team Admin's only, in Setup. Keeping
+  colleagues away from an account is Assign to me. See R6.8 as changed.
+- **Members never write the shared setup:** `persistStep` on a member's PC saves only name, language and API key
+  (saving a step rebuilds the whole value - e.g. the exclusion list from its read-only boxes).
+- **Outreach check (Leads Dashboard):** a lead whose company is assigned to a colleague (or the folder is not
+  connected / not in sync) - Draft, Copy, status and Save disabled, a red notice ("UBS is assigned to Boaz - only Boaz
+  contacts it"), Send Message / Dismiss disabled in the row menu. Marking a lead Contacted records `contactedBy` /
+  `contactedAt`; before drafting or marking Contacted a lead of a person a colleague already contacted (same profile
+  URL, else same name + company), the member is asked ("Annick already contacted … Contact anyway?") and an orange
+  note says so on the lead. Company column: the same badges as Target Accounts.
+- **A colleague's lead (live test, Boaz):** row ⋮ offers only Open; the lead page disables status, priority, Save,
+  template, Draft, Copy and the Sales Mentor (reading and earlier conversation stay). **The Team Admin is blocked too**
+  (decided 2026-10-05, consistent with accounts) - to work it, the admin reassigns the account to themselves first.
+- **Told when the admin takes an account (Boaz):** when a colleague's records release or reassign an account that was
+  mine (`applyRemote`: an `unassign` of me by someone else, and it is no longer mine after the batch), a notice goes
+  into `teamNotices` (personal, backup-excluded): the top bar says "Boaz reassigned your account Roche to Annick" /
+  "Boaz released your account UBS - it is unassigned now" (several: one line listing them), until **OK**. Not shown
+  for my own releases or a lost race (those are my own records).
+- **Team-wide check (R6.6), as built:** the merged picture is every member's local data, so the existing dedupe of
+  discovery / import (name, LinkedIn id) already refuses a second copy of anything the team holds. What 5b adds is the
+  flag: the discovery merge preview says "Already in the team's list" and shows whose account it is; a new contact
+  for a colleague's account carries that badge. Scans only add leads; whose they are shows on the Leads Dashboard and
+  the outreach check above guards them.
+- **Speed (found in the live test):** Remove took 8-14 s with nothing on screen. Measured: not the team sync (0 s
+  waiting for the account lock) but the full list reload after it - every step ~1 s on the 2 MB data. Remove,
+  Restore and Bulk edit now refresh only what changed (`refreshAfterExtrasChange`: re-read the two extras maps, filter
+  in memory, redraw, readiness in the background): remove ~3 s, restore of 3 ~5 s, with a pop-up / "Restoring…" /
+  "Applying…" at once. The rest is the save itself (the whole extras map is rewritten) - left as it is.
+- **One menu per account, one per contact (Boaz):** the ⋮ at the end of a list row and the ⋮ next to the title on the
+  account / contact page are built by the same function (`accountMenuItems` / `contactMenuItems`), same items, same
+  order: Open (list only), Edit, Review web findings (N)… (when there are open findings), Merge…, Assign to me /
+  Release, Reassign to… (admin), Remove (admin). The old greyed-out "Merge" placeholder is gone.
+  Assign / Release / Reassign left the line under the title, which now only says who has the account. The page's ⋮
+  is no longer a blocked region: on a colleague's account its changing items are disabled one by one (reason as
+  tooltip), so the admin can still release or reassign from it.
+- ~~Removed… third tab "Excluded"~~ - built, then **dropped** (Boaz): the admin changes the exclusion list in Setup;
+  a second place for it adds nothing.
+- **Toolbar (Boaz):** search first, then everything that decides which accounts are shown, together - Mine / Others /
+  Unassigned / All, Removed… - and Columns last. That spot is where a later step's **queue picker** goes (see 11).
+- **Account page:** the lost-race notice is its own line with its own OK (Boaz).
+- **Tests:** `test_pure_modules.py` +8 (list rows: identity, concurrent additions, removal in place) = 612;
+  `test_team_sync.py` +6 = 101 (two members add to the exclusion list at once - both kept; the admin's removal arrives; the member is told about a reassigned and a released account, the admin is not).
+
 ### 2.11 Added to 5b by Boaz (2026-10-05): removing accounts
 - **Remove is admin-only in a team** - the row menu, the account page and bulk edit. (Removal is shared: it takes the
   account off every member's list.) Not in a team: unchanged.
@@ -520,9 +574,15 @@ files stay in the folder for the record (the admin can remove the member).
 | 3 | Create / join / leave, Settings > Team, backups, top-bar states, reconnect, not-in-sync (as built: 2.8) | 1.2.1.6 |
 | 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) (as built: 2.9) | 1.2.1.7 |
 | 5a | Assign to me / release, admin reassign / release all, badges, Mine / Others / Unassigned / All filter, off-limits checks on list row actions, bulk edit and bulk research, setup read-only for members (D3) (as built: 2.10) | 1.2.1.8 |
-| 5b | Team-wide check on scan / discovery / import, do-not-contact as team data (members add, admin removes), outreach check on the Leads Dashboard; **Remove admin-only** + Removed accounts view with bulk restore (Boaz 2026-10-05, see below) | 1.2.1.9 |
+| 5b | Team-wide check on scan / discovery / import, do-not-contact as team data (members add, admin removes), outreach check on the Leads Dashboard; **Remove admin-only** + Removed accounts view with bulk restore (Boaz 2026-10-05, see below) (as built: 2.12) | 1.2.1.9 |
 | 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.10 |
 | 7 | Help, privacy, listing, website, release notes, PRD; test with the real team → **1.2.2** | 1.2.2 |
+
+**Later (advanced mode, after 1.2.2 - Boaz 2026-10-05):** a **queue picker** in place of Mine / Others / Unassigned /
+All: the admin defines account groups (territory - EMEA, USA, Asia; VIP; Global accounts; ...) and assigns members to
+them; a member picks among *their* groups, My accounts, Unassigned (default: their own). Example: members 1 and 3 -
+EMEA; 2 - VIP and Global; 4 and 5 - USA and Asia; 6 - all regions as backup. Matches the 2026-10-01 phase-2 proposal
+(queues with assignment rules by country / industry / size).
 
 Each step is tested by Reload on the live install and on a second PC sharing the folder.
 

@@ -624,3 +624,11 @@ textarea {
 #team-members-table { border-collapse: collapse; font-size: 12.5px; margin: 4px 0 14px; }
 #team-members-table td { border-bottom: 1px solid #e3e8ef; padding: 5px 14px 5px 0; }
 #team-members-table tr.team-members-head td { font-weight: 600; color: var(--gray-light); }
+
+/* 1.2.1.9: the two Settings cards Change Settings > Advanced opens - a way back, and read-only for a team member. */
+.advanced-card-nav { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin: -4px 0 10px; }
+.advanced-card-nav a { font-size: 12.5px; }
+.team-member-readonly-card :is(input, select, textarea, button):disabled { opacity: 0.55; cursor: not-allowed; }
+.team-member-readonly-card .advanced-card-hint { color: #7a4800; font-weight: 600; }
+.settings-card.has-advanced-back { position: relative; margin-top: 34px; }
+.advanced-card-back { position: absolute; top: -28px; left: 0; font-size: 13px; font-weight: 600; }

@@ -359,14 +359,16 @@
       </section>
 
       <div id="explorer-controls" hidden>
-        <!-- 1.2.2 step 5 (R6.3): shown only in a team -->
+        <input id="search-input" type="text" placeholder="Search company or industry…" />
+        <!-- 1.2.2 step 5 (R6.3): which accounts are shown - in one place (Boaz). The owner filter only in a team; a
+             later step may turn it into a queue picker (account groups the admin assigns). -->
         <span id="team-owner-filter" class="team-owner-filter" hidden>
           <button type="button" data-owner="mine" title="Accounts assigned to you">Mine</button>
           <button type="button" data-owner="others" title="Accounts assigned to a colleague">Others</button>
           <button type="button" data-owner="unassigned" title="Accounts nobody has taken yet">Unassigned</button>
           <button type="button" data-owner="all" title="Every account">All</button>
         </span>
-        <input id="search-input" type="text" placeholder="Search company or industry…" />
+        <button id="removed-btn" type="button" title="Accounts and contacts removed from the list - see when, and restore them">Removed…</button>
         <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="result-count"></span>
       </div>
@@ -615,16 +617,36 @@
         <input type="date" id="bulk-edit-due-date" disabled />
       </span>
     </div>
-    <label class="bulk-edit-remove">
-      <input type="checkbox" id="bulk-edit-remove" />
-      <span id="bulk-edit-remove-label">Remove the selected rows from the list</span>
-    </label>
+    <!-- 1.2.2 step 5b (Boaz): removing many rows at once is the dangerous one - out of the way, and admin-only in a team -->
+    <details id="bulk-edit-advanced" class="bulk-edit-advanced">
+      <summary>Advanced</summary>
+      <label class="bulk-edit-remove">
+        <input type="checkbox" id="bulk-edit-remove" />
+        <span id="bulk-edit-remove-label">Remove the selected rows from the list</span>
+      </label>
+    </details>
     <p id="bulk-edit-status-text" class="status-text" role="status"></p>
     <div class="action-dialog-actions">
       <button id="bulk-edit-apply-btn" type="button">Apply</button>
       <button type="button" class="action-dialog-close-btn">Cancel</button>
     </div>
     <button id="bulk-edit-undo-btn" type="button" class="text-link-btn" hidden></button>
+  </dialog>
+
+  <!-- 1.2.2 step 5b (design 2.11): every removal is soft - see them with their date, and restore in bulk -->
+  <dialog id="removed-dialog" class="action-dialog removed-dialog">
+    <h3>Removed from the list</h3>
+    <p class="page-subtitle">Nothing removed is erased. Tick the rows to bring back and click Restore. Sort by date to undo a removal done on a given day.</p>
+    <div class="removed-tabs">
+      <button type="button" data-removed-scope="accounts" class="active">Accounts</button>
+      <button type="button" data-removed-scope="contacts">Contacts</button>
+    </div>
+    <div id="removed-table-wrap" class="removed-table-wrap"></div>
+    <p id="removed-status-text" class="status-text" role="status"></p>
+    <div class="action-dialog-actions">
+      <button id="removed-restore-btn" type="button" disabled>Restore</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
   </dialog>
 
   <dialog id="web-research-apply-dialog" class="action-dialog">
