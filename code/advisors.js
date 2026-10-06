@@ -3,7 +3,7 @@
 // in real lead data via tool calls) and the Customer Voice (a simulated buyer
 // persona to pressure-test outreach messages against). Also owns the persona/
 // company-context/template settings that shape both agents' system prompts.
-import { askConfirm } from "./confirm-dialog.js";
+import { askConfirm, askChoice } from "./confirm-dialog.js";
 import {
   getAnthropicApiKey,
   getMessageTemplates,
@@ -71,7 +71,7 @@ async function draftSettings() {
 // Same reusable chat-wiring pattern as the side panel's Sales Mentor/Customer
 // Voice used before this page existed: DOM wiring here, the actual tool-use
 // loop lives in agent-shared.js's runAgentTurn so both pages share it.
-function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputEl, sendBtn, clearBtn, executeTool, getHistoryFn, saveHistoryFn, clearHistoryFn, label }) {
+function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputEl, sendBtn, clearBtn, executeTool, getHistoryFn, saveHistoryFn, clearHistoryFn, label, beforeSend }) {
   let history = [];
 
   function appendBubble(kind, text) {
@@ -108,6 +108,10 @@ function createAgentChat({ buildSystemPrompt, tools, historyEl, statusEl, inputE
     if (sendBtn.disabled) return;
     const text = inputEl.value.trim();
     if (!text) return;
+    sendBtn.disabled = true;
+    let proceed = false;
+    try { proceed = beforeSend ? await beforeSend() : true; } finally { sendBtn.disabled = false; }
+    if (!proceed) return;
     inputEl.value = "";
 
     const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
@@ -165,6 +169,7 @@ const salesMentor = createAgentChat({
   saveHistoryFn: saveAdvisorHistory,
   clearHistoryFn: clearAdvisorHistory,
   label: "Sales Mentor",
+  beforeSend: () => mentorPersonaEditor.beforeSend(),
 });
 
 const customerVoice = createAgentChat({
@@ -180,6 +185,7 @@ const customerVoice = createAgentChat({
   saveHistoryFn: saveCustomerVoiceHistory,
   clearHistoryFn: clearCustomerVoiceHistory,
   label: "Customer Voice",
+  beforeSend: () => customerPersonaEditor.beforeSend(),
 });
 
 document.getElementById("open-dashboard-link").addEventListener("click", (event) => {
@@ -192,30 +198,70 @@ document.getElementById("open-settings-link").addEventListener("click", (event) 
   chrome.tabs.create({ url: chrome.runtime.getURL("settings.html") });
 });
 
-// Logs one activity-log entry per real edit (focus -> blur, value actually
-// changed), not per keystroke - the field's own "input" listener above
-// keeps saving live; this only adds logging on top.
-function logOnBlur(el, { action, labelFor }) {
-  let valueAtFocus = el.value;
-  el.addEventListener("focus", () => { valueAtFocus = el.value; });
-  el.addEventListener("blur", () => {
-    if (el.value !== valueAtFocus) {
-      appendActivityLog({ actor: "user", action, label: labelFor(valueAtFocus, el.value), prevValue: valueAtFocus, newValue: el.value });
-    }
-  });
+// Persona fields are saved only by their Save button (rule 2026-10-06: no
+// save-on-change). The chat always uses the SAVED persona (mentorPersona /
+// customerPersona above); sending with unsaved edits asks which one to use.
+function wirePersona({ inputEl, saveBtn, statusEl, getSaved, setSaved, saveFn, action, label }) {
+  const isDirty = () => inputEl.value !== getSaved();
+  const refresh = () => {
+    saveBtn.disabled = !isDirty();
+    if (isDirty()) statusEl.textContent = "Unsaved changes";
+    else if (statusEl.textContent === "Unsaved changes") statusEl.textContent = "";
+  };
+  const save = async () => {
+    if (!isDirty()) return;
+    saveBtn.disabled = true;
+    const prev = getSaved();
+    const next = inputEl.value;
+    setSaved(next);
+    await saveFn(next);
+    appendActivityLog({ actor: "user", action, label: `${label} persona changed`, prevValue: prev, newValue: next });
+    refresh();
+    statusEl.textContent = "Saved ✓";
+    setTimeout(() => { if (statusEl.textContent === "Saved ✓") statusEl.textContent = ""; }, 3000);
+  };
+  inputEl.addEventListener("input", refresh);
+  saveBtn.addEventListener("click", save);
+  return {
+    isDirty,
+    refresh,
+    // Resolves true when the send should go ahead.
+    async beforeSend() {
+      if (!isDirty()) return true;
+      const choice = await askChoice(`Your ${label} persona edits aren't saved yet. The chat uses the saved persona.`,
+        [{ value: "save", label: "Save and send" }, { value: "saved", label: "Send with the saved persona" }]);
+      if (!choice) return false;
+      if (choice === "save") await save();
+      return true;
+    },
+  };
 }
 
-mentorPersonaInput.addEventListener("input", () => {
-  mentorPersona = mentorPersonaInput.value;
-  saveMentorPersona(mentorPersona);
+const mentorPersonaEditor = wirePersona({
+  inputEl: mentorPersonaInput,
+  saveBtn: document.getElementById("mentor-persona-save-btn"),
+  statusEl: document.getElementById("mentor-persona-save-status"),
+  getSaved: () => mentorPersona,
+  setSaved: (v) => { mentorPersona = v; },
+  saveFn: saveMentorPersona,
+  action: "mentor_persona_changed",
+  label: "Sales Mentor",
 });
-logOnBlur(mentorPersonaInput, { action: "mentor_persona_changed", labelFor: () => "Sales Mentor persona changed" });
 
-customerPersonaInput.addEventListener("input", () => {
-  customerPersona = customerPersonaInput.value;
-  saveCustomerPersona(customerPersona);
+const customerPersonaEditor = wirePersona({
+  inputEl: customerPersonaInput,
+  saveBtn: document.getElementById("customer-persona-save-btn"),
+  statusEl: document.getElementById("customer-persona-save-status"),
+  getSaved: () => customerPersona,
+  setSaved: (v) => { customerPersona = v; },
+  saveFn: saveCustomerPersona,
+  action: "customer_persona_changed",
+  label: "Customer Voice",
 });
-logOnBlur(customerPersonaInput, { action: "customer_persona_changed", labelFor: () => "Customer Voice persona changed" });
+
+window.addEventListener("beforeunload", (event) => {
+  if (mentorPersonaEditor.isDirty() || customerPersonaEditor.isDirty()) { event.preventDefault(); event.returnValue = ""; }
+});
 
 // companyContext/outputLanguage/messageTemplates/valueAddOffers are now
 // edited exclusively on the separate Settings page - this page only reads
@@ -230,6 +276,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.messageTemplates) messageTemplates = changes.messageTemplates.newValue || [];
   if (changes.valueAddOffers) valueAddOffers = changes.valueAddOffers.newValue || [];
   if (changes.userProfile) userProfile = { name: "", title: "", email: "", ...(changes.userProfile.newValue || {}) };
+  // Personas saved elsewhere: take the new saved value, but never overwrite unsaved edits in the field.
+  if (changes.mentorPersona) {
+    const wasDirty = mentorPersonaEditor.isDirty();
+    mentorPersona = changes.mentorPersona.newValue || "";
+    if (!wasDirty) mentorPersonaInput.value = mentorPersona;
+    mentorPersonaEditor.refresh();
+  }
+  if (changes.customerPersona) {
+    const wasDirty = customerPersonaEditor.isDirty();
+    customerPersona = changes.customerPersona.newValue || "";
+    if (!wasDirty) customerPersonaInput.value = customerPersona;
+    customerPersonaEditor.refresh();
+  }
 });
 
 async function init() {

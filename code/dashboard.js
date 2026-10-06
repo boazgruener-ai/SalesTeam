@@ -3,7 +3,7 @@
 // leads table, and per-lead priority scoring. Also owns the "Bulk Change"
 // dialog (mass status changes with a confirmation step and one-level undo)
 // and the "Prioritize Unscored Leads" action.
-import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
 import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { confirmIfCostly } from "./api-usage.js";
 import { guardBatchStart, withBatch } from "./batch-jobs.js";
@@ -1916,6 +1916,24 @@ function renderDetail(lead) {
 // Sales Mentor's own draft_message tool call from the standalone Advisors
 // page), same as it already did when this UI lived in Settings. Not a
 // per-lead override; the data model doesn't support one.
+//
+// Saved only by pressing "Save templates" (rule 2026-10-06: no save-on-change). Edits live in templateEdits
+// (id -> text) until then; messageTemplates stays the SAVED list, and that is what Draft Message uses.
+const templateEdits = new Map();
+const templatesSaveBtn = document.getElementById("templates-save-btn");
+const templatesSaveStatus = document.getElementById("templates-save-status");
+
+function templatesDirty() {
+  return messageTemplates.some((t) => templateEdits.has(t.id) && templateEdits.get(t.id) !== t.instructions);
+}
+
+function markTemplatesDirty() {
+  const dirty = templatesDirty();
+  templatesSaveBtn.disabled = !dirty;
+  if (dirty) templatesSaveStatus.textContent = "Unsaved changes";
+  else if (templatesSaveStatus.textContent === "Unsaved changes") templatesSaveStatus.textContent = "";
+}
+
 function renderTemplatesEditor() {
   const listEl = document.getElementById("detail-templates-list");
   listEl.innerHTML = "";
@@ -1926,26 +1944,42 @@ function renderTemplatesEditor() {
     label.className = "template-name";
     label.textContent = template.name;
     const textarea = document.createElement("textarea");
-    textarea.value = template.instructions;
-    let valueAtFocus = textarea.value;
-    textarea.addEventListener("focus", () => { valueAtFocus = textarea.value; });
+    textarea.value = templateEdits.has(template.id) ? templateEdits.get(template.id) : template.instructions;
     textarea.addEventListener("input", () => {
-      template.instructions = textarea.value;
-      saveMessageTemplates(messageTemplates);
-    });
-    textarea.addEventListener("blur", () => {
-      if (textarea.value !== valueAtFocus) {
-        appendActivityLog({
-          actor: "user", action: "message_template_changed",
-          label: `Message Template "${template.name}" changed`,
-          prevValue: valueAtFocus, newValue: textarea.value,
-        });
-      }
+      templateEdits.set(template.id, textarea.value);
+      markTemplatesDirty();
     });
     wrap.append(label, textarea);
     listEl.appendChild(wrap);
   }
+  markTemplatesDirty();
 }
+
+async function saveTemplateEdits() {
+  const changed = messageTemplates.filter((t) => templateEdits.has(t.id) && templateEdits.get(t.id) !== t.instructions);
+  if (!changed.length) return;
+  templatesSaveBtn.disabled = true;
+  const prev = new Map(changed.map((t) => [t.id, t.instructions]));
+  messageTemplates = messageTemplates.map((t) => (templateEdits.has(t.id) ? { ...t, instructions: templateEdits.get(t.id) } : t));
+  templateEdits.clear();
+  await saveMessageTemplates(messageTemplates);
+  for (const t of changed) {
+    const now = messageTemplates.find((x) => x.id === t.id);
+    appendActivityLog({
+      actor: "user", action: "message_template_changed",
+      label: `Message Template "${t.name}" changed`,
+      prevValue: prev.get(t.id), newValue: now ? now.instructions : "",
+    });
+  }
+  markTemplatesDirty();
+  templatesSaveStatus.textContent = "Saved ✓";
+  setTimeout(() => { if (templatesSaveStatus.textContent === "Saved ✓") templatesSaveStatus.textContent = ""; }, 3000);
+}
+templatesSaveBtn.addEventListener("click", saveTemplateEdits);
+
+window.addEventListener("beforeunload", (event) => {
+  if (templatesDirty()) { event.preventDefault(); event.returnValue = ""; }
+});
 
 document.getElementById("detail-edit-templates-btn").addEventListener("click", () => {
   const editor = document.getElementById("detail-templates-editor");
@@ -2040,6 +2074,13 @@ document.getElementById("detail-draft-btn").addEventListener("click", async () =
   const textarea = document.getElementById("detail-draft-textarea");
   const templateId = document.getElementById("detail-template-select").value;
   if (outreachBlock(currentDetailLead) || !(await confirmNoSecondApproach(currentDetailLead))) return;
+  // Drafting reads the SAVED templates - if the editor holds unsaved edits, say so rather than silently ignore them.
+  if (templatesDirty()) {
+    const choice = await askChoice("Your template edits aren't saved yet. Drafts use the saved templates.",
+      [{ value: "save", label: "Save and draft" }, { value: "saved", label: "Draft with the saved templates" }]);
+    if (!choice) return;
+    if (choice === "save") await saveTemplateEdits();
+  }
   btn.disabled = true;
   statusEl.textContent = "Drafting…";
   try {
@@ -2840,6 +2881,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // same reasoning as every other live-update listener in this codebase.
   if (changes.targetAccountsWorkbook) {
     loadTargetContacts().then(renderTable);
+  }
+  // Templates saved elsewhere (another tab, the onboarding wizard): refresh the saved copy. Unsaved edits here
+  // live in templateEdits, so a re-render keeps them.
+  if (changes.messageTemplates) {
+    messageTemplates = changes.messageTemplates.newValue || [];
+    if (!document.getElementById("detail-templates-editor").hidden) renderTemplatesEditor();
+    else markTemplatesDirty();
   }
 });
 

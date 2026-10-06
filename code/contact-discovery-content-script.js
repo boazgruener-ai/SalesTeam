@@ -125,7 +125,7 @@ async function run() {
     results,
     insightsLoadError,
     caughtError,
-  });
+  }).catch(() => {});
 }
 
 run().catch((err) => {

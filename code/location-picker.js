@@ -2,9 +2,9 @@
 // by Settings' Location Filter (6.13, settings.html/js) and the onboarding
 // wizard's Location step (Phase 2, onboarding.html/js) - extracted from
 // settings.js, which had this exact ~350-line widget built once already.
-// The two call sites differ only in *when* they persist a change (Settings
-// auto-saves mode/continent picks immediately but stages country picks
-// behind its own explicit Save button and dirty-tracking; onboarding just
+// The call sites differ only in *what they do* with a change (Settings and
+// the Scanner's per-topic override mark their page dirty and write only on
+// an explicit Save - the explicit-save rule, 2026-10-06; onboarding just
 // reads the current value once, on "Next") - that decision stays with each
 // caller via the two separate change callbacks below, never made here.
 //

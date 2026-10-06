@@ -43,15 +43,9 @@ import {
   exportLeads,
   importSettings,
   importLeads,
-  getWebFindingsArbitration,
-  saveWebFindingsArbitration,
-  getRevenueNormalization,
-  saveRevenueNormalization,
   getSetupResearch,
   saveSetupResearch,
 } from "./storage.js";
-import { RULES as ARBITRATION_RULES, DEFAULT_ARBITRATION_SETTINGS } from "./web-findings-arbitration.js";
-import { SUPPORTED_CURRENCIES, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sanitizeApiKey, SELLER_RESEARCH_ESTIMATE_USD } from "./agent-shared.js";
 import {
@@ -70,36 +64,53 @@ import { getLinkedinTouchStats, formatTouchRelease } from "./linkedin-touch-log.
 import { initDecisionsDot } from "./decisions-dot.js";
 import { initTeamSettings } from "./team-ui.js";
 
-// Logs one activity-log entry per real edit (focus -> blur, value actually
-// changed), not per keystroke - the field's own existing "input" listener
-// keeps saving live as before; this only adds logging on top. Same pattern
-// as sidepanel.js's logOnBlur.
-function logOnBlur(el, { action, labelFor }) {
-  let valueAtFocus = el.value;
-  el.addEventListener("focus", () => { valueAtFocus = el.value; });
-  el.addEventListener("blur", () => {
-    if (el.value !== valueAtFocus) {
-      appendActivityLog({ actor: "user", action, label: labelFor(valueAtFocus, el.value), prevValue: valueAtFocus, newValue: el.value });
-    }
-  });
-}
 
-// Reported directly: auto-save "feels weird, unsure if it saved" - this
-// page still auto-saves on every change (safer than requiring an explicit
-// Save everywhere, which would risk losing an edit if the user navigates
-// away), but every save now flashes this one persistent, page-wide
-// indicator so there's always visible confirmation it actually happened.
-const saveStatusEl = document.getElementById("settings-save-status");
-let saveStatusTimeout = null;
-function flashSaved() {
-  saveStatusEl.textContent = "Saved";
-  saveStatusEl.classList.add("flash");
-  clearTimeout(saveStatusTimeout);
-  saveStatusTimeout = setTimeout(() => {
-    saveStatusEl.textContent = "All changes saved";
-    saveStatusEl.classList.remove("flash");
-  }, 1500);
+// RULE 2026-10-06 (Boaz): nothing on this page is saved until Save is pressed - the page used to save every change at
+// once and flash "Saved" in the top corner. Each card gets one Save / Cancel row: Save is on while the card differs
+// from what is stored, Cancel puts the stored values back.
+const dirtyCards = new Set();
+function mountCardSave(cardId, { current, stored, save, revert }) {
+  const card = document.getElementById(cardId);
+  const row = document.createElement("div");
+  row.className = "settings-buttons-row card-save-row";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.textContent = "Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  const note = document.createElement("span");
+  note.className = "status-text";
+  note.setAttribute("role", "status");
+  row.append(saveBtn, cancelBtn, note);
+  card.appendChild(row);
+  const isDirty = () => JSON.stringify(current()) !== JSON.stringify(stored());
+  const refresh = () => {
+    const dirty = isDirty();
+    saveBtn.disabled = !dirty;
+    cancelBtn.disabled = !dirty;
+    if (dirty) { dirtyCards.add(cardId); note.textContent = "Unsaved changes"; }
+    else { dirtyCards.delete(cardId); if (note.textContent === "Unsaved changes") note.textContent = ""; }
+  };
+  card.addEventListener("input", refresh);
+  card.addEventListener("change", refresh);
+  saveBtn.addEventListener("click", async () => {
+    if (!isDirty()) return;
+    saveBtn.disabled = true;
+    await save(current());
+    refresh();
+    note.textContent = "Saved ✓";
+    setTimeout(() => { if (note.textContent === "Saved ✓") note.textContent = ""; }, 2500);
+  });
+  cancelBtn.addEventListener("click", () => { revert(); refresh(); });
+  refresh();
+  return { refresh, isDirty };
 }
+window.addEventListener("beforeunload", (event) => {
+  if (!dirtyCards.size) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 
 let currentUserProfile = { name: "", title: "", email: "" };
 
@@ -111,12 +122,17 @@ const profileNameInput = document.getElementById("profile-name-input");
 const profileTitleInput = document.getElementById("profile-title-input");
 const profileEmailInput = document.getElementById("profile-email-input");
 
-outputLanguageSelect.addEventListener("change", () => {
-  const prevValue = outputLanguageSelect.dataset.prevValue || null;
-  saveOutputLanguage(outputLanguageSelect.value);
-  flashSaved();
-  appendActivityLog({ actor: "user", action: "output_language_changed", label: `Output language changed to "${outputLanguageSelect.value}"`, prevValue, newValue: outputLanguageSelect.value });
-  outputLanguageSelect.dataset.prevValue = outputLanguageSelect.value;
+let storedOutputLanguage = "english";
+const languageSave = mountCardSave("language-section", {
+  current: () => outputLanguageSelect.value,
+  stored: () => storedOutputLanguage,
+  save: async (value) => {
+    const prevValue = storedOutputLanguage;
+    await saveOutputLanguage(value);
+    storedOutputLanguage = value;
+    appendActivityLog({ actor: "user", action: "output_language_changed", label: `Output language changed to "${value}"`, prevValue, newValue: value });
+  },
+  revert: () => { outputLanguageSelect.value = storedOutputLanguage; },
 });
 
 // The API key is edited as a draft: nothing is stored until Save is pressed, and Cancel puts the stored key back
@@ -152,17 +168,18 @@ apiKeyCancelBtn.addEventListener("click", () => {
 // User Profile (2026-09-18, user's own request) - name/title/email saved
 // together as one object rather than 3 separate storage keys, same shape
 // storage.js's getUserProfile/saveUserProfile already use.
-function saveProfileField(field, value) {
-  currentUserProfile = { ...currentUserProfile, [field]: value };
-  saveUserProfile(currentUserProfile);
-  flashSaved();
-}
-profileNameInput.addEventListener("input", () => saveProfileField("name", profileNameInput.value));
-profileTitleInput.addEventListener("input", () => saveProfileField("title", profileTitleInput.value));
-profileEmailInput.addEventListener("input", () => saveProfileField("email", profileEmailInput.value));
-logOnBlur(profileNameInput, { action: "user_profile_changed", labelFor: () => "User Profile name changed" });
-logOnBlur(profileTitleInput, { action: "user_profile_changed", labelFor: () => "User Profile title changed" });
-logOnBlur(profileEmailInput, { action: "user_profile_changed", labelFor: () => "User Profile email changed" });
+const profileFields = { name: profileNameInput, title: profileTitleInput, email: profileEmailInput };
+const profileSave = mountCardSave("profile-section", {
+  current: () => Object.fromEntries(Object.entries(profileFields).map(([k, input]) => [k, input.value])),
+  stored: () => ({ name: currentUserProfile.name || "", title: currentUserProfile.title || "", email: currentUserProfile.email || "" }),
+  save: async (values) => {
+    const changed = Object.keys(values).filter((k) => values[k] !== (currentUserProfile[k] || ""));
+    currentUserProfile = { ...currentUserProfile, ...values };
+    await saveUserProfile(currentUserProfile);
+    appendActivityLog({ actor: "user", action: "user_profile_changed", label: `User Profile ${changed.join(", ")} changed` });
+  },
+  revert: () => { for (const [k, input] of Object.entries(profileFields)) input.value = currentUserProfile[k] || ""; },
+});
 
 // v0.29.38: reported directly - date-only made two same-day imports (e.g.
 // re-importing a refreshed workbook to pick up a Zefix cross-check) show an
@@ -252,13 +269,6 @@ function hideEmbeddedPage() {
 // Messages from the frame this page hosts (the wizard / Change Settings).
 window.addEventListener("message", (event) => {
   if (event.origin !== location.origin || !event.data) return;
-  // Change Settings' Advanced group: open one of this page's own cards (1.2.0.51).
-  if (event.data.type === "salesteam-open-settings-section" && SETTINGS_SECTION_IDS.includes(event.data.section)) {
-    hideEmbeddedPage();
-    if (location.hash === `#${event.data.section}`) routeSettings();
-    else location.hash = `#${event.data.section}`;
-    return;
-  }
   if (event.data.type === "salesteam-leave-settings") {
     // Change Settings' "Back to menu": when this page is itself shown inside another page (Posts, Accounts, Scanner),
     // close it and land back on that page - not on a Settings card the user never chose.
@@ -704,8 +714,6 @@ const SETTINGS_SECTION_IDS = [
   "setup-section", "automation-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
   "team-section",
   "discovery-queue-section", "company-discovery-section", "contact-discovery-section",
-  // 1.2.0.49: these two were missing, so they showed under whichever card was open.
-  "revenue-currency-section", "web-findings-section",
 ];
 
 let onboardingIsComplete = false;
@@ -747,9 +755,12 @@ function routeSettings() {
   }
   // Change Settings opened straight on one setting (the User Profile card's "Open About you", 1.2.0.16), or on About
   // you with the seller research started (the once-only offer, design 3.12).
-  if (location.hash === "#change-settings-about" || location.hash === "#change-settings-research") {
+  // Also the Advanced tools menu's "Revenue & Currency" and "How to handle research findings" (Change Settings steps
+  // since 1.2.1.10).
+  const settingsStep = { "#change-settings-about": "about", "#change-settings-research": "about", "#change-settings-findings": "findings", "#change-settings-revenue": "revenue" }[location.hash];
+  if (settingsStep) {
     const research = location.hash === "#change-settings-research" ? "&research=1" : "";
-    showEmbeddedPage(`onboarding.html?mode=settings&step=about${research}`, "Change Settings");
+    showEmbeddedPage(`onboarding.html?mode=settings&step=${settingsStep}${research}`, "Change Settings");
     document.querySelectorAll("#app-nav .nav-item.active").forEach((e) => e.classList.remove("active"));
     document.getElementById("nav-change-settings")?.classList.add("active");
     return;
@@ -856,8 +867,9 @@ async function init() {
 
   await renderDiscoveryQueueState();
 
-  outputLanguageSelect.value = await getOutputLanguage();
-  outputLanguageSelect.dataset.prevValue = outputLanguageSelect.value;
+  storedOutputLanguage = await getOutputLanguage();
+  outputLanguageSelect.value = storedOutputLanguage;
+  languageSave.refresh();
   storedApiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
   anthropicApiKeyInput.value = storedApiKey;
   refreshApiKeyButtons();
@@ -866,6 +878,7 @@ async function init() {
   profileNameInput.value = currentUserProfile.name;
   profileTitleInput.value = currentUserProfile.title;
   profileEmailInput.value = currentUserProfile.email;
+  profileSave.refresh();
 }
 
 init();
@@ -1013,39 +1026,52 @@ document.getElementById("automation-enabled-label").textContent = CONSENT_TITLE;
 document.getElementById("automation-consent-text").textContent = CONSENT_TEXT;
 const automationWebCheckbox = document.getElementById("automation-web-checkbox");
 const automationWebBudget = document.getElementById("automation-web-budget");
-const automationWebBudgetSave = document.getElementById("automation-web-budget-save");
-const automationWebBudgetStatus = document.getElementById("automation-web-budget-status");
 document.getElementById("automation-web-label").textContent = WEB_CONSENT_TITLE;
 document.getElementById("automation-web-text").textContent = WEB_CONSENT_TEXT;
+// Both switches and the budget are saved together by the card's Save (RULE 2026-10-06); they used to act on click.
+let storedAutomation = null;
+const automationValues = () => ({
+  enabled: automationCheckbox.checked,
+  webEnabled: automationWebCheckbox.checked,
+  monthlyUsd: Math.max(0, Number(automationWebBudget.value) || 0),
+});
+function showAutomationValues(a) {
+  automationCheckbox.checked = a.enabled;
+  automationWebCheckbox.checked = a.webEnabled;
+  automationWebBudget.value = String(a.monthlyUsd);
+}
+const automationSave = mountCardSave("automation-section", {
+  current: automationValues,
+  stored: () => storedAutomation || automationValues(),
+  save: async (v) => {
+    const before = storedAutomation;
+    if (!before || v.enabled !== before.enabled) {
+      await setPipelineAutomationEnabled(v.enabled, "Settings");
+      if (!v.enabled) chrome.runtime.sendMessage({ type: "PIPELINE_STOP" }).catch(() => {});
+    }
+    if (!before || v.webEnabled !== before.webEnabled || v.monthlyUsd !== before.monthlyUsd) {
+      await setWebResearchAutomation({ enabled: v.webEnabled, monthlyUsd: v.monthlyUsd }, "Settings");
+    }
+    storedAutomation = v;
+    if (v.enabled && before && !before.enabled) kickAndExplain("settings");
+    else if (v.enabled) kickPipelineFromPage("settings");
+  },
+  revert: () => showAutomationValues(storedAutomation),
+});
 async function renderAutomationCard() {
   const a = await getPipelineAutomation();
-  automationCheckbox.checked = a.enabled;
   automationResumeBtn.hidden = !(a.enabled && a.pausedDay === localDay());
-  automationWebCheckbox.checked = a.webEnabled;
+  const wasDirty = storedAutomation !== null && automationSave.isDirty();
   // W3: off means 0; the default is offered as soon as the box is ticked.
-  if (document.activeElement !== automationWebBudget) {
-    automationWebBudget.value = a.webMonthlyUsd > 0 ? String(a.webMonthlyUsd) : a.webEnabled ? String(DEFAULT_WEB_BUDGET_USD) : "0";
-    automationWebBudgetSave.disabled = true;
-  }
+  storedAutomation = {
+    enabled: a.enabled,
+    webEnabled: a.webEnabled,
+    monthlyUsd: a.webMonthlyUsd > 0 ? a.webMonthlyUsd : a.webEnabled ? DEFAULT_WEB_BUDGET_USD : 0,
+  };
+  // A change made elsewhere (the pipeline pausing, the Setup's Finish) does not overwrite what is being edited here.
+  if (!wasDirty) showAutomationValues(storedAutomation);
+  automationSave.refresh();
 }
-automationWebCheckbox.addEventListener("change", async () => {
-  await setWebResearchAutomation({ enabled: automationWebCheckbox.checked }, "Settings");
-  if (automationWebCheckbox.checked) kickPipelineFromPage("settings");
-});
-automationWebBudget.addEventListener("input", () => { automationWebBudgetSave.disabled = false; automationWebBudgetStatus.textContent = ""; });
-automationWebBudgetSave.addEventListener("click", async () => {
-  const value = Math.max(0, Number(automationWebBudget.value) || 0);
-  await setWebResearchAutomation({ monthlyUsd: value }, "Settings");
-  automationWebBudgetSave.disabled = true;
-  automationWebBudgetStatus.textContent = "Saved ✓";
-  setTimeout(() => { if (automationWebBudgetStatus.textContent === "Saved ✓") automationWebBudgetStatus.textContent = ""; }, 2500);
-  kickPipelineFromPage("settings");
-});
-automationCheckbox.addEventListener("change", async () => {
-  await setPipelineAutomationEnabled(automationCheckbox.checked, "Settings");
-  if (automationCheckbox.checked) kickAndExplain("settings");
-  else chrome.runtime.sendMessage({ type: "PIPELINE_STOP" }).catch(() => {});
-});
 automationResumeBtn.addEventListener("click", async () => {
   await setPipelinePausedDay(null);
   kickPipelineFromPage("resume");
@@ -1054,284 +1080,3 @@ chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" &
 renderAutomationCard();
 watchPipelineStatusLine(document.getElementById("automation-status-line"));
 watchWebStatusLine(document.getElementById("automation-web-status-line"));
-
-// ---- Web Findings - Automatic Arbitration ----
-// The seven rule rows are generated from ARBITRATION_RULES rather than written into settings.html,
-// so a rule added to the mechanism cannot quietly go missing from the page that is supposed to
-// control it. Everything here saves on change - there is no Save button - matching the rest of this
-// page; the stored object is a flat patch over DEFAULT_ARBITRATION_SETTINGS.
-const webFindingsNumberFields = [
-  { id: "web-findings-tolerance", path: ["tolerancePct"], min: 0, max: 100 },
-  { id: "web-findings-max-employees", path: ["illogical", "maxEmployees"], min: 1 },
-  { id: "web-findings-rev-floor", path: ["illogical", "revenueUnitsFloor"], min: 0 },
-  { id: "web-findings-rev-ceil", path: ["illogical", "revenueUnitsCeil"], min: 0 },
-  { id: "web-findings-rpe-min", path: ["illogical", "revPerEmployeeMin"], min: 0 },
-  { id: "web-findings-rpe-max", path: ["illogical", "revPerEmployeeMax"], min: 0 },
-];
-
-function webFindingsEl(id) {
-  return document.getElementById(id);
-}
-
-function buildWebFindingsRuleRows() {
-  const wrap = webFindingsEl("web-findings-rules");
-  wrap.innerHTML = "";
-  for (const rule of ARBITRATION_RULES) {
-    const label = document.createElement("label");
-    label.className = "checkbox-label web-findings-rule";
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.id = `web-findings-rule-${rule.id}`;
-    box.dataset.setting = rule.setting;
-    label.appendChild(box);
-    // Named, not numbered - see ruleLabel() in target-accounts.js for why.
-    label.appendChild(document.createTextNode(` ${rule.label}`));
-    const detail = document.createElement("p");
-    detail.className = "field-hint web-findings-rule-detail";
-    detail.textContent = rule.detail;
-    wrap.appendChild(label);
-    wrap.appendChild(detail);
-    box.addEventListener("change", async () => {
-      findingsSaver?.stage({ [rule.setting]: box.checked });
-    });
-  }
-}
-
-function fillWebFindingsForm(settings) {
-  for (const rule of ARBITRATION_RULES) {
-    const box = webFindingsEl(`web-findings-rule-${rule.id}`);
-    if (box) box.checked = Boolean(settings[rule.setting]);
-  }
-  for (const f of webFindingsNumberFields) {
-    const el = webFindingsEl(f.id);
-    if (!el) continue;
-    const value = f.path.length === 2 ? settings[f.path[0]]?.[f.path[1]] : settings[f.path[0]];
-    el.value = value ?? "";
-  }
-  webFindingsEl("web-findings-preference").value = settings.sourcePreference || "existing";
-  webFindingsEl("web-findings-linkedin-authoritative").checked = Boolean(settings.linkedinAuthoritative);
-}
-
-// A Save button for the two Advanced cards (Boaz, 2026-10-06): a change stays on screen as "Unsaved changes" until
-// Save writes all of them at once (and logs one Activity Log entry). The "back to the defaults" buttons still save
-// at once - they ask first.
-function isPlainObj(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
-function mergePatch(a, b) {
-  const out = { ...a };
-  for (const [k, v] of Object.entries(b)) out[k] = isPlainObj(v) && isPlainObj(out[k]) ? mergePatch(out[k], v) : v;
-  return out;
-}
-function createCardSaver({ card, saveFn, statusId, label, onSaved }) {
-  let pending = {};
-  const row = document.createElement("div");
-  row.className = "settings-buttons-row card-save-row";
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.textContent = "Save";
-  btn.disabled = true;
-  const note = document.createElement("span");
-  note.className = "status-text";
-  row.append(btn, note);
-  document.getElementById(card)?.appendChild(row);
-  const paint = () => {
-    const dirty = Object.keys(pending).length > 0;
-    btn.disabled = !dirty || btn.dataset.teamDisabled === "1";
-    note.textContent = dirty ? "Unsaved changes" : "";
-  };
-  btn.addEventListener("click", async () => {
-    if (!Object.keys(pending).length) return;
-    const patch = pending;
-    btn.disabled = true;
-    note.textContent = "Saving…";
-    const next = await saveFn(patch);
-    pending = {};
-    paint();
-    note.textContent = "Saved ✓";
-    setTimeout(() => { if (note.textContent === "Saved ✓") note.textContent = ""; }, 2500);
-    flashSaved();
-    appendActivityLog({ actor: "user", action: "settings_card_saved", label: `${label} saved (${Object.keys(patch).join(", ")})`, newValue: patch });
-    if (onSaved) onSaved(next);
-    const status = document.getElementById(statusId);
-    if (status) status.textContent = "";
-  });
-  return {
-    stage(patch) { pending = mergePatch(pending, patch); paint(); },
-    clear() { pending = {}; paint(); },
-  };
-}
-
-// "How to handle research findings" and "Revenue & Currency" open from Change Settings > Advanced (1.2.1.9 test):
-// they had no Save / Next - and no way back. A back link and a hint on top; a Save button at the bottom.
-// Both are shared team settings: a team member sees them read-only (D3, like the setup).
-async function decorateAdvancedCards() {
-  const membership = (await chrome.storage.local.get("teamMembership")).teamMembership;
-  const member = Boolean(membership && membership.role !== "admin");
-  for (const id of ["web-findings-section", "revenue-currency-section"]) {
-    const card = document.getElementById(id);
-    if (!card) continue;
-    let bar = card.querySelector(".advanced-card-nav");
-    if (!bar) {
-      // The way back sits above the card's box (Boaz: under the title it was easy to miss); it belongs to the card so it
-      // shows and hides with it. The hint stays under the title.
-      const back = document.createElement("a");
-      back.href = "#change-settings";
-      back.className = "advanced-card-back";
-      back.textContent = "← Back to Change Settings";
-      card.classList.add("has-advanced-back");
-      card.prepend(back);
-      bar = document.createElement("div");
-      bar.className = "advanced-card-nav";
-      const hint = document.createElement("span");
-      hint.className = "field-hint advanced-card-hint";
-      bar.append(hint);
-      card.querySelector("h3")?.insertAdjacentElement("afterend", bar);
-    }
-    bar.querySelector(".advanced-card-hint").textContent = member
-      ? `Shared with the team "${membership.teamName}" - only the Team Admin can change it. You can look at it here.`
-      : "Change what you need, then click Save at the bottom of this card.";
-    card.classList.toggle("team-member-readonly-card", member);
-    for (const c of card.querySelectorAll("input, select, textarea, button")) {
-      if (member) { c.dataset.teamDisabled = "1"; c.disabled = true; }
-      else if (c.dataset.teamDisabled) { delete c.dataset.teamDisabled; c.disabled = false; }
-    }
-  }
-}
-chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.teamMembership) decorateAdvancedCards().catch(() => {}); });
-
-let findingsSaver = null;
-async function initWebFindingsArbitration() {
-  if (!webFindingsEl("web-findings-rules")) return;
-  findingsSaver = createCardSaver({
-    card: "web-findings-section", saveFn: saveWebFindingsArbitration, statusId: "web-findings-status",
-    label: "Research findings settings", onSaved: (next) => fillWebFindingsForm(next),
-  });
-  buildWebFindingsRuleRows();
-  const findingsSettings = await getWebFindingsArbitration();
-  fillWebFindingsForm(findingsSettings);
-  document.getElementById(findingsSettings.askEveryDifference ? "findings-mode-ask" : "findings-mode-auto").checked = true;
-  for (const id of ["findings-mode-auto", "findings-mode-ask"]) {
-    document.getElementById(id).addEventListener("change", () =>
-      findingsSaver.stage({ askEveryDifference: document.getElementById("findings-mode-ask").checked }));
-  }
-
-  for (const f of webFindingsNumberFields) {
-    const el = webFindingsEl(f.id);
-    if (!el) continue;
-    // "change", not "input": half-typed numbers should not be saved, and an empty box should put
-    // the default back rather than store a NaN that every later comparison would silently fail.
-    el.addEventListener("change", async () => {
-      const raw = Number(el.value);
-      const fallback = f.path.length === 2
-        ? DEFAULT_ARBITRATION_SETTINGS[f.path[0]][f.path[1]]
-        : DEFAULT_ARBITRATION_SETTINGS[f.path[0]];
-      let value = Number.isFinite(raw) && el.value !== "" ? raw : fallback;
-      if (f.min !== undefined) value = Math.max(f.min, value);
-      if (f.max !== undefined) value = Math.min(f.max, value);
-      el.value = value;
-      const patch = f.path.length === 2 ? { [f.path[0]]: { [f.path[1]]: value } } : { [f.path[0]]: value };
-      findingsSaver.stage(patch);
-    });
-  }
-
-  webFindingsEl("web-findings-preference").addEventListener("change", async (e) => {
-    findingsSaver.stage({ sourcePreference: e.target.value });
-  });
-
-  webFindingsEl("web-findings-linkedin-authoritative").addEventListener("change", async (e) => {
-    findingsSaver.stage({ linkedinAuthoritative: e.target.checked });
-  });
-
-  webFindingsEl("web-findings-reset-btn").addEventListener("click", async () => {
-    if (!(await askConfirm(
-      "Put every rule, tolerance and threshold here back to the way SalesTeam ships them?\n\nThis only changes the settings - nothing already decided on your accounts is touched.",
-      { okLabel: "Put back the defaults", cancelLabel: "Cancel" }
-    ))) return;
-    const next = await saveWebFindingsArbitration(DEFAULT_ARBITRATION_SETTINGS);
-    findingsSaver.clear();
-    fillWebFindingsForm(next);
-    webFindingsEl("web-findings-status").textContent = "Back to the defaults.";
-    flashSaved();
-    appendActivityLog({ actor: "user", action: "web_findings_arbitration_reset", label: "Web findings arbitration settings put back to the defaults" });
-  });
-}
-
-initWebFindingsArbitration().finally(() => decorateAdvancedCards().catch(() => {}));
-
-// ---- Revenue & Currency ----
-// The rates grid is generated from SUPPORTED_CURRENCIES for the same reason the rule rows are
-// generated from ARBITRATION_RULES: a currency added to the module should not need a second edit
-// here to become visible.
-async function initRevenueCurrency() {
-  const select = document.getElementById("revenue-currency-select");
-  if (!select) return;
-  const grid = document.getElementById("revenue-rates-grid");
-  const asOfInput = document.getElementById("revenue-rates-asof-input");
-  const statusEl = document.getElementById("revenue-currency-status");
-  let fill = null;
-  const revenueSaver = createCardSaver({
-    card: "revenue-currency-section", saveFn: saveRevenueNormalization, statusId: "revenue-currency-status",
-    label: "Revenue & Currency", onSaved: (next) => fill(next),
-  });
-
-  select.innerHTML = "";
-  for (const code of SUPPORTED_CURRENCIES) {
-    const option = document.createElement("option");
-    option.value = code;
-    option.textContent = code;
-    select.appendChild(option);
-  }
-
-  fill = (settings) => {
-    select.value = settings.targetCurrency;
-    asOfInput.value = settings.asOf || "";
-    document.getElementById("revenue-rates-asof").textContent =
-      `Rates as last checked on ${settings.asOf || "an unknown date"}.`;
-    grid.innerHTML = "";
-    for (const code of SUPPORTED_CURRENCIES) {
-      const label = document.createElement("label");
-      label.textContent = `1 ${code} = ? USD`;
-      const input = document.createElement("input");
-      input.type = "number";
-      input.step = "0.0001";
-      input.min = "0";
-      input.style.width = "140px";
-      input.value = settings.rates[code] ?? "";
-      input.disabled = code === DEFAULT_EXCHANGE_RATES.base;
-      input.addEventListener("change", async () => {
-        const value = Number(input.value);
-        if (!Number.isFinite(value) || value <= 0) {
-          input.value = settings.rates[code] ?? "";
-          statusEl.textContent = "A rate has to be a number greater than zero.";
-          return;
-        }
-        revenueSaver.stage({ rates: { [code]: value } });
-      });
-      grid.appendChild(label);
-      grid.appendChild(input);
-    }
-  };
-
-  fill(await getRevenueNormalization());
-
-  select.addEventListener("change", async () => {
-    revenueSaver.stage({ targetCurrency: select.value });
-  });
-
-  asOfInput.addEventListener("change", async () => {
-    revenueSaver.stage({ asOf: asOfInput.value });
-  });
-
-  document.getElementById("revenue-rates-reset-btn").addEventListener("click", async () => {
-    if (!(await askConfirm(
-      "Put every exchange rate back to the values SalesTeam ships with?\n\nThe currency you display revenue in is not changed.",
-      { okLabel: "Put back the defaults", cancelLabel: "Cancel" }
-    ))) return;
-    const next = await saveRevenueNormalization({ rates: DEFAULT_EXCHANGE_RATES.rates, asOf: DEFAULT_EXCHANGE_RATES.asOf });
-    revenueSaver.clear();
-    fill(next);
-    statusEl.textContent = "Rates back to the defaults.";
-    flashSaved();
-  });
-}
-
-initRevenueCurrency().finally(() => decorateAdvancedCards().catch(() => {}));

@@ -187,7 +187,7 @@ async function run() {
     topicId: currentJobScanTopicId,
     topicName: currentJobScanTopicName,
     jobs,
-  });
+  }).catch(() => {});
 }
 
 run();

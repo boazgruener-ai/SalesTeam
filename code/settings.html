@@ -129,8 +129,8 @@
         <button id="nav-extract-companies-btn" type="button" class="nav-item" title="Auto-extract a company name for every Post lead that doesn't have one yet">Extract Companies</button>
         <button id="nav-extract-companies-profiles-btn" type="button" class="nav-item" title="For leads still missing a company or location, visit each person's own LinkedIn profile page one at a time to find their current employer and stated location - slower and visits individual profiles, unlike the headline-only Extract Companies above">Extract Companies &amp; Locations from Profiles…</button>
         <button id="nav-prioritize-target-accounts-btn" type="button" class="nav-item" title="Score every eligible company's Priority (P1-P5)">Prioritize Companies…</button>
-        <a href="#revenue-currency-section" class="nav-item" id="nav-revenue-currency-section" title="Clean-up and currency conversion for revenue and employee figures">Revenue &amp; Currency</a>
-        <a href="#web-findings-section" class="nav-item" id="nav-web-findings-section" title="The rules behind &quot;Resolve Web Findings Automatically…&quot; on the Target Accounts Dashboard">How to handle research findings</a>
+        <a href="#change-settings-revenue" class="nav-item" id="nav-revenue-currency-section" title="Clean-up and currency conversion for revenue and employee figures">Revenue &amp; Currency</a>
+        <a href="#change-settings-findings" class="nav-item" id="nav-web-findings-section" title="The rules behind &quot;Resolve Web Findings Automatically…&quot; on the Target Accounts Dashboard">How to handle research findings</a>
         <a href="#discovery-queue-section" class="nav-item" id="nav-discovery-queue-section">Discovery Queue (support)</a>
         <a href="#company-discovery-section" class="nav-item" id="nav-company-discovery-section">Company Discovery (support)</a>
         <a href="#contact-discovery-section" class="nav-item" id="nav-contact-discovery-section">Contact Discovery (support)</a>
@@ -145,7 +145,6 @@
           Shared by the Sales Mentor, Customer Voice, and the Dashboard's per-lead Draft Message — configure once
           here. Any other general (non-lead-specific) settings added later will live on this page too.
         </p>
-        <div id="settings-save-status">All changes saved</div>
         <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
       </div>
 
@@ -165,7 +164,7 @@
         The 12 Setup steps: who you are, which companies and people to look for (location, size, industry, target
         contacts), what you sell and can offer, companies to include or exclude, and how big your list should be.
         Walked through once after installing; each answer can be changed later in Change Settings, which also holds
-        the advanced settings (Discovery and Leads Prioritization, Company aliases).
+        the advanced settings (Discovery and Leads Prioritization, Company aliases, research findings, Revenue &amp; Currency).
       </p>
       <div id="onboarding-progress-wrap">
         <div id="onboarding-progress-label"></div>
@@ -201,8 +200,6 @@
       <div class="settings-buttons-row">
         <label for="automation-web-budget">Monthly budget US$</label>
         <input type="number" id="automation-web-budget" min="0" step="1" style="width: 90px" />
-        <button type="button" id="automation-web-budget-save" disabled>Save</button>
-        <span id="automation-web-budget-status" class="field-hint" role="status"></span>
       </div>
       <p class="field-hint" id="automation-web-status-line" hidden></p>
     </section>
@@ -558,125 +555,6 @@
       <p id="backup-storage-usage" class="field-hint"></p>
     </section>
 
-    <!-- Deliberately in Advanced tools and closed by default. Every decision this mechanism makes is
-         written to the Activity Log, which is how a user would ever discover a bad pattern and come
-         looking for these controls - they are the remedy, not the safeguard, so they should be
-         findable when sought rather than noise for the great majority who never need them. -->
-
-    <!-- Revenue figures arrive in whatever currency and shape the source used. This is where they are
-         given one meaning: cleaned up ("102M" -> 102,000,000, "CHF 102m" -> the number plus its
-         currency) and then expressed in a single currency everywhere they are compared. -->
-    <section class="settings-card" id="revenue-currency-section">
-      <h3>Revenue &amp; Currency</h3>
-      <p class="field-hint">
-        Revenue reaches SalesTeam written every possible way &ndash; <code>102M</code>, <code>CHF 102m</code>,
-        <code>102'000</code>, <code>1.2bn</code>, sometimes just <code>USD</code> with no number at all. It is cleaned up
-        into plain digits (<code>102M</code> becomes <code>102,000,000</code>) and anything not already in the currency
-        below is converted into it, so two figures can actually be compared instead of merely looking different.
-        The same clean-up rescues employee counts stored as text, like <code>6,500+</code>, which otherwise give a
-        company no size at all when it is scored.
-      </p>
-
-      <label for="revenue-currency-select">Show and compare all revenue in</label>
-      <select id="revenue-currency-select"></select>
-
-      <details id="revenue-rates-details">
-        <summary>Exchange rates</summary>
-        <p class="field-hint" id="revenue-rates-asof"></p>
-        <p class="field-hint">
-          These are approximate starting values, not a live feed &ndash; SalesTeam never calls out to a rates service.
-          Correct any of them by hand and set the date so you can see at a glance how old they are. Each one is how
-          many US dollars one unit of that currency is worth.
-        </p>
-        <label for="revenue-rates-asof-input">Rates last checked on</label>
-        <input type="date" id="revenue-rates-asof-input" />
-        <div id="revenue-rates-grid"></div>
-        <button type="button" id="revenue-rates-reset-btn">Put the rates back to the defaults</button>
-      </details>
-      <span id="revenue-currency-status" class="status-text" role="status"></span>
-    </section>
-
-    <section class="settings-card" id="web-findings-section">
-      <h3>How to handle research findings</h3>
-      <!-- 1.2.0.51: the same plain choice as on the Setup's Finish screen. -->
-      <label class="checkbox-label">
-        <input type="radio" name="findings-mode" id="findings-mode-auto" value="auto" />
-        Decide automatically where it is safe, and ask me only when it matters (recommended)
-      </label>
-      <label class="checkbox-label">
-        <input type="radio" name="findings-mode" id="findings-mode-ask" value="ask" />
-        Ask me about every difference (empty fields are still filled in)
-      </label>
-      <p class="field-hint">
-        When a web research turns up a fact that disagrees with what an account already holds, most of the time it is
-        not a mistake: two correct figures counted differently (84,146 employees or 150,000 &ndash; direct staff against
-        staff-and-contractors), or a field that is never used to score a company at all. <strong>Resolve Web Findings
-        Automatically&hellip;</strong> on the Target Accounts Dashboard settles those by the rules below and leaves you only
-        the ones that can genuinely change something. It always shows you what it will do before it does it, writes
-        every single decision to the Activity Log, and can be undone in one action.
-      </p>
-
-      <h4>Rules</h4>
-      <p class="field-hint">
-        Turning a rule off always moves in the safe direction. For the rules that decide something, that case stops
-        being decided and comes to you instead. For the rules that always ask, it stops forcing a question and lets the
-        remaining rules try &ndash; but a value that fails the &ldquo;looks wrong&rdquo; checks is never written into an account
-        whatever these are set to, so the most a switched-off rule can do is keep what you already have.
-      </p>
-      <div id="web-findings-rules"></div>
-
-      <h4>Settings the rules use</h4>
-      <label for="web-findings-tolerance">Treat two employee counts as the same when they differ by less than (%)</label>
-      <input type="number" id="web-findings-tolerance" min="0" max="100" step="1" style="width: 110px" />
-      <p class="field-hint">
-        Only used when the two counts fall in different size bands. Higher means fewer questions and more decided for you.
-      </p>
-
-      <label for="web-findings-preference">When a rule decides for you, prefer</label>
-      <select id="web-findings-preference">
-        <option value="existing">Current data</option>
-        <option value="web">Web findings</option>
-      </select>
-      <p class="field-hint">
-        Keeping current data is the safer default: it is the curated set and it is consistent across every account.
-        Choose web findings instead if the imported data is older or less trustworthy than a fresh search.
-      </p>
-
-      <label class="checkbox-label">
-        <input type="checkbox" id="web-findings-linkedin-authoritative" />
-        Trust an employee count read from LinkedIn when deciding which size band a company is in
-      </label>
-      <p class="field-hint">
-        A count fetched from LinkedIn is the size band the company publishes about itself. It is not an exact headcount,
-        but it is the most reliable thing available for putting a company in the right band &ndash; so when it disagrees with
-        the web research about the band, this keeps LinkedIn's rather than asking you.
-      </p>
-
-      <details id="web-findings-illogical">
-        <summary>What counts as a value that &ldquo;looks wrong&rdquo;</summary>
-        <p class="field-hint">
-          Checked on both sides &ndash; the found value and the one already stored. Alongside these numbers, rule 2 also
-          catches an employee count that is not a number at all (values like &ldquo;6,500+&rdquo; are stored on some accounts and
-          can never be used for sizing), a local employee count larger than the worldwide one, any negative value, and
-          revenue that looks like it was entered in millions where the other side is in units.
-        </p>
-        <label for="web-findings-max-employees">Too many employees to be real</label>
-        <input type="number" id="web-findings-max-employees" min="1" step="1000" style="width: 160px" />
-        <label for="web-findings-rev-floor">Revenue below this, when the other side is at least the next figure, is a units mistake</label>
-        <input type="number" id="web-findings-rev-floor" min="0" step="100" style="width: 160px" />
-        <label for="web-findings-rev-ceil">&hellip;and the other side is at least</label>
-        <input type="number" id="web-findings-rev-ceil" min="0" step="100000" style="width: 160px" />
-        <label for="web-findings-rpe-min">Lowest believable revenue per employee</label>
-        <input type="number" id="web-findings-rpe-min" min="0" step="100" style="width: 160px" />
-        <label for="web-findings-rpe-max">Highest believable revenue per employee</label>
-        <input type="number" id="web-findings-rpe-max" min="0" step="100000" style="width: 160px" />
-      </details>
-
-      <div class="settings-buttons-row">
-        <button type="button" id="web-findings-reset-btn">Put everything back to the defaults</button>
-        <span id="web-findings-status" class="status-text" role="status"></span>
-      </div>
-    </section>
   </div>
       </div>
 

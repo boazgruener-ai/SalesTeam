@@ -357,7 +357,7 @@ async function run() {
     topicId: currentScanTopicId,
     topicName: currentScanTopicName,
     posts,
-  });
+  }).catch(() => {});
 }
 
 run();

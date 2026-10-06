@@ -892,3 +892,34 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 #nav-save-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .team-member-readonly .wizard-step :is(input, select, textarea):not(.team-member-own):not(.team-member-own *) { opacity: 0.6; }
 .team-member-readonly .wizard-step button:not(.team-member-own *) { opacity: 0.5; }
+
+/* Change Settings > Advanced: research findings and Revenue & Currency (advanced-steps.js, moved from Settings 1.2.1.10) */
+.advanced-card-step h4 { margin: 18px 0 6px; font-size: 13px; }
+.advanced-card-step label { display: block; }
+.advanced-card-step .checkbox-label { display: block; margin: 6px 0; }
+#web-findings-rules .web-findings-rule {
+  display: block;
+  margin-bottom: 10px;
+}
+
+#web-findings-rules .web-findings-rule-detail {
+  margin: 2px 0 0 24px;
+}
+
+/* Exchange rates (Revenue & Currency) - a label/input pair per currency, generated in advanced-steps.js
+   from SUPPORTED_CURRENCIES so a new currency needs no edit here. */
+#revenue-rates-grid {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: 6px 12px;
+  align-items: center;
+  margin: 10px 0;
+}
+
+#revenue-rates-grid label {
+  margin: 0;
+  font-size: 12px;
+}
+
+
+#nav-save-status.unsaved { color: #b05a00; font-weight: 600; }

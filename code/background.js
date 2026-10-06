@@ -43,7 +43,7 @@ import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
 import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease, countTouchesSince } from "./linkedin-touch-log.js";
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
-import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
+import { acquireBatch, BatchBusyError, SCAN_BATCH_LABEL } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
 import { startWebLane, stopWebLane, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { startWebDiscovery, stopWebDiscovery } from "./web-discovery.js";
@@ -1019,7 +1019,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === "SCAN_ALL") {
     // one batch process at a time: the page checks first (and explains); this is the safety net
-    acquireBatch("Scanner (searching LinkedIn for posts and jobs)").then((release) => {
+    acquireBatch(SCAN_BATCH_LABEL).then((release) => {
       const startedAt = Date.now();
       scanAllTopics({ reapplyToExisting: Boolean(message.reapplyToExisting) }).finally(() => {
         release();

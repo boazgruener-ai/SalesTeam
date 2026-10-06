@@ -2114,3 +2114,15 @@ thead .actions-col {
 .removed-table-wrap .removed-empty { padding: 14px; color: #777; }
 #removed-btn[hidden] { display: none; }
 .team-assign-lost button { margin-left: 6px; padding: 1px 10px; font-size: 12px; background: #fff; color: #333; border: 1px solid var(--border); }
+
+/* Rule 2026-10-06 (explicit Save): shown beside Status / SalesTeam Priority / Follow-up due while the picked value
+   differs from what is stored. */
+.field-unsaved-hint {
+  font-size: 12px;
+  font-style: italic;
+  color: #b45309;
+}
+
+.due-date-field .priority-override-set-btn {
+  margin-left: 6px;
+}

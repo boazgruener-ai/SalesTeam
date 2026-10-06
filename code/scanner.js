@@ -15,8 +15,9 @@
 // live per-topic search-count hint), triggers a scan (background.js) and
 // shows its progress, lists results, and provides Export/Import/backup plus
 // the entry points to the Dashboard, Advisors, Settings, and Help pages.
-import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
-import { guardBatchStart } from "./batch-jobs.js";
+import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { guardBatchStart, SCAN_BATCH_LABEL } from "./batch-jobs.js";
+import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 import { initBatchStatus } from "./batch-status.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import {
@@ -146,6 +147,128 @@ let topics = [];
 let jobTopics = [];
 let jobLocationPresets = [];
 
+// Explicit-save rule (2026-10-06): nothing on this page is written to
+// storage until the user presses Save. Edits only change the in-memory
+// working state (topics/jobTopics/negativeTopics arrays, the option
+// controls) and mark the matching part dirty; Save writes every dirty part
+// with the same save* functions the fields used to call directly. The scan
+// itself (background.js) reads its settings from storage, so unsaved edits
+// never reach a scan unless they are saved first - see the scan button.
+const scannerDirty = { topics: false, jobTopics: false, negativeTopics: false, jobLocationPresets: false };
+// Scan option keys changed since the last save - only these are written, so
+// an option the user never touched is never rewritten from a control.
+const dirtyScanOptions = new Set();
+const scannerSaveBar = document.getElementById("scanner-save-bar");
+const scannerSaveStatus = document.getElementById("scanner-save-status");
+const scannerSaveBtn = document.getElementById("scanner-save-btn");
+let scannerSavedFlashTimer = null;
+
+function isScannerDirty() {
+  return Object.values(scannerDirty).some(Boolean) || dirtyScanOptions.size > 0;
+}
+
+function renderScannerSaveBar() {
+  const dirty = isScannerDirty();
+  scannerSaveBar.classList.toggle("scanner-save-dirty", dirty);
+  scannerSaveBtn.disabled = !dirty;
+  if (dirty) {
+    clearTimeout(scannerSavedFlashTimer);
+    scannerSaveStatus.textContent = "Unsaved changes";
+  } else if (!scannerSavedFlashTimer) {
+    scannerSaveStatus.textContent = "No unsaved changes";
+  }
+}
+
+function markScannerDirty(part) {
+  scannerDirty[part] = true;
+  renderScannerSaveBar();
+}
+
+function markScanOptionDirty(key) {
+  dirtyScanOptions.add(key);
+  renderScannerSaveBar();
+}
+
+const SCAN_OPTION_SAVERS = {
+  timeframe: () => saveTimeframe(timeframeSelect.value),
+  authorTitleEnabled: () => saveAuthorTitleEnabled(authorTitleEnabledCheckbox.checked),
+  includeJobAds: () => saveIncludeJobAds(includeJobAdsCheckbox.checked),
+  jobSearchEnabled: () => saveJobSearchEnabled(jobSearchEnabledCheckbox.checked),
+  jobSearchUsePostTopics: () => saveJobSearchUsePostTopics(jobSearchUsePostTopicsCheckbox.checked),
+  scanCompanyScope: () => saveScanCompanyScope(scanCompanyScopeSelect.value),
+  jobSearchUseMainLocation: () => saveJobSearchUseMainLocation(jobUseMainLocationCheckbox.checked),
+  jobSearchLocation: () => saveJobSearchLocation(jobSearchLocationSelect.value),
+  jobSearchTimeframe: () => saveJobSearchTimeframe(jobSearchTimeframeSelect.value),
+};
+
+async function saveScannerSettings() {
+  if (!isScannerDirty()) return;
+  const parts = { ...scannerDirty };
+  const options = [...dirtyScanOptions];
+  for (const key of Object.keys(scannerDirty)) scannerDirty[key] = false;
+  dirtyScanOptions.clear();
+  scannerSaveBtn.disabled = true;
+  scannerSaveStatus.textContent = "Saving…";
+  try {
+    if (parts.topics) await saveTopics(topics);
+    if (parts.jobTopics) await saveJobTopics(jobTopics);
+    if (parts.negativeTopics) await saveNegativeTopics(negativeTopics);
+    if (parts.jobLocationPresets) await saveJobSearchLocationPresets(jobLocationPresets);
+    for (const key of options) await SCAN_OPTION_SAVERS[key]();
+  } catch (err) {
+    // Put everything back to dirty so nothing is silently lost.
+    for (const [key, wasDirty] of Object.entries(parts)) if (wasDirty) scannerDirty[key] = true;
+    for (const key of options) dirtyScanOptions.add(key);
+    renderScannerSaveBar();
+    scannerSaveStatus.textContent = `Could not save: ${err.message}`;
+    throw err;
+  }
+  if (isScannerDirty()) {
+    renderScannerSaveBar();
+  } else {
+    clearTimeout(scannerSavedFlashTimer);
+    scannerSaveStatus.textContent = "Saved ✓";
+    scannerSavedFlashTimer = setTimeout(() => {
+      scannerSavedFlashTimer = null;
+      renderScannerSaveBar();
+    }, 2500);
+    renderScannerSaveBar();
+  }
+  appendActivityLog({ actor: "user", action: "scanner_settings_saved", label: "Saved the Scanner settings" });
+}
+
+scannerSaveBtn.addEventListener("click", () => {
+  saveScannerSettings().catch((err) => console.error("[SalesTeam] Saving Scanner settings failed:", err));
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (!isScannerDirty()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+
+// Before anything that reads the scan settings from storage (a scan, Apply
+// Negative Filters): if there are unsaved edits, let the user save them
+// first or knowingly go ahead with the saved settings. Returns false on
+// Cancel.
+async function resolveUnsavedBeforeRun(actionLabel) {
+  if (!isScannerDirty()) return true;
+  const choice = await askChoice(
+    "You have unsaved changes to the scan settings.",
+    [{ label: `Save and ${actionLabel}`, value: "save" }, { label: `${actionLabel[0].toUpperCase()}${actionLabel.slice(1)} without saving changes`, value: "discard" }],
+    { cancelLabel: "Cancel" },
+  );
+  if (choice === "save") {
+    try {
+      await saveScannerSettings();
+    } catch {
+      return false;
+    }
+    return true;
+  }
+  return choice === "discard";
+}
+
 // Mirrors the limit in background.js - a single OR-group tops out at 6
 // terms. Lists longer than this get auto-split into multiple sub-searches
 // at scan time.
@@ -202,7 +325,9 @@ let scanCompanyScope = "P2";
 let plannedSearchTotal = 0;
 
 async function refreshResolvedTargetCompanyCount() {
-  scanCompanyScope = await getScanCompanyScope();
+  // An unsaved scope change on screen wins over the stored one, so the
+  // "Total: N searches" hint matches what the user sees.
+  scanCompanyScope = dirtyScanOptions.has("scanCompanyScope") ? scanCompanyScopeSelect.value : await getScanCompanyScope();
   resolvedTargetCompanyCount = (await getScanTargetCompanyIds(scanCompanyScope)).length;
   updateTotalSearchesHint();
 }
@@ -285,13 +410,10 @@ function applyChunkHint(hintEl, keywordCount, andKeywordCount, mode) {
 // already use) when unchecked. Built with document.createElement rather
 // than static HTML ids, since topic cards are a dynamic, add/remove-able
 // list - mountLocationPicker just needs real DOM element references, not
-// specifically ones with ids. Persists immediately via onUpdate on every
-// change (same auto-save-always convention every other topic-card field
-// already follows) - unlike Settings' own countries dual-listbox, which
-// stages behind an explicit Save button; that difference is a deliberate
-// per-caller choice location-picker.js's own header comment says is
-// intentionally left to each caller, not something to keep consistent
-// between them.
+// specifically ones with ids. Every change calls onUpdate, which only marks
+// the page's scan settings dirty - like every other topic-card field it is
+// written to storage only when the user presses the Save bar's Save button
+// (explicit-save rule, 2026-10-06).
 function buildLocationOverrideSection(topic, topicKind, onUpdate) {
   const wrap = document.createElement("div");
   wrap.className = "topic-location-override";
@@ -443,9 +565,9 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
     nameInput.type = "text";
     nameInput.placeholder = "Topic name (e.g. AI Transformation)";
     nameInput.value = topic.name;
-    // "input" (not "change") so this is persisted immediately on every
-    // keystroke - otherwise a scan started before blurring the field would
-    // read a stale (possibly still-empty) name/keyword list from storage.
+    // "input" (not "change") so the in-memory topic (and the Save bar's
+    // "Unsaved changes" state) follows every keystroke; nothing is written
+    // until Save, and a scan with unsaved edits asks first.
     nameInput.addEventListener("input", () => {
       topic.name = nameInput.value;
       onUpdate();
@@ -528,8 +650,10 @@ function renderTopicCards(topicsArray, listEl, { onUpdate, onRemove, mode }) {
   }
 }
 
-async function persistTopics() {
-  await saveTopics(topics);
+// Explicit-save rule (2026-10-06): an edit only marks the topics dirty; the
+// Save bar writes them.
+function persistTopics() {
+  markScannerDirty("topics");
   updateTotalSearchesHint();
 }
 
@@ -545,8 +669,8 @@ function renderTopics() {
   });
 }
 
-async function persistJobTopics() {
-  await saveJobTopics(jobTopics);
+function persistJobTopics() {
+  markScannerDirty("jobTopics");
   updateTotalSearchesHint();
 }
 
@@ -790,7 +914,7 @@ async function applySelectedLookalikeSuggestions() {
     await persistTopics();
     renderTopics();
   }
-  suggestTopicsStatusEl.textContent = `Added ${added} keyword${added === 1 ? "" : "s"}.`;
+  suggestTopicsStatusEl.textContent = `Added ${added} keyword${added === 1 ? "" : "s"}` + (added > 0 ? " - press Save to keep them." : ".");
   suggestTopicsResultsEl.hidden = true;
   suggestTopicsResultsEl.innerHTML = "";
   if (added > 0) {
@@ -1001,7 +1125,7 @@ async function applySelectedSearchAnalysisSuggestions() {
   if (topicsChanged) { await persistTopics(); renderTopics(); }
   if (negativeTopicsChanged) { await persistNegativeTopics(); renderNegativeTopics(); }
 
-  searchQualityStatusEl.textContent = `Applied ${applied} change${applied === 1 ? "" : "s"}.`;
+  searchQualityStatusEl.textContent = `Applied ${applied} change${applied === 1 ? "" : "s"}` + (applied > 0 ? " - press Save to keep them." : ".");
   searchQualityResultsEl.hidden = true;
   searchQualityResultsEl.innerHTML = "";
   if (applied > 0) {
@@ -1060,8 +1184,8 @@ function newNegativeTopic() {
   };
 }
 
-async function persistNegativeTopics() {
-  await saveNegativeTopics(negativeTopics);
+function persistNegativeTopics() {
+  markScannerDirty("negativeTopics");
 }
 
 // Wizard-list-backed builtin topics (2026-09-16) - their `keywords` are
@@ -1260,10 +1384,11 @@ addNegativeTopicBtn.addEventListener("click", () => {
 });
 
 // Immediate, no-scan-needed alternative to the "apply on next scan" checkbox
-// above - every field here already autosaves as you type, so by the time
-// this is clicked, whatever's on screen is already what's stored; this just
-// runs the same bidirectional check against it right now.
+// above. reapplyBlocklist() reads the negative topics from storage, so with
+// unsaved edits on screen the user first chooses to save them or to apply
+// the saved filters (explicit-save rule, 2026-10-06).
 applyNegativeFiltersBtn.addEventListener("click", async () => {
+  if (!(await resolveUnsavedBeforeRun("apply"))) return;
   if (!(await askConfirm("Check all your existing leads against your Negative Topics now?\n\nExisting leads with status New that match a negative topic are removed from your lists; leads that no longer match any filter come back. Nothing is deleted. No LinkedIn activity is used."))) return;
   applyNegativeFiltersBtn.disabled = true;
   applyNegativeFiltersStatus.textContent = "Checking existing leads…";
@@ -1314,9 +1439,9 @@ addJobLocationBtn.addEventListener("click", async () => {
   }
 
   jobLocationPresets.push({ name, geoId });
-  await saveJobSearchLocationPresets(jobLocationPresets);
   renderJobLocationOptions(geoId);
-  await saveJobSearchLocation(geoId);
+  markScannerDirty("jobLocationPresets");
+  markScanOptionDirty("jobSearchLocation");
 
   newJobLocationNameInput.value = "";
   newJobLocationGeoIdInput.value = "";
@@ -1583,7 +1708,7 @@ async function renderResultsFromStorage() {
 }
 
 timeframeSelect.addEventListener("change", () => {
-  saveTimeframe(timeframeSelect.value);
+  markScanOptionDirty("timeframe");
   appendActivityLog({ actor: "user", action: "timeframe_changed", label: `Posted-within timeframe changed to "${timeframeSelect.value}"`, newValue: timeframeSelect.value });
 });
 
@@ -1603,37 +1728,39 @@ async function refreshAuthorTitlesFromTargetContacts() {
 }
 
 authorTitleEnabledCheckbox.addEventListener("change", () => {
-  saveAuthorTitleEnabled(authorTitleEnabledCheckbox.checked);
+  markScanOptionDirty("authorTitleEnabled");
   appendActivityLog({ actor: "user", action: "author_title_filter_toggled", label: `Author title filter ${authorTitleEnabledCheckbox.checked ? "enabled" : "disabled"}`, newValue: authorTitleEnabledCheckbox.checked });
 });
 
 includeJobAdsCheckbox.addEventListener("change", () => {
-  saveIncludeJobAds(includeJobAdsCheckbox.checked);
+  markScanOptionDirty("includeJobAds");
   appendActivityLog({ actor: "user", action: "include_job_ads_toggled", label: `Include in-post job ads ${includeJobAdsCheckbox.checked ? "enabled" : "disabled"}`, newValue: includeJobAdsCheckbox.checked });
 });
 
 jobSearchEnabledCheckbox.addEventListener("change", () => {
-  saveJobSearchEnabled(jobSearchEnabledCheckbox.checked);
+  markScanOptionDirty("jobSearchEnabled");
   updateTotalSearchesHint();
   appendActivityLog({ actor: "user", action: "job_search_toggled", label: `Job Search ${jobSearchEnabledCheckbox.checked ? "enabled" : "disabled"}`, newValue: jobSearchEnabledCheckbox.checked });
 });
 
 jobSearchUsePostTopicsCheckbox.addEventListener("change", () => {
-  saveJobSearchUsePostTopics(jobSearchUsePostTopicsCheckbox.checked);
+  markScanOptionDirty("jobSearchUsePostTopics");
   updateTotalSearchesHint();
   appendActivityLog({ actor: "user", action: "job_search_use_post_topics_toggled", label: `"Also use Post topics for Job Search" ${jobSearchUsePostTopicsCheckbox.checked ? "enabled" : "disabled"}`, newValue: jobSearchUsePostTopicsCheckbox.checked });
 });
 
 scanCompanyScopeSelect.addEventListener("change", async () => {
-  await saveScanCompanyScope(scanCompanyScopeSelect.value);
+  markScanOptionDirty("scanCompanyScope");
   await refreshResolvedTargetCompanyCount();
   appendActivityLog({ actor: "user", action: "scan_company_scope_changed", label: `Scan "Target Account companies to scan" set to ${SCAN_SCOPE_LABELS[scanCompanyScopeSelect.value] || scanCompanyScopeSelect.value}`, newValue: scanCompanyScopeSelect.value });
 });
 
 // "Use the same location as in the main settings" - the manual location controls are only shown when it is off, or when
 // none of the target countries has a confirmed LinkedIn location ID.
-async function refreshJobLocationMode() {
-  const useMain = await getJobSearchUseMainLocation();
+// useMainOverride: the checkbox's own unsaved value, so a change shows its
+// effect at once without being saved (explicit-save rule, 2026-10-06).
+async function refreshJobLocationMode(useMainOverride) {
+  const useMain = typeof useMainOverride === "boolean" ? useMainOverride : await getJobSearchUseMainLocation();
   const main = await getMainLocationForJobs();
   jobUseMainLocationCheckbox.checked = useMain;
   if (useMain && main) {
@@ -1648,17 +1775,17 @@ async function refreshJobLocationMode() {
   }
 }
 jobUseMainLocationCheckbox.addEventListener("change", async () => {
-  await saveJobSearchUseMainLocation(jobUseMainLocationCheckbox.checked);
+  markScanOptionDirty("jobSearchUseMainLocation");
   appendActivityLog({ actor: "user", action: "job_search_use_main_location_toggled", label: `"Use the same location as in the main settings" for Job Listing Search ${jobUseMainLocationCheckbox.checked ? "enabled" : "disabled"}` });
-  await refreshJobLocationMode();
+  await refreshJobLocationMode(jobUseMainLocationCheckbox.checked);
 });
 
 jobSearchLocationSelect.addEventListener("change", () => {
-  saveJobSearchLocation(jobSearchLocationSelect.value);
+  markScanOptionDirty("jobSearchLocation");
 });
 
 jobSearchTimeframeSelect.addEventListener("change", () => {
-  saveJobSearchTimeframe(jobSearchTimeframeSelect.value);
+  markScanOptionDirty("jobSearchTimeframe");
 });
 
 document.querySelectorAll(".action-dialog-close-btn").forEach((btn) => {
@@ -1731,11 +1858,40 @@ async function confirmReadyGate() {
   );
 }
 
+// Boaz, 2026-10-06: after a click nothing showed until "Searching: <topic> (1 of N)" - which can take a while (the
+// backup check, the automatic preparation making way, the first LinkedIn search) - so Scan All Topics got clicked
+// twice. From the click on, the button and the top bar say the scan is starting; the first progress line ends it.
+function showScanStarting(on) {
+  if (on) {
+    scanBtn.disabled = true;
+    scanBtn.textContent = "Starting scan…";
+    progressTextEl.textContent = "Starting scan…";
+    setStatusMessage("scan-starting", { text: "Starting the scan… the first search appears in a moment." });
+  } else {
+    scanStopping = false;
+    scanBtn.textContent = "Scan All Topics";
+    clearStatusMessage("scan-starting");
+  }
+}
+
 scanBtn.addEventListener("click", async () => {
+  // background.js reads every scan setting from storage, so unsaved edits
+  // on this page only reach the scan if they are saved first.
+  if (!(await resolveUnsavedBeforeRun("scan"))) return;
   if (!(await confirmReadyGate())) return;
-  if (!(await guardBatchStart("Scanner (searching LinkedIn for posts and jobs)", askConfirm))) return;
-  scanBtn.disabled = true;
-  progressTextEl.textContent = "Checking backup…";
+  const sameJob = {
+    message: "You already have a scanner running (searching LinkedIn for posts and jobs).\n\n" +
+      "Press Close to let it continue, or press OK to stop it and start a new scan.",
+    stop: () => chrome.storage.local.set({ scanAbortRequested: true }),
+  };
+  showScanStarting(true);
+  if (!(await guardBatchStart(SCAN_BATCH_LABEL, askConfirm, { sameJob }))) {
+    showScanStarting(false);
+    scanBtn.disabled = false;
+    progressTextEl.textContent = "";
+    return;
+  }
+  progressTextEl.textContent = "Starting scan… checking the backup first.";
   // A scan never starts without a full backup from the last 12 hours (the daily one usually already exists);
   // this click is a gesture, so a folder permission Chrome asks for again can be requested right here.
   await runAutoBackupIfDue({ force: true, gesture: true }).catch((err) => {
@@ -1757,9 +1913,14 @@ scanBtn.addEventListener("click", async () => {
 // stopping is one in-flight search, not the rest of the run. Disabled
 // immediately (not just on the eventual SCAN_ABORTED message) so a slow
 // in-flight search can't look like the click didn't register.
+// While stopping, one button says so (Boaz, 2026-10-06: "Scanning…" and "Stopping…" side by side looked off) - the
+// scan button reads "Stopping…" and Stop Scan goes away until the scan has ended.
+let scanStopping = false;
 stopScanBtn.addEventListener("click", () => {
-  stopScanBtn.disabled = true;
-  stopScanBtn.textContent = "Stopping…";
+  scanStopping = true;
+  stopScanBtn.hidden = true;
+  scanBtn.textContent = "Stopping…";
+  progressTextEl.textContent = "Stopping after the current search…";
   chrome.storage.local.set({ scanAbortRequested: true });
 });
 
@@ -1816,10 +1977,14 @@ async function promptAndRunProfileExtraction(results) {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "SCAN_PROGRESS") {
+    clearStatusMessage("scan-starting");
+    if (scanStopping) return; // a search already under way when Stop was pressed
+    scanBtn.textContent = "Scanning…";
     progressTextEl.textContent = `Searching: ${message.topicName} (${message.current} of ${message.total})…`;
   } else if (message?.type === "SCAN_PRIORITIZING") {
     progressTextEl.textContent = `Search done — prioritizing ${message.count} new lead${message.count === 1 ? "" : "s"} with the Sales Mentor…`;
   } else if (message?.type === "SCAN_COMPLETE") {
+    showScanStarting(false);
     const newCount = message.results.filter((r) => r.isNew).length;
     progressTextEl.textContent =
       `Scan complete — ${message.results.length} total leads (${newCount} new).`;
@@ -1829,12 +1994,14 @@ chrome.runtime.onMessage.addListener((message) => {
     renderLinkedinTouchStat();
     promptAndRunProfileExtraction(message.results);
   } else if (message?.type === "SCAN_ERROR") {
+    showScanStarting(false);
     progressTextEl.textContent = message.message;
     scanBtn.disabled = false;
     stopScanBtn.hidden = true;
     renderResultsFromStorage(); // pick up any leads saved before the failure
     renderLinkedinTouchStat();
   } else if (message?.type === "SCAN_ABORTED") {
+    showScanStarting(false);
     progressTextEl.textContent = message.message;
     scanBtn.disabled = false;
     stopScanBtn.hidden = true;
@@ -1959,7 +2126,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if ("targetContactProfile" in changes) refreshAuthorTitlesFromTargetContacts();
   if (Object.keys(changes).some((key) => WIZARD_LIST_SYNC_KEYS.has(key) && key !== "targetContactProfile")) {
     getNegativeTopics().then((fresh) => {
-      negativeTopics = fresh;
+      if (scannerDirty.negativeTopics) {
+        // Unsaved edits on screen: refresh only the wizard-list-backed
+        // company lists (read-only here), never replace the working copy.
+        const freshById = new Map(fresh.map((t) => [t.id, t]));
+        for (const topic of negativeTopics) {
+          if (topic.sourceList && freshById.has(topic.id)) topic.keywords = freshById.get(topic.id).keywords;
+        }
+      } else {
+        negativeTopics = fresh;
+      }
       renderNegativeTopics();
     });
   }

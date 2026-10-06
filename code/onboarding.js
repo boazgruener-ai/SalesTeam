@@ -8,6 +8,8 @@
 // optional step here). Phase 5/6 (company/contact discovery scanning)
 // consume everything captured here.
 import { rescoreDerivedPriorities } from "./auto-score.js";
+import { mountAdvancedSteps, persistAdvancedStep, discardAdvancedStep } from "./advanced-steps.js";
+import { askChoice } from "./confirm-dialog.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, CONSENT_TITLE, CONSENT_TEXT,
   setWebResearchAutomation, WEB_CONSENT_TITLE, WEB_CONSENT_TEXT, DEFAULT_WEB_BUDGET_USD,
@@ -76,11 +78,12 @@ let teamMemberReadOnly = false;
 
 const ALL_STEPS = [
   "about", "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
-  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets",
+  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets", "findings", "revenue",
 ];
 // 1.2.0.51 (Boaz): technical steps a new user need not decide are not in the first Setup (their defaults apply);
-// Change Settings lists them last, under "Advanced".
-const ADVANCED_STEPS = ["priority", "leads-prioritization", "aliases"];
+// Change Settings lists them last, under "Advanced". "findings" and "revenue" were two Settings cards until 1.2.1.10
+// (advanced-steps.js); now they behave like every other step.
+const ADVANCED_STEPS = ["priority", "leads-prioritization", "aliases", "findings", "revenue"];
 const BASIC_STEPS = ALL_STEPS.filter((s) => !ADVANCED_STEPS.includes(s));
 const STEP_ORDER = new URLSearchParams(location.search).get("mode") === "settings"
   ? [...BASIC_STEPS, ...ADVANCED_STEPS, "finish"]
@@ -94,6 +97,8 @@ const STEP_TITLES = {
   exclusions: "Companies to exclude",
   aliases: "Company aliases",
   targets: "How big is your list",
+  findings: "How to handle research findings",
+  revenue: "Revenue & Currency",
 };
 
 // Short display names for storage.js's PRIORITIZATION_RULE_CATALOG ids (used
@@ -133,7 +138,7 @@ const SENIORITY_PRIORITY_OPTIONS = [["1", "Low"], ["2", "Medium"], ["3", "High"]
 // Working copies, seeded from storage in init() and mutated in place as each
 // step is validated. Persisted both on Confirm (the normal advance path)
 // and continuously while a step is open but not yet confirmed (see
-// scheduleAutoSave below) - a real completed run can take "tens of minutes
+// markStepDirty below) - a real completed run can take "tens of minutes
 // to several hours," so a step's in-progress content shouldn't be lost to
 // an accidental tab close before Confirm is clicked.
 let targetUniverseConfig;
@@ -249,9 +254,10 @@ function updateNavBar(step, index) {
     el("nav-exit-btn").hidden = !settingsMode;
     el("nav-save-exit-btn").hidden = false;
     el("nav-save-btn").hidden = false;
-    // A team member can change only About you (their name, key, language) - Save is off everywhere else.
-    el("nav-save-btn").disabled = teamMemberReadOnly && step !== "about";
-    el("nav-save-btn").title = el("nav-save-btn").disabled ? "Only the Team Admin can change this setting" : "";
+    // Save is on only with unsaved changes. A team member can change only About you (their name, key, language) - Save
+    // is off everywhere else.
+    paintDirty();
+    el("nav-save-btn").title = teamMemberReadOnly && step !== "about" ? "Only the Team Admin can change this setting" : "";
     // Change Settings ends at the last setting: there is no Setup complete step after it.
     el("nav-next-btn").hidden = settingsMode && index >= STEP_ORDER.length - 2;
     // Boaz, 2026-10-01: on the last step "Next" did not say that Finish Setup comes after it.
@@ -286,27 +292,11 @@ function renderWizardStepList() {
     btn.dataset.step = step;
     btn.textContent = settingsMode ? STEP_TITLES[step] : `${index + 1}. ${STEP_TITLES[step]}`;
     btn.addEventListener("click", async () => {
-      const currentStep = STEP_ORDER[currentStepIndex];
-      if (currentStep !== "finish" && currentStep !== step) {
-        STEP_VALIDATORS[currentStep]?.();
-        await persistStep(currentStep);
-      }
-      showStep(index);
+      if (STEP_ORDER[currentStepIndex] === step) return;
+      await goToStep(index);
     });
     listEl.appendChild(btn);
   });
-  if (settingsMode) appendAdvancedCardLinks(listEl);
-}
-
-// Change Settings' Advanced group also names the two advanced Settings cards; they open in the Settings page.
-function appendAdvancedCardLinks(listEl) {
-  for (const [section, title] of [["web-findings-section", "How to handle research findings"], ["revenue-currency-section", "Revenue & Currency"]]) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = title;
-    btn.addEventListener("click", () => window.parent.postMessage({ type: "salesteam-open-settings-section", section }, location.origin));
-    listEl.appendChild(btn);
-  }
 }
 
 function showStep(index) {
@@ -362,30 +352,87 @@ function showSettingsHome() {
   hint.hidden = false;
 }
 
-// Change Settings (Boaz, 2026-10-01): Previous / Next beside Save. Each saves the open setting first - a list of
-// settings has no Confirm screen - and does not move on while the setting has an error.
-async function saveOpenSettingThenShow(index) {
+// RULE 2026-10-06 (Boaz): nothing is saved until Save is pressed. An edit marks the open step "Unsaved changes" (it
+// used to be written 0.8 s later by a hidden auto-save). Leaving the step with unsaved changes - Previous, Next in
+// Change Settings, the step list, Exit, Back to menu - asks: Save / Don't save / Stay here. Save & Exit and the first
+// Setup's Confirm still save, as their names say.
+let stepDirty = false;
+function paintDirty() {
+  const status = el("nav-save-status");
+  const saveBtn = el("nav-save-btn");
   const step = STEP_ORDER[currentStepIndex];
+  if (step !== "finish") saveBtn.disabled = !stepDirty || (teamMemberReadOnly && step !== "about");
+  if (stepDirty) status.textContent = "Unsaved changes";
+  else if (status.textContent === "Unsaved changes") status.textContent = "";
+  status.classList.toggle("unsaved", stepDirty);
+}
+function markStepDirty() {
+  const step = STEP_ORDER[currentStepIndex];
+  if (step === "finish" || (teamMemberReadOnly && step !== "about")) return;
+  stepDirty = true;
+  paintDirty();
+}
+// Validates and writes the open step. False (and the error shown) when it cannot be saved yet.
+async function saveOpenStep() {
+  const step = STEP_ORDER[currentStepIndex];
+  if (step === "finish") return true;
   clearStepError(step);
   const { valid, error } = STEP_VALIDATORS[step]();
   if (!valid) {
     showStepError(step, error);
-    return;
+    return false;
   }
   await persistStep(step);
+  stepDirty = false;
+  paintDirty();
+  return true;
+}
+// May the open step be left? Yes with no unsaved changes, or when the user chose Save (and it saved) or Don't save -
+// "discarded" then tells the caller the form still shows the dropped edits.
+async function resolveUnsavedStep() {
+  if (!stepDirty) return { proceed: true };
+  const step = STEP_ORDER[currentStepIndex];
+  const choice = await askChoice(`"${STEP_TITLES[step]}" has unsaved changes.`,
+    [{ label: "Save", value: "save" }, { label: "Don't save", value: "discard" }], { cancelLabel: "Stay here" });
+  if (choice === "save") return { proceed: await saveOpenStep() };
+  if (choice === "discard") {
+    stepDirty = false;
+    paintDirty();
+    return { proceed: true, discarded: true };
+  }
+  return { proceed: false };
+}
+// Moves to another step. Dropped edits are thrown away by opening the page again on that step, so every form shows
+// what is stored (an edit has already changed the step's working copy).
+async function goToStep(index) {
+  const { proceed, discarded } = await resolveUnsavedStep();
+  if (!proceed) return;
+  const step = STEP_ORDER[currentStepIndex];
+  if (discarded && (step === "findings" || step === "revenue")) await discardAdvancedStep(step);
+  else if (discarded) {
+    const params = new URLSearchParams(location.search);
+    params.set("step", STEP_ORDER[index]);
+    params.delete("research");
+    location.search = params.toString();
+    return;
+  }
   showStep(index);
 }
+window.addEventListener("beforeunload", (event) => {
+  if (!stepDirty) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 
 el("nav-back-btn").addEventListener("click", () => {
   if (currentStepIndex <= 0) return;
-  if (settingsMode) saveOpenSettingThenShow(currentStepIndex - 1);
-  else showStep(currentStepIndex - 1);
+  goToStep(currentStepIndex - 1);
 });
 
 el("nav-next-btn").addEventListener("click", () => {
   const step = STEP_ORDER[currentStepIndex];
   if (settingsMode) {
-    if (currentStepIndex < STEP_ORDER.length - 2) saveOpenSettingThenShow(currentStepIndex + 1);
+    if (currentStepIndex < STEP_ORDER.length - 2) goToStep(currentStepIndex + 1);
     return;
   }
   clearStepError(step);
@@ -400,15 +447,11 @@ el("nav-next-btn").addEventListener("click", () => {
 // "Save and back to Settings" (reported directly, 2026-09-15: changing one
 // setting shouldn't mean clicking Back repeatedly through the whole wizard)
 // - validates+persists the CURRENT step immediately (bypassing
-// scheduleAutoSave's debounce, same real persistence, not a separate draft
+// markStepDirty's debounce, same real persistence, not a separate draft
 // layer) then navigates away. Skipped on the finish step, which has no
 // fields of its own left to persist and its own dedicated navigation.
 el("nav-save-exit-btn").addEventListener("click", async () => {
-  const step = STEP_ORDER[currentStepIndex];
-  if (step !== "finish") {
-    STEP_VALIDATORS[step]?.();
-    await persistStep(step);
-  }
+  if (!(await saveOpenStep())) return;
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
   leaveWizard();
@@ -420,12 +463,10 @@ el("nav-save-btn").addEventListener("click", async () => {
   const step = STEP_ORDER[currentStepIndex];
   if (step === "finish") return;
   const status = el("nav-save-status");
-  const result = STEP_VALIDATORS[step]?.();
-  if (result && result.valid === false) {
-    status.textContent = result.error || "Please fix this step first.";
+  if (!(await saveOpenStep())) {
+    status.textContent = "Please fix this step first.";
     return;
   }
-  await persistStep(step);
   if ((step === "value-add-offers" || step === "contacts") && checklists[step]) renderProposalForStep(step);
   status.textContent = "Saved ✓";
   setTimeout(() => { if (status.textContent === "Saved ✓") status.textContent = ""; }, 2500);
@@ -435,13 +476,14 @@ el("nav-save-btn").addEventListener("click", async () => {
 // the settings and not change anything," Save & Exit's immediate persist +
 // possible stale-Discovery dialog both read as unwanted for a pure look-
 // don't-touch visit) - leaves straight away, skipping both. Doesn't undo
-// anything already committed by the debounced autosave (scheduleAutoSave)
+// anything already committed by the debounced autosave (markStepDirty)
 // while this step was open - there's no separate draft layer to roll back,
 // consistent with this wizard's existing auto-save-always convention - it
 // only skips the *extra* work Save & Exit does on top of that: forcing an
 // immediate flush of whatever hasn't autosaved yet, and the stale-Discovery
 // check that flush could trigger.
-el("nav-exit-btn").addEventListener("click", () => {
+el("nav-exit-btn").addEventListener("click", async () => {
+  if (!(await resolveUnsavedStep()).proceed) return;
   leaveWizard();
 });
 
@@ -1026,7 +1068,7 @@ function syncExclusionTicks() {
     changedBoxes.add(box);
   }
   for (const { inputId, listId } of changedBoxes) renderExclusionParsedList(inputId, listId);
-  if (changedBoxes.size) scheduleAutoSave();
+  if (changedBoxes.size) markStepDirty();
 }
 
 function validateExclusionsStep() {
@@ -1114,7 +1156,7 @@ function renderInitiativeStages() {
         const [moved] = initiativeStages.splice(i, 1);
         initiativeStages.splice(i + delta, 0, moved);
         renderInitiativeStages();
-        scheduleAutoSave();
+        markStepDirty();
       });
       return b;
     };
@@ -1260,6 +1302,9 @@ const STEP_VALIDATORS = {
   exclusions: validateExclusionsStep,
   aliases: validateAliasesStep,
   targets: validateTargetsStep,
+  // Every field checks itself as it is changed (advanced-steps.js).
+  findings: () => ({ valid: true }),
+  revenue: () => ({ valid: true }),
 };
 
 // ---------------------------------------------------------------------
@@ -1390,6 +1435,10 @@ async function persistStep(step) {
       break;
     case "targets":
       await saveCompletionTargets(completionTargets);
+      break;
+    case "findings":
+    case "revenue":
+      await persistAdvancedStep(step);
       break;
   }
 }
@@ -1605,6 +1654,8 @@ function showConfirm(step) {
   };
   el("confirm-btn").onclick = async () => {
     await persistStep(step);
+    stepDirty = false;
+    paintDirty();
     confirmView.hidden = true;
     showStep(currentStepIndex + 1);
   };
@@ -1790,13 +1841,13 @@ function postRuleValueTitle(effectType) {
 function addPostRule() {
   postPrioritizationRules.push(defaultPostRule());
   renderPostPrioritizationRules();
-  scheduleAutoSave();
+  markStepDirty();
 }
 
 function removePostRule(ruleIndex) {
   postPrioritizationRules.splice(ruleIndex, 1);
   renderPostPrioritizationRules();
-  scheduleAutoSave();
+  markStepDirty();
 }
 
 function movePostRule(ruleIndex, delta) {
@@ -1805,19 +1856,19 @@ function movePostRule(ruleIndex, delta) {
   const [rule] = postPrioritizationRules.splice(ruleIndex, 1);
   postPrioritizationRules.splice(target, 0, rule);
   renderPostPrioritizationRules();
-  scheduleAutoSave();
+  markStepDirty();
 }
 
 function addPostRuleCondition(ruleIndex, type) {
   postPrioritizationRules[ruleIndex].conditions.push(defaultPostRuleCondition(type));
   renderPostPrioritizationRules();
-  scheduleAutoSave();
+  markStepDirty();
 }
 
 function removePostRuleCondition(ruleIndex, condIndex) {
   postPrioritizationRules[ruleIndex].conditions.splice(condIndex, 1);
   renderPostPrioritizationRules();
-  scheduleAutoSave();
+  markStepDirty();
 }
 
 function buildPostRuleConditionRow(ruleIndex, cond, condIndex) {
@@ -1850,7 +1901,7 @@ function buildPostRuleConditionRow(ruleIndex, cond, condIndex) {
       const nowNumeric = cond.operator === "atLeast" || cond.operator === "atMost";
       if (nowNumeric) { delete cond.values; cond.value = cond.value ?? 0; } else { delete cond.value; cond.values = cond.values || []; }
       renderPostPrioritizationRules();
-      scheduleAutoSave();
+      markStepDirty();
     });
     row.appendChild(h("div", { className: "rule-condition-fields" }, [columnInput, operatorSelect, valuesTextarea, numericInput]));
   } else if (cond.type === "companyHasMatch") {
@@ -2024,29 +2075,10 @@ function renderAliasesParsedList() {
 el("aliases-input").addEventListener("input", renderAliasesParsedList);
 
 // ---------------------------------------------------------------------
-// Continuous auto-save ("Save Draft" without a separate action) - reported
-// directly: the competitors step alone can take a long time (looking up
-// 25+ companies on LinkedIn one at a time), so losing whatever's been typed
-// into the *current*, not-yet-confirmed step to an accidental tab close is
-// a real cost. Reuses each step's own validator purely for its
-// state-capturing side effect (every validator mutates the relevant
-// working-state object regardless of whether it returns valid: true) and
-// then persists via the same persistStep used on Confirm - same real
-// storage, not a separate draft layer, consistent with this codebase's
-// existing auto-save-always convention (Settings). Debounced so fast
-// typing doesn't trigger a storage write per keystroke.
-let autoSaveTimeout = null;
-function scheduleAutoSave() {
-  clearTimeout(autoSaveTimeout);
-  autoSaveTimeout = setTimeout(async () => {
-    const step = STEP_ORDER[currentStepIndex];
-    if (step === "finish") return;
-    STEP_VALIDATORS[step]?.();
-    await persistStep(step);
-  }, 800);
-}
-el("onboarding-main").addEventListener("input", scheduleAutoSave);
-el("onboarding-main").addEventListener("change", scheduleAutoSave);
+// Any edit marks the open step "Unsaved changes" (markStepDirty). Until 1.2.1.10 this was a continuous auto-save,
+// written 0.8 s after the last edit; the leave warning (beforeunload) now protects a long setup against a closed tab.
+el("onboarding-main").addEventListener("input", markStepDirty);
+el("onboarding-main").addEventListener("change", markStepDirty);
 
 // ---------------------------------------------------------------------
 // Step 9: Finish - recaps every earlier step (reusing the same per-step
@@ -2080,13 +2112,10 @@ async function renderFindingsChoice() {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.checked = settings[rule.setting] !== false;
-    box.addEventListener("change", () => saveWebFindingsArbitration({ [rule.setting]: box.checked }));
+    box.dataset.setting = rule.setting; // saved by Finish Setup, with the rest of this screen
     label.append(box, document.createTextNode(` ${rule.label}`));
     wrap.appendChild(label);
   }
-}
-for (const id of ["finish-findings-auto", "finish-findings-ask"]) {
-  el(id).addEventListener("change", () => saveWebFindingsArbitration({ askEveryDifference: el("finish-findings-ask").checked }));
 }
 
 el("finish-back-to-menu-link").addEventListener("click", (event) => {
@@ -2097,17 +2126,16 @@ el("finish-back-to-menu-link").addEventListener("click", (event) => {
 // Change Settings: leaving saves the open setting first, then runs the same checks as Save & Exit.
 el("change-back-to-menu-link").addEventListener("click", async (event) => {
   event.preventDefault();
-  const step = STEP_ORDER[currentStepIndex];
-  if (step !== "finish") {
-    STEP_VALIDATORS[step]?.();
-    await persistStep(step);
-  }
+  if (!(await resolveUnsavedStep()).proceed) return;
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
   leaveWizard();
 });
 
 el("finish-btn").addEventListener("click", async () => {
+  const findings = { askEveryDifference: el("finish-findings-ask").checked };
+  for (const box of el("finish-findings-rules").querySelectorAll("input[data-setting]")) findings[box.dataset.setting] = box.checked;
+  await saveWebFindingsArbitration(findings);
   await setPipelineAutomationEnabled(el("finish-automation-checkbox").checked, "Setup wizard");
   // W4: web research only with automatic preparation on, since it runs inside it.
   const webOn = el("finish-automation-checkbox").checked && el("finish-web-checkbox").checked;
@@ -2191,7 +2219,10 @@ el("about-research-btn").addEventListener("click", async () => {
   const { valid, error } = validateAboutStep();
   if (!valid) return fail(error);
   if (!websiteDomain(el("about-website-input").value)) return fail("Enter your company's website first.");
+  // The research needs the website and key stored - pressing Research saves About you (the button says so in its hint).
   await persistStep("about");
+  stepDirty = false;
+  paintDirty();
   if (!(await getAnthropicApiKey())) return fail("Add your Anthropic API key above first - the research runs on it.");
   el("about-api-key-wrap").hidden = true;
   await runSellerResearch();
@@ -2610,7 +2641,7 @@ function mountStepChecklists(step, p, accepted) {
         title: open.length
           ? "Found on the website - tick the ones the AI may offer, then Save: they move to the list below"
           : "Every offer found on the website is in the list below.",
-        addPlaceholder: "Add another offer", onChange: scheduleAutoSave,
+        addPlaceholder: "Add another offer", onChange: markStepDirty,
       });
   } else if (step === "contacts") {
     // Same as offers (Boaz, 2026-10-01): the two boxes are the lists, ticked proposals move into them on Save.
@@ -2635,12 +2666,12 @@ function mountStepChecklists(step, p, accepted) {
     checklists[step] = {
       titles: mountChecklist(el("contacts-titles-checklist"), titles, {
         title: titles.length ? "Proposed exact titles - tick the ones to search for, then Save: they move to the box below" : "Every proposed title is in the box below.",
-        addPlaceholder: "Add a title", onChange: scheduleAutoSave,
+        addPlaceholder: "Add a title", onChange: markStepDirty,
       }),
       keywords: p.keywords.length
         ? mountChecklist(el("contacts-keywords-checklist"), keywords, {
           title: keywords.length ? "Proposed title keywords - tick, then Save: they move to the box below" : "Every proposed keyword is in the box below.",
-          addPlaceholder: "Add a keyword", onChange: scheduleAutoSave,
+          addPlaceholder: "Add a keyword", onChange: markStepDirty,
         })
         : null,
     };
@@ -2674,7 +2705,7 @@ function renderProposalForStep(step) {
     onUse: p && p.found
       ? () => {
         applyProposal(step, p, { tickAll: true });
-        scheduleAutoSave();
+        markStepDirty();
         if (step === "about") {
           // The language now matches, so About you's proposal box goes away - leave a line saying what happened.
           renderProposalForStep(step);
@@ -2682,7 +2713,7 @@ function renderProposalForStep(step) {
           slot.innerHTML = "";
           const done = document.createElement("p");
           done.className = "proposal-used-status";
-          done.textContent = `${languageLabel(p.outputLanguage)} is now your output language and saved - no need to press Save.`;
+          done.textContent = `${languageLabel(p.outputLanguage)} is now chosen as your output language - press Save to keep it.`;
           slot.append(done);
         }
       }
@@ -2893,8 +2924,8 @@ async function init() {
     // priority rows below, since their granularity depends on this same
     // selection.
     {
-      onCountriesChange: () => { refreshLocationPriorityRows(); scheduleAutoSave(); },
-      onModeOrContinentChange: () => { refreshLocationPriorityRows(); scheduleAutoSave(); },
+      onCountriesChange: () => { refreshLocationPriorityRows(); markStepDirty(); },
+      onModeOrContinentChange: () => { refreshLocationPriorityRows(); markStepDirty(); },
     },
   );
   locationPicker.setValue({
@@ -2920,14 +2951,14 @@ async function init() {
       row.querySelector(".priority-item-select").disabled = !checked;
       row.classList.toggle("priority-item-unchecked", !checked);
     }
-    scheduleAutoSave();
+    markStepDirty();
   }
   el("industry-select-none-btn").addEventListener("click", () => setAllIndustryRows(false));
   el("industry-select-all-btn").addEventListener("click", () => setAllIndustryRows(true));
   renderPriorityStepOptions();
   el("jobs-min-confidence-select").value = await getJobRulesMinConfidence();
   renderJobsMinConfidenceHint();
-  el("jobs-min-confidence-select").addEventListener("change", () => { renderJobsMinConfidenceHint(); scheduleAutoSave(); });
+  el("jobs-min-confidence-select").addEventListener("change", () => { renderJobsMinConfidenceHint(); markStepDirty(); });
   prioritizationRules = await getPrioritizationRules();
   renderLeadsPrioritizationRules();
   postPrioritizationRules = await getPostPrioritizationRules();
@@ -3013,6 +3044,7 @@ async function init() {
   scoringSignatureAtOpen = currentScoringSignature();
   scanFieldsAtOpen = scanAffectingFields(targetUniverseConfig, targetContactProfile);
   if (settingsMode) {
+    await mountAdvancedSteps({ onDirty: markStepDirty });
     document.body.classList.add("settings-mode");
     el("page-title-text").textContent = "Change Settings";
     el("page-subtitle-setup").hidden = true;
@@ -3033,7 +3065,10 @@ async function init() {
   // About you came with 1.2.1: a setup saved before it never saw the step, so it opens there first.
   const aboutNeverFilled = !el("about-company-input").value.trim() && !el("about-website-input").value.trim()
     && setupResearch.status === "none";
-  showStep(aboutNeverFilled ? 0 : Math.min(Math.max(savedStepIndex, 0), STEP_ORDER.length - 1));
+  // ?step= : the page reopened on a step after "Don't save" (goToStep).
+  const reopenStep = STEP_ORDER.indexOf(new URLSearchParams(location.search).get("step"));
+  if (reopenStep >= 0) showStep(reopenStep);
+  else showStep(aboutNeverFilled ? 0 : Math.min(Math.max(savedStepIndex, 0), STEP_ORDER.length - 1));
 }
 
 // The page stays hidden until init() has chosen what to show, so the default first step never flashes on screen

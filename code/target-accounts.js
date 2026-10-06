@@ -4795,6 +4795,39 @@ function lastCommunicationFor(leadsForEntity, manualStatusAt) {
 // whatever leads alone say.
 const MANUAL_STATUS_AUTO_OPTION = "(auto from leads)";
 
+// Rule 2026-10-06: a change is saved only when the user presses Save - everywhere. These page-card controls (Status,
+// SalesTeam Priority, Follow-up due) each get a small Save button, disabled until the value differs from what is
+// stored, plus an "Unsaved changes" hint. The hint element carries data-unsaved, which the beforeunload warning below
+// looks for. A re-render of the card (another save on the page, a background research finishing on this account)
+// rebuilds Status/Priority from storage, so an unsaved pick there is simply dropped - the due date keeps its edit.
+function unsavedHintNode() {
+  const hint = document.createElement("span");
+  hint.className = "field-unsaved-hint";
+  hint.textContent = "Unsaved changes";
+  hint.hidden = true;
+  return hint;
+}
+
+function setUnsaved(hint, unsaved) {
+  hint.hidden = !unsaved;
+  if (unsaved) hint.dataset.unsaved = "1";
+  else delete hint.dataset.unsaved;
+}
+
+function fieldSaveButton(label = "Save") {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "edit-save-btn priority-override-set-btn";
+  btn.textContent = label;
+  btn.disabled = true;
+  return btn;
+}
+
+window.addEventListener("beforeunload", (event) => {
+  const pending = [...document.querySelectorAll("[data-unsaved]")].some((el) => el.isConnected && !el.closest("[hidden]"));
+  if (pending) { event.preventDefault(); event.returnValue = ""; }
+});
+
 function statusFieldNode(leadBucket, manualStatus, onSetManual) {
   const wrap = document.createElement("div");
   wrap.className = "status-field-wrap";
@@ -4814,9 +4847,25 @@ function statusFieldNode(leadBucket, manualStatus, onSetManual) {
     option.textContent = opt;
     select.appendChild(option);
   }
-  select.value = manualStatus || MANUAL_STATUS_AUTO_OPTION;
-  select.addEventListener("change", () => onSetManual(select.value === MANUAL_STATUS_AUTO_OPTION ? null : select.value));
+  const saved = manualStatus || MANUAL_STATUS_AUTO_OPTION;
+  select.value = saved;
   wrap.appendChild(select);
+
+  const saveBtn = fieldSaveButton();
+  saveBtn.title = "Save this status";
+  const hint = unsavedHintNode();
+  const refresh = () => {
+    const dirty = select.value !== saved;
+    saveBtn.disabled = !dirty;
+    setUnsaved(hint, dirty);
+  };
+  select.addEventListener("change", refresh);
+  saveBtn.addEventListener("click", () => {
+    if (select.value === saved) return;
+    saveBtn.disabled = true;
+    onSetManual(select.value === MANUAL_STATUS_AUTO_OPTION ? null : select.value);
+  });
+  wrap.append(saveBtn, hint);
 
   return wrap;
 }
@@ -4828,9 +4877,9 @@ function statusFieldNode(leadBucket, manualStatus, onSetManual) {
 // mark [it] as 'overridden by user'." Unlike statusFieldNode above (which
 // saves the instant the <select> changes), moving to a manual P1-P5 value
 // here only reveals the reason box + a Set button - nothing is written
-// until the reason is confirmed. Moving back to auto clears both
-// immediately (no reason needed to un-override, same as Status's own
-// instant-clear behavior).
+// until the reason is confirmed. Moving back to auto needs no reason, but
+// (rule 2026-10-06) it too waits for Set - the reason box is hidden and only
+// the Set button shows.
 const MANUAL_PRIORITY_AUTO_OPTION = "(auto from scoring)";
 const DEFAULT_MANUAL_PRIORITY_REASON = "Overridden by user";
 
@@ -4870,21 +4919,41 @@ function salesTeamPriorityFieldNode(autoPriority, autoScore, autoReason, manualP
   setBtn.type = "button";
   setBtn.className = "edit-save-btn priority-override-set-btn";
   setBtn.textContent = "Set";
-  const commit = () => onSetManual(select.value, reasonInput.value.trim() || DEFAULT_MANUAL_PRIORITY_REASON);
+  const hint = unsavedHintNode();
+  const savedSelect = manualPriority || MANUAL_PRIORITY_AUTO_OPTION;
+  const savedReason = manualReason || DEFAULT_MANUAL_PRIORITY_REASON;
+  const isDirty = () => select.value !== savedSelect ||
+    (select.value !== MANUAL_PRIORITY_AUTO_OPTION && (reasonInput.value.trim() || DEFAULT_MANUAL_PRIORITY_REASON) !== savedReason);
+  const refresh = () => {
+    const dirty = isDirty();
+    setBtn.disabled = !dirty;
+    setUnsaved(hint, dirty);
+  };
+  const commit = () => {
+    if (!isDirty()) return;
+    setBtn.disabled = true;
+    if (select.value === MANUAL_PRIORITY_AUTO_OPTION) onSetManual(null, null);
+    else onSetManual(select.value, reasonInput.value.trim() || DEFAULT_MANUAL_PRIORITY_REASON);
+  };
   setBtn.addEventListener("click", commit);
   reasonInput.addEventListener("keydown", (event) => { if (event.key === "Enter") commit(); });
-  reasonWrap.append(reasonInput, setBtn);
+  reasonInput.addEventListener("input", refresh);
+  reasonWrap.append(reasonInput, setBtn, hint);
   wrap.appendChild(reasonWrap);
+  refresh();
 
   select.addEventListener("change", () => {
     if (select.value === MANUAL_PRIORITY_AUTO_OPTION) {
-      reasonWrap.hidden = true;
-      onSetManual(null, null);
+      // Back to auto: no reason needed, but still only on Set. Nothing to set when auto is already what is stored.
+      reasonInput.hidden = true;
+      reasonWrap.hidden = savedSelect === MANUAL_PRIORITY_AUTO_OPTION;
     } else {
       reasonWrap.hidden = false;
+      reasonInput.hidden = false;
       reasonInput.value = manualReason || DEFAULT_MANUAL_PRIORITY_REASON;
       reasonInput.focus();
     }
+    refresh();
   });
 
   return wrap;
@@ -4900,47 +4969,92 @@ function salesTeamPriorityFieldNode(autoPriority, autoScore, autoReason, manualP
 // Parks the two controls back in the (hidden) view root before the overview is cleared: entering Edit mode clears the
 // overview card they were moved into, which used to delete them from the page - the next render (Save or Cancel) then
 // could not find them and threw, leaving the edit form on screen (found 2026-09-21).
+// Rule 2026-10-06: picking a date or pressing Clear only changes the field; the Save button beside it writes it.
+// The Save button and hint are created once per input (dueDateSaveControls) and travel with it like the Clear button.
+function dueDateSaveControls(inputEl) {
+  if (!inputEl._dueSave) inputEl._dueSave = { saveBtn: fieldSaveButton(), hint: unsavedHintNode() };
+  return inputEl._dueSave;
+}
+
 function parkDueDateControls(viewRootId, inputEl, clearBtnEl) {
+  const { saveBtn, hint } = dueDateSaveControls(inputEl);
   inputEl.hidden = true;
   clearBtnEl.hidden = true;
-  document.getElementById(viewRootId).append(inputEl, clearBtnEl);
+  saveBtn.hidden = true;
+  document.getElementById(viewRootId).append(inputEl, clearBtnEl, saveBtn, hint);
 }
 
 function dueDateFieldNode(inputEl, clearBtnEl) {
+  const { saveBtn, hint } = dueDateSaveControls(inputEl);
   inputEl.hidden = false;
   clearBtnEl.hidden = false;
+  saveBtn.hidden = false;
   const wrap = document.createElement("span");
   wrap.className = "due-date-field";
-  wrap.append(inputEl, clearBtnEl);
+  wrap.append(inputEl, clearBtnEl, saveBtn, hint);
   return wrap;
 }
 
+// Called on every render. The listeners are attached once per element (they used to be added again on each render,
+// so one change wrote and logged several times); each render only swaps in the current entity's context.
 function wireDueDateInput(inputEl, clearBtnEl, getExtra, saveExtra, { entityLabel, relatedCompanyKey, relatedContactKey }) {
+  const { saveBtn, hint } = dueDateSaveControls(inputEl);
+  const entityKey = relatedContactKey || relatedCompanyKey;
+  const prev = inputEl._dueCtx;
+  const keepEdit = Boolean(prev && prev.entityKey === entityKey && inputEl.value !== prev.savedValue);
+  const ctx = { entityKey, saveExtra, entityLabel, relatedCompanyKey, relatedContactKey, savedValue: keepEdit ? prev.savedValue : inputEl.value };
+  inputEl._dueCtx = ctx;
+  const refresh = () => {
+    const c = inputEl._dueCtx;
+    const dirty = inputEl.value !== c.savedValue;
+    saveBtn.disabled = !dirty;
+    setUnsaved(hint, dirty);
+  };
   getExtra().then((extra) => {
-    inputEl.value = extra.nextActionDueAt ? new Date(extra.nextActionDueAt).toISOString().slice(0, 10) : "";
+    if (inputEl._dueCtx !== ctx) return; // another render took over meanwhile
+    const stored = extra.nextActionDueAt ? new Date(extra.nextActionDueAt).toISOString().slice(0, 10) : "";
+    // Same entity re-rendered with an unsaved date: keep the edit, only the stored value is refreshed.
+    if (!keepEdit) inputEl.value = stored;
+    ctx.savedValue = stored;
+    refresh();
   });
-  inputEl.addEventListener("change", () => {
-    const ms = inputEl.value ? new Date(`${inputEl.value}T00:00:00`).getTime() : null;
-    saveExtra({ nextActionDueAt: ms });
-    appendActivityLog({
-      actor: "user",
-      action: "follow_up_due_date_set",
-      label: `Follow-up due date set for ${entityLabel} (${inputEl.value})`,
-      newValue: ms,
-      relatedCompanyKey,
-      relatedContactKey,
-    });
-  });
+  refresh();
+  if (inputEl.dataset.dueWired) return;
+  inputEl.dataset.dueWired = "1";
+  inputEl.addEventListener("input", refresh);
+  inputEl.addEventListener("change", refresh);
   clearBtnEl.addEventListener("click", () => {
     inputEl.value = "";
-    saveExtra({ nextActionDueAt: null });
-    appendActivityLog({
-      actor: "user",
-      action: "follow_up_due_date_cleared",
-      label: `Follow-up due date cleared for ${entityLabel}`,
-      relatedCompanyKey,
-      relatedContactKey,
-    });
+    refresh();
+  });
+  saveBtn.addEventListener("click", async () => {
+    const c = inputEl._dueCtx;
+    if (inputEl.value === c.savedValue) return;
+    saveBtn.disabled = true;
+    const value = inputEl.value;
+    if (value) {
+      const ms = new Date(`${value}T00:00:00`).getTime();
+      await c.saveExtra({ nextActionDueAt: ms });
+      appendActivityLog({
+        actor: "user",
+        action: "follow_up_due_date_set",
+        label: `Follow-up due date set for ${c.entityLabel} (${value})`,
+        newValue: ms,
+        relatedCompanyKey: c.relatedCompanyKey,
+        relatedContactKey: c.relatedContactKey,
+      });
+    } else {
+      await c.saveExtra({ nextActionDueAt: null });
+      appendActivityLog({
+        actor: "user",
+        action: "follow_up_due_date_cleared",
+        label: `Follow-up due date cleared for ${c.entityLabel}`,
+        relatedCompanyKey: c.relatedCompanyKey,
+        relatedContactKey: c.relatedContactKey,
+      });
+    }
+    if (inputEl._dueCtx === c) c.savedValue = value;
+    refresh();
   });
 }
 
@@ -5767,9 +5881,10 @@ for (const el of document.querySelectorAll("#bulk-research-dialog input")) {
 // refreshBulkSummary on every keystroke, not just on blur: the summary now says how many accounts
 // the limit pays for, which is the whole point of typing a number in here.
 document.getElementById("bulk-budget-input").addEventListener("input", (e) => { e.target.dataset.touched = "1"; refreshBulkSummary(); });
-document.getElementById("bulk-max-accounts").addEventListener("input", () => { refreshBulkSummary(); saveBulkPrefs(); });
+document.getElementById("bulk-max-accounts").addEventListener("input", () => { refreshBulkSummary(); });
 // The choices in the dialog are remembered, so a start that is refused (another batch is running) or a later visit
-// does not make the user fill them in again.
+// does not make the user fill them in again. Saved only when the user presses Start (rule 2026-10-06: nothing is
+// saved on change) - closing the dialog without starting leaves the remembered choices as they were.
 const BULK_PREFS_KEY = "bulkResearchPrefs";
 async function saveBulkPrefs() {
   const dlg = document.getElementById("bulk-research-dialog");
@@ -5799,8 +5914,6 @@ async function loadBulkPrefs() {
   if (p.budget) { budget.value = p.budget; budget.dataset.touched = "1"; }
   document.getElementById("bulk-max-accounts").value = p.maxAccounts || "";
 }
-for (const el of document.querySelectorAll("#bulk-research-dialog input")) el.addEventListener("change", () => saveBulkPrefs());
-document.getElementById("bulk-budget-input").addEventListener("input", () => saveBulkPrefs());
 
 document.getElementById("bulk-research-page-btn").addEventListener("click", async () => {
   // opens even while another batch is running, so the choices can be prepared; Start is disabled (and explained) until it is free
@@ -5812,6 +5925,7 @@ document.getElementById("bulk-research-page-btn").addEventListener("click", asyn
 document.getElementById("bulk-research-start-btn").addEventListener("click", async () => {
   const { items } = bulkSelection();
   if (items.length === 0) return;
+  await saveBulkPrefs(); // the explicit action that saves the dialog's choices (see BULK_PREFS_KEY)
   // Visible at once that the click landed: making way for the pipeline can take a while (guardBatchStart).
   const startBtn = document.getElementById("bulk-research-start-btn");
   const startLabel = startBtn.textContent;

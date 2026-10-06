@@ -132,6 +132,34 @@ textarea {
   resize: vertical;
 }
 
+.persona-save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 10px;
+}
+
+.persona-save-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--blue);
+  color: white;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.persona-save-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.persona-save-status {
+  color: var(--gray-light);
+  font-size: 12px;
+}
+
 .agent-history {
   max-height: 420px;
   overflow-y: auto;

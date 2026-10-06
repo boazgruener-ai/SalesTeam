@@ -1314,6 +1314,12 @@ thead th.actions-col {
   margin-bottom: 4px;
 }
 
+.templates-save-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+}
+
 .template-card textarea {
   min-height: 55px;
   margin-bottom: 0;
@@ -1498,7 +1504,8 @@ thead th.actions-col {
 }
 
 /* Post detail: explicit Save button for Status / Priority (reported directly, 2026-09-21). */
-#detail-save-btn {
+#detail-save-btn,
+#templates-save-btn {
   background: var(--blue, #1a56b0);
   color: #fff;
   border: none;
@@ -1509,7 +1516,8 @@ thead th.actions-col {
   cursor: pointer;
   margin-right: 8px;
 }
-#detail-save-btn:disabled {
+#detail-save-btn:disabled,
+#templates-save-btn:disabled {
   opacity: 0.45;
   cursor: default;
 }
