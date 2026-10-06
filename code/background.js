@@ -6,7 +6,6 @@
 // every wait is wrapped in withKeepAlive() so Chrome doesn't kill this service
 // worker as idle mid-scan. Results are merged, deduped, ranked, and negative
 // topics are (re-)applied before saving.
-import { probeTeamFolderFromBackground } from "./team-folder-probe.js";
 import { initTeamSync, handleTeamMessage } from "./team-sync.js";
 import { teamBadgeFor } from "./team-badge.js";
 import {
@@ -1016,12 +1015,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Step 6 (R6.5): the assignment badge on a LinkedIn company / profile page (team-badge-content-script.js).
     teamBadgeFor(String(message.url || "")).then(sendResponse).catch(() => sendResponse({ show: false }));
     return true;
-  }
-  if (message?.type === "TEAM_SPIKE_SW_PROBE") {
-    // Team use step 0: try the team folder from here after a delay, so the page can close itself first.
-    setTimeout(() => { probeTeamFolderFromBackground(message.tag || "x").catch(() => {}); }, message.delayMs || 0);
-    sendResponse({ ok: true });
-    return false;
   }
   if (message?.type === "SCAN_ALL") {
     // one batch process at a time: the page checks first (and explains); this is the safety net

@@ -1,3 +1,55 @@
+# SalesTeam — v1.2.2
+
+## Team use: one set of accounts for the whole sales team (builds 1.2.1.2-1.2.1.11)
+
+- **Work as a team** - colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder the team
+  owns. Every member's SalesTeam reads and writes that folder; changes reach the others by themselves. Each change
+  is kept with who made it and when, and the same picture builds up on every computer. There is
+  no SalesTeam server and no sign-in. Each member scans LinkedIn with their own account and their own daily limit.
+- **Settings > Team** - **Create a team** (you become its Team Admin, and your data becomes the team's starting data) or
+  **Join a team**, each with numbered steps (OneDrive folder, "Always keep on this device", "Allow on every visit").
+  SalesTeam saves a full backup before either. The card then shows the folder, the members with their role, whether they
+  are online and how many accounts each has, **Sync now** and **Leave the team**.
+- **Shared and personal** - shared: accounts, contacts, leads (posts) and their statuses, the Setup, message templates and
+  rules. Personal, never written to the folder: API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn
+  limits and the Activity Log.
+- **Assign to me / Release** - in every account menu. An assigned account is the holder's: colleagues can read it but not
+  change it, work its contacts or its leads (posts), and their automatic preparation leaves it alone. The Company column
+  shows **Mine** or the colleague's name, and **Mine / Others / Unassigned / All** above the table filter by it. Bulk
+  edit and bulk research skip colleagues' accounts and say so.
+- **No two people on one account** - changing an unassigned account first checks with the team ("Checking with the
+  team…", a few seconds) while you keep working. If a colleague was a few seconds earlier, you are told, and your changes
+  are kept aside with **Apply my changes now** for later. The automatic pipelines of the members share the unassigned
+  accounts between them, so no account is prepared twice.
+- **Team Admin** - changes the Setup and rules (members see them read-only), removes and restores accounts and contacts
+  (the new **Removed…** view, with date, who removed it and bulk Restore), reassigns a colleague's account or releases all
+  accounts of someone who left, and can take a member off the team. A member whose account is reassigned is told in the
+  top bar.
+- **Joining with your own data** - accounts you have that the team does not are listed for you to tick, and come in
+  assigned to you. Accounts you both have and you have already worked on go to the Team Admin as **join proposals** in
+  Decisions (give it to the newcomer, keep it, or leave it unassigned).
+- **Outreach check** - on the Leads Dashboard a colleague's lead (post) cannot be drafted, copied or set to a new status,
+  and SalesTeam asks before you approach a person a colleague has already contacted. Scans, discovery and imports mark
+  companies the team already has.
+- **On LinkedIn** - a small badge on company and profile pages shows whom that account is assigned to (with Hide).
+- **Who changed what** - the Activity Log filter now offers **Everything / Me / Automatic / Colleagues / Team**, with the
+  value before and after each colleague's change.
+- **Safe when the folder is not there** - the top bar says when to reconnect to the team folder, and when SalesTeam has
+  not been able to reach it for a few minutes ("Not in sync"); changes are then blocked and reading stays open.
+- **Save, always explicit** (1.2.1.10) - changes in Settings, Setup and Change Settings are kept only when you press
+  **Save**, everywhere; leaving with unsaved changes asks first. The two Advanced Settings cards became Change Settings
+  steps with Save, Previous and Next. A second **Scan** click while a scan runs asks whether to stop it and start again.
+- **Only the table scrolls** - on the Leads, Target Accounts and Target Contacts dashboards the title, pie charts,
+  controls and filters stay in place and only the table scrolls, with its header row always visible. The whole page,
+  menu included, no longer shifts when the top status bar is showing.
+- **Also** - a contact's manual Contacted or Responded now counts for its account's status and Last contact; the Target
+  Accounts pie cards line up, with long Pipeline status notes behind **Show more**.
+- **Wording** - Help has a new **Team** section; the privacy policy, store listing and website describe team use and
+  that the shared data lives in the team's own OneDrive folder. One new permission, **alarms**, used only for team members
+  to sync with the folder; it shows no warning when installing.
+
+---
+
 # SalesTeam — v1.2.1
 
 ## Onboarding research: the Setup proposes its own answers and builds the list (builds 1.2.0.1-1.2.0.64)

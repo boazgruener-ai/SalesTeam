@@ -2138,3 +2138,75 @@ thead .actions-col {
 .due-date-field .priority-override-set-btn {
   margin-left: 6px;
 }
+
+/* 1.2.2 (Boaz, 2026-10-06): only the table scrolls - the title, the pie charts, the controls and the filter chips stay
+   in place on every dashboard, and the table's header row stays at its top.
+   It also ends the "whole page scrolls" bug: the top status bar puts a spacer above #app-shell, which was 100vh tall by
+   itself, so the document grew by the bar's height and scrolled as a whole (menu included). The body is now one
+   viewport tall and #app-shell takes what the spacer leaves.
+   A window too short for the fixed parts plus a minimal table (min-height below) falls back to scrolling #app-main. */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+#app-shell {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
+/* The status bar's spacer is an empty div: as a flex item it would shrink to nothing and the bar would cover the top
+   of the page (Boaz, 2026-10-06). */
+#status-bar-spacer {
+  flex-shrink: 0;
+}
+#embedded-page-wrap {
+  height: 100%;
+}
+#app-main {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px;
+}
+#page-native-content:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#page-native-content > * {
+  flex-shrink: 0;
+}
+#list-view:not([hidden]),
+#contacts-list-view:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#list-view > *,
+#contacts-list-view > * {
+  flex-shrink: 0;
+}
+#list-view > #table-wrap,
+#contacts-list-view > #contacts-table-wrap {
+  flex: 1 1 auto;
+  min-height: 240px;
+  overflow: auto;
+}
+/* Sticky header: border-collapse drops a sticky cell's own border while scrolled, so the line under it is a shadow. */
+#companies-table thead th,
+#contacts-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: inset 0 -2px 0 var(--border);
+}
+#companies-table thead th.actions-col,
+#contacts-table thead th.actions-col {
+  right: 0;
+  z-index: 4;
+  box-shadow: inset 0 -2px 0 var(--border), -6px 0 6px -6px rgba(0, 0, 0, 0.2);
+}

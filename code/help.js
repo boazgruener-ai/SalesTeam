@@ -5,7 +5,7 @@
 // entry) plus light typo tolerance (edit-distance on individual words) -
 // not semantic/AI matching.
 
-const CATEGORIES = ["Scanning & Topics", "Setup & Target Accounts", "Negative Topics & Filtering", "Leads Dashboard", "Advisors (AI)", "Settings & Backup"];
+const CATEGORIES = ["Scanning & Topics", "Setup & Target Accounts", "Negative Topics & Filtering", "Leads Dashboard", "Advisors (AI)", "Team", "Settings & Backup"];
 
 // Each entry's `keywords` exist purely to catch how someone might actually
 // phrase a question - including the OPPOSITE of the literal answer (e.g.
@@ -59,7 +59,7 @@ const QA = [
     category: "Scanning & Topics",
     question: "How SalesTeam works with online platforms and data sources?",
     keywords: ["linkedin", "terms", "policy", "policies", "rules", "safe", "safety", "ban", "banned", "restricted", "account", "scraping", "compliance", "limit", "touch budget", "resell", "data", "registry", "registries", "website", "websites", "public data", "platform", "platforms", "research"],
-    answer: "SalesTeam is built with the rules of the online platforms and data sources it works with in mind. Its research draws on publicly available sources: the research prompt has an AI assistant consult public company registries and websites, and SalesTeam's own scans read pages of platforms such as LinkedIn. SalesTeam can also research companies on the public web itself - their own websites and web search results - through your own Anthropic API key, only if you switch web research on and within the monthly budget you set. It is designed for personal use, the way a person would use these sites: every scan starts when you click a button, and automatic account preparation runs only if you switch it on: you start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser. Every search and page visit happens in a browser tab or window you can see, only while Chrome is open, and you can turn the automation off at any time in Settings. There is no bulk collection of pages. A built-in safety limit keeps the number of searches and page visits per day modest - within what one person could do by hand. SalesTeam has no server or database of its own, so it never collects, resells or shares anyone's data: everything it finds stays on your device, for your own use, and it never sends messages or connection requests for you. Because each platform's terms of use apply to how any tool is used on it (LinkedIn's terms, for example), we recommend keeping your use moderate and within the daily limit.",
+    answer: "SalesTeam is built with the rules of the online platforms and data sources it works with in mind. Its research draws on publicly available sources: the research prompt has an AI assistant consult public company registries and websites, and SalesTeam's own scans read pages of platforms such as LinkedIn. SalesTeam can also research companies on the public web itself - their own websites and web search results - through your own Anthropic API key, only if you switch web research on and within the monthly budget you set. It is designed for personal use, the way a person would use these sites: every scan starts when you click a button, and automatic account preparation runs only if you switch it on: you start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser. Every search and page visit happens in a browser tab or window you can see, only while Chrome is open, and you can turn the automation off at any time in Settings. There is no bulk collection of pages. A built-in safety limit keeps the number of searches and page visits per day modest - within what one person could do by hand. SalesTeam has no server or database of its own, so it never collects, resells or shares anyone's data: everything it finds stays on your device (in a team, also in your team's own OneDrive folder), for your own and your team's use, and it never sends messages or connection requests for you. Because each platform's terms of use apply to how any tool is used on it (LinkedIn's terms, for example), we recommend keeping your use moderate and within the daily limit.",
   },
   {
     id: "manual-only",
@@ -200,6 +200,76 @@ const QA = [
     question: "How do I ask about one specific lead vs. a general question?",
     keywords: ["specific lead question", "general question", "ask about a lead", "per lead advisor"],
     answer: 'For a question about ONE lead (post) you\'re looking at, use "Consult Sales Mentor" on that lead\'s own detail page on the Leads Dashboard - it already knows that lead\'s details. For strategy questions not tied to one lead, use the Sales Mentor on the Advisors page - it can look up any lead by name if a question needs it.',
+  },
+  {
+    id: "team-what",
+    category: "Team",
+    question: "Can my whole sales team work with the same accounts and leads?",
+    keywords: ["team", "colleagues", "share", "shared", "sharing", "together", "several users", "multiple users", "onedrive", "team use", "collaborate"],
+    answer: 'Yes. In a team, colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder your team owns. Every member\'s SalesTeam reads and writes that folder; changes you make reach your colleagues by themselves, usually within a minute or two, depending on OneDrive, and theirs arrive on your computer. There is no SalesTeam server and no sign-in. One person creates the team and becomes its Team Admin; the others join. Each member still scans LinkedIn with their own LinkedIn account and their own daily limit. Start under Settings > Team.',
+  },
+  {
+    id: "team-create",
+    category: "Team",
+    question: "How do I start a team?",
+    keywords: ["create team", "start team", "new team", "set up team", "team admin", "team folder", "share folder"],
+    answer: 'Open Settings > Team > Create a team… and follow the numbered steps there: create an empty folder in OneDrive, right-click it and choose "Always keep on this device", share it with your colleagues so they can edit, then enter your name and the team\'s name, pick the folder and click "Back up and create the team". If Chrome asks whether SalesTeam may view and edit the folder, choose "Allow on every visit". SalesTeam saves a full backup first, then copies your accounts, contacts, leads (posts), Setup and rules into the folder as the team\'s starting data. You become the Team Admin.',
+  },
+  {
+    id: "team-join",
+    category: "Team",
+    question: "How do I join my team, and what happens to my own data?",
+    keywords: ["join team", "join", "invited", "shared folder", "my own accounts", "my data", "replace", "add shortcut", "accounts i have"],
+    answer: 'Open the e-mail in which a colleague shared the team folder, click "Add shortcut to My files", and in File Explorer > OneDrive set the folder to "Always keep on this device". Then open Settings > Team > Join a team…, enter your name and pick the folder. SalesTeam saves a full backup of your data first. Joining replaces the accounts, contacts, leads (posts), Setup and rules in this browser with the team\'s; accounts you have that the team does not are listed for you to tick, and the ones you tick are added to the team, assigned to you. Accounts both you and the team have, which you have already worked on, go to the Team Admin as join proposals under Decisions, who decides who keeps each one. Your API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn limits and Activity Log stay as they are.',
+  },
+  {
+    id: "team-shared-personal",
+    category: "Team",
+    question: "What is shared with my team, and what stays on my computer?",
+    keywords: ["shared", "personal", "private", "what is shared", "api key", "drafts", "visible to colleagues", "who contacted whom", "privacy", "team data"],
+    answer: 'Shared with the whole team: accounts, contacts, leads (posts) and their statuses, the Setup (what you sell, ideal customer, target contacts, message templates) and the rules (exclusions, Negative Topics, prioritization). Everyone in the team sees the shared data, including who contacted whom and who changed what. Personal, never written to the team folder: your Anthropic API key, User Profile, drafts, Advisors chats, scanner settings (Topics, timeframe, job search), LinkedIn limits and counters, web budget and your Activity Log. The team folder lives in your team\'s own OneDrive; SalesTeam has no server and never sees it.',
+  },
+  {
+    id: "team-assign",
+    category: "Team",
+    question: "How do I keep a colleague from working on an account I am working on?",
+    keywords: ["assign", "assign to me", "release", "claim", "my accounts", "mine", "others", "unassigned", "owner", "badge", "blocked", "colleague", "collision", "work queue"],
+    answer: 'Use "Assign to me" in the account\'s ⋮ menu (on the list row or on the account page). The account is then yours: colleagues can still read it, but only you can change it, work its contacts and leads (posts), and only your automatic preparation works on it. "Release" makes it unassigned again. The Company column shows "Mine" or the colleague\'s name, and the Mine / Others / Unassigned / All buttons above the Target Accounts table filter by it. On LinkedIn, a small badge on a company or profile page shows whom that account is assigned to.',
+  },
+  {
+    id: "team-updating",
+    category: "Team",
+    question: 'Why does an account say "Checking with the team" or that a colleague is updating it?',
+    keywords: ["checking with the team", "updating", "is updating", "blocked", "only can edit", "kept aside", "apply my changes", "lost", "a few seconds before you", "conflict"],
+    answer: 'When you start changing an unassigned account, SalesTeam first checks that no colleague started on it at the same moment ("Checking with the team…", usually a few seconds). You can go on working; your changes stay on your computer until the check is done. If a colleague was a few seconds earlier, SalesTeam tells you, keeps your changes aside and offers "Apply my changes now" once the account is free again. While a colleague is updating an account, or it is assigned to them, you can read it but not change it. Nothing is ever silently overwritten.',
+  },
+  {
+    id: "team-reconnect",
+    category: "Team",
+    question: 'What do "Click to reconnect to the team folder" and "Not in sync" mean?',
+    keywords: ["reconnect", "not in sync", "team folder", "not connected", "offline", "sync", "onedrive paused", "permission", "allow on every visit", "read only"],
+    answer: '"Click to reconnect" appears when Chrome needs your permission again to use the team folder (for example after you chose "Allow this time"). Click the top bar and allow it; choosing "Allow on every visit" avoids the question. Until then your changes wait on your computer and colleagues\' changes do not arrive. "Not in sync" means the team folder could not be read or written for a few minutes - OneDrive paused or signed out, the computer offline, or the folder not kept on this device. You can still read everything; changes are blocked until the folder works again, so that nobody works on old data. SalesTeam shares while a SalesTeam page or the side panel is open.',
+  },
+  {
+    id: "team-admin",
+    category: "Team",
+    question: "What can only the Team Admin do?",
+    keywords: ["team admin", "admin", "administrator", "roles", "permissions", "reassign", "release all", "remove", "restore", "setup", "remove from team", "join proposals"],
+    answer: 'The Team Admin (the person who created the team) changes the Setup and the rules - members see them read-only. Only the Team Admin can remove and restore accounts and contacts, reassign a colleague\'s account or release all accounts of a colleague (for example when someone has left), decide join proposals under Decisions, and take a member off the team (Settings > Team > Remove from team…). Like everyone else, the Team Admin cannot change an account assigned to a colleague; to work on it, they reassign it to themselves first, and the colleague is told.',
+  },
+  {
+    id: "team-log",
+    category: "Team",
+    question: "How do I see what my colleagues changed?",
+    keywords: ["who changed", "colleagues changes", "team log", "activity log", "history", "audit", "who did what"],
+    answer: 'Open the Activity Log and pick "Colleagues" (what your colleagues changed in the shared data, with the value before and after) or "Team" (every shared change in the team, yours included, with assignments, joins and leaves). Settings > Team lists the members, their role, whether they are online and how many accounts each has assigned.',
+  },
+  {
+    id: "team-leave",
+    category: "Team",
+    question: "How do I leave a team?",
+    keywords: ["leave team", "leave", "quit team", "stop sharing", "solo", "exit team"],
+    answer: 'Settings > Team > Leave the team. This browser stops sharing; the data here stays as it is now, as your own copy. Your assigned accounts are released for your colleagues. Your files stay in the team folder for the record, and the Team Admin can take you off the members list.',
   },
   {
     id: "set-api-key",
