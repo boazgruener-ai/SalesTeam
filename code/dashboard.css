@@ -1608,7 +1608,7 @@ thead th.actions-col {
   white-space: nowrap; vertical-align: middle; border: 1px solid transparent;
 }
 .team-badge-mine { background: #e6f4ea; color: #1e6b34; border-color: #a8d5b5; }
-.team-badge-other { background: #eef1f6; color: #3c4a5e; border-color: #c9d1dd; }
+.team-badge-other { background: #fce8e6; color: #a8322a; border-color: #f2c4bf; } /* soft red, like the LinkedIn badge (Boaz 2026-10-06) */
 .team-badge-busy { background: #fff4e0; color: #7a4800; border-color: #e8c27a; }
 .detail-team-notice { margin: 8px 0; padding: 8px 12px; border-radius: 8px; border: 2px solid #b26a00; background: #fff4e0; color: #7a4800; font-weight: 600; font-size: 13px; }
 .detail-team-notice.blocked { border-color: #b3261e; background: #fdeaea; color: #8c1d18; }

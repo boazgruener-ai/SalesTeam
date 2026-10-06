@@ -573,6 +573,14 @@ details.nav-group > div > .nav-item {
   margin-bottom: 20px;
 }
 
+/* Pipeline status notes: 4 lines unless opened (12px text, 1.4 line height). */
+.pie-notes { line-height: 1.4; }
+.pie-notes .pie-note { line-height: 1.4; }
+.pie-notes.collapsed { max-height: calc(4 * 1.4 * 12px + 6px); overflow: hidden; }
+.pie-notes-toggle { display: block; margin: 4px auto 0; border: 0; background: none; padding: 0; color: var(--blue);
+  font-size: 12px; font-weight: 600; cursor: pointer; }
+.pie-notes-toggle:hover { text-decoration: underline; }
+
 .pie-card {
   flex: 1;
   max-width: 340px;
@@ -588,26 +596,30 @@ details.nav-group > div > .nav-item {
   color: var(--gray);
 }
 
+/* Boaz 2026-10-06: every card the same height (the row stretches them), each pie at the top under its title, and
+   every legend entry on one line. */
 .pie-wrap {
   display: flex;
-  align-items: center;
-  gap: 16px;
+  align-items: flex-start;
+  gap: 14px;
 }
 
 .pie-wrap svg {
-  width: 120px;
-  height: 120px;
+  width: 110px;
+  height: 110px;
   flex: none;
 }
 
 .pie-legend {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
 }
 
 .pie-legend-row {
   display: flex;
   align-items: center;
+  white-space: nowrap;
   gap: 6px;
   cursor: default;
   padding: 2px 0;
@@ -2089,7 +2101,7 @@ thead .actions-col {
   white-space: nowrap; vertical-align: middle; border: 1px solid transparent;
 }
 .team-badge-mine { background: #e6f4ea; color: #1e6b34; border-color: #a8d5b5; }
-.team-badge-other { background: #eef1f6; color: #3c4a5e; border-color: #c9d1dd; }
+.team-badge-other { background: #fce8e6; color: #a8322a; border-color: #f2c4bf; } /* soft red, like the LinkedIn badge (Boaz 2026-10-06) */
 .team-badge-busy { background: #fff4e0; color: #7a4800; border-color: #e8c27a; }
 .team-owner-filter[hidden] { display: none; }
 .team-owner-filter { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-right: 8px; vertical-align: middle; }

@@ -9,7 +9,7 @@ import { askConfirm } from "./confirm-dialog.js";
 import { backupNow } from "./backup-restore.js";
 import { getUserProfile } from "./storage.js";
 import {
-  getTeamFolder, pickTeamFolder, saveTeamFolder, teamFolderPermission, requestTeamFolderPermission,
+  getTeamFolder, pickTeamFolder, saveTeamFolder, clearTeamFolder, teamFolderPermission, requestTeamFolderPermission,
   readTeamJson, listTeamFolderTop,
 } from "./team-folder.js";
 
@@ -253,6 +253,65 @@ async function onCreate() {
   }
 }
 
+// Step 6 (R6.7): the accounts only this browser has - tick which to bring into the team. Resolves to the ticked keys,
+// or null on Cancel. `shared`: accounts the team has too that this member worked on (told; the Team Admin decides).
+function chooseAccountsToBring(localOnly, shared) {
+  return new Promise((resolve) => {
+    const el = (tag, css, text) => { const n = document.createElement(tag); if (css) n.style.cssText = css; if (text) n.textContent = text; return n; };
+    const dlg = el("dialog", "border:none;border-radius:10px;padding:20px 24px;width:560px;max-width:92vw;box-shadow:0 8px 30px rgba(0,0,0,.25);font-size:13px;line-height:1.5;color:#1f2933");
+    dlg.append(el("h3", "margin:0 0 10px", "Your own accounts"));
+    const boxes = [];
+    if (localOnly.length) {
+      dlg.append(el("p", "margin:0 0 10px", `${localOnly.length} account${localOnly.length === 1 ? " is" : "s are"} in your list but not in the team's. Tick the ones to bring into the team - your colleagues will see them. The others are removed here (they stay in the backup).`));
+      const tools = el("div", "margin:0 0 6px;display:flex;gap:6px");
+      const all = el("button", "", "Tick all");
+      const none = el("button", "", "Tick none");
+      all.type = none.type = "button";
+      tools.append(all, none);
+      const list = el("div", "max-height:300px;overflow:auto;border:1px solid #d0d7de;border-radius:6px;padding:6px 10px;margin:0 0 12px");
+      for (const a of localOnly) {
+        const row = el("label", "display:flex;gap:8px;align-items:baseline;padding:3px 0;cursor:pointer");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.value = a.key;
+        boxes.push(cb);
+        const bits = [`${a.contacts} contact${a.contacts === 1 ? "" : "s"}`, `${a.leads} lead${a.leads === 1 ? "" : "s"}`, ...(a.worked || [])];
+        const text = el("span");
+        text.append(el("strong", "", a.name), document.createTextNode(` - ${bits.join(", ")}`));
+        row.append(cb, text);
+        list.append(row);
+      }
+      all.addEventListener("click", () => boxes.forEach((b) => { b.checked = true; }));
+      none.addEventListener("click", () => boxes.forEach((b) => { b.checked = false; }));
+      dlg.append(tools, list);
+    }
+    if (shared.length) {
+      dlg.append(el("p", "margin:0 0 6px", `${shared.length === 1 ? "This account you worked on is" : `These ${shared.length} accounts you worked on are`} also in the team's list. The team's version is kept; the Team Admin decides in Decisions whether you take ${shared.length === 1 ? "it" : "them"} over. Whom you contacted there (contacts and leads) is kept, so nobody approaches the same person twice.`));
+      const list = el("ul", "max-height:200px;overflow:auto;margin:0 0 12px;padding-left:20px");
+      for (const a of shared) {
+        const li = el("li", "padding:1px 0");
+        li.append(el("strong", "", a.name), document.createTextNode(` - ${(a.worked || []).join(", ")}`));
+        list.append(li);
+      }
+      dlg.append(list);
+    }
+    const actions = el("div", "display:flex;gap:8px;justify-content:flex-end;margin-top:6px");
+    const cancel = el("button", "", "Cancel");
+    const ok = el("button", "", "Join the team");
+    cancel.type = ok.type = "button";
+    ok.className = "team-primary-btn";
+    actions.append(cancel, ok);
+    dlg.append(actions);
+    const done = (value) => { dlg.close(); dlg.remove(); resolve(value); };
+    cancel.addEventListener("click", () => done(null));
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(null); });
+    ok.addEventListener("click", () => done(boxes.filter((b) => b.checked).map((b) => b.value)));
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+
 async function onJoin() {
   const status = "team-join-status";
   const name = $("team-join-name").value.trim();
@@ -265,7 +324,7 @@ async function onJoin() {
   }
   const go = await askConfirm(
     "Join the team?\n\nThe accounts, contacts, leads (posts), Setup and rules in this browser are replaced by the team's. " +
-    "Anything you have that the team does not is removed here - it stays in the backup saved next.\n\n" +
+    "Next you choose which of your own accounts to bring into the team; anything else you have that the team does not is removed here - it stays in the backup saved next.\n\n" +
     "Your API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn limits and Activity Log stay as they are.",
     { okLabel: "Back up and join", cancelLabel: "Cancel" });
   if (!go) return;
@@ -277,8 +336,16 @@ async function onJoin() {
     const recheck = await checkPickedFolder("join", picked.join);
     if (!recheck.ok) throw new Error(recheck.text);
     await saveTeamFolder(picked.join);
+    setText(status, `${b}\nReading the team's data to compare it with yours…`);
+    const preview = await send({ type: "TEAM_JOIN_PREVIEW" });
+    if (!preview.ok) { await clearTeamFolder(); throw new Error(preview.error || "could not read the team's data"); }
+    let addKeys = [];
+    if (preview.localOnly.length || preview.shared.length) {
+      addKeys = await chooseAccountsToBring(preview.localOnly, preview.shared);
+      if (addKeys === null) { await clearTeamFolder(); throw new Error("Cancelled - nothing was changed."); }
+    }
     setText(status, `${b}\nJoining - reading the team's data…`);
-    const r = await send({ type: "TEAM_JOIN", name });
+    const r = await send({ type: "TEAM_JOIN", name, addKeys });
     if (!r.ok) throw new Error(r.error || "could not join");
     picked.join = null;
     showFlow(null);
@@ -289,6 +356,8 @@ async function onJoin() {
       `You are now in the team "${recheck.team?.name || ""}".\n\n` +
       `This browser now holds the team's ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts). ` +
       "Changes you make are shared with your colleagues, and theirs arrive here by themselves." +
+      (r.brought?.accounts ? `\n\nYou brought ${r.brought.accounts} of your own account${r.brought.accounts === 1 ? "" : "s"} into the team${r.brought.assigned ? " - assigned to you" : ""}.` : "") +
+      (r.brought?.proposals ? `\n\n${r.brought.proposals} account${r.brought.proposals === 1 ? "" : "s"} you worked on ${r.brought.proposals === 1 ? "is" : "are"} waiting for the Team Admin's decision (Decisions).` : "") +
       (missing.length ? `\n\nStill to do, for you alone: ${missing.join("; ")}.` : "") +
       "\n\nSalesTeam shares while a SalesTeam page or the side panel is open.",
       { okLabel: "OK", cancelLabel: "Close" });
@@ -312,15 +381,21 @@ async function personalGaps() {
 async function onLeave() {
   const m = await getMembership();
   if (!m) return;
+  let mine = 0;
+  try { mine = ((await send({ type: "TEAM_ASSIGN_COUNTS" })).counts || {})[m.memberId] || 0; } catch { /* unknown */ }
   const go = await askConfirm(
     `Leave the team "${m.teamName}"?\n\nThis browser stops sharing. The data here stays as it is now, as your own copy; ` +
-    "your colleagues keep the team's data. What you wrote stays in the team folder.",
+    "your colleagues keep the team's data. What you wrote stays in the team folder." +
+    (mine ? `\n\nYour ${mine} assigned account${mine === 1 ? "" : "s"} become${mine === 1 ? "s" : ""} unassigned, so colleagues can work on ${mine === 1 ? "it" : "them"}.` : ""),
     { okLabel: "Leave the team", cancelLabel: "Stay", danger: true });
   if (!go) return;
   try {
     const r = await send({ type: "TEAM_LEAVE" });
     if (!r.ok) throw new Error(r.error || "could not leave");
     setText("team-member-status", "");
+    if (mine && !r.signedOff) {
+      await askConfirm("You have left the team. The team folder could not be reached, so your assigned accounts are still marked as yours for your colleagues - the Team Admin can release them (Settings > Team > Release all).", { okLabel: "OK", cancelLabel: "Close" });
+    }
   } catch (err) {
     setText("team-member-status", `Could not leave: ${err.message}`, true);
   }
@@ -405,8 +480,17 @@ export async function renderTeamSettings() {
       table.replaceChildren(memberRow(["Name", "Role", "Last seen", "", "Accounts assigned", ""]));
       table.firstChild.classList.add("team-members-head");
       table.append(memberRow([`${m.name} (you)`, role, "now", connected ? "online" : "not connected", String(counts[m.memberId] || 0), ""]));
-      for (const c of st.members || []) {
-        const row = memberRow([c.name, c.admin ? "Team Admin" : "Member", timeText(c.lastSeen), c.online ? "online" : "", String(counts[c.id] || 0)]);
+      let formerShown = false;
+      const sortedMembers = [...(st.members || [])].sort((x, y) => Boolean(x.left) - Boolean(y.left));
+      for (const c of sortedMembers) {
+        if (c.left && !formerShown) {
+          formerShown = true;
+          const head = memberRow(["Former members", "", "", "", "", ""]);
+          head.classList.add("team-members-head");
+          table.append(head);
+        }
+        const row = memberRow([c.name, c.admin ? "Team Admin" : "Member", c.left ? `${c.removed ? "removed" : "left"} ${timeText(c.left)}` : timeText(c.lastSeen), c.online ? "online" : "", String(counts[c.id] || 0)]);
+        if (c.left) row.style.color = "#8a8f98";
         const td = document.createElement("td");
         if (isAdmin && counts[c.id]) {
           const b = document.createElement("button");
@@ -426,6 +510,27 @@ They become unassigned - anyone in the team can then take them.`, { okLabel: "Re
             renderTeamSettings();
           });
           td.append(b);
+        }
+        if (isAdmin && !c.left && !c.admin) {
+          const rm = document.createElement("button");
+          rm.type = "button";
+          rm.className = "secondary";
+          rm.textContent = "Remove from team…";
+          rm.title = `Take ${c.name} off the team - e.g. an old membership, or a colleague who stopped without leaving`;
+          rm.addEventListener("click", async () => {
+            const n = counts[c.id] || 0;
+            if (!(await askConfirm(`Remove ${c.name} (last seen ${timeText(c.lastSeen) || "never"}) from the team?\n\n` +
+              (n ? `Their ${n} assigned account${n === 1 ? "" : "s"} become${n === 1 ? "s" : ""} unassigned. ` : "") +
+              `${c.name} is listed under Former members; what they changed stays in the team log. If their SalesTeam is still running, it stops sharing. To come back, they join the team again.`,
+              { okLabel: "Remove from team", cancelLabel: "Cancel", danger: true }))) return;
+            rm.disabled = true;
+            try {
+              const r = await send({ type: "TEAM_REMOVE_MEMBER", member: c.id });
+              setText("team-member-sync", r.ok ? `${c.name} removed from the team${r.count ? ` - ${r.count} account${r.count === 1 ? "" : "s"} released` : ""}.` : "Could not remove - the team folder is not connected or not in sync.", !r.ok);
+            } catch (err) { setText("team-member-sync", err.message, true); }
+            renderTeamSettings();
+          });
+          td.append(rm);
         }
         row.append(td);
         table.append(row);

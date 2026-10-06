@@ -8,6 +8,7 @@
 // topics are (re-)applied before saving.
 import { probeTeamFolderFromBackground } from "./team-folder-probe.js";
 import { initTeamSync, handleTeamMessage } from "./team-sync.js";
+import { teamBadgeFor } from "./team-badge.js";
 import {
   getTopics,
   getJobTopics,
@@ -1011,6 +1012,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Team use 1.2.2 (team-sync.js): create / join / leave, sync now, status.
   const team = handleTeamMessage(message, sendResponse);
   if (team !== null) return team;
+  if (message?.type === "TEAM_LINKEDIN_BADGE") {
+    // Step 6 (R6.5): the assignment badge on a LinkedIn company / profile page (team-badge-content-script.js).
+    teamBadgeFor(String(message.url || "")).then(sendResponse).catch(() => sendResponse({ show: false }));
+    return true;
+  }
   if (message?.type === "TEAM_SPIKE_SW_PROBE") {
     // Team use step 0: try the team folder from here after a delay, so the page can close itself first.
     setTimeout(() => { probeTeamFolderFromBackground(message.tag || "x").catch(() => {}); }, message.delayMs || 0);

@@ -13,7 +13,7 @@
 //   30 s alarm and, while the folder is usable, by in-worker timers. The folder is usable only while a SalesTeam
 //   page or the side panel is open (step 0); otherwise changes wait in the outbox.
 
-import { withAccountWriteLock, normalizeCompanyName } from "./storage.js";
+import { withAccountWriteLock, normalizeCompanyName, contactKeyFor } from "./storage.js";
 import { TEAM_SHARED_KEYS, isTeamSharedKey } from "./team-keys.js";
 import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchValue, rowTarget, rowKey, splitRowKey, canonicalRow } from "./team-rows.js";
 import {
@@ -27,6 +27,8 @@ import {
   teamDbGetAll, teamDbPutAll, teamDbClear, getTeamFolder, clearTeamFolder, teamFolderPermission,
   readTeamJson, writeTeamJson, listTeamNames, removeTeamFile, listTeamFolderTop,
 } from "./team-folder.js";
+import { teamLogEntries, appendTeamLog } from "./team-log.js";
+import { joinOverlap, addBackValues, joinProposals, JOIN_PROPOSALS_KEY } from "./team-join.js";
 
 export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 // Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
@@ -34,6 +36,9 @@ export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 export const TEAM_ACCOUNTS_KEY = "teamAccountStates";
 // Step 5b (Boaz): "the Team Admin reassigned / released your account" - shown in the top bar until OK. Personal.
 export const TEAM_NOTICES_KEY = "teamNotices";
+// Step 6 (R3.11, design 4.3): the team log shown in the Activity Log - built from the change records written and read
+// (team-log.js). Personal (each PC keeps what it has seen), backup-excluded.
+export const TEAM_LOG_KEY = "teamLog";
 const FORMAT = 1;
 const ALARM = "team-sync";
 const DIFF_DEBOUNCE_MS = 1000;
@@ -260,6 +265,39 @@ function accountDisplayName(key) {
   return key;
 }
 
+// The previous values of my own records, taken as they are made (holdOrSend), for the log line written when they go
+// out (flush). In memory only: after a worker restart a line simply has no previous values.
+const ownPriors = new Map(); // record -> priorOf
+const OWN_PRIORS_MAX = 20000;
+const priorsFor = (records) => new Map(records.map((r) => [r, priorOf(mem.state, r)]));
+
+// Inside the queue. "Boaz removed Annick from the team" - not a change record (a file in removed/), so logged here.
+async function logMemberRemoved(member, by, at) {
+  const entry = { at, m: by, op: "remove_member", kind: "member", key: null, ref: member, fields: [], rows: 1, mn: memberName(by), to: member, tn: memberName(member) };
+  const prev = (await chrome.storage.local.get(TEAM_LOG_KEY))[TEAM_LOG_KEY];
+  await chrome.storage.local.set({ [TEAM_LOG_KEY]: appendTeamLog(prev, [entry], Date.now()) });
+}
+
+// Inside the queue. Adds the log lines for these records (a base file is the team's starting point, not a change).
+async function recordTeamLog(records, priors = null) {
+  if (!records.length || !membership) return;
+  const entries = teamLogEntries(records, mem.state, normalizeCompanyName, priors);
+  if (!entries.length) return;
+  const names = new Map();
+  for (const [id, rec] of Object.entries(mem.state.entities.account || {})) {
+    if (id.startsWith("@")) continue;
+    const v = rec.f.company?.v;
+    if (typeof v === "string") { const k = normalizeCompanyName(v); if (k && !names.has(k)) names.set(k, v); }
+  }
+  for (const e of entries) {
+    if (e.key) e.name = names.get(e.key) || e.key;
+    e.mn = memberName(e.m);
+    if (e.to) e.tn = memberName(e.to);
+  }
+  const prev = (await chrome.storage.local.get(TEAM_LOG_KEY))[TEAM_LOG_KEY];
+  await chrome.storage.local.set({ [TEAM_LOG_KEY]: appendTeamLog(prev, entries, Date.now()) });
+}
+
 async function applyRemote(records) {
   const affected = new Set();
   // A colleague (the Team Admin) took one of my accounts away: remember whether it was mine before this batch.
@@ -300,14 +338,23 @@ async function applyRemote(records) {
 async function readFolder(root, me, { includeSelf = false } = {}) {
   const meta = mem.meta;
   const records = [];
-  const update = { cursors: {}, lastFileWall: {}, hb: {}, profiles: {}, basesApplied: [], files: 0, bytes: 0 };
+  const update = { cursors: {}, lastFileWall: {}, hb: {}, profiles: {}, basesApplied: [], files: 0, bytes: 0, baseRecords: 0 };
   update.admins = (await listTeamNames(root, ["admins"], "file"))
     .map((n) => (/^(.+)\.json$/.exec(n) || [])[1]).filter(Boolean);
+  // Members the Team Admin removed (Boaz 2026-10-06): removed/<member>.json, written by the admin.
+  update.removed = {};
+  for (const n of await listTeamNames(root, ["removed"], "file")) {
+    const id = (/^(.+)\.json$/.exec(n) || [])[1];
+    if (!id || meta.removed?.[id]) continue;
+    const r = await readTeamJson(root, ["removed"], n);
+    if (r.status === "ok") update.removed[id] = { at: r.data.at || Date.now(), by: r.data.by || null };
+  }
   for (const name of await listTeamNames(root, ["base"], "file")) {
     if (meta.basesApplied.includes(name)) continue;
     const r = await readTeamJson(root, ["base"], name);
     if (r.status !== "ok") continue;
     records.push(...(r.data.changes || []));
+    update.baseRecords += (r.data.changes || []).length;
     update.basesApplied.push(name);
     update.files += 1;
     update.bytes += r.bytes;
@@ -315,7 +362,7 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
   for (const m of await listTeamNames(root, ["members"], "directory")) {
     if (m === me && !includeSelf) continue;
     const hb = await readTeamJson(root, ["members", m], "heartbeat.json");
-    if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0, clock: hb.data.clock || null };
+    if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0, clock: hb.data.clock || null, left: hb.data.left || null };
     if (!meta.profiles[m]) {
       const p = await readTeamJson(root, ["members", m], "profile.json");
       if (p.status === "ok") update.profiles[m] = p.data;
@@ -359,6 +406,7 @@ function commitReadUpdate(update) {
   Object.assign(meta.profiles, update.profiles);
   meta.basesApplied = [...new Set([...meta.basesApplied, ...update.basesApplied])];
   if (update.admins) meta.admins = update.admins;
+  if (update.removed) meta.removed = { ...(meta.removed || {}), ...update.removed };
   meta.lastReadAt = Date.now();
 }
 
@@ -387,6 +435,13 @@ async function flush(root, me) {
     mem.meta.lastWrittenN = batch.n;
     mem.meta.lastFlushAt = Date.now();
     mem.meta.ownFiles = [...(mem.meta.ownFiles || []), { n: batch.n, at: Date.parse(batch.written) }];
+    // Records are copies once saved to IndexedDB: matched to their previous values by stamp and row.
+    const own = new Map();
+    for (const r of batch.changes) {
+      const p = ownPriors.get(`${r.t}|${r.e}|${r.id}`);
+      if (p) { own.set(r, p); ownPriors.delete(`${r.t}|${r.e}|${r.id}`); }
+    }
+    await recordTeamLog(batch.changes, own);
     measure({ kind: "flush", n: batch.n, records: batch.changes.length, bytes: w.bytes, attempts: w.attempts, ms: Math.round(performance.now() - t0) });
     await save(["inflight"]);
   });
@@ -398,13 +453,19 @@ async function readRound(root, me) {
   const { records, update } = await readFolder(root, me);
   await enqueue(async () => {
     commitReadUpdate(update);
+    for (const [id, r] of Object.entries(update.removed || {})) if (r.by && r.by !== me) await logMemberRemoved(id, r.by, r.at);
+    const logged = records.slice(update.baseRecords);
+    const priors = logged.length ? priorsFor(logged) : null; // before applying: the previous values
     const rows = records.length ? await applyRemote(records) : 0;
+    await recordTeamLog(logged, priors);
     measure({ kind: "read", files: update.files, bytes: update.bytes, records: records.length, rows, ms: Math.round(performance.now() - t0) });
     await save([]);
   });
 }
 
+let leaving = false; // leaveTeam has written the sign-off heartbeat: a round still running must not overwrite it
 async function heartbeat(root, me) {
+  if (leaving) return;
   await writeTeamJson(root, ["members", me], "heartbeat.json",
     { member: me, name: membership.name, at: Date.now(), lastN: mem.meta.lastWrittenN, clock: tick(mem.clock, Date.now()), version: chrome.runtime.getManifest().version });
   mem.meta.lastHeartbeatAt = Date.now();
@@ -482,6 +543,11 @@ export async function runTick(reason = "alarm") {
     const now = Date.now();
     const readEvery = claimsPending() ? CLAIM_READ_EVERY_MS : READ_EVERY_MS;
     if (reason === "now" || now - mem.meta.lastReadAt >= readEvery - 1000) await readRound(root, me);
+    if (mem?.meta.removed?.[me]) {
+      // The Team Admin removed this member: stop sharing, as Leave does (the local copy stays as a solo copy).
+      await leaveLocally();
+      return { removed: true };
+    }
     // Answer a colleague's claim at once: their claim is confirmed when we have written something after it (6.3).
     if (ackDue || now - Math.max(mem.meta.lastHeartbeatAt, mem.meta.lastFlushAt) >= HEARTBEAT_EVERY_MS) await heartbeat(root, me);
     await enqueue(resolveClaims);
@@ -532,7 +598,7 @@ function claimContext(now = Date.now()) {
   const lastSeen = {};
   const readUpTo = {};
   for (const m of Object.keys({ ...meta.cursors, ...meta.hb, ...meta.profiles })) {
-    if (m === me) continue;
+    if (m === me || meta.hb[m]?.left || meta.removed?.[m]) continue; // a member who left takes no part in claims or shares
     const hb = meta.hb[m];
     const fileWall = meta.lastFileWall[m] || 0;
     lastSeen[m] = Math.max(hb?.at || 0, fileWall);
@@ -573,6 +639,7 @@ function holdOrSend(records) {
   const views = new Map();
   let ctx = null;
   for (const r of records) {
+    if (r.op === "set" && ownPriors.size < OWN_PRIORS_MAX) ownPriors.set(`${r.t}|${r.e}|${r.id}`, priorOf(mem.state, r));
     const key = accountKeyOfChange(mem.state, r, normalizeCompanyName);
     let hold = false;
     if (key && claims.mine[key]) {
@@ -910,6 +977,35 @@ export function unassignAllOf(member) {
   });
 }
 
+// Boaz 2026-10-06: the Team Admin removes a member - e.g. an old membership of someone who left before "left" was
+// recorded, or a colleague who stopped without signing off. Their accounts are released and removed/<member>.json
+// tells every PC; they then show under "Former members". If that member's SalesTeam is still running, it leaves the
+// team on its next round (runTick).
+export function removeMember(member) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!isAdmin()) return { ok: false, reason: "not_admin" };
+    if (member === membership.memberId) return { ok: false, reason: "self" };
+    const root = await connectedRoot();
+    if (!root || !inSyncNow()) return { ok: false, reason: "offline" };
+    const now = Date.now();
+    let count = 0;
+    for (const id of Object.keys(mem.state.entities.account || {})) {
+      if (!id.startsWith("@") || !activeAssignments(mem.state, "account", id).some((x) => x.member === member)) continue;
+      pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "unassign", member });
+      count++;
+    }
+    await writeTeamJson(root, ["removed"], `${member}.json`, { member, by: membership.memberId, at: now });
+    await logMemberRemoved(member, membership.memberId, now);
+    mem.meta.removed = { ...(mem.meta.removed || {}), [member]: { at: now, by: membership.memberId } };
+    await save(["state", "outbox"]);
+    await publishSummary();
+    scheduleTick(0);
+    return { ok: true, count };
+  });
+}
+
 // For pages: how many accounts each member has assigned (Settings > Team).
 export function assignmentCounts() {
   return enqueue(async () => {
@@ -1028,9 +1124,47 @@ export function createTeam({ name, teamName }) {
   });
 }
 
+// A contact's name by its extras key, from the member's own workbook (for the join proposal's details).
+function contactNamer(workbook) {
+  const names = new Map();
+  for (const c of workbook?.contacts || []) {
+    const k = c && c.fullName ? contactKeyFor(c.company, c.fullName) : null;
+    if (k && !names.has(k)) names.set(k, c.fullName);
+  }
+  return (k) => names.get(k) || null;
+}
+
+// The keys the join overlap looks at (team-join.js).
+const JOIN_KEYS = ["targetAccounts", "targetAccountExtras", "targetContactExtras", "targetAccountsWorkbook", "results", JOIN_PROPOSALS_KEY];
+
+// Step 6 (R6.7): before joining - what this browser has that the team does not, and what both have that this member
+// has worked on. Reads the folder into a throw-away picture; nothing is saved.
+export function previewJoin() {
+  return enqueue(async () => {
+    if (await loadMembership()) throw new Error("This browser is already in a team - leave it first.");
+    const root = await requireRoot();
+    const team = await readTeamJson(root, [], "team.json");
+    if (team.status !== "ok") throw new Error("This folder has no team in it (team.json is missing or not synced yet).");
+    await startFresh(randomId("m"));
+    try {
+      const { records } = await readFolder(root, "-");
+      for (const r of records) applyChange(mem.state, r);
+      const teamValues = {};
+      for (const key of JOIN_KEYS) teamValues[key] = patchValue(key, undefined, projectKey(mem.state, key));
+      const local = await chrome.storage.local.get(JOIN_KEYS);
+      return { ok: true, ...joinOverlap(local, teamValues, normalizeCompanyName, { contactName: contactNamer(local.targetAccountsWorkbook) }) };
+    } finally {
+      await teamDbClear();
+      mem = null;
+    }
+  });
+}
+
 // A member: this browser's shared keys are REPLACED by the team picture (personal keys stay). The caller
-// (dev page; Settings > Team in step 3) takes a full backup first.
-export function joinTeam({ name }) {
+// (Settings > Team) takes a full backup first. Step 6 (R6.7): `addKeys` - accounts only this member has, which it
+// brings in (they come back after the replace as its own changes); accounts both have that this member worked on
+// become join proposals for the Team Admin, and its contacted leads for them come back too.
+export function joinTeam({ name, addKeys = [] }) {
   return enqueue(async () => {
     if (await loadMembership()) throw new Error("This browser is already in a team - leave it first.");
     const root = await requireRoot();
@@ -1046,9 +1180,16 @@ export function joinTeam({ name }) {
       applyChange(mem.state, r);
       observe(mem.clock, r.t);
     }
+    // A member joining sees the team's history so far (setMembership comes later, so it is set for the log here).
+    membership = m;
+    await recordTeamLog(records.slice(update.baseRecords));
+    membership = null;
     // Every shared key becomes exactly the team's: team rows written, rows the team does not have removed.
+    let brought = { accounts: 0, proposals: 0 };
     await withAccountWriteLock(async () => {
       const values = await chrome.storage.local.get(TEAM_SHARED_KEYS);
+      const local = {};
+      for (const key of JOIN_KEYS) local[key] = values[key];
       const toSet = {};
       const toRemove = [];
       for (const key of TEAM_SHARED_KEYS) {
@@ -1064,7 +1205,31 @@ export function joinTeam({ name }) {
       await setMembership(m);
       if (Object.keys(toSet).length) await chrome.storage.local.set(toSet);
       if (toRemove.length) await chrome.storage.local.remove(toRemove);
+      // What this member brings in, written AFTER the team picture: it differs from the shadow, so the diff sends it
+      // out as this member's own changes.
+      const teamValues = {};
+      for (const key of JOIN_KEYS) teamValues[key] = toSet[key];
+      const overlap = joinOverlap(local, teamValues, normalizeCompanyName, { contactName: contactNamer(local.targetAccountsWorkbook) });
+      const wanted = new Set(addKeys || []);
+      const add = overlap.localOnly.filter((a) => wanted.has(a.key)).map((a) => a.key);
+      const extra = addBackValues(local, teamValues, add, overlap.shared.map((s) => ({ localKey: s.localKey, key: s.key })), normalizeCompanyName, memberId);
+      if (overlap.shared.length) {
+        const proposals = joinProposals(overlap.shared, {
+          memberId, memberName: m.name, at: Date.now(),
+          assigneeOf: (key) => activeAssignments(mem.state, "account", claimIdFor(key))[0]?.member || null,
+        });
+        extra[JOIN_PROPOSALS_KEY] = { ...(teamValues[JOIN_PROPOSALS_KEY] || {}), ...proposals };
+      }
+      if (Object.keys(extra).length) await chrome.storage.local.set(extra);
+      brought = { accounts: add.length, proposals: overlap.shared.length, keys: add };
     });
+    // Boaz 2026-10-06: the accounts this member brings in are assigned to them - they found them, so they work them.
+    let assigned = 0;
+    for (const key of brought.keys) {
+      const r = await assignInner(key, null).catch(() => null);
+      if (r?.ok) assigned++;
+    }
+    brought = { accounts: brought.accounts, proposals: brought.proposals, assigned };
     await writeProfile(root, m);
     await heartbeat(root, memberId);
     // The seller setup came with the team (it is shared), so this member does not walk the Setup wizard - only the
@@ -1080,7 +1245,7 @@ export function joinTeam({ name }) {
     lastError = null;
     await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 });
     const after = await chrome.storage.local.get(["targetAccountsWorkbook", "results"]);
-    return { ok: true, memberId, files: update.files, records: records.length, counts: localCounts(after) };
+    return { ok: true, memberId, files: update.files, records: records.length, counts: localCounts(after), brought };
   });
 }
 
@@ -1090,13 +1255,49 @@ function localCounts(values) {
 }
 
 // The local copy stays as it is (a solo copy); this member's files stay in the folder for the record.
-export function leaveTeam() {
+// Boaz 2026-10-06: leaving hands back this member's assigned accounts and signs off (heartbeat `left`), so colleagues
+// see "left" and the accounts are free - when the folder is reachable. Otherwise the Team Admin uses Release all.
+export async function leaveTeam() {
+  let released = 0;
+  let signedOff = false;
+  leaving = true;
+  try {
+    if (await loadMembership()) {
+      const root = await connectedRoot();
+      if (root && inSyncNow()) {
+        const me = membership.memberId;
+        released = await enqueue(async () => {
+          await ensureLoaded();
+          const now = Date.now();
+          let n = 0;
+          for (const id of Object.keys(mem.state.entities.account || {})) {
+            if (!id.startsWith("@") || !activeAssignments(mem.state, "account", id).some((x) => x.member === me)) continue;
+            pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "unassign" });
+            n++;
+          }
+          if (n) await save(["state", "outbox"]);
+          return n;
+        });
+        for (let i = 0; i < 10 && (mem.inflight || mem.outbox.length); i++) await flush(root, me);
+        await enqueue(async () => {
+          await writeTeamJson(root, ["members", me], "heartbeat.json",
+            { member: me, name: membership.name, at: Date.now(), lastN: mem.meta.lastWrittenN, clock: tick(mem.clock, Date.now()), left: Date.now(), version: chrome.runtime.getManifest().version });
+        });
+        signedOff = !mem.inflight && !mem.outbox.length;
+      }
+    }
+  } catch { /* leaving still goes ahead; the admin can release what is left */ }
+  const done = await leaveLocally().finally(() => { leaving = false; });
+  return { ...done, released, signedOff };
+}
+
+function leaveLocally() {
   return enqueue(async () => {
     await chrome.alarms.clear(ALARM);
     await setMembership(null);
     await teamDbClear();
     await clearTeamFolder();
-    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY]);
+    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY, TEAM_LOG_KEY]);
     lastSummaryJson = null;
     mem = null;
     recentWriteBack.clear();
@@ -1127,7 +1328,9 @@ export async function getTeamSyncStatus() {
         id: m,
         name: meta.profiles[m]?.name || hb?.name || m,
         admin: (meta.admins || []).includes(m),
-        online: Date.now() - lastSeen <= ONLINE_MS,
+        left: hb?.left || meta.removed?.[m]?.at || null,
+        removed: Boolean(meta.removed?.[m]),
+        online: !hb?.left && !meta.removed?.[m] && Date.now() - lastSeen <= ONLINE_MS,
         cursor,
         lastSeen,
         // Design 6.3: a heartbeat counts only once every change it vouches for has been read.
@@ -1195,6 +1398,7 @@ export function handleTeamMessage(message, sendResponse) {
   const reply = (p) => { p.then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message })); return true; };
   switch (message?.type) {
     case "TEAM_CREATE": return reply(createTeam(message));
+    case "TEAM_JOIN_PREVIEW": return reply(previewJoin());
     case "TEAM_JOIN": return reply(joinTeam(message));
     case "TEAM_LEAVE": return reply(leaveTeam());
     case "TEAM_SYNC_NOW": return reply(runTick("now"));
@@ -1208,6 +1412,7 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_UNASSIGN": return reply(unassignAccount(message.key));
     case "TEAM_ASSIGN_DISMISS": return reply(dismissAssignNotice(message.key));
     case "TEAM_UNASSIGN_ALL": return reply(unassignAllOf(message.member));
+    case "TEAM_REMOVE_MEMBER": return reply(removeMember(message.member));
     case "TEAM_ASSIGN_COUNTS": return reply(assignmentCounts());
     default: return null;
   }

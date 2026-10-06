@@ -193,6 +193,63 @@ with its own handle.
   with kept-aside and apply after release; pipeline shares disjoint and covering; a held account refused to a
   colleague's pipeline).
 
+### 2.13 Step 6 as built (1.2.1.11, 2026-10-06)
+- **Join proposals (R6.7, 9.2 step 4):** Join now reads the team's data first and compares (`TEAM_JOIN_PREVIEW`, pure
+  `team-join.js`; accounts matched by normalised name - from `targetAccounts` and the workbook's companies - else by
+  LinkedIn company id). A dialog lists the accounts **only the member has** (contacts, leads, what was done on each),
+  all ticked, with Tick all / Tick none; Cancel changes nothing. After the replace, the ticked accounts are written back
+  (targetAccounts / extras entries, workbook company, contact and initiative rows, contact extras, leads) - a row id
+  that clashes with a team row gets a new one (`<id>-<member>`), its contacts follow. They differ from the shadow, so
+  the normal diff sends them out as the member's own changes. Accounts **both have where the member worked** (a lead
+  Contacted / Responded / Converted, a follow-up date, a Sales Mentor conversation) become proposals in the new shared
+  map key `teamJoinProposals` (`<member>~<account key>`); the member's contacted leads for them come back too, so the
+  team knows who was approached. Accounts both have that the member did not work on: the team's version, nothing asked.
+- **Decisions:** the Team Admin (only) sees a **Join proposal** card per proposal, first in the queue (and in the red
+  dot): who joined, what they had done, who has the account now. Two answers, the proposed owner first: *Give it to
+  Fay* (assigns through `TEAM_ASSIGN`, the colleague's assignment ends) / *Keep with Anna* or *Leave unassigned* - when
+  a colleague already has it assigned, keeping comes first. Either way the proposal is removed on every PC.
+- **LinkedIn badge (R6.5):** a new content script on all of linkedin.com (LinkedIn changes pages without a reload; the
+  URL is checked every 1.5 s, the background asked only when it changes) - inside a team only. On a company page
+  (slug or numeric id against the accounts' LinkedIn link / company id) or a profile (a contact's Contact Link, else a
+  lead's profile) of one of the team's accounts, a small badge bottom-left: "SalesTeam - UBS: assigned to Anna since
+  3 Oct" (red), "assigned to you" (green), "Ben is updating it (since 09:41)", "in the team's list, unassigned" (blue);
+  × hides it on that page. Reads only: it clicks nothing and reads nothing off the page. No new permission
+  (linkedin.com was already a host permission).
+- **Team log (R3.11, 4.3):** built from the change records this PC writes and reads (not from re-reading the folder
+  each time): `team-log.js` (pure) groups one member's records of one kind on one account (or lead / setting) per batch
+  into one line - "Anna changed UBS: status, notes", "removed / restored", "Boaz assigned Roche to Anna", "released",
+  "changed the setting negativeTopics". Claims and releases are left out (a page renews its claim every minute).
+  Stored in `teamLog` (personal, backup-excluded, newest 3000, 90 days). A joining member gets the history in the
+  change files at that moment (the base file is the starting point, not logged). **Activity Log:** a new actor filter
+  *Team (everyone's shared changes)*, shown in a team; *All actors* adds colleagues' lines to my own (mine are already
+  there as User / Extension), the pill shows the member's name.
+- **Added in the live test (Boaz, 2026-10-06):**
+  - *LinkedIn badge:* in a closed shadow root (LinkedIn's CSS turned it grey and hid the close button), a **Hide**
+    button; the account is picked among every key matching the page (one with a team state wins).
+  - *List tags:* a colleague's soft red, mine soft green. *Target Accounts pies:* Pipeline status notes folded to 4
+    lines (Show more), all cards one height, pies at the top, one-line legends (Evidence: Full / Rich / ...).
+  - *Team log:* previous and new values, readable field names (a field's own "...At" stamp folded in), join-proposal
+    bookkeeping in words, member removals logged. *Activity Log filter:* Everything / Me / Automatic / Colleagues /
+    Team: all shared changes; the Actor column says Me / Automatic / the colleague.
+  - *Settings menu* (sidebar of the three main pages) got **Team**.
+  - *Join:* only work the team does not already have counts (a rejoining member holds the team's own data); a
+    contact's or account's manual Contacted / Responded counts and is carried over; the dialog lists each account with
+    what was done. *Decisions:* "Also for Anna's other N join proposals"; **Show details** (each contact / lead /
+    follow-up with name, status, time); the answer is logged like other decisions. Accounts a member brings in are
+    **assigned to them**.
+  - *Leave* releases the member's accounts and signs off (`heartbeat.left`); **Remove from team…** (Team Admin, per
+    colleague): accounts released, `removed/<member>.json`, listed under **Former members**; a removed member's own
+    PC stops sharing on its next round.
+  - *Account status (rule):* a contact set to Contacted / Responded by hand counts for its account too - status,
+    filter, pie and **Last contact** (always the latest of leads and Contacted / Responded marks; "Not contacted"
+    gives no date). The account's dropdown reads "(auto from contacts and leads)". A contact opened from an account
+    goes **Back to <account>**. Extras read through `getTargetAccountExtra` / `getTargetContactExtra` are filled in
+    from the empty default (a carried-over status had no chat history and the contact page threw).
+- **Tests (final):** `test_pure_modules.py` 634; `test_team_sync.py` 125. First build: `test_pure_modules.py` +16 (team log grouping and wording; join overlap, id clash, leads, proposals) =
+  628; `test_team_sync.py` +14 = 115 (Fay joins with her own data: preview, ticked account reaches the admin with a
+  renamed clashing id, unticked does not, contacted lead kept, proposal arrives and its removal reaches Fay, the log
+  names Fay and leaves claims out).
+
 ### 2.12 Step 5b as built (1.2.1.9, 2026-10-05)
 - **Remove admin-only** (2.11): the Remove items in the list and page menus are not shown to a member; bulk edit's
   remove checkbox sits in a collapsed **Advanced** part, hidden for members. Removals record `deletedBy` (team).
@@ -575,7 +632,7 @@ files stay in the folder for the record (the admin can remove the member).
 | 4 | Claims in the UI and the pipeline (claim, confirm, held edits, lost-claim notice, shares) (as built: 2.9) | 1.2.1.7 |
 | 5a | Assign to me / release, admin reassign / release all, badges, Mine / Others / Unassigned / All filter, off-limits checks on list row actions, bulk edit and bulk research, setup read-only for members (D3) (as built: 2.10) | 1.2.1.8 |
 | 5b | Team-wide check on scan / discovery / import, do-not-contact as team data (members add, admin removes), outreach check on the Leads Dashboard; **Remove admin-only** + Removed accounts view with bulk restore (Boaz 2026-10-05, see below) (as built: 2.12) | 1.2.1.9 |
-| 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log | 1.2.1.10 |
+| 6 | Join proposals in Decisions, LinkedIn badge, team log in Activity Log (as built: 2.13) | 1.2.1.11 |
 | 7 | Help, privacy, listing, website, release notes, PRD; test with the real team → **1.2.2** | 1.2.2 |
 
 **Later (advanced mode, after 1.2.2 - Boaz 2026-10-05):** a **queue picker** in place of Mine / Others / Unassigned /

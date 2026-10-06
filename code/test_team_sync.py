@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-sync.js"]
+REAL = ["team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -88,6 +88,7 @@ var chrome = {
 // storage.js stub: one writer at a time is all the test needs.
 function withAccountWriteLock(fn) { return fn(); }
 function normalizeCompanyName(n) { return String(n || '').toLowerCase().trim(); }
+function contactKeyFor(company, fullName) { var c = normalizeCompanyName(company), n = String(fullName || '').toLowerCase().trim(); return c && n ? c + '::' + n : null; }
 
 // team-folder.js stub: FOLDER is the shared folder (path -> text), DB the sync layer's IndexedDB.
 var FOLDER = {}, DB = {}, FAIL_NEXT_WRITES = 0;
@@ -371,7 +372,7 @@ def main():
     # 10. Cleo leaves: sync stops, her data stays, the folder is forgotten on her PC, her files stay in the folder.
     me = cleo.status()["me"]["memberId"]
     r, folder = cleo.call("leaveTeam()", folder)
-    check("leave: ok", r, {"ok": True})
+    check("leave: ok", r.get("ok"), True)
     check("leave: no longer a member", cleo.status(), {"member": False})
     check("leave: her data stays", same(picture(cleo)["targetAccounts"], picture(ben)["targetAccounts"]), True)
     check("leave: the team folder is forgotten on her PC", cleo.e("FOLDER_CLEARED"), True)
@@ -584,6 +585,70 @@ def main():
     r, folder = dora.sync(folder)
     r, folder = eli.sync(folder)
     check("dnc: the admin's removal reaches Eli", names(eli), ["Foo GmbH", "adecco"])
+
+    # Step 6 (R6.7): Fay joins with accounts of her own. Gamma (ticked) comes into the team, Delta (not ticked) does not;
+    # Acme AG, which the team has and where she contacted a lead, becomes a join proposal and her lead is kept.
+    fay = Member("fay", now_offset=11)
+    fay.set_local({
+        "targetAccounts": {"acme ag": {"company": "Acme AG"}, "gamma": {"company": "Gamma"}, "delta": {"company": "Delta"}},
+        "targetAccountsWorkbook": {"companies": [{"companyId": "c-1", "company": "Gamma"}, {"companyId": "c-7", "company": "Delta"}], "contacts": []},
+        "results": {"lead-f1": {"author": "Pia", "company": "Acme AG", "status": "Contacted"}, "lead-f2": {"author": "Max", "company": "Delta", "status": "New"}},
+    })
+    r, folder = fay.call("previewJoin()", folder)
+    check("join preview: accounts only Fay has", sorted(a["key"] for a in r.get("localOnly", [])), ["delta", "gamma"])
+    check("join preview: shared and worked on", [(a["key"], a["worked"]) for a in r.get("shared", [])], [("acme ag", ["1 lead contacted"])])
+    check("join preview: Fay is not in the team yet", fay.local("teamMembership"), None)
+    r, folder = fay.call("joinTeam({ name: 'Fay', addKeys: ['gamma'] })", folder)
+    check("join with own data: ok, 1 brought (assigned to Fay), 1 proposal", (r.get("ok"), r.get("brought")), (True, {"accounts": 1, "proposals": 1, "assigned": 1}))
+    r, folder = fay.sync(folder)
+    fay_id = fay.status()["me"]["memberId"]
+    check("join with own data: Gamma kept, Delta gone", (sorted(fay.local("targetAccounts")), sorted(c["company"] for c in fay.local("targetAccountsWorkbook")["companies"])),
+          (["gamma"], ["Acme AG", "Beta SA", "Gamma"]))
+    gamma_rows = [c for c in fay.local("targetAccountsWorkbook")["companies"] if c["company"] == "Gamma"]
+    check("join with own data: Gamma's clashing id c-1 renamed", [c["companyId"] for c in gamma_rows], ["c-1-%s" % fay_id])
+    r, folder = dora.sync(folder)
+    check("join with own data: Dora gets Gamma", "gamma" in (dora.local("targetAccounts") or {}), True)
+    check("join with own data: Dora's Acme AG row untouched", [c["company"] for c in dora.local("targetAccountsWorkbook")["companies"] if c["companyId"] == "c-1"], ["Acme AG"])
+    check("join with own data: Fay's contacted lead reaches Dora", (dora.local("results") or {}).get("lead-f1", {}).get("status"), "Contacted")
+    check("join with own data: Delta's lead does not", "lead-f2" in (dora.local("results") or {}), False)
+    props = dora.local("teamJoinProposals") or {}
+    check("join proposal: Dora has it", [(v["key"], v["by"], v["byName"]) for v in props.values()], [("acme ag", fay_id, "Fay")])
+    check("join proposal: details name the lead", [(d["what"], d["name"]) for v in props.values() for d in v.get("details", [])], [("lead", "Pia")])
+    log = dora.local("teamLog") or []
+    check("team log: Dora's PC logged Fay's changes", any(x["m"] == fay_id and x.get("mn") == "Fay" and x.get("key") == "gamma" for x in log), True)
+    check("team log: claims are not logged", any(x["op"] in ("claim", "release") for x in log), False)
+    check("team log: new values kept", any(x.get("key") == "gamma" and x.get("after", {}).get("company") == "Gamma" for x in log), True)
+    # The admin declines: the proposal goes on every PC.
+    dora.advance(20000)  # past the clobber window
+    dora.set_local({"teamJoinProposals": {}})
+    r, folder = dora.sync(folder)
+    r, folder = fay.sync(folder)
+    check("join proposal: removal reaches Fay", fay.local("teamJoinProposals") or {}, {})
+    # Boaz 2026-10-06: leaving hands back the leaver's accounts and signs off.
+    r, folder = fay.call("assignAccount('gamma')", folder)
+    r, folder = fay.sync(folder)
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("assignmentCounts()", folder)
+    check("leave: Fay holds Gamma before leaving", r.get("counts", {}).get(fay_id), 1)
+    r, folder = fay.call("leaveTeam()", folder)
+    check("leave: released 1, signed off", (r.get("ok"), r.get("released"), r.get("signedOff")), (True, 1, True))
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("assignmentCounts()", folder)
+    check("leave: Gamma is free for Dora", r.get("counts", {}).get(fay_id), None)
+    st = dora.status()
+    check("leave: Dora sees Fay as left, not online", [(m["name"], bool(m.get("left")), m["online"]) for m in st["members"] if m["id"] == fay_id], [("Fay", True, False)])
+    # Boaz 2026-10-06: the Team Admin removes a member who never signed off (Eli): accounts released, Former members.
+    r, folder = eli.call("assignAccount('beta sa')", folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("removeMember('%s')" % eli_id, folder)
+    check("remove member: ok, 1 account released", (r.get("ok"), r.get("count")), (True, 1))
+    check("remove member: removed/<id>.json written", "removed/%s.json" % eli_id in folder, True)
+    r, folder = dora.sync(folder)
+    st = dora.status()
+    check("remove member: Dora lists Eli as removed", [(bool(m.get("removed")), m["online"]) for m in st["members"] if m["id"] == eli_id], [(True, False)])
+    r, folder = eli.sync(folder)
+    check("remove member: Eli's own PC stops sharing", eli.local("teamMembership"), None)
 
     print()
     for f in _failures:

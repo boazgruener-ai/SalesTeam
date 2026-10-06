@@ -17,7 +17,7 @@ import { withAccountWriteLock } from "./storage.js";
 // this feature's own bookkeeping, transient scan state, and a re-derivable cache. teamMembership (1.2.2) belongs with
 // the team's sync state in IndexedDB and the folder permission, neither of which a backup holds - restoring it alone
 // would make a browser believe it is a team member it no longer is.
-const EXCLUDED_EXACT = new Set(["anthropicApiKey", "lastAutoBackupAt", "lastBackupInfo", "scanAbortRequested", "companyLocationSizeCache", "teamMembership", "teamAccountStates", "teamNotices"]);
+const EXCLUDED_EXACT = new Set(["anthropicApiKey", "lastAutoBackupAt", "lastBackupInfo", "scanAbortRequested", "companyLocationSizeCache", "teamMembership", "teamAccountStates", "teamNotices", "teamLog"]);
 const EXCLUDED_PREFIXES = ["currentScan", "currentJobScan"];
 
 // category id -> { label, detail, keys | test }. A stored key belongs to the first category that claims

@@ -31,7 +31,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2287,6 +2287,87 @@ def test_team_claims(ctx):
           '[null,"assigned","held",null,null]')
 
 
+def test_team_log_and_join(ctx):
+    """1.2.2 step 6: the team log built from change records (R3.11); the join overlap and add-back (R6.7)."""
+    e = lambda x: ctx.eval(x)
+    e("""
+      var T6 = 1759480000000;
+      var n6 = function (n) { return String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+      var LS = newState();
+      applyChanges(LS, [{t: formatStamp(T6, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {companyId: 'c-1', company: 'Acme AG'}}]);
+      var LOG = teamLogEntries([
+        {t: formatStamp(T6 + 1, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {nextActionDueAt: 1, notes: 'x'}},
+        {t: formatStamp(T6 + 2, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {status: 'Won', notes: 'y'}},
+        {t: formatStamp(T6 + 3, 0, 'anna'), e: 'contact', id: 'x:acme ag::ann', op: 'set', f: {deletedAt: 5}},
+        {t: formatStamp(T6 + 4, 0, 'anna'), e: 'account', id: '@acme ag', op: 'claim'},
+        {t: formatStamp(T6 + 5, 0, 'boaz'), e: 'account', id: '@acme ag', op: 'assign', member: 'anna'},
+        {t: formatStamp(T6 + 6, 0, 'boaz'), e: 'setting', id: 'negativeTopics', op: 'set', f: {$v: []}},
+      ], LS, n6);
+      var txt = function (x) { return teamLogText(x, function (k) { return k === 'acme ag' ? 'Acme AG' : k; }, function (m) { return m; }); };
+    """)
+    check("team log: one line per member, change and account; claims left out", e("LOG.length"), 4)
+    e("""
+      var REC = {t: formatStamp(T6 + 7, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {company: 'Acme Group'}};
+      var PRI = new Map([[REC, priorOf(LS, REC)]]);
+      var VL = teamLogEntries([REC], LS, n6, PRI)[0];
+    """)
+    check("team log: previous and new value of a field", e("JSON.stringify([VL.before, VL.after])"), '[{"company":"Acme AG"},{"company":"Acme Group"}]')
+    check("team log: fields of one account's rows together, in words", e("txt(LOG[0])"), "changed Acme AG: Follow-up date, Notes, Status")
+    check("team log: a field's own time stamp is left out", e("JSON.stringify(shownFields(['manualStatus', 'manualStatusAt', 'reviewedAt']).map(fieldName))"), '["Status","Reviewed at"]')
+    check("team log: a contact removed", e("txt(LOG[1])"), "removed Acme AG (a contact)")
+    check("team log: assigned by the admin", e("txt(LOG[2])"), "assigned Acme AG to anna")
+    check("team log: a setting", e("txt(LOG[3])"), "changed the setting negativeTopics")
+    check("team log: kept to the newest TEAM_LOG_KEPT, old ones out",
+          e("appendTeamLog([{at: 1}, {at: T6}], [{at: T6 + 9}], T6 + 10).map(function (x) { return x.at; }).join(',')"), "%d,%d" % (1759480000000, 1759480000009))
+
+    e("""
+      var LOCAL = {
+        targetAccounts: {'acme ag': {company: 'Acme AG'}, 'beta sa': {company: 'Beta SA', linkedinCompanyId: '77'}, 'gamma': {company: 'Gamma'}, 'gone': {company: 'Gone'}},
+        targetAccountExtras: {'gone': {deletedAt: 1}, 'gamma': {nextActionDueAt: 3}},
+        targetContactExtras: {'gamma::eve': {mentorHistory: [1]}},
+        targetAccountsWorkbook: {companies: [{companyId: 'C1', company: 'Acme AG'}, {companyId: 'C2', company: 'Gamma'}],
+          contacts: [{contactId: 'P1', companyId: 'C2', company: 'Gamma', fullName: 'Eve'}]},
+        results: {L1: {company: 'Beta SA', status: 'Contacted'}, L2: {company: 'Gamma', status: 'New'}, L3: {company: 'Acme AG', status: 'New'}},
+      };
+      var TEAM = {
+        targetAccounts: {'beta': {company: 'Beta', linkedinCompanyId: '77'}, 'acme ag': {company: 'Acme AG'}},
+        targetAccountsWorkbook: {companies: [{companyId: 'C2', company: 'Beta'}], contacts: [{contactId: 'P1', company: 'Beta', fullName: 'Bo'}]},
+        results: {},
+      };
+      var OV = joinOverlap(LOCAL, TEAM, n6);
+      var BACK = addBackValues(LOCAL, TEAM, ['gamma'], OV.shared.map(function (s) { return s.localKey; }), n6, 'm1');
+    """)
+    check("join: only-mine accounts listed (removed ones not)", e("OV.localOnly.map(function (a) { return a.key; }).join(',')"), "gamma")
+    check("join: what was done on it", e("OV.localOnly[0].worked.join('; ')"), "a follow-up date; a Sales Mentor conversation")
+    check("join: shared + worked, matched by LinkedIn id -> the team's key", e("JSON.stringify(OV.shared.map(function (s) { return [s.key, s.localKey]; }))"), '[["beta","beta sa"]]')
+    check("join: shared but not worked is no proposal", e("OV.shared.some(function (s) { return s.key === 'acme ag'; })"), False)
+    check("join: brought account back in targetAccounts, team's kept", e("Object.keys(BACK.targetAccounts).sort().join(',')"), "acme ag,beta,gamma")
+    check("join: clashing company id renamed, contact follows", e("JSON.stringify(BACK.targetAccountsWorkbook.contacts[1])"),
+          '{"contactId":"P1-m1","companyId":"C2-m1","company":"Gamma","fullName":"Eve"}')
+    check("join: team's workbook rows untouched", e("BACK.targetAccountsWorkbook.companies[0].company + '|' + BACK.targetAccountsWorkbook.companies[1].companyId"), "Beta|C2-m1")
+    check("join: contact extras of a brought account come along", e("'gamma::eve' in BACK.targetContactExtras"), True)
+    check("join: leads - brought account's and contacted ones of shared accounts", e("Object.keys(BACK.results).sort().join(',')"), "L1,L2")
+    e("""
+      var REJOIN = joinOverlap(
+        {targetAccounts: {'roche': {company: 'Roche'}, 'ubs': {company: 'UBS'}}, results: {R1: {company: 'Roche', status: 'Contacted'}, U1: {company: 'UBS', status: 'Contacted'}}},
+        {targetAccounts: {'roche': {company: 'Roche'}, 'ubs': {company: 'UBS'}}, results: {R1: {company: 'Roche', status: 'New'}, U1: {company: 'UBS', status: 'Contacted'}}}, n6);
+    """)
+    check("join: a lead the team has as New gets the member's Contacted",
+          e("JSON.stringify(addBackValues({results: {R1: {company: 'Roche', status: 'Contacted', contactedBy: 'Annick'}}}, {results: {R1: {company: 'Roche', status: 'New', author: 'Pia'}}}, [], ['roche'], n6, 'm2').results.R1)"),
+          '{"company":"Roche","status":"Contacted","author":"Pia","contactedBy":"Annick"}')
+    check("join: work the team already has does not count (rejoining member)", e("JSON.stringify(REJOIN.shared.map(function (s) { return [s.key, s.worked]; }))"), '[["roche",["1 lead contacted"]]]')
+    e("""
+      var CL = {targetAccounts: {'roche': {company: 'Roche'}}, targetContactExtras: {'roche::ann': {manualStatus: 'Contacted', manualStatusAt: 5}}};
+      var CT = {targetAccounts: {'roche': {company: 'Roche'}}, targetContactExtras: {'roche::ann': {manualStatus: 'Not contacted'}}};
+      var COV = joinOverlap(CL, CT, n6);
+      var CB = addBackValues(CL, CT, [], [{localKey: 'roche', key: 'roche'}], n6, 'm3');
+    """)
+    check("join: a contact set to Contacted counts as work", e("JSON.stringify(COV.shared.map(function (s) { return s.worked; }))"), '[["1 contact marked Contacted"]]')
+    check("join: ... and its status is carried over", e("CB.targetContactExtras['roche::ann'].manualStatus"), "Contacted")
+    check("join: proposals keyed per member and account",
+          e("JSON.stringify(Object.keys(joinProposals(OV.shared, {memberId: 'm1', memberName: 'Eve', at: 1, assigneeOf: function () { return 'boaz'; }})))"), '["m1~beta"]')
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -2330,6 +2411,7 @@ def main():
     test_team_rows(ctx)
     test_team_list_rows(ctx)
     test_team_claims(ctx)
+    test_team_log_and_join(ctx)
 
     print()
     for f in _failures:

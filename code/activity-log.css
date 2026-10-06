@@ -186,3 +186,9 @@ h1 {
 .log-value-expandable {
   cursor: pointer;
 }
+
+/* Team use step 6: a colleague's (or my own) change from the team log. */
+.log-actor-pill.log-actor-team {
+  background: #fdecea;
+  color: #8e1b12;
+}

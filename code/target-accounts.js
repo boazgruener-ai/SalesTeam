@@ -478,6 +478,7 @@ document.getElementById("open-settings-language-btn").addEventListener("click", 
 document.getElementById("open-settings-apikey-btn").addEventListener("click", () => showEmbeddedPage("settings.html#api-key-section", "Settings"));
 document.getElementById("open-settings-backup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#backup-section", "Settings"));
 document.getElementById("open-settings-restore-btn").addEventListener("click", () => showEmbeddedPage("settings.html#restore-section", "Settings"));
+document.getElementById("open-settings-team-btn").addEventListener("click", () => showEmbeddedPage("settings.html#team-section", "Settings"));
 document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
@@ -670,7 +671,9 @@ function renderGenericPieChart(containerEl, slices, { unitLabel = "", onSliceCli
       swatch.className = "pie-legend-swatch";
       swatch.style.background = slice.color;
       const percentText = percentOf > 0 ? ` (${Math.round((slice.count / percentOf) * 100)}%)` : "";
-      row.append(swatch, document.createTextNode(` ${slice.label}: ${slice.count}${percentText}`));
+      // A short legend name (slice.short) keeps every entry on one line; the full name is the tooltip.
+      if (slice.short && !row.title) row.title = slice.label;
+      row.append(swatch, document.createTextNode(` ${slice.short || slice.label}: ${slice.count}${percentText}`));
       if (onSliceClick) row.addEventListener("click", () => onSliceClick(slice.label));
       legend.appendChild(row);
     }
@@ -1023,7 +1026,7 @@ function rawValue(company, column) {
   if (column.id === "accountStatus") {
     const key = normalizeCompanyName(company.company);
     const leads = allLeads.filter((l) => normalizeCompanyName(l.company) === key);
-    return effectiveStatus(leadStatusBucket(leads), accountExtras[key]?.manualStatus);
+    return effectiveStatus(accountLeadBucket(leads, key), accountExtras[key]?.manualStatus);
   }
   if (column.id === "contactStatus") {
     const key = contactKeyFor(company.company, company.fullName);
@@ -3193,7 +3196,9 @@ function computeEvidenceLevelCounts(companies) {
     counts[KNOWN_EVIDENCE_LEVELS.has(c.evidenceStatus) ? c.evidenceStatus
       : accountExtras[normalizeCompanyName(c.company)]?.webResearch ? "Web researched" : "Not yet researched"]++;
   }
-  return EVIDENCE_LEVEL_ORDER.map((label) => ({ label, count: counts[label], color: EVIDENCE_LEVEL_COLORS[label] }));
+  // Legend: "Full", "Rich", ... - "Evidence" is the card's title already (Boaz 2026-10-06: one line per entry).
+  const short = (label) => (label === "Not yet researched" ? "Not researched" : label.replace(/ Evidence$/, ""));
+  return EVIDENCE_LEVEL_ORDER.map((label) => ({ label, short: short(label), count: counts[label], color: EVIDENCE_LEVEL_COLORS[label] }));
 }
 
 // Reported directly: a coverage/status stat that includes every
@@ -3232,6 +3237,34 @@ function effectiveStatus(leadBucket, manualStatus) {
   return (STATUS_RANK[manualStatus] ?? -1) > STATUS_RANK[leadBucket] ? manualStatus : leadBucket;
 }
 
+// Boaz 2026-10-06: a contact set to Contacted / Responded by hand counts for its ACCOUNT too - as a lead of the
+// contact already does - for the account's status and its Last contact date. Per account: the highest such status of
+// its contacts (removed contacts left out) and the latest time one was set. Rebuilt when contactExtras is reloaded.
+const WORKED_MANUAL_STATUSES = new Set(["Contacted", "Responded"]);
+let contactsManualCache = { src: null, map: new Map() };
+function contactsManualOf(companyKey) {
+  if (contactsManualCache.src !== contactExtras) {
+    const map = new Map();
+    for (const [k, v] of Object.entries(contactExtras || {})) {
+      if (!v || v.deletedAt || !WORKED_MANUAL_STATUSES.has(v.manualStatus)) continue;
+      const i = k.indexOf("::");
+      if (i <= 0) continue;
+      const ck = k.slice(0, i);
+      const e = map.get(ck) || { manualStatus: null, manualStatusAt: 0 };
+      if ((STATUS_RANK[v.manualStatus] ?? -1) > (STATUS_RANK[e.manualStatus] ?? -1)) e.manualStatus = v.manualStatus;
+      e.manualStatusAt = Math.max(e.manualStatusAt, v.manualStatusAt || 0);
+      map.set(ck, e);
+    }
+    contactsManualCache = { src: contactExtras, map };
+  }
+  return contactsManualCache.map.get(companyKey) || null;
+}
+
+// What the account's leads AND its contacts' own statuses say, before the account's own manual status is applied.
+function accountLeadBucket(leads, companyKey) {
+  return effectiveStatus(leadStatusBucket(leads), contactsManualOf(companyKey)?.manualStatus);
+}
+
 // Advance-only write, for the automatic "I copied a drafted message from
 // the Mentor" trigger (wired below on each Mentor chat's own agent bubbles)
 // - copying twice, or copying after already manually marking "Responded",
@@ -3251,7 +3284,7 @@ function computeAccountStatusCounts(companies) {
   for (const c of companies) {
     const companyKey = normalizeCompanyName(c.company);
     const leads = allLeads.filter((l) => normalizeCompanyName(l.company) === companyKey);
-    const status = effectiveStatus(leadStatusBucket(leads), accountExtras[companyKey]?.manualStatus);
+    const status = effectiveStatus(accountLeadBucket(leads, companyKey), accountExtras[companyKey]?.manualStatus);
     counts[status]++;
   }
   return ACCOUNT_STATUS_ORDER.map((label) => ({ label, count: counts[label], color: ACCOUNT_STATUS_COLORS[label] }));
@@ -3370,6 +3403,30 @@ function renderReadinessPie() {
   const coverageEl = document.getElementById("pie-targets-coverage");
   coverageEl.textContent = targetsCoverage.length ? `Your targets - ${targetsCoverage.join(" ")}` : "";
   coverageEl.hidden = targetsCoverage.length === 0;
+  updatePieNotesToggle();
+}
+
+// The Pipeline status notes show 4 lines; "Show more" appears only when there is more (the text changes as the
+// pipeline works, so this is re-checked on every redraw and whenever a note changes).
+let pieNotesOpen = false;
+function updatePieNotesToggle() {
+  const box = document.getElementById("pie-readiness-notes");
+  const btn = document.getElementById("pie-readiness-notes-toggle");
+  if (!box || !btn) return;
+  box.classList.toggle("collapsed", !pieNotesOpen);
+  const overflows = pieNotesOpen || box.scrollHeight > box.clientHeight + 1;
+  btn.hidden = !overflows;
+  btn.textContent = pieNotesOpen ? "Show less" : "Show more";
+}
+document.getElementById("pie-readiness-notes-toggle")?.addEventListener("click", () => {
+  pieNotesOpen = !pieNotesOpen;
+  updatePieNotesToggle();
+});
+{
+  const notes = document.getElementById("pie-readiness-notes");
+  if (notes) new MutationObserver(() => updatePieNotesToggle()).observe(notes, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+  // The section is hidden until the data is loaded: measure again once it has a size.
+  if (notes && window.ResizeObserver) new ResizeObserver(() => updatePieNotesToggle()).observe(notes);
 }
 
 function renderAccountsStats() {
@@ -4569,7 +4626,7 @@ function buildEditForm(fields, effectiveRow, onSave, onCancel, statusOpts) {
         // manualStatus, so the lead bucket is exactly what you get. Showing effectiveStatus here meant
         // that on a record with a manual "Contacted" over leads that say "Not contacted", the option
         // read "currently Contacted" and then selecting it displayed "Not contacted" (reported 2026-09-22).
-        optionEl.textContent = opt === MANUAL_STATUS_AUTO_OPTION ? `${opt} - currently ${statusOpts.leadBucket}` : opt;
+        optionEl.textContent = opt === MANUAL_STATUS_AUTO_OPTION ? `${statusOpts.autoLabel || opt} - currently ${statusOpts.leadBucket}` : opt;
         statusSelect.appendChild(optionEl);
       }
       statusSelect.value = statusOpts.manualStatus || MANUAL_STATUS_AUTO_OPTION;
@@ -4773,11 +4830,14 @@ document.getElementById("open-onboarding-link").addEventListener("click", (event
 // "cold" account/contact with no lead at all previously could never show a
 // Last Contact date no matter what the user actually did, since this only
 // ever read from lead.statusUpdatedAt.
-function lastCommunicationFor(leadsForEntity, manualStatusAt) {
+// manuals: extras-like { manualStatus, manualStatusAt } - the entity's own, and for an account its contacts'
+// (contactsManualOf). Only Contacted / Responded counts: setting "Not contacted" by hand is no contact. The latest
+// time wins (Boaz 2026-10-06: contact marked at 15:00, its lead's draft sent at 15:02 -> 15:02).
+function lastCommunicationFor(leadsForEntity, ...manuals) {
   const contacted = leadsForEntity
     .filter((l) => ["Contacted", "Responded", "Converted"].includes(l.status))
     .map((l) => l.statusUpdatedAt || 0);
-  if (manualStatusAt) contacted.push(manualStatusAt);
+  for (const m of manuals) if (m && WORKED_MANUAL_STATUSES.has(m.manualStatus) && m.manualStatusAt) contacted.push(m.manualStatusAt);
   return contacted.length > 0 ? Math.max(...contacted) : null;
 }
 
@@ -4794,6 +4854,7 @@ function lastCommunicationFor(leadsForEntity, manualStatusAt) {
 // the override entirely (manualStatus: null), handing status back to
 // whatever leads alone say.
 const MANUAL_STATUS_AUTO_OPTION = "(auto from leads)";
+const ACCOUNT_STATUS_AUTO_LABEL = "(auto from contacts and leads)";
 
 // Rule 2026-10-06: a change is saved only when the user presses Save - everywhere. These page-card controls (Status,
 // SalesTeam Priority, Follow-up due) each get a small Save button, disabled until the value differs from what is
@@ -4828,7 +4889,9 @@ window.addEventListener("beforeunload", (event) => {
   if (pending) { event.preventDefault(); event.returnValue = ""; }
 });
 
-function statusFieldNode(leadBucket, manualStatus, onSetManual) {
+// autoLabel: what "no manual status" is called - an account's status comes from its contacts and leads (Boaz
+// 2026-10-06: "(auto from leads)" read as if the contacts did not count), a contact's from its leads.
+function statusFieldNode(leadBucket, manualStatus, onSetManual, autoLabel = MANUAL_STATUS_AUTO_OPTION) {
   const wrap = document.createElement("div");
   wrap.className = "status-field-wrap";
 
@@ -4844,7 +4907,7 @@ function statusFieldNode(leadBucket, manualStatus, onSetManual) {
   for (const opt of [MANUAL_STATUS_AUTO_OPTION, "Contacted", "Responded"]) {
     const option = document.createElement("option");
     option.value = opt;
-    option.textContent = opt;
+    option.textContent = opt === MANUAL_STATUS_AUTO_OPTION ? autoLabel : opt;
     select.appendChild(option);
   }
   const saved = manualStatus || MANUAL_STATUS_AUTO_OPTION;
@@ -5162,7 +5225,7 @@ function createAgentChat({ buildSystemPrompt, historyEl, statusEl, inputEl, send
 
   return {
     async init() {
-      history = await getHistoryFn();
+      history = (await getHistoryFn()) || [];
       render();
     },
   };
@@ -6325,13 +6388,13 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
     }, () => {
       accountEditMode = false;
       renderAccountView(companyKey);
-    }, { leadBucket: leadStatusBucket(companyLeads), manualStatus: accountExtras[companyKey]?.manualStatus || null }));
+    }, { leadBucket: accountLeadBucket(companyLeads, companyKey), manualStatus: accountExtras[companyKey]?.manualStatus || null, autoLabel: ACCOUNT_STATUS_AUTO_LABEL }));
   } else {
     const accountManualStatus = accountExtras[companyKey]?.manualStatus || null;
     overviewEl.appendChild(buildOverviewCard([
       {
         label: "Status",
-        node: statusFieldNode(leadStatusBucket(companyLeads), accountManualStatus, async (newStatus) => {
+        node: statusFieldNode(accountLeadBucket(companyLeads, companyKey), accountManualStatus, async (newStatus) => {
           await saveTargetAccountExtra(companyKey, { manualStatus: newStatus, manualStatusAt: newStatus ? Date.now() : null });
           appendActivityLog({
             actor: "user",
@@ -6341,7 +6404,7 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
           });
           await loadWorkbook();
           await renderAccountView(companyKey);
-        }),
+        }, ACCOUNT_STATUS_AUTO_LABEL),
       },
       {
         label: "SalesTeam Priority",
@@ -6394,7 +6457,7 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
       { label: "Local / Global", value: effectiveCompany.targetCountryRelationship || localizeTypeWording(effectiveCompany.companyType) },
       { label: "Company Type", value: effectiveCompany.targetCountryRelationship ? localizeTypeWording(effectiveCompany.companyType) : null },
       { label: "Budget", value: [effectiveCompany.aiInvestmentGlobal, effectiveCompany.aiInvestmentSwitzerland].filter(Boolean).join(" / ") || null },
-      { label: "Last contact", value: formatDateTime(lastCommunicationFor(companyLeads, accountExtras[companyKey]?.manualStatusAt)) },
+      { label: "Last contact", value: formatDateTime(lastCommunicationFor(companyLeads, accountExtras[companyKey], contactsManualOf(companyKey))) },
       { label: "Follow-up due", node: dueDateFieldNode(dueDateInputEl, dueDateClearBtnEl) },
       { label: "Top initiatives", value: effectiveCompany.topAiInitiatives, long: true },
     ]));
@@ -6420,6 +6483,7 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
   if (startInEdit) contactEditMode = true;
   const contact = currentContactRow();
   document.getElementById("contact-title").textContent = contact.fullName || "(unknown contact)";
+  paintContactBackLink();
 
   const contactLeads = findLeadsForContact(contact, allLeads);
   const contactOverrides = contactExtras[contactKey]?.overrides || {};
@@ -6499,7 +6563,7 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
       { label: "Source Evidence Quality", value: effectiveContact.evidenceQuality },
       { label: "Source Last Verified", value: formatExcelDate(effectiveContact.lastVerified) },
       { label: "Bio Page", value: effectiveContact.profileUrl, link: true },
-      { label: "Last contact", value: formatDateTime(lastCommunicationFor(contactLeads, contactExtras[contactKey]?.manualStatusAt)) },
+      { label: "Last contact", value: formatDateTime(lastCommunicationFor(contactLeads, contactExtras[contactKey])) },
       { label: "Follow-up due", node: dueDateFieldNode(dueDateInputEl, dueDateClearBtnEl) },
       { label: "Relevance", value: effectiveContact.aiRelevance, long: true },
     ]));
@@ -6641,9 +6705,28 @@ document.getElementById("account-back-link").addEventListener("click", (e) => {
   e.preventDefault();
   location.hash = "";
 });
+// Boaz 2026-10-06: a contact opened from an account's Contacts list goes back to THAT account ("Back to Glencore"),
+// not to Target Contacts. Remembered when the page moves from #account=<key> to #contact=<key>; any other way in
+// (the Target Contacts list, a link, a reload) keeps the Target Contacts default.
+let contactBackAccountKey = null;
+function noteContactCameFrom(oldUrl, newUrl) {
+  const hashOf = (u) => { try { return new URL(u).hash.replace(/^#/, ""); } catch { return ""; } };
+  const from = hashOf(oldUrl);
+  const to = hashOf(newUrl);
+  if (!to.startsWith("contact=")) return;
+  contactBackAccountKey = from.startsWith("account=") ? decodeURIComponent(from.slice("account=".length)) : null;
+}
+function paintContactBackLink() {
+  const link = document.getElementById("contact-back-link");
+  if (!link) return;
+  const company = contactBackAccountKey
+    ? (workbook.companies || []).find((c) => normalizeCompanyName(c.company) === contactBackAccountKey)?.company
+    : null;
+  link.textContent = company ? `← Back to ${company}` : "← Back to Target Contacts";
+}
 document.getElementById("contact-back-link").addEventListener("click", (e) => {
   e.preventDefault();
-  location.hash = "contacts";
+  location.hash = contactBackAccountKey ? `account=${encodeURIComponent(contactBackAccountKey)}` : "contacts";
 });
 
 // ---- Accounts-only / contacts-only CSV (1.2.1 step 7) ----
@@ -6762,7 +6845,7 @@ document.getElementById("hubspot-export-btn").addEventListener("click", async ()
     await askConfirm("There are no accounts to export for this choice.", { okLabel: "OK", cancelLabel: "Close" });
     return;
   }
-  const statusOfCompany = (c) => effectiveStatus(leadStatusBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company))), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
+  const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
   const statusOfContact = (c) => effectiveStatus(leadStatusBucket(findLeadsForContact(c, allLeads)), contactExtras[contactKeyFor(c.company, c.fullName)]?.manualStatus);
   const files = buildHubspotFiles(companies, contacts, statusOfCompany, statusOfContact);
   const stamp = new Date().toISOString().slice(0, 10);
@@ -7187,7 +7270,8 @@ document.getElementById("contact-actions-btn").addEventListener("click", (event)
 // fires either way, so calling it here too (function hoisted, defined
 // below) covers both cases: a real reload (init() calls it) and a
 // same-document hash-only change (this listener calls it).
-window.addEventListener("hashchange", () => {
+window.addEventListener("hashchange", (event) => {
+  noteContactCameFrom(event.oldURL, location.href);
   route();
   openActionFromHash();
 });

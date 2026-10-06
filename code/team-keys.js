@@ -29,6 +29,8 @@ export const TEAM_MAP_KEYS = [
   { key: "results", e: "lead", prefix: "", personal: PERSONAL_LEAD_FIELDS },
   { key: "discoveryNameDecisions", e: "setting", prefix: "discoveryNameDecisions:" },
   { key: "companyLocationSizeCache", e: "setting", prefix: "companyLocationSizeCache:" },
+  // step 6 (R6.7): a joining member's claims on accounts the team already has - the Team Admin decides in Decisions
+  { key: "teamJoinProposals", e: "setting", prefix: "teamJoinProposals:" },
 ];
 
 export const TEAM_WHOLE_KEYS = [
@@ -71,7 +73,7 @@ export const TEAM_PERSONAL_KEYS = [
   "targetAccountsImportedAt", "targetAccountsImportedFileName", "targetAccountsWorkbookImportedAt",
   "companyExclusionsMigrated", "locationHeuristicV2Migrated", "locationHeuristicV3Migrated",
   // the team layer's own state
-  "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices",
+  "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices", "teamLog",
 ];
 
 export function teamKeyKind(key) {
