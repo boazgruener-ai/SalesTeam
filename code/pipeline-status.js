@@ -85,6 +85,7 @@ const WHY = {
   linkedin_logged_out: "Stopped because LinkedIn is not logged in in this browser. Log in at linkedin.com - it tries again by itself.",
   interrupted: "It was interrupted (the browser or the extension was restarted). Everything already found is saved.",
   error: "Stopped because of an error",
+  team_offline: "Stopped because the team folder is not connected on this PC (or not in sync). In a team, SalesTeam prepares accounts only while colleagues can see what it works on - keep a SalesTeam page or the side panel open.",
 };
 
 export function pipelineResultText(s) {

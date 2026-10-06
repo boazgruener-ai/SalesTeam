@@ -101,7 +101,7 @@ add_bullets(doc, [
 doc.add_heading("3. Non-goals", level=2)
 add_bullets(doc, [
     "Not a full CRM. No pipeline stages beyond a simple status label, no deal value/forecasting, no team "
-    "features (single-user, local-only storage) - team use is a planned future milestone, see section 8.",
+    "features beyond team use - since 1.2.2 a team shares its data through a OneDrive folder it owns (section 6.23); no server, no CRM-style roles beyond Team Admin.",
     "Never sends a message on the user's behalf. Drafts are generated for copy-paste only.",
     "No timer-driven scanning. Every Posts/Jobs scan is a manual click. Account preparation (1.2.0 pipeline) "
     "runs by itself only after the user switches it on once, only while Chrome is open, visibly, within the "
@@ -1876,12 +1876,40 @@ add_bullets(doc, [
     'One top status bar - running and waiting jobs show in one bar at the top of every page; pop-ups only for decisions and finished jobs.',
 ])
 
+doc.add_heading('6.23 Team use (v1.2.2)', level=3)
+doc.add_paragraph('1.2.2 lets a whole sales team work on one set of accounts, contacts and leads (posts) through a OneDrive folder the team owns (Option A - no SalesTeam server, no sign-in, no IT consent). It ships phase 1 (shared data, no collisions) and phase 2 basic mode (Team Admin, Assign to me / release). The requirements (R1-R6, Q1-Q6) are in TEAM_USE_REQUIREMENTS.md; the design, its decisions (D1-D6), the step-0 measurements and each step as built in TEAM_USE_DESIGN.md.')
+p = doc.add_paragraph()
+p.add_run('Data layer').bold = True
+add_bullets(doc, [
+    "Shared folder - every member's SalesTeam writes its own append-only change files (members/<id>/changes/c-<n>.json) and reads everyone else's; one writer per file, so OneDrive never has to merge. Retry with read-back; empty or unparsable files are skipped and read again later. Daily compaction into base snapshots.",
+    'Merge - chrome.storage.local stays the working copy. The sync layer (team-sync.js, in the background) diffs every write to a shared key against a shadow copy and turns it into per-field changes with hybrid-logical-clock stamps; team-merge.js (pure) merges them field by field, last writer wins, the same on every PC. No existing write site was changed.',
+    'Shared and personal keys - team-keys.js classifies every storage key once: shared = workbook, account and contact extras, leads (posts) without drafts and Sales Mentor history, Setup, templates, rules; personal = API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn limits and counters, web budget, Activity Log.',
+    'Timers - a chrome.alarms alarm every 30 s (the only alarm, team members only) drives writes, reads every 15 s and a heartbeat every 60 s. The folder permission lasts while a SalesTeam page or the side panel is open; with “Allow on every visit” it survives a Chrome restart, otherwise the top bar asks to reconnect.',
+])
+p = doc.add_paragraph()
+p.add_run('Working together').bold = True
+add_bullets(doc, [
+    "Claims - the first change to an unassigned account claims it (by company key); the claim is confirmed once every active member's heartbeat after it has been read (earliest claim wins). Changes are held on the PC while “Checking with the team…”; a lost claim retracts them, keeps them aside and offers Apply my changes now. Claims expire after 5 minutes idle.",
+    'Assign to me / Release - in every account menu (one shared action set for list row and page). An assigned account is off-limits to colleagues - edits, its contacts, its leads (posts) and their pipelines - and readable by all. Badges Mine / name, filter Mine / Others / Unassigned / All, LinkedIn badge on company and profile pages (closed shadow root, Hide). The pipelines share the unassigned accounts by rendezvous hashing.',
+    "Team Admin - the creator. Owns the Setup and rules (read-only for members, D3), Remove and Restore (Removed… view, soft deletes with who and when), Reassign to… and Release all, join proposals in Decisions, Remove from team. The admin is blocked from a colleague's account like anyone else; the path is Reassign to themselves, and the member is notified in the top bar.",
+    "Outreach check - a colleague's lead (post) cannot be drafted, copied or re-statused; Contacted records contactedBy; a second approach to a person a colleague contacted asks first. Scan, discovery and import mark companies the team already has.",
+])
+p = doc.add_paragraph()
+p.add_run('Joining, leaving, seeing').bold = True
+add_bullets(doc, [
+    "Create / join / leave - Settings > Team with numbered steps; a full backup first. Join replaces the shared keys with the team's; the member ticks own accounts the team lacks (added, assigned to them), and shared accounts the member had worked on become join proposals for the admin. Leave keeps a solo copy, releases the member's assignments and signs off.",
+    'Top bar and Settings > Team - reconnect, not connected, and “Not in sync” after 2 minutes of failed rounds (changes blocked, reading open); members table with role, online, assigned count, Sync now.',
+    "Team log - colleagues' changes with before and after; Activity Log filter Everything / Me / Automatic / Colleagues / Team.",
+    'Not in 1.2.2 - advanced mode - admin-defined queues (territory, VIP, global) with members per queue and automatic assignment rules, replacing the Mine / Others filter (TEAM_USE_DESIGN.md section 11); a Microsoft Graph data layer (Option B) with real locks.',
+])
+
 doc.add_heading("7. Non-functional requirements", level=2)
 add_bullets(doc, [
-    "No timers, one standing consent — no alarms. Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.",
+    "No timers, one standing consent — the only alarms use is team sync (1.2.2, team members only; it never starts LinkedIn work). Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.",
     "Local-first privacy — all data in chrome.storage.local; the only outbound calls are to linkedin.com "
     "(reading pages already open) and api.anthropic.com (only when AI features are used, with the user's "
-    "own key). No server operated by this project.",
+    "own key). No server operated by this project. Team use (1.2.2) also writes shared data to a OneDrive "
+    "folder the team owns, on the member's own disk; OneDrive syncs it.",
     "No remote code — no bundler-fetched or eval'd remote JavaScript (a Chrome Web Store policy "
     "requirement); Dashboard's pie charts are hand-drawn inline SVG rather than a chart library for this "
     "reason.",
@@ -2888,12 +2916,12 @@ add_bullets(doc, [
     "company name, so alias-keyed duplicates never enter the count.",
 ])
 add_bullets(doc, [
-    ('Future milestone (parked, 2026-09-19, NOT started): use by a whole sales team, not one salesperson.', " " + "The trigger: providing SalesTeam to the members of the user's wife's sales team, several of whom work in the same region and possibly on the same accounts. Today it is single-user by design (all data in one browser's local storage - see Non-goals), so two people would each hold their own diverging copy. This needs its own design and plan before any code. Proposed first step (the user's own suggestion): keep all the data the extension uses in a shared OneDrive folder that every team member's extension reads and writes, so the whole team sees the same accounts, contacts, leads and functionality. Not yet analysed: how to share, modify and act on that data without collisions or inconsistencies. Three common strategies for avoiding collisions, as listed by the user: (1) everyone can access everything, with a lock on the entity (account, contact, lead...) to prevent write races; (2) a person must first request/assign an entity to themselves, which puts it in their work queue, and only they work it - suits work that flows in continuously and is similar for everyone; (3) fixed assignment of accounts to users - no overlap or races, but resources are used badly (one person overloaded while another idles, or one person's absence stalls their whole book). The user's current preference is option 2 (believed easier than option 1, and it uses the team's capacity well). Beyond that, a real team has a leader: a team-leader/admin role that sees everything, assigns accounts and work, and defines users and roles - which means role-based access to the tool, and then admin and operations dashboards and reports. All of this is a large step in its own right and must be planned as a milestone; the shared-folder step is only the possible first stage. Related groundwork already in place (2026-09-19): the full backup (one dated zip of everything, with CSV spreadsheets) and the user-chosen backup folder (File System Access) - the same folder-handle approach may be a starting point for a shared folder, but sharing live data is a much harder problem than backing it up, and that comparison has not been analysed yet."),
+    ('Future milestone (parked, 2026-09-19, NOT started): use by a whole sales team, not one salesperson.', " " + "Update: shipped in 1.2.2 as phase 1 + basic mode (section 6.23); advanced-mode queues remain open. The trigger: providing SalesTeam to the members of the user's wife's sales team, several of whom work in the same region and possibly on the same accounts. Today it is single-user by design (all data in one browser's local storage - see Non-goals), so two people would each hold their own diverging copy. This needs its own design and plan before any code. Proposed first step (the user's own suggestion): keep all the data the extension uses in a shared OneDrive folder that every team member's extension reads and writes, so the whole team sees the same accounts, contacts, leads and functionality. Not yet analysed: how to share, modify and act on that data without collisions or inconsistencies. Three common strategies for avoiding collisions, as listed by the user: (1) everyone can access everything, with a lock on the entity (account, contact, lead...) to prevent write races; (2) a person must first request/assign an entity to themselves, which puts it in their work queue, and only they work it - suits work that flows in continuously and is similar for everyone; (3) fixed assignment of accounts to users - no overlap or races, but resources are used badly (one person overloaded while another idles, or one person's absence stalls their whole book). The user's current preference is option 2 (believed easier than option 1, and it uses the team's capacity well). Beyond that, a real team has a leader: a team-leader/admin role that sees everything, assigns accounts and work, and defines users and roles - which means role-based access to the tool, and then admin and operations dashboards and reports. All of this is a large step in its own right and must be planned as a milestone; the shared-folder step is only the possible first stage. Related groundwork already in place (2026-09-19): the full backup (one dated zip of everything, with CSV spreadsheets) and the user-chosen backup folder (File System Access) - the same folder-handle approach may be a starting point for a shared folder, but sharing live data is a much harder problem than backing it up, and that comparison has not been analysed yet."),
 ])
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.0.51."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.2."
 )
 
 for section in doc.sections:

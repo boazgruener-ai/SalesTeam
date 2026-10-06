@@ -18,6 +18,7 @@ export const DECISION_KIND_LABELS = {
   duplicate: "Possible duplicate",
   lacking_evidence: "Lacking evidence",
   finding: "Web finding",
+  join_proposal: "Join proposal",
 };
 
 // Bumped when a pipeline rule changes in a way that makes earlier failed attempts worth retrying once

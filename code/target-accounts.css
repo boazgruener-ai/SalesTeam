@@ -573,6 +573,14 @@ details.nav-group > div > .nav-item {
   margin-bottom: 20px;
 }
 
+/* Pipeline status notes: 4 lines unless opened (12px text, 1.4 line height). */
+.pie-notes { line-height: 1.4; }
+.pie-notes .pie-note { line-height: 1.4; }
+.pie-notes.collapsed { max-height: calc(4 * 1.4 * 12px + 6px); overflow: hidden; }
+.pie-notes-toggle { display: block; margin: 4px auto 0; border: 0; background: none; padding: 0; color: var(--blue);
+  font-size: 12px; font-weight: 600; cursor: pointer; }
+.pie-notes-toggle:hover { text-decoration: underline; }
+
 .pie-card {
   flex: 1;
   max-width: 340px;
@@ -588,26 +596,30 @@ details.nav-group > div > .nav-item {
   color: var(--gray);
 }
 
+/* Boaz 2026-10-06: every card the same height (the row stretches them), each pie at the top under its title, and
+   every legend entry on one line. */
 .pie-wrap {
   display: flex;
-  align-items: center;
-  gap: 16px;
+  align-items: flex-start;
+  gap: 14px;
 }
 
 .pie-wrap svg {
-  width: 120px;
-  height: 120px;
+  width: 110px;
+  height: 110px;
   flex: none;
 }
 
 .pie-legend {
   flex: 1;
+  min-width: 0;
   font-size: 12px;
 }
 
 .pie-legend-row {
   display: flex;
   align-items: center;
+  white-space: nowrap;
   gap: 6px;
   cursor: default;
   padding: 2px 0;
@@ -2051,4 +2063,150 @@ thead .actions-col {
   font-size: 11px;
   color: var(--gray);
   margin-top: 2px;
+}
+
+/* Team use 1.2.2 step 4 (team-claims-ui.js): who is updating this account, held / kept-aside changes. */
+.team-claim-notice {
+  margin: 8px 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 2px solid;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.team-claim-notice p { margin: 0 0 4px; }
+.team-claim-notice p:last-of-type { margin-bottom: 0; }
+.team-claim-blocked { background: #fdeaea; border-color: #b3261e; color: #8c1d18; }
+.team-claim-checking { background: #e8f0fe; border-color: #1a56c4; color: #133f8f; }
+.team-claim-aside { background: #fff4e0; border-color: #b26a00; color: #7a4800; }
+.team-claim-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-weight: 400; }
+.team-claim-actions button.secondary { background: #fff; color: #333; border: 1px solid var(--border); }
+/* A colleague holds the account: its controls take no clicks; links still do (reading is never blocked). */
+.team-blocked { pointer-events: none; opacity: 0.75; }
+.team-blocked a[href] { pointer-events: auto; }
+
+/* Team use 1.2.2 step 5 (design 7): the assignment line on the account / contact page, list badges, the owner filter. */
+.team-claim-notice:not(.team-claim-blocked):not(.team-claim-checking):not(.team-claim-aside) {
+  background: #f6f8fb; border: 1px solid var(--border); font-weight: 400; padding: 8px 14px;
+}
+.team-assign-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; font-weight: 400; color: #333; }
+.team-assign-row:last-child { margin-bottom: 0; }
+.team-assign-label { font-weight: 600; margin-right: 4px; }
+.team-assign-row button { padding: 3px 10px; font-size: 12px; }
+.team-assign-row button.secondary { background: #fff; color: #333; border: 1px solid var(--border); }
+.team-assign-row select { font-size: 12px; padding: 2px 4px; }
+.team-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  white-space: nowrap; vertical-align: middle; border: 1px solid transparent;
+}
+.team-badge-mine { background: #e6f4ea; color: #1e6b34; border-color: #a8d5b5; }
+.team-badge-other { background: #fce8e6; color: #a8322a; border-color: #f2c4bf; } /* soft red, like the LinkedIn badge (Boaz 2026-10-06) */
+.team-badge-busy { background: #fff4e0; color: #7a4800; border-color: #e8c27a; }
+.team-owner-filter[hidden] { display: none; }
+.team-owner-filter { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-right: 8px; vertical-align: middle; }
+.team-owner-filter button { border: none; border-right: 1px solid var(--border); background: #fff; color: #333; padding: 4px 10px; font-size: 12px; border-radius: 0; cursor: pointer; }
+.team-owner-filter button:last-child { border-right: none; }
+.team-owner-filter button.active { background: #1a56c4; color: #fff; }
+
+/* Team use 1.2.2 step 5b: bulk edit's Advanced part; the Removed dialog. */
+.bulk-edit-advanced { margin: 4px 0 8px; }
+.bulk-edit-advanced summary { cursor: pointer; color: #555; font-size: 12.5px; }
+.bulk-edit-advanced[hidden] { display: none; }
+.removed-dialog { width: min(900px, 92vw); }
+.removed-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin: 6px 0 10px; }
+.removed-tabs button { border: none; border-right: 1px solid var(--border); background: #fff; color: #333; padding: 4px 12px; font-size: 12.5px; border-radius: 0; cursor: pointer; }
+.removed-tabs button:last-child { border-right: none; }
+.removed-tabs button.active { background: #1a56c4; color: #fff; }
+.removed-table-wrap { max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.removed-table-wrap table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.removed-table-wrap th { position: sticky; top: 0; background: #f6f8fb; text-align: left; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+.removed-table-wrap td { border-top: 1px solid #eef0f3; padding: 5px 8px; vertical-align: top; }
+.removed-table-wrap td.removed-note { color: #777; }
+.removed-table-wrap .removed-empty { padding: 14px; color: #777; }
+#removed-btn[hidden] { display: none; }
+.team-assign-lost button { margin-left: 6px; padding: 1px 10px; font-size: 12px; background: #fff; color: #333; border: 1px solid var(--border); }
+
+/* Rule 2026-10-06 (explicit Save): shown beside Status / SalesTeam Priority / Follow-up due while the picked value
+   differs from what is stored. */
+.field-unsaved-hint {
+  font-size: 12px;
+  font-style: italic;
+  color: #b45309;
+}
+
+.due-date-field .priority-override-set-btn {
+  margin-left: 6px;
+}
+
+/* 1.2.2 (Boaz, 2026-10-06): only the table scrolls - the title, the pie charts, the controls and the filter chips stay
+   in place on every dashboard, and the table's header row stays at its top.
+   It also ends the "whole page scrolls" bug: the top status bar puts a spacer above #app-shell, which was 100vh tall by
+   itself, so the document grew by the bar's height and scrolled as a whole (menu included). The body is now one
+   viewport tall and #app-shell takes what the spacer leaves.
+   A window too short for the fixed parts plus a minimal table (min-height below) falls back to scrolling #app-main. */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+#app-shell {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
+/* The status bar's spacer is an empty div: as a flex item it would shrink to nothing and the bar would cover the top
+   of the page (Boaz, 2026-10-06). */
+#status-bar-spacer {
+  flex-shrink: 0;
+}
+#embedded-page-wrap {
+  height: 100%;
+}
+#app-main {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 16px;
+}
+#page-native-content:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#page-native-content > * {
+  flex-shrink: 0;
+}
+#list-view:not([hidden]),
+#contacts-list-view:not([hidden]) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#list-view > *,
+#contacts-list-view > * {
+  flex-shrink: 0;
+}
+#list-view > #table-wrap,
+#contacts-list-view > #contacts-table-wrap {
+  flex: 1 1 auto;
+  min-height: 240px;
+  overflow: auto;
+}
+/* Sticky header: border-collapse drops a sticky cell's own border while scrolled, so the line under it is a shadow. */
+#companies-table thead th,
+#contacts-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: inset 0 -2px 0 var(--border);
+}
+#companies-table thead th.actions-col,
+#contacts-table thead th.actions-col {
+  right: 0;
+  z-index: 4;
+  box-shadow: inset 0 -2px 0 var(--border), -6px 0 6px -6px rgba(0, 0, 0, 0.2);
 }

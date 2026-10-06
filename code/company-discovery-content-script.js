@@ -153,7 +153,7 @@ async function runSearchResultsScrape() {
     url: location.href.split("?")[0],
     results,
     caughtError,
-  });
+  }).catch(() => {});
 }
 
 // Location fallback - confirmed live (2026-09-15) against real company
@@ -232,7 +232,7 @@ async function runLocationFallback() {
     city: found?.city || null,
     linkedinCompanyId: companyId,
     caughtError,
-  });
+  }).catch(() => {});
 }
 
 async function run() {

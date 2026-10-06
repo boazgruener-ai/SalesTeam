@@ -15,6 +15,7 @@ import { DECISION_TAKEN_KEY } from "./decisions-dot.js";
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
   "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
+  "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Admin's join proposals
 ]);
 
 const CHOICES = {
@@ -33,7 +34,11 @@ const KIND_PLURAL = {
   duplicate: ["possible duplicate", "possible duplicates"],
   lacking_evidence: ["account lacking evidence", "accounts lacking evidence"],
   finding: ["web finding", "web findings"],
+  join_proposal: ["join proposal", "join proposals"],
 };
+
+// A join proposal's two answers depend on the account (who has it now) - the item carries them (team-proposals.js).
+const choicesOf = (item) => item.choices || CHOICES[item.kind];
 
 let items = [];
 let skipped = [];      // ids skipped while this page is open, in the order they were skipped
@@ -144,6 +149,22 @@ function bodyFor(item) {
       stops retrying until something new arrives for it (a re-import, a Discovery result, an edit).
       <strong>Remove</strong> hides it everywhere; nothing is permanently erased.</p>`;
   }
+  if (item.kind === "join_proposal") {
+    const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
+    return `
+      <p><strong>${esc(p.byName)}</strong> joined the team${when ? ` on ${esc(when)}` : ""} with this account already in
+      their own list, and had worked on it: ${esc((p.worked || []).join(", ") || "yes")}.</p>
+      <table class="compare">
+        <tr><th>Now</th><td>${p.current ? `Assigned to ${esc(p.current)}` : "Unassigned"}</td></tr>
+        <tr><th>Proposed</th><td>Assigned to ${esc(p.byName)}</td></tr>
+      </table>
+      ${(p.details || []).length ? `<details class="join-details"><summary>Show details (${p.details.length})</summary>
+        <table class="compare">${p.details.map((d) => `<tr><th>${esc(d.name)}</th><td>${esc(d.status)}${d.at ? ` <span class="note">${esc(new Date(d.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</span>` : ""}</td><td class="note">${esc({ lead: "lead (post)", contact: "contact", account: "account", "follow-up": "follow-up date", conversation: "Sales Mentor" }[d.what] || "")}</td></tr>`).join("")}</table>
+      </details>` : ""}
+      <p class="note"><strong>Give it to ${esc(p.byName)}</strong>: the account is assigned to them${p.current ? ` (${esc(p.current)} no longer has it)` : ""}.
+      <strong>${p.current ? `Keep with ${esc(p.current)}` : "Leave unassigned"}</strong>: nothing changes. Either way the
+      contacts and leads ${esc(p.byName)} contacted keep that status, so nobody approaches the same person twice.</p>`;
+  }
   if (item.kind === "finding") {
     return `
       <p>Web research found a different <strong>${esc(p.label)}</strong>, and the automatic resolve could not settle
@@ -159,6 +180,7 @@ function bodyFor(item) {
 
 function similarLabel(item, n) {
   const p = item.payload || {};
+  if (item.kind === "join_proposal") return `Also for ${esc(p.byName)}'s other ${n} join proposal${n === 1 ? "" : "s"}`;
   if (item.kind === "finding") return `Also for the other ${n} ${esc(p.label)} finding${n === 1 ? "" : "s"}`;
   if (item.kind === "lacking_evidence") {
     const cause = p.reason === "empty_page" ? "with an empty LinkedIn page" : "with no LinkedIn company found";
@@ -188,7 +210,7 @@ function render() {
   $("decision-similar-checkbox").checked = false;
   $("decision-similar-text").innerHTML = others.length ? similarLabel(item, others.length) : "";
 
-  const [[aVal, aLabel], [bVal, bLabel]] = CHOICES[item.kind];
+  const [[aVal, aLabel], [bVal, bLabel]] = choicesOf(item);
   $("decision-choice-a").textContent = aLabel;
   $("decision-choice-a").dataset.choice = aVal;
   $("decision-choice-b").textContent = bLabel;
@@ -219,7 +241,7 @@ async function decide(choice) {
   if (busy) return;
   const item = items.find((i) => i.id === currentId);
   if (!item) return;
-  const label = CHOICES[item.kind].find(([v]) => v === choice)?.[1] || choice;
+  const label = choicesOf(item).find(([v]) => v === choice)?.[1] || choice;
   const targets = [item, ...($("decision-similar-checkbox").checked ? similarTo(item) : [])];
 
   if (targets.length > 1) {

@@ -134,7 +134,7 @@ async function run() {
     employeeCount: resolved ? employeeCount : null,
     sizeBandText,
     debug: resolved ? null : { title: document.title, url: location.href.split("?")[0], sizeBandText, caughtError },
-  });
+  }).catch(() => {});
 }
 
 run().catch((err) => {

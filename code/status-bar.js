@@ -15,7 +15,7 @@ const TONES = {
   error: { background: "#b3261e", color: "#fff" },
 };
 
-const messages = new Map(); // id -> { text, tone, action: { label, disabled, onClick } | null }
+const messages = new Map(); // id -> { text, tone, action: { label, disabled, onClick } | null, priority }
 let barEl = null;
 let spacerEl = null;
 let shownKey = "";
@@ -41,7 +41,7 @@ function ensureBar() {
   btn.style.cssText = "flex-shrink:0;background:#fff;color:#1a1a1a;border:0;border-radius:6px;padding:5px 14px;" +
     "font:600 13px system-ui,sans-serif;cursor:pointer;";
   btn.addEventListener("click", () => {
-    const current = [...messages.values()].pop();
+    const current = currentMessage();
     if (current && current.action && !current.action.disabled) current.action.onClick();
   });
   barEl.append(text, btn);
@@ -55,9 +55,16 @@ function ensureBar() {
   return barEl;
 }
 
+// The latest message set wins - except that a priority message (team folder not connected, 1.2.2) stays on top of
+// the always-present pipeline line: it is the one thing the user has to act on.
+function currentMessage() {
+  const all = [...messages.values()];
+  return all.filter((m) => m.priority).pop() || all.pop();
+}
+
 function render() {
   if (typeof document === "undefined" || !document.body) return;
-  const current = [...messages.values()].pop(); // the latest message set wins
+  const current = currentMessage();
   if (!current) {
     if (barEl) {
       barEl.style.display = "none";
@@ -92,9 +99,10 @@ function render() {
 }
 
 // Shows (or updates) a message. `tone`: "info" (dark blue) or "error" (red). `action`: an optional button.
-// An update keeps the message's place; a new message goes on top of the ones already shown.
-export function setStatusMessage(id, { text, tone = "info", action = null }) {
-  messages.set(id, { text, tone, action });
+// An update keeps the message's place; a new message goes on top of the ones already shown. `priority`: shown
+// above every message without it.
+export function setStatusMessage(id, { text, tone = "info", action = null, priority = false }) {
+  messages.set(id, { text, tone, action, priority });
   render();
 }
 

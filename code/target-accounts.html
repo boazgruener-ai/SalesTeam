@@ -242,6 +242,7 @@
         <button id="open-settings-apikey-btn" type="button" class="nav-item" title="Open Settings - Anthropic API Key">Anthropic API Key</button>
         <button id="open-settings-backup-btn" type="button" class="nav-item" title="Open Settings - Backup">Backup</button>
         <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
+        <button id="open-settings-team-btn" type="button" class="nav-item" title="Share accounts, contacts and leads with colleagues through a OneDrive folder - create, join or leave a team">Team</button>
         <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Billing</button>
       </details>
 
@@ -334,11 +335,15 @@
         <div class="pie-card">
           <h2>Pipeline status</h2>
           <div class="pie-wrap" id="pie-readiness"></div>
-          <p class="pie-note" id="pie-readiness-line"></p>
-          <p class="pie-note" id="pie-readiness-gaps"></p>
-          <p class="pie-note" id="pie-targets-coverage" hidden></p>
-          <p class="pie-note" id="pie-pipeline-status"></p>
-          <p class="pie-note" id="pie-web-status" hidden></p>
+          <!-- Boaz 2026-10-06: the notes took the whole screen - 4 lines by default, "Show more" for the rest. -->
+          <div class="pie-notes collapsed" id="pie-readiness-notes">
+            <p class="pie-note" id="pie-readiness-line"></p>
+            <p class="pie-note" id="pie-readiness-gaps"></p>
+            <p class="pie-note" id="pie-targets-coverage" hidden></p>
+            <p class="pie-note" id="pie-pipeline-status"></p>
+            <p class="pie-note" id="pie-web-status" hidden></p>
+          </div>
+          <button type="button" class="pie-notes-toggle" id="pie-readiness-notes-toggle" hidden>Show more</button>
         </div>
         <div class="pie-card">
           <h2>Priority</h2>
@@ -360,6 +365,15 @@
 
       <div id="explorer-controls" hidden>
         <input id="search-input" type="text" placeholder="Search company or industry…" />
+        <!-- 1.2.2 step 5 (R6.3): which accounts are shown - in one place (Boaz). The owner filter only in a team; a
+             later step may turn it into a queue picker (account groups the admin assigns). -->
+        <span id="team-owner-filter" class="team-owner-filter" hidden>
+          <button type="button" data-owner="mine" title="Accounts assigned to you">Mine</button>
+          <button type="button" data-owner="others" title="Accounts assigned to a colleague">Others</button>
+          <button type="button" data-owner="unassigned" title="Accounts nobody has taken yet">Unassigned</button>
+          <button type="button" data-owner="all" title="Every account">All</button>
+        </span>
+        <button id="removed-btn" type="button" title="Accounts and contacts removed from the list - see when, and restore them">Removed…</button>
         <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="result-count"></span>
       </div>
@@ -369,6 +383,8 @@
       <div id="accounts-bulk-bar" class="bulk-bar" hidden>
         <span id="accounts-bulk-count" class="bulk-bar-count"></span>
         <button id="accounts-bulk-edit-btn" type="button">Bulk edit…</button>
+        <button id="accounts-bulk-assign-btn" type="button" hidden>Assign to me</button>
+        <button id="accounts-bulk-release-btn" type="button" hidden>Release</button>
         <button id="accounts-bulk-extend" type="button" class="text-link-btn" hidden></button>
         <button id="accounts-bulk-clear-btn" type="button" class="text-link-btn">Clear selection</button>
       </div>
@@ -606,16 +622,36 @@
         <input type="date" id="bulk-edit-due-date" disabled />
       </span>
     </div>
-    <label class="bulk-edit-remove">
-      <input type="checkbox" id="bulk-edit-remove" />
-      <span id="bulk-edit-remove-label">Remove the selected rows from the list</span>
-    </label>
+    <!-- 1.2.2 step 5b (Boaz): removing many rows at once is the dangerous one - out of the way, and admin-only in a team -->
+    <details id="bulk-edit-advanced" class="bulk-edit-advanced">
+      <summary>Advanced</summary>
+      <label class="bulk-edit-remove">
+        <input type="checkbox" id="bulk-edit-remove" />
+        <span id="bulk-edit-remove-label">Remove the selected rows from the list</span>
+      </label>
+    </details>
     <p id="bulk-edit-status-text" class="status-text" role="status"></p>
     <div class="action-dialog-actions">
       <button id="bulk-edit-apply-btn" type="button">Apply</button>
       <button type="button" class="action-dialog-close-btn">Cancel</button>
     </div>
     <button id="bulk-edit-undo-btn" type="button" class="text-link-btn" hidden></button>
+  </dialog>
+
+  <!-- 1.2.2 step 5b (design 2.11): every removal is soft - see them with their date, and restore in bulk -->
+  <dialog id="removed-dialog" class="action-dialog removed-dialog">
+    <h3>Removed from the list</h3>
+    <p class="page-subtitle">Nothing removed is erased. Tick the rows to bring back and click Restore. Sort by date to undo a removal done on a given day.</p>
+    <div class="removed-tabs">
+      <button type="button" data-removed-scope="accounts" class="active">Accounts</button>
+      <button type="button" data-removed-scope="contacts">Contacts</button>
+    </div>
+    <div id="removed-table-wrap" class="removed-table-wrap"></div>
+    <p id="removed-status-text" class="status-text" role="status"></p>
+    <div class="action-dialog-actions">
+      <button id="removed-restore-btn" type="button" disabled>Restore</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
   </dialog>
 
   <dialog id="web-research-apply-dialog" class="action-dialog">

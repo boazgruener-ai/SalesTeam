@@ -20,9 +20,12 @@
   <main id="log-main">
     <div id="log-controls">
       <select id="log-actor-filter">
-        <option value="all">All actors</option>
-        <option value="user">User</option>
-        <option value="extension">Extension</option>
+        <!-- Boaz 2026-10-06: named by who did it; the two team views only in a team. -->
+        <option value="all">Everything</option>
+        <option value="user">Me</option>
+        <option value="extension">Automatic</option>
+        <option value="colleagues" id="log-actor-colleagues-option" hidden>Colleagues</option>
+        <option value="team" id="log-actor-team-option" hidden>Team: all shared changes</option>
       </select>
       <input id="log-search-input" type="text" placeholder="Search action, description, or value…" />
       <label class="checkbox-label">

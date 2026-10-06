@@ -98,3 +98,8 @@ h1 {
 .last { color: var(--gray); font-size: 13px; margin-top: 14px; }
 
 a { color: var(--blue); }
+
+/* Team use step 6: a join proposal's "Show details" (what the member did, one row per item). */
+.join-details { margin: 8px 0 12px; }
+.join-details summary { cursor: pointer; color: #0a66c2; font-weight: 600; font-size: 13px; }
+.join-details table { margin-top: 6px; }

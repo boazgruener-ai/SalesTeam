@@ -12,6 +12,9 @@ export const BULK_STATE_KEY = "bulkResearchState";
 const HEARTBEAT_MS = 15000;
 const STALE_MS = 180000; // background tabs may throttle timers to about once a minute
 
+// One name for the Scanner job, so a second click can tell it is the same job (guardBatchStart sameJob).
+export const SCAN_BATCH_LABEL = "Scanner (searching LinkedIn for posts and jobs)";
+
 export class BatchBusyError extends Error {
   constructor(message, running) {
     super(message);
@@ -78,13 +81,35 @@ async function waitForPipelineToMakeWay(newLabel) {
 
 // Shows the explanation and returns false when another batch is running; returns true when the way is free.
 // The data pipeline never blocks the user: it is asked to make way instead (U2).
-export async function guardBatchStart(newLabel, askConfirm) {
+//
+// The SAME job already running (Boaz, 2026-10-06: a second click on Scan All Topics, unsure whether the first one had
+// started, got "only one batch process at a time ... before you start: Scanner" - the same name twice): with
+// `sameJob: { message, stop }` the user is asked instead - Close lets it continue, OK stops it and starts again.
+const RESTART_WAIT_MS = 120000;
+export async function guardBatchStart(newLabel, askConfirm, { sameJob } = {}) {
   let running = await getRunningBatch();
   if ((running && running.pipeline) || (!running && (await pipelineRunning()))) running = await waitForPipelineToMakeWay(newLabel);
   // Even with no pipeline run in progress, keep the next automatic one from starting in the moment
   // between this check and the job taking the batch lock (the Scanner makes a backup first).
   else if (!running) chrome.runtime.sendMessage({ type: "PIPELINE_PAUSE", forLabel: newLabel }).catch(() => {});
   if (!running) return true;
+  if (running.label === newLabel && sameJob) {
+    if (!(await askConfirm(sameJob.message, { okLabel: "OK", cancelLabel: "Close" }))) return false;
+    await sameJob.stop();
+    setStatusMessage("wait", { text: "Stopping the running job… the new one starts right after." });
+    try {
+      // The job stops at its next checkpoint (one in-flight search for a scan), then releases its batch.
+      const until = Date.now() + RESTART_WAIT_MS;
+      while (Date.now() < until) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!(await getRunningBatch())) return true;
+      }
+    } finally {
+      clearStatusMessage("wait");
+    }
+    await askConfirm(`${running.label} has not stopped yet. Please try again in a moment.`, { okLabel: "OK", cancelLabel: "Close" });
+    return false;
+  }
   await askConfirm(busyMessage(running, newLabel), { okLabel: "OK", cancelLabel: "Close" });
   return false;
 }

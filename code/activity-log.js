@@ -6,6 +6,12 @@
 // on their own (storage.js prunes anything past the 90-day retention
 // window), not via any action on this page.
 import { getActivityLog } from "./storage.js";
+import { teamLogText, fieldName, shownFields } from "./team-log.js";
+
+// Team use step 6 (R3.11): the team log (team-sync.js TEAM_LOG_KEY) - who in the team changed what. "Team" shows
+// everyone's shared changes, mine included; "All actors" adds only colleagues' lines (mine are already here as User
+// and Extension entries).
+const TEAM_LOG_KEY = "teamLog";
 
 const actorFilterEl = document.getElementById("log-actor-filter");
 const searchInputEl = document.getElementById("log-search-input");
@@ -50,7 +56,14 @@ function applyFilters() {
   const query = searchInputEl.value.trim().toLowerCase();
 
   const filtered = allEntries.filter((entry) => {
-    if (actor !== "all" && entry.actor !== actor) return false;
+    // Everything: this PC's log plus colleagues' lines (my own team lines only where nothing else records them). Me /
+    // Automatic: this PC's log by actor. Colleagues: others' team lines. Team: every team line, mine included.
+    const show = actor === "team" ? entry.team
+      : actor === "colleagues" ? entry.team && !entry.mine
+      : actor === "user" ? (entry.team ? entry.mine && entry.ownOnlyHere : entry.actor === "user")
+      : actor === "extension" ? !entry.team && entry.actor === "extension"
+      : !(entry.team && entry.mine && !entry.ownOnlyHere);
+    if (!show) return false;
     if (errorsOnly && !entry.error) return false;
     if (!entryMatchesSearch(entry, query)) return false;
     return true;
@@ -115,7 +128,8 @@ function renderRows(entries) {
     const actorTd = document.createElement("td");
     const actorPill = document.createElement("span");
     actorPill.className = `log-actor-pill log-actor-${entry.actor}`;
-    actorPill.textContent = entry.actor === "extension" ? "Extension" : "User";
+    // The same names as the filter: Me / Automatic / the colleague's name.
+    actorPill.textContent = entry.team ? (entry.mine ? "Me" : entry.who) : entry.actor === "extension" ? "Automatic" : "Me";
     actorTd.appendChild(actorPill);
 
     const actionTd = document.createElement("td");
@@ -141,9 +155,42 @@ function renderRows(entries) {
   markExpandableValues();
 }
 
+// "field: value" lines for the Previous / New Value columns (null = empty).
+function fieldLines(values, fields) {
+  if (!values) return null;
+  const shownValue = (f, v) => {
+    if (v === null || v === undefined) return "(empty)";
+    // A time stored as milliseconds ("...At" fields) reads as a date.
+    if (/At$/.test(f) && /^\d{12,}$/.test(String(v))) return new Date(Number(v)).toLocaleString();
+    return v;
+  };
+  const lines = shownFields(fields || Object.keys(values)).filter((f) => f in values).map((f) => `${fieldName(f)}: ${shownValue(f, values[f])}`);
+  return lines.length ? lines : null;
+}
+
+function teamRows(teamLog, me) {
+  return (Array.isArray(teamLog) ? teamLog : []).map((e) => ({
+    team: true,
+    mine: e.m === me,
+    // My own assignments, releases and member removals are only in the team log - shown under All actors too.
+    ownOnlyHere: ["assign", "unassign", "remove_member"].includes(e.op),
+    actor: "team",
+    who: e.m === me ? "You" : e.mn || "A colleague",
+    timestamp: e.at,
+    label: `${e.m === me ? "You" : e.mn || "A colleague"} ${teamLogText(e, (k) => e.name || k, (m) => (m === me ? "you" : e.tn || "a colleague"))}`,
+    // A join proposal's bookkeeping fields say nothing to a reader - the line itself says what happened.
+    prevValue: e.ref === "teamJoinProposals" ? null : e.before && Object.keys(e.before).length ? fieldLines(e.before, e.fields) : null,
+    newValue: e.ref === "teamJoinProposals" ? null : fieldLines(e.after, e.fields),
+  }));
+}
+
 async function loadLog() {
-  const log = await getActivityLog();
-  allEntries = [...log].reverse(); // newest first
+  const [log, stored] = await Promise.all([getActivityLog(), chrome.storage.local.get([TEAM_LOG_KEY, "teamMembership"])]);
+  const me = stored.teamMembership?.memberId || null;
+  const team = teamRows(stored[TEAM_LOG_KEY], me);
+  document.getElementById("log-actor-team-option").hidden = !me && !team.length;
+  document.getElementById("log-actor-colleagues-option").hidden = !me && !team.length;
+  allEntries = [...log, ...team].sort((a, b) => b.timestamp - a.timestamp); // newest first
   applyFilters();
 }
 
@@ -158,7 +205,7 @@ errorsOnlyCheckbox.addEventListener("change", applyFilters);
 // YYYY-MM-DD" key (storage.js) rather than one shared key, so this checks
 // for any changed key with that prefix, not one fixed key name.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && Object.keys(changes).some((k) => k.startsWith("activityLog:") || k === "activityLog")) loadLog();
+  if (area === "local" && Object.keys(changes).some((k) => k.startsWith("activityLog:") || k === "activityLog" || k === TEAM_LOG_KEY)) loadLog();
 });
 
 async function init() {

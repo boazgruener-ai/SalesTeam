@@ -24,7 +24,8 @@ WHAT IT DOES
 - Define "Negative Topics" too - competitors and recruiter/staffing posts that match the same keywords but are never real prospects get auto-filtered out, not left for you to skip past manually. Two are built in; add your own for any other recurring noise.
 - Results are merged, deduplicated, and ranked, with matched keywords, hiring/freelance signals, and connection-degree shown on every lead (post).
 - The Leads Dashboard turns the leads (posts) into a real pipeline view: pie charts by status, a sortable/filterable table, per-lead detail pages, CSV export, every active filter shown above the table with one-click clear, and safe bulk status changes (confirmation required, one level of undo). A Target Accounts Explorer does the same for your company/contact universe - priority, evidence level, and contact coverage at a glance, with accounts and contacts each exportable as a spreadsheet that opens in Excel, or as HubSpot import files.
-- Built for personal use, the way a person would use these sites: your research draws on publicly available sources (company registries and websites, through the research prompt or SalesTeam's own web research on your Anthropic API key) and on platforms such as LinkedIn. Every scan starts when you click a button. Automatic account preparation runs only if you switch it on: You start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser, and you can turn it off at any time. Every search and page visit happens in a browser tab or window you can see, only while your browser is open. There is no bulk page collection, and a built-in daily limit keeps searches and page visits modest. SalesTeam has no server or database of its own, never resells or shares data, and never sends messages for you.
+- Work as a team: colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder your team owns - changes reach everyone by themselves. "Assign to me" keeps an account yours so nobody else works it, the Team Admin owns the Setup and can reassign accounts, and a small badge on LinkedIn company and profile pages shows who has the account. Each member scans with their own LinkedIn account and their own daily limit; API keys, drafts and scanner settings stay personal. No SalesTeam server and no sign-in.
+- Built for personal use, the way a person would use these sites: your research draws on publicly available sources (company registries and websites, through the research prompt or SalesTeam's own web research on your Anthropic API key) and on platforms such as LinkedIn. Every scan starts when you click a button. Automatic account preparation runs only if you switch it on: You start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser, and you can turn it off at any time. Every search and page visit happens in a browser tab or window you can see, only while your browser is open. There is no bulk page collection, and a built-in daily limit keeps searches and page visits modest. SalesTeam has no server or database of its own, never resells or shares data, and never sends messages for you. In a team, the shared data lives only in your team's own OneDrive folder.
 YOUR AI SALES TEAM (optional, needs your own Anthropic API key)
 
 - Automatic prioritization: after every scan, each new lead (post) is scored 1 (highest) to 5 (lowest) by real fit and urgency - not just keyword overlap - so you always know what to work on first. Target companies get their own AI-judged Strategic Fit score the same way.
@@ -36,7 +37,7 @@ The core scanning, filtering, and Dashboard features work with no AI key at all.
 
 PRIVACY
 
-SalesTeam only reads LinkedIn pages opened in your own browser (Posts/Jobs search, Company/People search, company and profile pages), stores everything locally in your browser, and never sends anything to a server we operate. See the full privacy policy at: https://aisalesteam.app/privacy.html
+SalesTeam only reads LinkedIn pages opened in your own browser (Posts/Jobs search, Company/People search, company and profile pages), stores everything locally in your browser - and, if you work as a team, in a OneDrive folder your team owns and shares - and never sends anything to a server we operate. See the full privacy policy at: https://aisalesteam.app/privacy.html
 
 ## Privacy tab - fields in the order they appear on the page
 
@@ -55,11 +56,15 @@ Lets the extension keep the data a user builds up - imported research workbooks 
 
 sidePanel justification:
 
-Displays quick links to open the Scanner, Target Accounts, Target Contacts and Posts dashboards, plus pipeline stats.
+Displays quick links to open the Scanner, Target Accounts, Target Contacts and Leads dashboards, plus pipeline stats.
 
 clipboardWrite justification:
 
 Lets the user copy an AI-drafted message with one click, to paste into LinkedIn's own message compose box.
+
+alarms justification:
+
+Only for team use: for a member of a team, wakes SalesTeam's background every half minute while Chrome runs, to write the member's changes to the team's shared OneDrive folder, read colleagues' changes from it, and mark the member as online. Without a team nothing is scheduled. It never starts a LinkedIn scan or visit.
 
 power justification:
 
@@ -68,7 +73,7 @@ Keeps the machine awake for the duration of a long-running search or lookup, so 
 ### 3. Host permission justification (one field - paste both paragraphs)
 
 Host permission - https://www.linkedin.com/*:
-Required to read the Posts, Jobs, Company Search, People Search, individual company, and individual profile pages the user is already viewing (or that a user-triggered search, or the automatic account preparation the user has switched on, opens in a tab or a small window of its own), in order to match leads (posts) and build/enrich the user's target-account and target-contact lists. The extension does not run on any other website.
+Required to read the Posts, Jobs, Company Search, People Search, individual company, and individual profile pages the user is already viewing (or that a user-triggered search, or the automatic account preparation the user has switched on, opens in a tab or a small window of its own), in order to match leads (posts) and build/enrich the user's target-account and target-contact lists. For team users, it also shows a small badge on LinkedIn company and profile pages saying which team member that account is assigned to; it reads only the page address for this. The extension does not run on any other website.
 
 Host permission - https://api.anthropic.com/*:
 Required so the optional AI features (prioritization, message drafting, web research, Sales Mentor, Customer Voice) can call Anthropic's API directly from the browser, authenticated with the user's own API key.
@@ -78,7 +83,7 @@ Answer: No. The extension makes data API calls to Anthropic (text in, text out) 
 
 ### 5. Data usage - what user data do you collect
 - From Data Usage Checkboxes - only check: PII, Authentication Information and Website content.
-Does this extension collect or transmit user data (Personal Identifiable Information) ? Yes - lead (post) and target-account text and chat content, only when the optional AI features are used, sent directly to Anthropic's API using the user's own key.
+Does this extension collect or transmit user data (Personal Identifiable Information) ? Yes - lead (post) and target-account text and chat content, only when the optional AI features are used, sent directly to Anthropic's API using the user's own key. (Team use writes shared data only into a OneDrive folder on the user's own computer that the user's team owns; the extension sends it to no server.)
 
 ### 6. I certify that the following disclosures are true (tick all three)
 - I do not sell or transfer user data to third parties, outside of the approved use cases

@@ -222,7 +222,7 @@ async function runCompanyPageFallback(expectedName) {
     // the same thing applyResolvedCompanyIds needs to fill a missing linkedinLink.
     companyPageUrl: resolved ? location.href : null,
     debug: resolved ? null : { ...collectDiagnostics({ fallbackPage: true, currentCompanyIdFound: companyId }), caughtError },
-  });
+  }).catch(() => {});
 }
 
 // Reads the company's own displayed name off a company page's <title> -
@@ -284,7 +284,7 @@ async function runDirectLinkResolve(expectedName, candidateNames) {
     debug: resolved
       ? null
       : { ...collectDiagnostics({ directLink: true, pageName, currentCompanyIdFound: companyId }), caughtError },
-  });
+  }).catch(() => {});
 }
 
 // Reported directly: a genuine, reproducible chunk of companies (confirmed
@@ -369,7 +369,7 @@ async function run() {
           ...collectDiagnostics({ heroName, currentCompanyIdFound: companyId, heroLinkFound: Boolean(heroLink), heroLinkHref: heroLink?.href || null }),
           caughtError,
         },
-  });
+  }).catch(() => {});
 }
 
 run().catch((err) => {

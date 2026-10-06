@@ -21,6 +21,7 @@ the test.
 import io
 import os
 import re
+import json
 import sys
 
 try:
@@ -30,7 +31,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js"]
+PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1840,6 +1841,533 @@ def test_login_wall(ctx):
     check("never logged out", e("linkedinLoggedOutRecently(null, 5)"), False)
 
 
+def test_team_merge(ctx):
+    """1.2.2 step 1 (TEAM_USE_DESIGN.md 4, 6, 7): the merge engine gives the same picture on every PC."""
+    e = lambda x: ctx.eval(x)
+    # A small world: three members, a few changes each, written with real clocks.
+    e("""
+      var M = 60000;
+      function st(wall, counter, member) { return formatStamp(wall, counter, member); }
+      var T0 = 1759480000000;
+      var CH = [
+        {t: st(T0,     0, 'anna'), e: 'account', id: 'c-1', op: 'set', f: {status: 'New', city: 'Bern'}},
+        {t: st(T0+1000,0, 'ben'),  e: 'account', id: 'c-1', op: 'set', f: {status: 'Contacted'}},
+        {t: st(T0+2000,0, 'anna'), e: 'account', id: 'c-1', op: 'set', f: {status: 'Meeting'}},
+        {t: st(T0+500, 0, 'cleo'), e: 'account', id: 'c-2', op: 'set', f: {status: 'New'}},
+        {t: st(T0+600, 0, 'cleo'), e: 'account', id: 'c-2', op: 'delete'},
+        {t: st(T0+700, 0, 'ben'),  e: 'account', id: 'c-3', op: 'set', f: {status: 'New'}},
+        {t: st(T0+800, 0, 'anna'), e: 'account', id: 'c-3', op: 'delete'},
+        {t: st(T0+900, 0, 'ben'),  e: 'account', id: 'c-3', op: 'set', f: {note: 'still interested'}},
+        {t: st(T0+100, 0, 'ben'),  e: 'contact', id: 'p-9', op: 'touch', note: 'InMail'},
+        {t: st(T0+150, 0, 'anna'), e: 'contact', id: 'p-9', op: 'touch', note: 'Call'},
+        {t: st(T0+1000,0, 'anna'), e: 'account', id: 'c-5', op: 'assign'},
+        {t: st(T0+1000,0, 'ben'),  e: 'account', id: 'c-5', op: 'assign'},
+        {t: st(T0+3000,0, 'anna'), e: 'account', id: 'c-6', op: 'assign'},
+        {t: st(T0+4000,0, 'anna'), e: 'account', id: 'c-6', op: 'unassign'},
+        {t: st(T0+5000,0, 'ben'),  e: 'account', id: 'c-6', op: 'assign'},
+        {t: st(T0+6000,0, 'admin'),e: 'account', id: 'c-7', op: 'assign', member: 'cleo'},
+      ];
+      function viewAll(s) {
+        var out = {};
+        ['c-1','c-2','c-3','c-5','c-6','c-7'].forEach(function (id) {
+          out[id] = {v: entityView(s, 'account', id), a: assignee(s, 'account', id)};
+        });
+        out.touches = touches(s, 'contact', 'p-9');
+        out.lost = lostValues(s);
+        return JSON.stringify(out);
+      }
+      function rng(seed) { return function () { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }; }
+      function shuffled(list, seed) {
+        var a = list.slice(), r = rng(seed);
+        for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)); var x = a[i]; a[i] = a[j]; a[j] = x; }
+        return a;
+      }
+      var S = newState(); applyChanges(S, CH);
+      var REF = viewAll(S);
+    """)
+
+    # The property everything rests on: any order, any repetition -> the same result.
+    orders_same = e("""
+      (function () {
+        for (var seed = 1; seed <= 40; seed++) {
+          var s = newState();
+          var list = shuffled(CH, seed);
+          applyChanges(s, list);
+          applyChanges(s, shuffled(CH, seed + 100));   // every file read twice
+          if (viewAll(s) !== REF) return seed;
+        }
+        return 0;
+      })()""")
+    check("team merge: 40 shuffled orders + re-reads give the identical state", orders_same, 0)
+
+    check("team merge: later stamp wins a field", e("entityView(S,'account','c-1').values.status"), "Meeting")
+    check("team merge: untouched field kept", e("entityView(S,'account','c-1').values.city"), "Bern")
+    check("team merge: who changed it", e("entityView(S,'account','c-1').changedBy.status.member"), "anna")
+    check("team merge: overwritten values are kept, oldest first",
+          e("JSON.stringify(lostValues(S,{e:'account',id:'c-1'}).map(function(x){return x.v;}))"), '["New","Contacted"]')
+    check("team merge: delete after the last change -> gone", e("entityView(S,'account','c-2').exists"), False)
+    check("team merge: change after a delete revives the row", e("entityView(S,'account','c-3').exists"), True)
+    check("team merge: both touches kept, in order",
+          e("JSON.stringify(touches(S,'contact','p-9').map(function(x){return x.member+':'+x.note;}))"), '["ben:InMail","anna:Call"]')
+    check("team merge: same-millisecond assignments -> fixed tie-break (member id)", e("assignee(S,'account','c-5').member"), "anna")
+    check("team merge: released then taken by a colleague", e("assignee(S,'account','c-6').member"), "ben")
+    check("team merge: admin assigns to someone else", e("assignee(S,'account','c-7').member"), "cleo")
+    check("team merge: malformed / half-written records are ignored, never throw",
+          e("(function(){var s=newState(); return applyChanges(s,[null,{},{t:'x',e:'account',id:'a',op:'set'},{t:st(T0,0,'a'),e:'nope',id:'a',op:'set'},{t:st(T0,0,'a'),e:'account',id:'',op:'set'}]);})()"), 0)
+
+    # Clock: never backwards, moves past a colleague's later stamp.
+    check("team clock: same ms -> counter", e("(function(){var c=createClock('a'); tick(c,T0); return tick(c,T0);})()"),
+          e("st(T0,1,'a')"))
+    check("team clock: PC clock went back -> still increases", e("(function(){var c=createClock('a'); tick(c,T0); return tick(c,T0-5000);})()"),
+          e("st(T0,1,'a')"))
+    check("team clock: after seeing a later stamp, the next sorts after it",
+          e("(function(){var c=createClock('a'); tick(c,T0); observe(c, st(T0+9000,3,'b')); return tick(c,T0+10) > st(T0+9000,3,'b');})()"), True)
+    check("team clock: stamps sort as strings across digit lengths", e("st(999,0,'a') < st(1000,0,'a')"), True)
+
+    # Claims: earliest active wins; expiry by idleness or heartbeat; release.
+    e("""
+      var C = newState();
+      applyChanges(C, [
+        {t: st(T0+200, 0, 'ben'),  e: 'account', id: 'k', op: 'claim'},
+        {t: st(T0+100, 0, 'anna'), e: 'account', id: 'k', op: 'claim'},
+      ]);
+      var SEEN = {anna: T0+1000, ben: T0+1000};
+    """)
+    check("team claim: earliest claim wins", e("claimHolder(C,'account','k',{now:T0+2000,lastSeen:SEEN}).member"), "anna")
+    check("team claim: both profiles agree (other order)",
+          e("(function(){var s=newState(); applyChanges(s,[{t:st(T0+100,0,'anna'),e:'account',id:'k',op:'claim'},{t:st(T0+200,0,'ben'),e:'account',id:'k',op:'claim'}]); return claimHolder(s,'account','k',{now:T0+2000,lastSeen:SEEN}).member;})()"),
+          "anna")
+    check("team claim: idle 5 min -> expired, next in line holds it",
+          e("(function(){applyChanges(C,[{t:st(T0+6*M,0,'ben'),e:'account',id:'k',op:'set',f:{x:1}}]); return claimHolder(C,'account','k',{now:T0+6*M,lastSeen:{anna:T0+6*M,ben:T0+6*M}}).member;})()"),
+          "ben")
+    check("team claim: holder's heartbeat too old -> not a holder",
+          e("JSON.stringify(activeClaims(C,'account','k',{now:T0+6*M,lastSeen:{anna:T0+6*M}}))"), "[]")
+    check("team claim: release ends it, a new claim starts fresh",
+          e("(function(){var s=newState(); applyChanges(s,[{t:st(T0,0,'anna'),e:'account',id:'r',op:'claim'},{t:st(T0+10,0,'anna'),e:'account',id:'r',op:'release'},{t:st(T0+20,0,'ben'),e:'account',id:'r',op:'claim'}]); return claimHolder(s,'account','r',{now:T0+30,lastSeen:{anna:T0+30,ben:T0+30}}).member;})()"),
+          "ben")
+
+    # Confirmation (design 6.3).
+    check("team confirm: every active colleague has written after the claim -> confirmed",
+          e("isClaimConfirmed(st(T0,0,'anna'),{me:'anna',activeMembers:['anna','ben','cleo'],readUpTo:{ben:T0+1,cleo:T0+5}})"), True)
+    check("team confirm: one colleague not yet heard from since -> not yet",
+          e("isClaimConfirmed(st(T0,0,'anna'),{me:'anna',activeMembers:['anna','ben','cleo'],readUpTo:{ben:T0+1,cleo:T0}})"), False)
+    check("team confirm: alone in the team -> confirmed at once",
+          e("isClaimConfirmed(st(T0,0,'anna'),{me:'anna',activeMembers:['anna'],readUpTo:{}})"), True)
+
+    # Pipeline shares (design 6.5).
+    check("team share: deterministic and independent of member order",
+          e("pipelineOwner('c-42',['ben','anna','cleo']) === pipelineOwner('c-42',['cleo','anna','ben'])"), True)
+    moved = e("""
+      (function () {
+        var ids = []; for (var i = 0; i < 600; i++) ids.push('c-' + i);
+        var three = ['anna','ben','cleo'], four = ['anna','ben','cleo','dan'];
+        var moved = 0, wrong = 0, counts = {anna:0, ben:0, cleo:0};
+        ids.forEach(function (id) {
+          var a = pipelineOwner(id, three), b = pipelineOwner(id, four);
+          counts[a]++;
+          if (a !== b) { moved++; if (b !== 'dan') wrong++; }
+        });
+        return JSON.stringify({moved: moved, wrong: wrong, min: Math.min(counts.anna, counts.ben, counts.cleo)});
+      })()""")
+    import json
+    moved = json.loads(moved)
+    check("team share: a joining member only takes accounts, nobody else's move", moved["wrong"], 0)
+    check("team share: about a quarter move to the new member", 100 < moved["moved"] < 200, True)
+    check("team share: three members get roughly equal shares", moved["min"] > 150, True)
+
+
+def test_team_rows(ctx):
+    """1.2.2 step 2 (TEAM_USE_DESIGN.md 4.1, 5.2, 5.3): local values <-> rows <-> change records, end to end."""
+    e = lambda x: ctx.eval(x)
+    e("""
+      var WB = {
+        companies: [
+          {companyId: 'c-1', company: 'Acme AG', status: 'New', city: 'Bern'},
+          {companyId: 'c-2', company: 'Beta SA', status: 'New'},
+          {companyId: 'c-1', company: 'Acme duplicate'},
+          {company: 'No id GmbH'}
+        ],
+        contacts: [{contactId: 'p-1', companyId: 'c-1', fullName: 'Ann Muster'}],
+        aiInitiatives: [],
+        aiInvestment: [{companyId: 'c-1', amount: 5}],
+        sources: [{companyId: 'c-2', url: 'https://x'}],
+        version: 3
+      };
+      var LEADS = {
+        'lead-a': {author: 'Ann', status: 'New', draftMessage: 'Hi Ann', mentorHistory: [1, 2]},
+        'lead-b': {author: 'Ben', status: 'Contacted'}
+      };
+      function jsonOf(v) { return JSON.stringify(v); }
+      function rebuild(key, value) { return patchValue(key, undefined, extractRows(key, value)); }
+      // Field order inside a row does not matter to the app; row order and content do.
+      function deepSorted(v) {
+        if (Array.isArray(v)) return v.map(deepSorted);
+        if (v && typeof v === 'object') { var o = {}; Object.keys(v).sort().forEach(function (k) { o[k] = deepSorted(v[k]); }); return o; }
+        return v;
+      }
+      function canonicalWb(wb) { return JSON.stringify(deepSorted(wb)); }
+      // Simulates a member: local values -> diff against its shadow -> stamped change records.
+      function Member(id, t0) {
+        this.clock = createClock(id); this.now = t0; this.shadow = {}; this.state = newState(); this.sent = [];
+      }
+      Member.prototype.emit = function (key, value) {
+        var d = diffRows(this.shadow[key] || {}, extractRows(key, value));
+        this.shadow[key] = d.shadow;
+        var self = this, out = [];
+        d.sets.forEach(function (s) {
+          var f = s.f;
+          if (s.isNew) { var st = staleFieldUnsets(self.state, s.e, s.id, f); for (var k in st) if (!(k in f)) f[k] = st[k]; }
+          self.now += 10;
+          out.push({t: tick(self.clock, self.now), e: s.e, id: s.id, op: 'set', f: f});
+        });
+        d.dels.forEach(function (x) { self.now += 10; out.push({t: tick(self.clock, self.now), e: x.e, id: x.id, op: 'delete'}); });
+        applyChanges(this.state, out);
+        this.sent = this.sent.concat(out);
+        return out;
+      };
+    """)
+    # 1. Round trip: rows -> value gives the value back (duplicates and id-less rows travel with the rest).
+    check("team rows: workbook round trip keeps every row, duplicates and id-less rows at the end",
+          e("canonicalWb(rebuild('targetAccountsWorkbook', WB))"),
+          e("canonicalWb(WB)"))
+    check("team rows: workbook rows are keyed by home + id",
+          e("jsonOf(Array.from(extractRows('targetAccountsWorkbook', WB).keys()))"),
+          '["account|wb:c-1","account|wb:c-2","contact|wb:p-1","setting|wb:rest"]')
+    check("team rows: personal lead fields never become row fields",
+          e("jsonOf(extractRows('results', LEADS).get('lead|lead-a'))"), '{"author":"Ann","status":"New"}')
+    check("team rows: a whole setting is one row with $v",
+          e("jsonOf(rebuild('negativeTopics', ['jobs', 'hiring']))"), '["jobs","hiring"]')
+    check("team rows: a map whose entries are not objects round-trips",
+          e("jsonOf(rebuild('discoveryNameDecisions', {a: 'same', b: 'different'}))"), '{"a":"same","b":"different"}')
+    check("team rows: a claim on a bare company id is not a row", e("rowTarget('account', 'c-1')"), None)
+    check("team rows: an unknown key is not shared", e("extractRows('anthropicApiKey', 'sk-x').size"), 0)
+
+    # 2. The diff: one field changed, one removed, a row added, a row deleted.
+    e("""
+      var shadow0 = diffRows({}, extractRows('targetAccounts', {acme: {score: 1, note: 'x'}, beta: {score: 2}})).shadow;
+      var D = diffRows(shadow0, extractRows('targetAccounts', {acme: {score: 5}, gamma: {score: 3}}));
+    """)
+    check("team rows: diff sends only the changed field and clears the removed one",
+          e("jsonOf(D.sets[0])"), '{"e":"account","id":"ta:acme","f":{"score":5,"note":{"$unset":1}},"isNew":false}')
+    check("team rows: diff sends a new row whole", e("jsonOf(D.sets[1])"), '{"e":"account","id":"ta:gamma","f":{"score":3},"isNew":true}')
+    check("team rows: diff deletes a row that is gone", e("jsonOf(D.dels)"), '[{"e":"account","id":"ta:beta"}]')
+    check("team rows: no change, no records",
+          e("diffRows(D.shadow, extractRows('targetAccounts', {acme: {score: 5}, gamma: {score: 3}})).sets.length"), 0)
+    check("team rows: field order does not count as a change",
+          e("diffRows(D.shadow, extractRows('targetAccounts', {gamma: {score: 3}, acme: {score: 5}})).sets.length"), 0)
+
+    # 3. End to end: Anna's changes reach Ben's local copy exactly; Ben's personal lead fields survive.
+    e("""
+      var anna = new Member('anna', 1759480000000), ben = new Member('ben', 1759480000005);
+      var base = anna.emit('targetAccountsWorkbook', WB).concat(anna.emit('results', LEADS));
+      applyChanges(ben.state, base);
+      var benWb = patchValue('targetAccountsWorkbook', undefined, projectKey(ben.state, 'targetAccountsWorkbook'));
+      var benLeads = patchValue('results', undefined, projectKey(ben.state, 'results'));
+      benLeads['lead-b'].draftMessage = 'Ben draft';
+      ben.shadow.targetAccountsWorkbook = diffRows({}, extractRows('targetAccountsWorkbook', benWb)).shadow;
+      ben.shadow.results = diffRows({}, extractRows('results', benLeads)).shadow;
+      // Anna edits: a company field, a new contact, a deleted company, a lead status.
+      var WB2 = JSON.parse(JSON.stringify(WB));
+      WB2.companies[0].status = 'Contacted';
+      WB2.companies.splice(1, 1);
+      WB2.contacts.push({contactId: 'p-2', companyId: 'c-1', fullName: 'Bob Beispiel'});
+      var L2 = JSON.parse(JSON.stringify(LEADS)); L2['lead-b'].status = 'Meeting';
+      var round = anna.emit('targetAccountsWorkbook', WB2).concat(anna.emit('results', L2));
+      applyChanges(ben.state, round);
+      function updatesFor(state, key, records) {
+        var m = new Map();
+        records.forEach(function (r) { var t = rowTarget(r.e, r.id); if (t && t.key === key) m.set(rowKey(r.e, r.id), projectRow(state, r.e, r.id)); });
+        return m;
+      }
+      var benWb2 = patchValue('targetAccountsWorkbook', benWb, updatesFor(ben.state, 'targetAccountsWorkbook', round));
+      var benLeads2 = patchValue('results', benLeads, updatesFor(ben.state, 'results', round));
+    """)
+    check("team rows: Anna's base gives Ben the identical workbook", e("canonicalWb(benWb)"), e("canonicalWb(WB)"))
+    check("team rows: Anna's edits give Ben the identical workbook", e("canonicalWb(benWb2)"), e("canonicalWb(WB2)"))
+    check("team rows: only 4 records for 4 edits", e("round.length"), 4)
+    check("team rows: Ben's lead gets Anna's status and keeps Ben's draft",
+          e("jsonOf(benLeads2['lead-b'])"), '{"author":"Ben","status":"Meeting","draftMessage":"Ben draft"}')
+    check("team rows: Anna's draft never reached Ben", e("'draftMessage' in benLeads2['lead-a']"), False)
+    check("team rows: writing the merged rows back is no change for Ben (no echo)",
+          e("diffRows(ben.shadow.results, extractRows('results', benLeads)).sets.length"), 0)
+
+    # 4. Deleted and re-created with fewer fields: the old fields do not come back.
+    e("""
+      var cleo = new Member('cleo', 1759490000000);
+      cleo.emit('targetAccounts', {acme: {score: 1, note: 'old', owner: 'x'}});
+      cleo.emit('targetAccounts', {});
+      cleo.emit('targetAccounts', {acme: {score: 9}});
+      var dan = newState(); applyChanges(dan, cleo.sent.slice().reverse());
+    """)
+    check("team rows: a re-created row does not revive its old fields",
+          e("jsonOf(projectRow(cleo.state, 'account', 'ta:acme'))"), '{"score":9}')
+    check("team rows: ... in any order on another PC",
+          e("jsonOf(projectRow(dan, 'account', 'ta:acme'))"), '{"score":9}')
+
+    # 5. Compaction keeps the picture.
+    e("""
+      var full = newState(); applyChanges(full, anna.sent);
+      var compact = compactChanges(anna.sent);
+      var fromCompact = newState(); applyChanges(fromCompact, compact);
+      var keys = ['targetAccountsWorkbook', 'results'];
+      function pictureOf(s) { return keys.map(function (k) { return jsonOf(Array.from(projectKey(s, k))); }).join('|'); }
+      var again = newState(); applyChanges(again, anna.sent); var reapplied = applyChanges(again, compact);
+    """)
+    e("function fieldCount(list) { return list.reduce(function (n, r) { return n + Object.keys(r.f || {}).length; }, 0); }")
+    check("team compaction: superseded field values are dropped", e("fieldCount(compact) < fieldCount(anna.sent)"), True)
+    check("team compaction: the same picture from the snapshot", e("pictureOf(fromCompact) === pictureOf(full)"), True)
+    check("team compaction: a reader that had the originals applies nothing new", e("reapplied"), 0)
+
+    # 6. A team's base stamps thousands of rows in one millisecond: the counter must never outgrow 4 digits.
+    e("""
+      var oc = createClock('z'), ost = [];
+      for (var i = 0; i < 12000; i++) ost.push(tick(oc, 1759480000000));
+      var ordered = ost.every(function (x, i) { return i === 0 || ost[i - 1] < x; });
+      var parsed = ost.every(function (x) { return parseStamp(x) !== null; });
+    """)
+    check("team clock: 12000 stamps in one millisecond stay parseable", e("parsed"), True)
+    check("team clock: ... and strictly increasing", e("ordered"), True)
+
+
+def test_team_list_rows(ctx):
+    """1.2.2 step 5b: companyExclusions is one row per entry - two members adding at once both keep theirs."""
+    e = lambda x: ctx.eval(x)
+    e("""
+      var EX0 = [{slug: 'adecco', category: 'recruiter'}, {name: 'Rival AG', category: 'competitor'}];
+      var exRows = extractRows('companyExclusions', EX0);
+      var T1 = 1759480000000;
+      function stL(w, c, m) { return formatStamp(w, c, m); }
+      // Anna and Ben each add one entry to the same list, a second apart, neither having seen the other's.
+      var EA = EX0.concat([{name: 'Foo GmbH', category: 'customer', source: 'team'}]);
+      var EB = EX0.concat([{slug: 'bar-sa', category: 'partner'}]);
+      function setsOf(rows, member, w) {
+        var out = []; var c = 0;
+        rows.forEach(function (f, rk) { var sp = splitRowKey(rk); out.push({t: stL(w, c++, member), e: sp.e, id: sp.id, op: 'set', f: f}); });
+        return out;
+      }
+      var LS = newState();
+      applyChanges(LS, setsOf(extractRows('companyExclusions', EA), 'anna', T1));
+      applyChanges(LS, setsOf(extractRows('companyExclusions', EB), 'ben', T1 + 1000));
+      var merged = patchValue('companyExclusions', EA, projectKey(LS, 'companyExclusions'));
+      // The admin removes Rival AG: its row is deleted, the others stay in place.
+      var gone = new Map([[rowKey('setting', 'companyExclusions:' + listEntryId(TEAM_LIST_KEYS[0], EX0[1])), null]]);
+      var afterRemove = patchValue('companyExclusions', merged, gone);
+    """)
+    check("list: one row per entry", e("exRows.size"), 2)
+    check("list: row id from the entry's identity", e("listEntryId(TEAM_LIST_KEYS[0], {name: ' Rival AG ', category: 'competitor'})"), "competitor||rival ag|")
+    check("list: the key is a list, not a whole setting", e("teamKeyKind('companyExclusions')"), "list")
+    check("list: a list row goes back to companyExclusions", e("rowTarget('setting', 'companyExclusions:x').key"), "companyExclusions")
+    check("list: the old whole row is no longer a home", e("rowTarget('setting', 'companyExclusions')"), None)
+    check("list: both concurrent additions survive", e("merged.length + '|' + merged.map(function (x) { return x.name || x.slug; }).join(',')"),
+          "4|adecco,Rival AG,Foo GmbH,bar-sa")
+    check("list: removing one keeps the others in place", e("afterRemove.map(function (x) { return x.name || x.slug; }).join(',')"), "adecco,Foo GmbH,bar-sa")
+    check("list: no rows touching it leaves the value alone", e("patchValue('companyExclusions', EX0, new Map()) === EX0"), True)
+
+
+def test_team_claims(ctx):
+    """1.2.2 step 4 (TEAM_USE_DESIGN.md 6): which account a change belongs to, claim states, held edits retracted."""
+    e = lambda x: ctx.eval(x)
+    e("""
+      var T0 = 1759480000000;
+      function st2(wall, counter, member) { return formatStamp(wall, counter, member); }
+      var norm = function (n) { return String(n).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+      var CS = newState();
+      applyChanges(CS, [
+        {t: st2(T0, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {companyId: 'c-1', company: 'Acme AG', status: 'New'}},
+        {t: st2(T0, 1, 'anna'), e: 'contact', id: 'wb:p-1', op: 'set', f: {contactId: 'p-1', companyId: 'c-1', fullName: 'Ann'}},
+      ]);
+    """)
+    k = lambda ch: e("accountKeyOfChange(CS, %s, norm)" % ch)
+    check("claims: targetAccounts row -> its key", k("{e:'account', id:'ta:acme ag', f:{}}"), "acme ag")
+    check("claims: extras row -> its key", k("{e:'account', id:'x:acme ag', f:{}}"), "acme ag")
+    check("claims: workbook company (name from the state)", k("{e:'account', id:'wb:c-1', f:{status:'Won'}}"), "acme ag")
+    check("claims: workbook company (name in the change)", k("{e:'account', id:'wb:c-9', f:{company:'Beta SA'}}"), "beta sa")
+    check("claims: contact extras -> the company part of its key", k("{e:'contact', id:'x:acme ag::ann muster', f:{}}"), "acme ag")
+    check("claims: workbook contact without a company name -> its company row", k("{e:'contact', id:'wb:p-1', f:{title:'CEO'}}"), "acme ag")
+    check("claims: a lead belongs to no account claim", k("{e:'lead', id:'lead-1', f:{company:'Acme AG'}}"), None)
+    check("claims: a setting neither", k("{e:'setting', id:'negativeTopics', f:{}}"), None)
+    check("claims: active members = seen in the window", e("JSON.stringify(activeMembersOf({ben: T0 - 1000, cleo: T0 - 11*60000}, T0, 10*60000))"), '["ben"]')
+
+    # Claim states seen by Anna: Ben active, then Ben's claim earlier/later than hers.
+    e("""
+      function view(s, readBen) {
+        var ctx = {me: 'anna', now: T0 + 20000, lastSeen: {ben: T0 + 15000}, readUpTo: {ben: readBen}, activeMembers: ['ben'], idleMs: 300000};
+        return claimView(s, 'acme ag', ctx).state;
+      }
+      var C1 = newState();
+      applyChange(C1, {t: st2(T0 + 10000, 0, 'anna'), e: 'account', id: claimIdFor('acme ag'), op: 'claim'});
+    """)
+    check("claims: free when nobody claimed", e("view(newState(), 0)"), "free")
+    check("claims: checking until Ben has written after Anna's claim", e("view(C1, T0 + 9000)"), "checking")
+    check("claims: mine once Ben has written after it", e("view(C1, T0 + 12000)"), "mine")
+    e("var C2 = JSON.parse(JSON.stringify(C1)); applyChange(C2, {t: st2(T0 + 8000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'claim'});")
+    check("claims: lost when Ben claimed earlier", e("view(C2, T0 + 12000)"), "lost")
+    e("var C3 = newState(); applyChange(C3, {t: st2(T0 + 8000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'claim'});")
+    check("claims: other when only Ben claimed", e("view(C3, T0 + 12000)"), "other")
+    e("var C4 = JSON.parse(JSON.stringify(C2)); applyChange(C4, {t: st2(T0 + 9000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'release'});")
+    check("claims: Ben released -> Anna's claim is the earliest again", e("view(C4, T0 + 12000)"), "mine")
+    check("claims: a claim is not a data row", e("rowTarget('account', claimIdFor('acme ag'))"), None)
+
+    # Held edits of a lost claim are taken back out; a colleague's later change stays.
+    e("""
+      var R = newState();
+      applyChange(R, {t: st2(T0, 0, 'ben'), e: 'account', id: 'x:acme ag', op: 'set', f: {status: 'New', note: 'ben-1'}});
+      var held = [
+        {t: st2(T0 + 1000, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {status: 'Contacted', city: 'Bern'}},
+        {t: st2(T0 + 2000, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {status: 'Meeting'}},
+      ];
+      var prior = {'account|x:acme ag': priorOf(R, held[0])};
+      held.forEach(function (h) { applyChange(R, h); });
+      // Ben's later change to the note arrives while Anna's edits are held.
+      applyChange(R, {t: st2(T0 + 3000, 0, 'ben'), e: 'account', id: 'x:acme ag', op: 'set', f: {note: 'ben-2'}});
+      var heldShown = entityView(R, 'account', 'x:acme ag').values;
+      retractChanges(R, held, prior);
+      var afterRetract = entityView(R, 'account', 'x:acme ag').values;
+      var lostAfterRetract = lostValues(R, {e: 'account', id: 'x:acme ag'});
+      // Re-applied later (Apply my changes) with new stamps: they win again.
+      var again = held.map(function (h, i) { return Object.assign({}, h, {t: st2(T0 + 9000 + i, 0, 'anna')}); });
+      applyChanges(R, again);
+      var afterApply = entityView(R, 'account', 'x:acme ag').values;
+    """)
+    check("claims: held edits show on Anna's PC meanwhile", e("heldShown.status + '|' + heldShown.city"), "Meeting|Bern")
+    check("claims: retracted - status back to Ben's value", e("afterRetract.status"), "New")
+    check("claims: retracted - a field only Anna set is gone", e("'city' in afterRetract"), False)
+    check("claims: retracted - Ben's later note stays", e("afterRetract.note"), "ben-2")
+    check("claims: retracted - only Ben's overwritten note is left as a lost value",
+          e("JSON.stringify(lostAfterRetract.map(function (x) { return x.field + '=' + x.v; }))"), '["note=ben-1"]')
+    check("claims: applying the kept-aside edits later wins again", e("afterApply.status + '|' + afterApply.city"), "Meeting|Bern")
+    # A held delete is retracted too.
+    e("""
+      var D = newState();
+      applyChange(D, {t: st2(T0, 0, 'ben'), e: 'contact', id: 'x:acme ag::ann', op: 'set', f: {title: 'CEO'}});
+      var hd = [{t: st2(T0 + 1000, 0, 'anna'), e: 'contact', id: 'x:acme ag::ann', op: 'delete'}];
+      var pd = {'contact|x:acme ag::ann': priorOf(D, hd[0])};
+      applyChange(D, hd[0]);
+      var deletedMeanwhile = entityView(D, 'contact', 'x:acme ag::ann').exists;
+      retractChanges(D, hd, pd);
+    """)
+    check("claims: a held delete hides the row meanwhile", e("deletedMeanwhile"), False)
+    check("claims: ... and retracting it brings the row back", e("entityView(D, 'contact', 'x:acme ag::ann').exists"), True)
+
+    # Step 5 - assignments (design 7): who has it, a race, off-limits, the pages' summary.
+    e("""
+      var ACTX = {me: 'anna', now: T0 + 20000, lastSeen: {ben: T0 + 15000}, readUpTo: {ben: T0 + 12000}, activeMembers: ['ben'], idleMs: 300000};
+      var A = newState();
+      applyChange(A, {t: st2(T0 + 10000, 0, 'anna'), e: 'account', id: claimIdFor('acme ag'), op: 'assign'});
+      var A2 = JSON.parse(JSON.stringify(A));
+      applyChange(A2, {t: st2(T0 + 9000, 0, 'ben'), e: 'account', id: claimIdFor('acme ag'), op: 'assign'});
+      var A3 = JSON.parse(JSON.stringify(A2));
+      applyChange(A3, {t: st2(T0 + 11000, 0, 'anna'), e: 'account', id: claimIdFor('acme ag'), op: 'unassign'});
+      var B = newState();
+      applyChange(B, {t: st2(T0 + 10000, 0, 'ben'), e: 'account', id: claimIdFor('beta sa'), op: 'claim'});
+      applyChange(B, {t: st2(T0 + 10000, 1, 'anna'), e: 'account', id: claimIdFor('gamma ag'), op: 'assign', member: 'cleo'});
+      applyChange(B, {t: st2(T0 + 10000, 2, 'anna'), e: 'account', id: claimIdFor('delta ag'), op: 'claim'});
+      function av(s, k, c) { var v = assignmentView(s, k, c || ACTX); return [v.assignee && v.assignee.member, v.mine, v.confirmed, v.lostTo]; }
+    """)
+    check("assign: Anna's own, confirmed once Ben wrote after it", e("JSON.stringify(av(A, 'acme ag'))"), '["anna",true,true,null]')
+    check("assign: ... checking while Ben has not",
+          e("JSON.stringify(av(A, 'acme ag', Object.assign({}, ACTX, {readUpTo: {ben: T0 + 9000}})))"), '["anna",true,false,null]')
+    check("assign: Ben assigned earlier - his; Anna lost to him", e("JSON.stringify(av(A2, 'acme ag'))"), '["ben",false,false,"ben"]')
+    check("assign: Anna's withdrawn assignment is no longer a lost one", e("JSON.stringify(av(A3, 'acme ag'))"), '["ben",false,false,null]')
+    check("assign: unassigned account", e("JSON.stringify(av(newState(), 'acme ag'))"), '[null,false,false,null]')
+    check("off-limits: a colleague's assigned account", e("JSON.stringify(offLimitsFor(A2, 'acme ag', ACTX))"),
+          json.dumps({"reason": "assigned", "member": "ben", "sinceWall": 1759480009000}, separators=(",", ":")))
+    check("off-limits: my own assigned account is not", e("offLimitsFor(A, 'acme ag', ACTX)"), None)
+    check("off-limits: a colleague updating it", e("offLimitsFor(B, 'beta sa', ACTX).reason"), "held")
+    check("off-limits: assigned by the admin to someone else", e("offLimitsFor(B, 'gamma ag', ACTX).member"), "cleo")
+    check("summary: assignments and claims, nothing else",
+          e("JSON.stringify(teamAccountSummary(B, ACTX))"),
+          json.dumps({"beta sa": {"h": "ben", "hs": 1759480010000}, "gamma ag": {"a": "cleo", "as": 1759480010000},
+                      "delta ag": {"h": "anna", "hs": 1759480010000}}, separators=(",", ":")))
+    check("summary: my unconfirmed assignment is flagged",
+          e("JSON.stringify(teamAccountSummary(A, Object.assign({}, ACTX, {readUpTo: {ben: 0}})))"),
+          json.dumps({"acme ag": {"a": "anna", "as": 1759480010000, "ac": False}}, separators=(",", ":")))
+    check("summary off-limits: mine / colleague's / held / my own claim",
+          e("JSON.stringify([summaryOffLimits({a: 'anna'}, 'anna'), summaryOffLimits({a: 'ben', as: 5}, 'anna').reason, summaryOffLimits({h: 'ben'}, 'anna').reason, summaryOffLimits({h: 'anna'}, 'anna'), summaryOffLimits(null, 'anna')])"),
+          '[null,"assigned","held",null,null]')
+
+
+def test_team_log_and_join(ctx):
+    """1.2.2 step 6: the team log built from change records (R3.11); the join overlap and add-back (R6.7)."""
+    e = lambda x: ctx.eval(x)
+    e("""
+      var T6 = 1759480000000;
+      var n6 = function (n) { return String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+      var LS = newState();
+      applyChanges(LS, [{t: formatStamp(T6, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {companyId: 'c-1', company: 'Acme AG'}}]);
+      var LOG = teamLogEntries([
+        {t: formatStamp(T6 + 1, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {nextActionDueAt: 1, notes: 'x'}},
+        {t: formatStamp(T6 + 2, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {status: 'Won', notes: 'y'}},
+        {t: formatStamp(T6 + 3, 0, 'anna'), e: 'contact', id: 'x:acme ag::ann', op: 'set', f: {deletedAt: 5}},
+        {t: formatStamp(T6 + 4, 0, 'anna'), e: 'account', id: '@acme ag', op: 'claim'},
+        {t: formatStamp(T6 + 5, 0, 'boaz'), e: 'account', id: '@acme ag', op: 'assign', member: 'anna'},
+        {t: formatStamp(T6 + 6, 0, 'boaz'), e: 'setting', id: 'negativeTopics', op: 'set', f: {$v: []}},
+      ], LS, n6);
+      var txt = function (x) { return teamLogText(x, function (k) { return k === 'acme ag' ? 'Acme AG' : k; }, function (m) { return m; }); };
+    """)
+    check("team log: one line per member, change and account; claims left out", e("LOG.length"), 4)
+    e("""
+      var REC = {t: formatStamp(T6 + 7, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {company: 'Acme Group'}};
+      var PRI = new Map([[REC, priorOf(LS, REC)]]);
+      var VL = teamLogEntries([REC], LS, n6, PRI)[0];
+    """)
+    check("team log: previous and new value of a field", e("JSON.stringify([VL.before, VL.after])"), '[{"company":"Acme AG"},{"company":"Acme Group"}]')
+    check("team log: fields of one account's rows together, in words", e("txt(LOG[0])"), "changed Acme AG: Follow-up date, Notes, Status")
+    check("team log: a field's own time stamp is left out", e("JSON.stringify(shownFields(['manualStatus', 'manualStatusAt', 'reviewedAt']).map(fieldName))"), '["Status","Reviewed at"]')
+    check("team log: a contact removed", e("txt(LOG[1])"), "removed Acme AG (a contact)")
+    check("team log: assigned by the admin", e("txt(LOG[2])"), "assigned Acme AG to anna")
+    check("team log: a setting", e("txt(LOG[3])"), "changed the setting negativeTopics")
+    check("team log: kept to the newest TEAM_LOG_KEPT, old ones out",
+          e("appendTeamLog([{at: 1}, {at: T6}], [{at: T6 + 9}], T6 + 10).map(function (x) { return x.at; }).join(',')"), "%d,%d" % (1759480000000, 1759480000009))
+
+    e("""
+      var LOCAL = {
+        targetAccounts: {'acme ag': {company: 'Acme AG'}, 'beta sa': {company: 'Beta SA', linkedinCompanyId: '77'}, 'gamma': {company: 'Gamma'}, 'gone': {company: 'Gone'}},
+        targetAccountExtras: {'gone': {deletedAt: 1}, 'gamma': {nextActionDueAt: 3}},
+        targetContactExtras: {'gamma::eve': {mentorHistory: [1]}},
+        targetAccountsWorkbook: {companies: [{companyId: 'C1', company: 'Acme AG'}, {companyId: 'C2', company: 'Gamma'}],
+          contacts: [{contactId: 'P1', companyId: 'C2', company: 'Gamma', fullName: 'Eve'}]},
+        results: {L1: {company: 'Beta SA', status: 'Contacted'}, L2: {company: 'Gamma', status: 'New'}, L3: {company: 'Acme AG', status: 'New'}},
+      };
+      var TEAM = {
+        targetAccounts: {'beta': {company: 'Beta', linkedinCompanyId: '77'}, 'acme ag': {company: 'Acme AG'}},
+        targetAccountsWorkbook: {companies: [{companyId: 'C2', company: 'Beta'}], contacts: [{contactId: 'P1', company: 'Beta', fullName: 'Bo'}]},
+        results: {},
+      };
+      var OV = joinOverlap(LOCAL, TEAM, n6);
+      var BACK = addBackValues(LOCAL, TEAM, ['gamma'], OV.shared.map(function (s) { return s.localKey; }), n6, 'm1');
+    """)
+    check("join: only-mine accounts listed (removed ones not)", e("OV.localOnly.map(function (a) { return a.key; }).join(',')"), "gamma")
+    check("join: what was done on it", e("OV.localOnly[0].worked.join('; ')"), "a follow-up date; a Sales Mentor conversation")
+    check("join: shared + worked, matched by LinkedIn id -> the team's key", e("JSON.stringify(OV.shared.map(function (s) { return [s.key, s.localKey]; }))"), '[["beta","beta sa"]]')
+    check("join: shared but not worked is no proposal", e("OV.shared.some(function (s) { return s.key === 'acme ag'; })"), False)
+    check("join: brought account back in targetAccounts, team's kept", e("Object.keys(BACK.targetAccounts).sort().join(',')"), "acme ag,beta,gamma")
+    check("join: clashing company id renamed, contact follows", e("JSON.stringify(BACK.targetAccountsWorkbook.contacts[1])"),
+          '{"contactId":"P1-m1","companyId":"C2-m1","company":"Gamma","fullName":"Eve"}')
+    check("join: team's workbook rows untouched", e("BACK.targetAccountsWorkbook.companies[0].company + '|' + BACK.targetAccountsWorkbook.companies[1].companyId"), "Beta|C2-m1")
+    check("join: contact extras of a brought account come along", e("'gamma::eve' in BACK.targetContactExtras"), True)
+    check("join: leads - brought account's and contacted ones of shared accounts", e("Object.keys(BACK.results).sort().join(',')"), "L1,L2")
+    e("""
+      var REJOIN = joinOverlap(
+        {targetAccounts: {'roche': {company: 'Roche'}, 'ubs': {company: 'UBS'}}, results: {R1: {company: 'Roche', status: 'Contacted'}, U1: {company: 'UBS', status: 'Contacted'}}},
+        {targetAccounts: {'roche': {company: 'Roche'}, 'ubs': {company: 'UBS'}}, results: {R1: {company: 'Roche', status: 'New'}, U1: {company: 'UBS', status: 'Contacted'}}}, n6);
+    """)
+    check("join: a lead the team has as New gets the member's Contacted",
+          e("JSON.stringify(addBackValues({results: {R1: {company: 'Roche', status: 'Contacted', contactedBy: 'Annick'}}}, {results: {R1: {company: 'Roche', status: 'New', author: 'Pia'}}}, [], ['roche'], n6, 'm2').results.R1)"),
+          '{"company":"Roche","status":"Contacted","author":"Pia","contactedBy":"Annick"}')
+    check("join: work the team already has does not count (rejoining member)", e("JSON.stringify(REJOIN.shared.map(function (s) { return [s.key, s.worked]; }))"), '[["roche",["1 lead contacted"]]]')
+    e("""
+      var CL = {targetAccounts: {'roche': {company: 'Roche'}}, targetContactExtras: {'roche::ann': {manualStatus: 'Contacted', manualStatusAt: 5}}};
+      var CT = {targetAccounts: {'roche': {company: 'Roche'}}, targetContactExtras: {'roche::ann': {manualStatus: 'Not contacted'}}};
+      var COV = joinOverlap(CL, CT, n6);
+      var CB = addBackValues(CL, CT, [], [{localKey: 'roche', key: 'roche'}], n6, 'm3');
+    """)
+    check("join: a contact set to Contacted counts as work", e("JSON.stringify(COV.shared.map(function (s) { return s.worked; }))"), '[["1 contact marked Contacted"]]')
+    check("join: ... and its status is carried over", e("CB.targetContactExtras['roche::ann'].manualStatus"), "Contacted")
+    check("join: proposals keyed per member and account",
+          e("JSON.stringify(Object.keys(joinProposals(OV.shared, {memberId: 'm1', memberName: 'Eve', at: 1, assigneeOf: function () { return 'boaz'; }})))"), '["m1~beta"]')
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -1879,6 +2407,11 @@ def main():
     test_same_brand_domain(ctx)
     test_title_brackets(ctx)
     test_login_wall(ctx)
+    test_team_merge(ctx)
+    test_team_rows(ctx)
+    test_team_list_rows(ctx)
+    test_team_claims(ctx)
+    test_team_log_and_join(ctx)
 
     print()
     for f in _failures:

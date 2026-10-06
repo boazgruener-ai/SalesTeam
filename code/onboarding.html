@@ -8,15 +8,17 @@
 </head>
 <body>
   <header id="page-header">
-    <a id="wizard-main-menu-link" href="settings.html" title="Open the SalesTeam menu (dashboards, scanner, settings, backup). Your answers so far are saved automatically.">&#9776; SalesTeam menu</a>
+    <a id="wizard-main-menu-link" href="settings.html" title="Open the SalesTeam menu (dashboards, scanner, settings, backup). With unsaved changes on the open step, you are asked first.">&#9776; SalesTeam menu</a>
     <h1><span id="page-title-text">SalesTeam Setup</span> <span id="version-text"></span></h1>
     <p class="page-subtitle" id="page-subtitle-setup">
       Tell us who you're looking for. This scopes every future Target Account &amp; Contact Discovery scan -
       you can change any of it later from Settings' "Change Settings".
     </p>
     <p class="page-subtitle" id="page-subtitle-change" hidden>
-      Pick the setting you want to change. Changes are saved as you make them; press Save to be sure.
+      Pick the setting you want to change, then press Save. Nothing is changed until you do.
     </p>
+    <!-- 1.2.2 step 5 (D3): a team member sees the shared setup read-only -->
+    <div id="team-member-setup-note" class="wizard-note team-member-setup-note" hidden></div>
     <div id="linkedin-use-note" class="wizard-note">
       <strong>How SalesTeam works with online platforms and data sources.</strong> SalesTeam is built with the rules of the online platforms and data sources it works with in mind. Its research draws on publicly available sources: the research prompt has an AI assistant consult public company registries and websites, and SalesTeam's own scans read pages of platforms such as LinkedIn. It is designed for personal use, the way a person would use these sites: every scan starts when you click a button, and automatic account preparation runs only if you switch it on: you start it once; SalesTeam keeps your accounts ready within your daily LinkedIn limit, visible in your browser. Every search and page visit happens in a browser tab or window you can see, only while Chrome is open, and you can turn the automation off at any time in Settings. There is no bulk collection of pages. A built-in safety limit keeps the number of searches and page visits per day modest - within what one person could do by hand. SalesTeam has no server or database of its own, so it never collects, resells or shares anyone's data: everything it finds stays on your device, for your own use, and it never sends messages or connection requests for you. Because each platform's terms of use apply to how any tool is used on it (LinkedIn's terms, for example), we recommend keeping your use moderate and within the daily limit.
     </div>
@@ -37,7 +39,7 @@
     <div id="wizard-step-list"></div>
     <div id="wizard-nav-buttons">
       <button type="button" id="nav-back-btn">Back</button>
-      <button type="button" id="nav-exit-btn" title="Leave the setup and open the SalesTeam menu. Your answers so far are saved automatically.">Exit to menu</button>
+      <button type="button" id="nav-exit-btn" title="Leave the setup and open the SalesTeam menu. With unsaved changes on the open step, you are asked first.">Exit to menu</button>
       <button type="button" id="nav-save-btn" title="Save this step now and stay here">Save</button>
       <span id="nav-save-status" class="status-text" role="status"></span>
       <button type="button" id="nav-save-exit-btn" title="Save this step and leave the setup. You can continue where you left off later.">Save &amp; Exit to menu</button>
@@ -78,7 +80,7 @@
       <p class="field-hint">Drafted messages, the Sales Mentor and the proposals of the research. The same setting as in Settings.</p>
       <div id="about-research-box" class="wizard-note">
         <p id="about-research-text"></p>
-        <button type="button" id="about-research-btn"></button>
+        <button type="button" id="about-research-btn" class="step-inline-btn"></button>
         <p id="about-research-error" class="step-error" hidden></p>
       </div>
       <p class="step-error" hidden></p>
@@ -236,7 +238,7 @@
         After every scan the Sales Mentor ranks each new lead (post) from P1 (best) to P5. The rules on this page
         adjust that ranking when the lead's company is one of your Target Accounts. (Ranking the companies themselves
         is a different step: Discovery Prioritization.) The Sales Mentor's own judgment always comes first; a rule
-        only changes the ranking of a lead that meets its condition. Changes are saved as you make them.
+        only changes the ranking of a lead that meets its condition.
       </p>
 
       <h3 class="lp-part-heading">Posts</h3>
@@ -469,6 +471,121 @@
       <label for="targets-initiatives-input">Relevant initiatives per account</label>
       <input type="number" id="targets-initiatives-input" min="0" max="5" />
       <p class="targets-estimate" id="targets-estimate"></p>
+      <p class="step-error" hidden></p>
+    </section>
+
+    <!-- Change Settings > Advanced (moved from two Settings cards, 1.2.1.10; advanced-steps.js). Settings mode only. -->
+    <section id="enter-findings" class="wizard-step advanced-card-step" hidden>
+      <h2>How to handle research findings</h2>
+      <!-- 1.2.0.51: the same plain choice as on the Setup's Finish screen. -->
+      <label class="checkbox-label">
+        <input type="radio" name="findings-mode" id="findings-mode-auto" value="auto" />
+        Decide automatically where it is safe, and ask me only when it matters (recommended)
+      </label>
+      <label class="checkbox-label">
+        <input type="radio" name="findings-mode" id="findings-mode-ask" value="ask" />
+        Ask me about every difference (empty fields are still filled in)
+      </label>
+      <p class="field-hint">
+        When a web research turns up a fact that disagrees with what an account already holds, most of the time it is
+        not a mistake: two correct figures counted differently (84,146 employees or 150,000 &ndash; direct staff against
+        staff-and-contractors), or a field that is never used to score a company at all. <strong>Resolve Web Findings
+        Automatically&hellip;</strong> on the Target Accounts Dashboard settles those by the rules below and leaves you only
+        the ones that can genuinely change something. It always shows you what it will do before it does it, writes
+        every single decision to the Activity Log, and can be undone in one action.
+      </p>
+
+      <h4>Rules</h4>
+      <p class="field-hint">
+        Turning a rule off always moves in the safe direction. For the rules that decide something, that case stops
+        being decided and comes to you instead. For the rules that always ask, it stops forcing a question and lets the
+        remaining rules try &ndash; but a value that fails the &ldquo;looks wrong&rdquo; checks is never written into an account
+        whatever these are set to, so the most a switched-off rule can do is keep what you already have.
+      </p>
+      <div id="web-findings-rules"></div>
+
+      <h4>Settings the rules use</h4>
+      <label for="web-findings-tolerance">Treat two employee counts as the same when they differ by less than (%)</label>
+      <input type="number" id="web-findings-tolerance" min="0" max="100" step="1" style="width: 110px" />
+      <p class="field-hint">
+        Only used when the two counts fall in different size bands. Higher means fewer questions and more decided for you.
+      </p>
+
+      <label for="web-findings-preference">When a rule decides for you, prefer</label>
+      <select id="web-findings-preference">
+        <option value="existing">Current data</option>
+        <option value="web">Web findings</option>
+      </select>
+      <p class="field-hint">
+        Keeping current data is the safer default: it is the curated set and it is consistent across every account.
+        Choose web findings instead if the imported data is older or less trustworthy than a fresh search.
+      </p>
+
+      <label class="checkbox-label">
+        <input type="checkbox" id="web-findings-linkedin-authoritative" />
+        Trust an employee count read from LinkedIn when deciding which size band a company is in
+      </label>
+      <p class="field-hint">
+        A count fetched from LinkedIn is the size band the company publishes about itself. It is not an exact headcount,
+        but it is the most reliable thing available for putting a company in the right band &ndash; so when it disagrees with
+        the web research about the band, this keeps LinkedIn's rather than asking you.
+      </p>
+
+      <details id="web-findings-illogical">
+        <summary>What counts as a value that &ldquo;looks wrong&rdquo;</summary>
+        <p class="field-hint">
+          Checked on both sides &ndash; the found value and the one already stored. Alongside these numbers, rule 2 also
+          catches an employee count that is not a number at all (values like &ldquo;6,500+&rdquo; are stored on some accounts and
+          can never be used for sizing), a local employee count larger than the worldwide one, any negative value, and
+          revenue that looks like it was entered in millions where the other side is in units.
+        </p>
+        <label for="web-findings-max-employees">Too many employees to be real</label>
+        <input type="number" id="web-findings-max-employees" min="1" step="1000" style="width: 160px" />
+        <label for="web-findings-rev-floor">Revenue below this, when the other side is at least the next figure, is a units mistake</label>
+        <input type="number" id="web-findings-rev-floor" min="0" step="100" style="width: 160px" />
+        <label for="web-findings-rev-ceil">&hellip;and the other side is at least</label>
+        <input type="number" id="web-findings-rev-ceil" min="0" step="100000" style="width: 160px" />
+        <label for="web-findings-rpe-min">Lowest believable revenue per employee</label>
+        <input type="number" id="web-findings-rpe-min" min="0" step="100" style="width: 160px" />
+        <label for="web-findings-rpe-max">Highest believable revenue per employee</label>
+        <input type="number" id="web-findings-rpe-max" min="0" step="100000" style="width: 160px" />
+      </details>
+
+      <div class="settings-buttons-row">
+        <button type="button" id="web-findings-reset-btn">Put everything back to the defaults</button>
+        <span id="web-findings-status" class="status-text" role="status"></span>
+      </div>
+      <p class="step-error" hidden></p>
+    </section>
+
+    <section id="enter-revenue" class="wizard-step advanced-card-step" hidden>
+      <h2>Revenue &amp; Currency</h2>
+      <p class="field-hint">
+        Revenue reaches SalesTeam written every possible way &ndash; <code>102M</code>, <code>CHF 102m</code>,
+        <code>102'000</code>, <code>1.2bn</code>, sometimes just <code>USD</code> with no number at all. It is cleaned up
+        into plain digits (<code>102M</code> becomes <code>102,000,000</code>) and anything not already in the currency
+        below is converted into it, so two figures can actually be compared instead of merely looking different.
+        The same clean-up rescues employee counts stored as text, like <code>6,500+</code>, which otherwise give a
+        company no size at all when it is scored.
+      </p>
+
+      <label for="revenue-currency-select">Show and compare all revenue in</label>
+      <select id="revenue-currency-select"></select>
+
+      <details id="revenue-rates-details">
+        <summary>Exchange rates</summary>
+        <p class="field-hint" id="revenue-rates-asof"></p>
+        <p class="field-hint">
+          These are approximate starting values, not a live feed &ndash; SalesTeam never calls out to a rates service.
+          Correct any of them by hand and set the date so you can see at a glance how old they are. Each one is how
+          many US dollars one unit of that currency is worth.
+        </p>
+        <label for="revenue-rates-asof-input">Rates last checked on</label>
+        <input type="date" id="revenue-rates-asof-input" />
+        <div id="revenue-rates-grid"></div>
+        <button type="button" id="revenue-rates-reset-btn">Put the rates back to the defaults</button>
+      </details>
+      <span id="revenue-currency-status" class="status-text" role="status"></span>
       <p class="step-error" hidden></p>
     </section>
 

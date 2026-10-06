@@ -405,7 +405,7 @@ async function run() {
     // came back empty, so this exact case produced no debug sample at all.
     // Widened to fire whenever either field is still missing.
     debug: (!company || !personLocation) ? collectDiagnostics() : null,
-  });
+  }).catch(() => {});
 }
 
 run();

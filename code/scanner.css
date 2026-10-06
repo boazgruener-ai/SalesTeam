@@ -741,6 +741,54 @@ section {
   cursor: default;
 }
 
+/* Explicit-save rule (2026-10-06): scan settings are saved only by this
+   button. Sticky at the top of the independently-scrolling settings column
+   so it stays in view wherever the user is editing. */
+#scanner-save-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid var(--border, #e0e0e0);
+  border-radius: 6px;
+}
+
+#scanner-save-bar.scanner-save-dirty {
+  background: #fff8e1;
+  border-color: #e0a800;
+}
+
+#scanner-save-status {
+  font-size: 12px;
+  color: #888;
+}
+
+#scanner-save-bar.scanner-save-dirty #scanner-save-status {
+  color: #8a5a00;
+  font-weight: 600;
+}
+
+#scanner-save-btn {
+  padding: 6px 18px;
+  border: none;
+  border-radius: 6px;
+  background: #0a66c2;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#scanner-save-btn:disabled {
+  background: #9cbfe0;
+  cursor: default;
+}
+
 #stop-scan-btn {
   width: 100%;
   padding: 6px;

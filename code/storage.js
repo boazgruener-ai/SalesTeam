@@ -1,5 +1,6 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
+import { joinProposalItems, applyJoinProposal } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
@@ -3206,12 +3207,18 @@ export async function updateResultDraft(key, { draftMessage, draftTemplateId }) 
 // action. Silently no-ops on an unknown key or status value rather than
 // throwing, since this is always called from a UI that already has the
 // current lead list in front of it.
-export async function updateLeadStatus(key, status) {
+// `by` (1.2.2 step 5b): in a team, the member who marked the lead Contacted - the Leads Dashboard warns a colleague
+// before a second approach to the same person.
+export async function updateLeadStatus(key, status, { by = null } = {}) {
   if (!LEAD_STATUSES.includes(status)) return;
   const results = await getResults();
   if (results[key]) {
     results[key].status = status;
     results[key].statusUpdatedAt = Date.now();
+    if (status === "Contacted" && by) {
+      results[key].contactedBy = by;
+      results[key].contactedAt = Date.now();
+    }
     await saveResults(results);
   }
 }
@@ -4432,7 +4439,9 @@ export async function getTargetAccountExtras() {
 
 export async function getTargetAccountExtra(companyKey) {
   const extras = await getTargetAccountExtras();
-  return extras[companyKey] || emptyExtra();
+  // Filled in from emptyExtra: an entry can hold only some fields (team use: a status carried over on joining, a row
+  // arriving from a colleague) - the chats then found no history array and the page threw (live test 1.2.1.11).
+  return { ...emptyExtra(), ...(extras[companyKey] || {}) };
 }
 
 // src says where a changed override came from: "user" (a manual edit, the default) or "web" (an
@@ -4707,7 +4716,7 @@ export async function getTargetContactExtras() {
 
 export async function getTargetContactExtra(contactKey) {
   const extras = await getTargetContactExtras();
-  return extras[contactKey] || emptyExtra();
+  return { ...emptyExtra(), ...(extras[contactKey] || {}) }; // filled in, as getTargetAccountExtra
 }
 
 export async function saveTargetContactExtra(contactKey, patch) {
@@ -5756,7 +5765,9 @@ function buildDecisionQueueShared(views) {
 }
 
 export async function getDecisionQueue() {
-  return buildDecisionQueueShared();
+  // Team use step 6 (R6.7): the Team Admin's join proposals come first - a colleague is waiting on them.
+  const [q, proposals] = await Promise.all([buildDecisionQueueShared(), joinProposalItems().catch(() => [])]);
+  return proposals.length ? { items: [...proposals, ...q.items], count: q.count + proposals.length } : q;
 }
 
 // Clears an account's failed attempts, empty-page mark, Keep and pending page change: something new
@@ -5775,6 +5786,11 @@ async function resetPipelineForUnlocked(key) {
 //   finding: "web" | "current"
 // Returns a short line saying what was done, for the page and the Activity Log.
 export async function applyDecision(item, choice) {
+  if (item.kind === "join_proposal") {
+    const done = await applyJoinProposal(item, choice);
+    appendActivityLog({ actor: "user", action: "decision", label: `Decision: ${done}`, relatedCompanyKey: item.accountKey, newValue: { kind: item.kind, choice } }).catch(() => {});
+    return done;
+  }
   const p = item.payload || {};
   let label;
   if (item.kind === "page_changed") {

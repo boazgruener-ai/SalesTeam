@@ -350,6 +350,240 @@ h1 {
   gap: 8px;
 }
 
+#version-text {
+  font-size: 11px;
+  color: var(--gray-light);
+}
+
+.nav-group {
+  padding: 0 12px;
+  margin-bottom: 18px;
+}
+
+.nav-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+  padding: 0 8px 6px 8px;
+}
+
+.nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 8px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: none;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.nav-item:hover {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+.nav-item-top {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--nav-header);
+}
+
+.nav-item-top:hover {
+  color: var(--blue);
+}
+
+/* Reported directly, 2026-09-19: bold was doing double duty (group
+   headers AND the current item), making the two hard to tell apart at a
+   glance. Bold is now group-headers-only (.nav-group-label); the current
+   item is marked by this background pill alone, no weight change. */
+.nav-item.active {
+  background: var(--blue-light);
+  color: var(--blue);
+}
+
+.nav-item-badge {
+  float: right;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gray-light);
+}
+
+.nav-item.active .nav-item-badge {
+  color: var(--blue);
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - the nav is now the full
+   cross-app menu on every page (native <details>/<summary>, no JS needed
+   for expand/collapse) - see target-accounts.html's own #app-nav comment
+   for the full reasoning. */
+details.nav-group summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details.nav-group summary::-webkit-details-marker {
+  display: none;
+}
+
+details.nav-group summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  transition: transform 0.15s ease;
+}
+
+details.nav-group[open] summary::before {
+  transform: rotate(90deg);
+}
+
+details.nav-group > .nav-item,
+details.nav-group > div > .nav-item {
+  margin-left: 20px;
+  width: calc(100% - 20px);
+}
+
+.nav-group-sublabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--gray-light);
+  opacity: 0.75;
+  margin: 10px 0 4px 20px;
+}
+
+/* Reported directly: Debug test panels aren't for normal use, only support
+   sessions - kept navigable from within Settings (so someone who arrived
+   via the hub's own discrete Debug link can still switch between the 3
+   panels), but visually de-emphasized and pushed to the very bottom of the
+   nav rather than sitting alongside real settings. */
+.nav-group-debug {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.nav-group-debug .nav-group-label,
+.nav-group-debug .nav-item {
+  color: var(--gray-light);
+  font-size: 12px;
+}
+
+.nav-group-debug .nav-item:hover {
+  color: var(--blue);
+}
+
+/* 27th round of direct feedback (2026-09-19), same-day follow-up - see
+   #app-shell's own comment above and target-accounts.css's copy of this
+   comment for the full reasoning: overflow-y: auto makes this its own
+   dedicated, self-contained scroll region - never the outer document. */
+#app-main {
+  flex-grow: 1;
+  min-width: 0;
+  padding: 24px 32px 60px;
+  position: relative;
+  overflow-y: auto;
+}
+
+/* PRD 6.20 Phase 10 follow-up (2026-09-19) - every cross-page nav item
+   embeds in place now (6th round of direct feedback), see
+   target-accounts.css's own copy of this comment for the full reasoning. */
+/* Reverted the earlier `#app-main { min-height: 100vh }` fix + fixed
+   properly, 2026-09-19 - see target-accounts.css's own copy of this
+   comment for the full reasoning (that fix produced a real second, nested
+   outer scrollbar on top of the embedded iframe's own internal one,
+   reported directly: "the outer one moves the main page and also the
+   menu, the inner one moves only the central page"). Sizes itself (no
+   dependency on #app-main's own height) instead of stretching to match a
+   forced-tall #app-main.
+   height, not min-height (2026-09-19, see target-accounts.css's own copy
+   of this comment for the full reasoning) - min-height briefly broke the
+   embedded iframe's own sizing (a flex container's min-height doesn't
+   reliably give a flex: 1 child a definite height), reported directly as
+   a missing top scrollbar inside the embedded page. */
+#embedded-page-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #fafafa;
+}
+
+#embedded-page-wrap[hidden] {
+  display: none;
+}
+
+#embedded-page-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  flex-shrink: 0;
+}
+
+/* Same fix as #embedded-page-wrap[hidden] above (round 6) - an ID
+   selector's own display:flex silently beats the browser's native
+   [hidden] { display: none }, so hiding this bar (19th round of direct
+   feedback, 2026-09-19) needs the same explicit, more-specific override. */
+#embedded-page-bar[hidden] {
+  display: none;
+}
+
+#embedded-page-close-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#embedded-page-close-btn:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+#embedded-page-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+#embedded-page-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+}
+
+/* #app-nav is sticky within the WINDOW's own scroll (not an internal
+   #app-main scroll region), so the anchor-jump smoothing belongs on the
+   root element, not #app-main itself. */
+html {
+  scroll-behavior: smooth;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 #settings-save-status {
   position: fixed;
   top: 16px;
@@ -581,32 +815,23 @@ textarea {
   font-size: 13px;
 }
 
-#web-findings-rules .web-findings-rule {
-  display: block;
-  margin-bottom: 10px;
-}
-
-#web-findings-rules .web-findings-rule-detail {
-  margin: 2px 0 0 24px;
-}
-
-/* Exchange rates (Revenue & Currency) - a label/input pair per currency, generated in settings.js
-   from SUPPORTED_CURRENCIES so a new currency needs no edit here. */
-#revenue-rates-grid {
-  display: grid;
-  grid-template-columns: max-content max-content;
-  gap: 6px 12px;
-  align-items: center;
-  margin: 10px 0;
-}
-
-#revenue-rates-grid label {
-  margin: 0;
-  font-size: 12px;
-}
-
 /* User Profile: where the company and its website are set (Change Settings > About you, 1.2.0.16). */
 #profile-about-you-note { margin-top: 12px; padding: 10px 14px; background: #eef4fb; border: 1px solid #d3e2f3; border-radius: 8px; font-size: 12px; line-height: 1.5; }
 #profile-about-you-note button { margin-top: 8px; }
 #seller-research-offer { margin: 0 0 16px; padding: 12px 16px; background: #eef4fb; border: 1px solid #9cc0e8; border-left: 4px solid #1155cc; border-radius: 8px; font-size: 13px; line-height: 1.5; max-width: 900px; }
 #seller-research-offer p { margin: 0 0 8px; }
+
+/* Settings > Team (1.2.2 step 3, team-ui.js) */
+#team-section input[type="text"] { display: block; width: 100%; max-width: 360px; box-sizing: border-box; margin-bottom: 10px; }
+.team-steps { margin: 8px 0 14px; padding-left: 22px; font-size: 13px; line-height: 1.55; }
+.team-steps li { margin-bottom: 4px; }
+.team-warning { margin: 6px 0 10px; padding: 10px 14px; background: #fff4e5; border: 1px solid #f0c48a; border-radius: 8px; font-size: 12.5px; line-height: 1.5; }
+.team-status { white-space: pre-line; }
+.team-status.team-error { color: #b3261e; font-weight: 600; }
+.settings-buttons-row button.team-primary-btn { background: #1155cc; border-color: #1155cc; color: #fff; }
+.settings-buttons-row button.team-primary-btn:disabled { background: #9db6e0; border-color: #9db6e0; cursor: default; }
+#team-member-who { font-weight: 600; margin: 0 0 4px; }
+#team-members-table { border-collapse: collapse; font-size: 12.5px; margin: 4px 0 14px; }
+#team-members-table td { border-bottom: 1px solid #e3e8ef; padding: 5px 14px 5px 0; }
+#team-members-table tr.team-members-head td { font-weight: 600; color: var(--gray-light); }
+

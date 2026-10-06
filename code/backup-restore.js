@@ -431,6 +431,10 @@ export async function safetyCopyBeforeRestore() {
 // One entry point for every kind of backup file: the full zip, or one of the older JSON backups.
 // Returns a one-line description of what happened, or null if the user cancelled.
 export async function restoreFromFile(file) {
+  // 1.2.2: in a team, whatever a restore puts back is shared with every colleague as a change of this member's.
+  const team = (await chrome.storage.local.get("teamMembership")).teamMembership;
+  if (team && !confirm(`You are in the team "${team.teamName}". Restoring changes the team's data too: the accounts, contacts, ` +
+    "leads and settings you restore are sent to every colleague and replace what they have now.\n\nRestore anyway?")) return null;
   if (file.name.toLowerCase().endsWith(".zip")) {
     const parsed = await parseFullBackup(await file.arrayBuffer());
     const sections = await chooseRestoreSections("full", parsed.manifest);

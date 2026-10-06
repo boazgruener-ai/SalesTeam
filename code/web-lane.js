@@ -22,6 +22,7 @@ import { BULK_STATE_KEY } from "./batch-jobs.js";
 import { isRateLimited, backoffDelayMs, MAX_RATE_LIMITS_IN_A_ROW } from "./rate-limit.js";
 import { getPipelineAutomation, webBudgetState, recordWebSpend, setWebBlocked, apiKeyTail } from "./pipeline-automation.js";
 import { localDay } from "./pipeline-plan.js";
+import { teamWorkGate, claimAccount, releaseAccount } from "./team-sync.js";
 
 export const WEB_LANE_STATE_KEY = "webLaneState";
 const WORKERS = 4;
@@ -110,7 +111,10 @@ export async function startWebLane({ limit, budget, auto = false }) {
   if (bulk && bulk.status === "running") throw new Error("A bulk web research is running - wait for it to finish, or stop it, first.");
   const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
   if (!apiKey) throw new Error("Add your Anthropic API key first (Settings > Anthropic API Key) - web research runs on your own key.");
-  const all = await webLaneCandidates();
+  // Team use 1.2.2 step 4 (design 6.5): in a team, only accounts no colleague holds, from this member's share.
+  const gate = await teamWorkGate().catch(() => null);
+  if (gate && !gate.connected) throw new Error("The team folder is not connected on this PC (or not in sync) - in a team, web research runs only while colleagues can see what it works on.");
+  const all = (await webLaneCandidates()).filter((c) => !gate || gate.mayWork(c.key));
   const items = all.slice(0, Math.max(1, Number(limit) || 20));
   if (items.length === 0) throw new Error("No account needs web research right now - every account already has what the lane looks for.");
   const state = {
@@ -132,7 +136,7 @@ export async function startWebLane({ limit, budget, auto = false }) {
       for (const c of controllers.values()) c.abort();
     },
   };
-  run(items, { apiKey, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r), auto: Boolean(auto) }).catch(() => {});
+  run(items, { apiKey, state, save, controllers, isStopping: () => stopping, stop: (r) => runner?.stop(r), auto: Boolean(auto), team: Boolean(gate) }).catch(() => {});
   return { ok: true, total: items.length, candidates: all.length };
 }
 
@@ -150,7 +154,7 @@ async function autoStopReason() {
   return w.reason ? `web_${w.reason}` : null;
 }
 
-async function run(items, { apiKey, state, save, controllers, isStopping, stop, auto }) {
+async function run(items, { apiKey, state, save, controllers, isStopping, stop, auto, team = false }) {
   let beat = 0;
   const keepAlive = setInterval(() => {
     chrome.storage.local.get("keepAlive").catch(() => {});
@@ -197,7 +201,13 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
         await save();
         const sentAt = Date.now();
         let requeued = false;
+        // In a team the account is claimed first; one a colleague took meanwhile is skipped (counted as done).
+        const claimed = team ? await claimAccount(item.key, { kind: "pipeline" }).catch(() => ({ ok: false })) : { ok: true };
         try {
+          if (!claimed.ok) {
+            state.results.push({ key: item.key, company: item.company, isPublic: item.isPublic, topics: item.topics, error: "Skipped - a colleague is working on this account" });
+            continue;
+          }
           const company = { ...item.companyRow, company: item.company, website: item.website };
           const mainTopics = item.topics.filter((t) => t !== "profiles");
           // 1. The research of what is missing - skipped when only profiles are missing.
@@ -272,6 +282,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
           if (blocked) stop(blocked);
           else if (consecutiveFailures >= 3 || [401, 402, 403].includes(err.status)) stop("errors");
         } finally {
+          if (team && claimed.ok) await releaseAccount(item.key).catch(() => {});
           controllers.delete(item.key);
           state.runningKeys = state.runningKeys.filter((k) => k !== item.key);
           if (!requeued) {

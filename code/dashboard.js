@@ -3,7 +3,7 @@
 // leads table, and per-lead priority scoring. Also owns the "Bulk Change"
 // dialog (mass status changes with a confirmation step and one-level undo)
 // and the "Prioritize Unscored Leads" action.
-import { askConfirm, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
 import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { confirmIfCostly } from "./api-usage.js";
 import { guardBatchStart, withBatch } from "./batch-jobs.js";
@@ -64,6 +64,7 @@ import {
 import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, runProfileExtraction } from "./profile-extraction.js";
 import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
 import { initDecisionsDot } from "./decisions-dot.js";
+import { teamAccounts } from "./team-accounts-ui.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -187,6 +188,7 @@ document.getElementById("open-settings-language-btn").addEventListener("click", 
 document.getElementById("open-settings-apikey-btn").addEventListener("click", () => showEmbeddedPage("settings.html#api-key-section", "Settings"));
 document.getElementById("open-settings-backup-btn").addEventListener("click", () => showEmbeddedPage("settings.html#backup-section", "Settings"));
 document.getElementById("open-settings-restore-btn").addEventListener("click", () => showEmbeddedPage("settings.html#restore-section", "Settings"));
+document.getElementById("open-settings-team-btn").addEventListener("click", () => showEmbeddedPage("settings.html#team-section", "Settings"));
 document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
@@ -722,6 +724,69 @@ function creatorCell(td, lead) {
 
 function companyCell(td, lead) {
   td.textContent = lead.company || "—";
+  // 1.2.2 step 5b (R6.5): whose account the lead's company is.
+  const badge = lead.company ? teamAccounts.badge(normalizeCompanyName(lead.company)) : null;
+  if (badge) td.appendChild(badge);
+}
+
+// --------------------------------------------------------------------------
+// Team use 1.2.2 step 5b (design 7, R6.2, R6.6): the outreach check
+// --------------------------------------------------------------------------
+// A lead whose company is assigned to a colleague is theirs to contact: drafting, copying and changing its status are
+// blocked (reading stays open). And before anyone approaches a person a colleague already contacted (from another
+// lead of the same person), they are asked first - no second approach by accident.
+const CONTACTED_STATUSES = ["Contacted", "Responded", "Converted"];
+
+function outreachBlock(lead) {
+  if (!lead || !teamAccounts.inTeam()) return null;
+  const off = teamAccounts.offLimits(lead.company ? normalizeCompanyName(lead.company) : "");
+  if (!off) return null;
+  if (off.reason === "offline") return off.text.replace("changes are blocked", "outreach is blocked");
+  if (off.reason === "assigned") return `${lead.company} is assigned to ${off.name} - only ${off.name} contacts it. You can read this lead.`;
+  return null; // a colleague updating the account does not stop outreach on its leads
+}
+
+const samePerson = (a, b) => (a.profileUrl && b.profileUrl ? a.profileUrl === b.profileUrl
+  : Boolean(leadCreatorName(a)) && leadCreatorName(a) === leadCreatorName(b) && normalizeCompanyName(a.company || "") === normalizeCompanyName(b.company || ""));
+
+function colleagueContact(lead) {
+  if (!lead || !teamAccounts.inTeam()) return null;
+  const me = teamAccounts.myName();
+  return allLeads.find((l) => l.key !== lead.key && l.contactedBy && l.contactedBy !== me
+    && CONTACTED_STATUSES.includes(l.status) && samePerson(l, lead)) || null;
+}
+
+async function confirmNoSecondApproach(lead) {
+  const prior = colleagueContact(lead);
+  if (!prior) return true;
+  return askConfirm(
+    `${prior.contactedBy} already contacted ${leadCreatorName(lead) || "this person"}${prior.contactedAt ? ` on ${formatDateTime(prior.contactedAt)}` : ""} (from another lead, now "${prior.status}").\n\nContact them again anyway?`,
+    { okLabel: "Contact anyway", cancelLabel: "Cancel" },
+  );
+}
+
+function paintTeamNotice(lead) {
+  let el = document.getElementById("detail-team-notice");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "detail-team-notice";
+    el.className = "detail-team-notice";
+    document.getElementById("detail-meta").insertAdjacentElement("afterend", el);
+  }
+  const block = outreachBlock(lead);
+  const prior = block ? null : colleagueContact(lead);
+  el.textContent = block || (prior ? `${prior.contactedBy} already contacted this person${prior.contactedAt ? ` on ${formatDateTime(prior.contactedAt)}` : ""} (another lead, "${prior.status}").` : "");
+  el.classList.toggle("blocked", Boolean(block));
+  el.hidden = !el.textContent;
+  // Everything that works the lead: status, priority, the draft, the Sales Mentor (Boaz, 2026-10-05). Reading stays.
+  for (const id of ["detail-status-select", "detail-priority-select", "detail-template-select", "detail-draft-btn", "detail-copy-btn",
+    "detail-save-btn", "detail-mentor-input", "detail-mentor-send-btn", "detail-mentor-clear-btn", "mentor-quick-summary-btn",
+    "mentor-quick-openers-btn"]) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    if (block) { b.disabled = true; b.title = block; }
+    else if (id !== "detail-save-btn") { b.disabled = false; b.removeAttribute("title"); }
+  }
 }
 
 // Reported directly: a metro-only location ("Greater Hamburg Area") gives no
@@ -879,15 +944,19 @@ function openRowMenu(anchorEl, rowKey, items) {
 // button's own look) is shared - see actions-column.js's own header
 // comment. Only this table's real menu items stay here.
 function buildLeadActionsMenu(lead) {
+  const block = outreachBlock(lead);
   return [
-    { label: "Open / Edit", onClick: () => openDetail(lead.key) },
-    { label: "Consult Mentor", onClick: () => openDetail(lead.key, "mentor") },
-    { label: "Send Message", onClick: () => openDetail(lead.key, "draft") },
-    { label: "Assign Company", onClick: () => openAssignCompanyDialog(lead) },
-    { label: "Assign Location", onClick: () => openAssignLocationDialog(lead) },
+    // A colleague's lead (Boaz, 2026-10-05): only Open - everything else works the lead.
+    { label: block ? "Open" : "Open / Edit", onClick: () => openDetail(lead.key) },
+    { label: "Consult Mentor", disabled: Boolean(block), title: block || undefined, onClick: () => openDetail(lead.key, "mentor") },
+    { label: "Send Message", disabled: Boolean(block), title: block || undefined, onClick: () => openDetail(lead.key, "draft") },
+    { label: "Assign Company", disabled: Boolean(block), title: block || undefined, onClick: () => openAssignCompanyDialog(lead) },
+    { label: "Assign Location", disabled: Boolean(block), title: block || undefined, onClick: () => openAssignLocationDialog(lead) },
     {
       label: "Dismiss",
       danger: true,
+      disabled: Boolean(block),
+      title: block || undefined,
       onClick: async () => {
         const prevValue = lead.status || "New";
         await updateLeadStatus(lead.key, "Dismissed");
@@ -1834,6 +1903,7 @@ function renderDetail(lead) {
 
   renderMentorHistory();
   document.getElementById("detail-mentor-status").textContent = "";
+  paintTeamNotice(lead);
 }
 
 // Message template editing (moved here from settings.html, 2026-09-16 - the
@@ -1847,6 +1917,24 @@ function renderDetail(lead) {
 // Sales Mentor's own draft_message tool call from the standalone Advisors
 // page), same as it already did when this UI lived in Settings. Not a
 // per-lead override; the data model doesn't support one.
+//
+// Saved only by pressing "Save templates" (rule 2026-10-06: no save-on-change). Edits live in templateEdits
+// (id -> text) until then; messageTemplates stays the SAVED list, and that is what Draft Message uses.
+const templateEdits = new Map();
+const templatesSaveBtn = document.getElementById("templates-save-btn");
+const templatesSaveStatus = document.getElementById("templates-save-status");
+
+function templatesDirty() {
+  return messageTemplates.some((t) => templateEdits.has(t.id) && templateEdits.get(t.id) !== t.instructions);
+}
+
+function markTemplatesDirty() {
+  const dirty = templatesDirty();
+  templatesSaveBtn.disabled = !dirty;
+  if (dirty) templatesSaveStatus.textContent = "Unsaved changes";
+  else if (templatesSaveStatus.textContent === "Unsaved changes") templatesSaveStatus.textContent = "";
+}
+
 function renderTemplatesEditor() {
   const listEl = document.getElementById("detail-templates-list");
   listEl.innerHTML = "";
@@ -1857,26 +1945,42 @@ function renderTemplatesEditor() {
     label.className = "template-name";
     label.textContent = template.name;
     const textarea = document.createElement("textarea");
-    textarea.value = template.instructions;
-    let valueAtFocus = textarea.value;
-    textarea.addEventListener("focus", () => { valueAtFocus = textarea.value; });
+    textarea.value = templateEdits.has(template.id) ? templateEdits.get(template.id) : template.instructions;
     textarea.addEventListener("input", () => {
-      template.instructions = textarea.value;
-      saveMessageTemplates(messageTemplates);
-    });
-    textarea.addEventListener("blur", () => {
-      if (textarea.value !== valueAtFocus) {
-        appendActivityLog({
-          actor: "user", action: "message_template_changed",
-          label: `Message Template "${template.name}" changed`,
-          prevValue: valueAtFocus, newValue: textarea.value,
-        });
-      }
+      templateEdits.set(template.id, textarea.value);
+      markTemplatesDirty();
     });
     wrap.append(label, textarea);
     listEl.appendChild(wrap);
   }
+  markTemplatesDirty();
 }
+
+async function saveTemplateEdits() {
+  const changed = messageTemplates.filter((t) => templateEdits.has(t.id) && templateEdits.get(t.id) !== t.instructions);
+  if (!changed.length) return;
+  templatesSaveBtn.disabled = true;
+  const prev = new Map(changed.map((t) => [t.id, t.instructions]));
+  messageTemplates = messageTemplates.map((t) => (templateEdits.has(t.id) ? { ...t, instructions: templateEdits.get(t.id) } : t));
+  templateEdits.clear();
+  await saveMessageTemplates(messageTemplates);
+  for (const t of changed) {
+    const now = messageTemplates.find((x) => x.id === t.id);
+    appendActivityLog({
+      actor: "user", action: "message_template_changed",
+      label: `Message Template "${t.name}" changed`,
+      prevValue: prev.get(t.id), newValue: now ? now.instructions : "",
+    });
+  }
+  markTemplatesDirty();
+  templatesSaveStatus.textContent = "Saved ✓";
+  setTimeout(() => { if (templatesSaveStatus.textContent === "Saved ✓") templatesSaveStatus.textContent = ""; }, 3000);
+}
+templatesSaveBtn.addEventListener("click", saveTemplateEdits);
+
+window.addEventListener("beforeunload", (event) => {
+  if (templatesDirty()) { event.preventDefault(); event.returnValue = ""; }
+});
 
 document.getElementById("detail-edit-templates-btn").addEventListener("click", () => {
   const editor = document.getElementById("detail-templates-editor");
@@ -1935,7 +2039,12 @@ detailSaveBtn.addEventListener("click", async () => {
   const priorityValue = document.getElementById("detail-priority-select").value;
   const newPriority = priorityValue ? Number(priorityValue) : null;
   if (newPriority !== prevPriority) await setLeadPriority(key, newPriority);
-  if (newStatus !== prevStatus) await updateLeadStatus(key, newStatus);
+  if (newStatus !== prevStatus && CONTACTED_STATUSES.includes(newStatus) && !CONTACTED_STATUSES.includes(prevStatus)
+    && !(await confirmNoSecondApproach(currentDetailLead))) {
+    detailSaveBtn.disabled = false;
+    return;
+  }
+  if (newStatus !== prevStatus) await updateLeadStatus(key, newStatus, { by: teamAccounts.myName() });
   await loadLeads();
   currentDetailLead = allLeads.find((l) => l.key === key) || currentDetailLead;
   renderAllPieCharts();
@@ -1965,6 +2074,14 @@ document.getElementById("detail-draft-btn").addEventListener("click", async () =
   const statusEl = document.getElementById("detail-draft-status");
   const textarea = document.getElementById("detail-draft-textarea");
   const templateId = document.getElementById("detail-template-select").value;
+  if (outreachBlock(currentDetailLead) || !(await confirmNoSecondApproach(currentDetailLead))) return;
+  // Drafting reads the SAVED templates - if the editor holds unsaved edits, say so rather than silently ignore them.
+  if (templatesDirty()) {
+    const choice = await askChoice("Your template edits aren't saved yet. Drafts use the saved templates.",
+      [{ value: "save", label: "Save and draft" }, { value: "saved", label: "Draft with the saved templates" }]);
+    if (!choice) return;
+    if (choice === "save") await saveTemplateEdits();
+  }
   btn.disabled = true;
   statusEl.textContent = "Drafting…";
   try {
@@ -1983,6 +2100,7 @@ document.getElementById("detail-draft-btn").addEventListener("click", async () =
 document.getElementById("detail-copy-btn").addEventListener("click", async () => {
   const textarea = document.getElementById("detail-draft-textarea");
   if (!textarea.value.trim()) return;
+  if (outreachBlock(currentDetailLead)) return;
   await navigator.clipboard.writeText(textarea.value);
   const statusEl = document.getElementById("detail-draft-status");
   statusEl.textContent = "Copied — paste it into LinkedIn's message box and review before sending.";
@@ -1996,7 +2114,7 @@ document.getElementById("detail-copy-btn").addEventListener("click", async () =>
   // someone already set on purpose (Dismissed, Responded, Converted, or an
   // already-"Contacted" lead being copied again).
   if (currentDetailLead && currentDetailLead.status === "New") {
-    await updateLeadStatus(currentDetailLead.key, "Contacted");
+    await updateLeadStatus(currentDetailLead.key, "Contacted", { by: teamAccounts.myName() });
     currentDetailLead.status = "Contacted";
     document.getElementById("detail-status-select").value = "Contacted";
     await loadLeads();
@@ -2765,6 +2883,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.targetAccountsWorkbook) {
     loadTargetContacts().then(renderTable);
   }
+  // Templates saved elsewhere (another tab, the onboarding wizard): refresh the saved copy. Unsaved edits here
+  // live in templateEdits, so a re-render keeps them.
+  if (changes.messageTemplates) {
+    messageTemplates = changes.messageTemplates.newValue || [];
+    if (!document.getElementById("detail-templates-editor").hidden) renderTemplatesEditor();
+    else markTemplatesDirty();
+  }
 });
 
 // Two-way scroll sync between the thin strip above the table and the
@@ -2828,6 +2953,12 @@ function runActionFromHash() {
 
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+  await teamAccounts.ready();
+  // Assignments arrive from the team in the background: repaint the badges and the open lead's notice.
+  teamAccounts.onChange(() => {
+    renderTable();
+    if (currentDetailLead && !document.getElementById("detail-view").hidden) paintTeamNotice(currentDetailLead);
+  });
   loadColumnWidths();
   loadHiddenColumns();
   loadPageSize();

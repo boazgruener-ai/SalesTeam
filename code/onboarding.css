@@ -187,6 +187,7 @@ label {
 
 select,
 input[type="text"],
+input[type="password"],
 input[type="number"],
 textarea {
   width: 100%;
@@ -222,7 +223,9 @@ textarea {
   font-weight: 600;
 }
 
-.wizard-buttons button#confirm-change-btn {
+.wizard-buttons button#confirm-change-btn,
+.wizard-buttons button#research-stop-btn,
+.wizard-buttons button#research-skip-btn {
   background: white;
   color: var(--blue);
 }
@@ -877,3 +880,46 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 #finish-findings { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3e8ef; }
 #finish-findings-rules .checkbox-label { display: block; margin: 4px 0; font-size: 13px; }
 .wizard-step-list-group { flex-basis: 100%; margin: 8px 0 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gray); }
+
+/* Team use 1.2.2 step 5 (D3): a member sees the shared setup read-only (their own name, key and language stay open). */
+.team-member-setup-note { background: #fff4e0; border: 2px solid #b26a00; color: #7a4800; font-weight: 600; }
+/* Every step but About you takes no clicks at all - whatever its controls are (rule lists, drag rows, chips). */
+.team-member-readonly .wizard-step:not(#enter-about) { pointer-events: none; }
+.team-member-readonly .wizard-step:not(#enter-about) :is(input, select, textarea, button) { opacity: 0.6; }
+.team-member-readonly #enter-about :is(input, select, textarea, button, [contenteditable], label, .chip, .proposal-slot):not(.team-member-own):not(.team-member-own *) {
+  pointer-events: none;
+}
+#nav-save-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.team-member-readonly .wizard-step :is(input, select, textarea):not(.team-member-own):not(.team-member-own *) { opacity: 0.6; }
+.team-member-readonly .wizard-step button:not(.team-member-own *) { opacity: 0.5; }
+
+/* Change Settings > Advanced: research findings and Revenue & Currency (advanced-steps.js, moved from Settings 1.2.1.10) */
+.advanced-card-step h4 { margin: 18px 0 6px; font-size: 13px; }
+.advanced-card-step label { display: block; }
+.advanced-card-step .checkbox-label { display: block; margin: 6px 0; }
+#web-findings-rules .web-findings-rule {
+  display: block;
+  margin-bottom: 10px;
+}
+
+#web-findings-rules .web-findings-rule-detail {
+  margin: 2px 0 0 24px;
+}
+
+/* Exchange rates (Revenue & Currency) - a label/input pair per currency, generated in advanced-steps.js
+   from SUPPORTED_CURRENCIES so a new currency needs no edit here. */
+#revenue-rates-grid {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: 6px 12px;
+  align-items: center;
+  margin: 10px 0;
+}
+
+#revenue-rates-grid label {
+  margin: 0;
+  font-size: 12px;
+}
+
+
+#nav-save-status.unsaved { color: #b05a00; font-weight: 600; }

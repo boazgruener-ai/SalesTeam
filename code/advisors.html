@@ -29,6 +29,10 @@
       </p>
       <label for="mentor-persona-input">Mentor persona</label>
       <textarea id="mentor-persona-input" placeholder="e.g. 25 years in B2B software sales, deep expertise in LinkedIn-based lead generation and social selling, direct and no-nonsense style."></textarea>
+      <div class="persona-save-row">
+        <button id="mentor-persona-save-btn" class="persona-save-btn" type="button" disabled title="Save the mentor persona - the chat uses the saved persona">Save persona</button>
+        <span id="mentor-persona-save-status" class="persona-save-status" role="status"></span>
+      </div>
       <div id="advisor-history" class="agent-history"></div>
       <p id="advisor-status" class="agent-status"></p>
       <div class="agent-input-row">
@@ -49,6 +53,10 @@
       </p>
       <label for="customer-persona-input">Target customer persona (used for general questions when no specific lead is named)</label>
       <textarea id="customer-persona-input" placeholder="e.g. IT/Operations Director at mid-size manufacturing or logistics companies (200-2000 employees), evaluating vendors in your space."></textarea>
+      <div class="persona-save-row">
+        <button id="customer-persona-save-btn" class="persona-save-btn" type="button" disabled title="Save the customer persona - the chat uses the saved persona">Save persona</button>
+        <span id="customer-persona-save-status" class="persona-save-status" role="status"></span>
+      </div>
       <div id="customer-history" class="agent-history"></div>
       <p id="customer-status" class="agent-status"></p>
       <div class="agent-input-row">

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SalesTeam - Team sync test</title>
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; font-size: 14px; color: #1f2937; background: #fff; margin: 24px; max-width: 980px; }
+    h1 { color: #122b4a; font-size: 22px; margin: 0 0 4px; }
+    h2 { color: #1155cc; font-size: 16px; margin: 0 0 6px; }
+    section { border: 1px solid #d6dde8; border-radius: 8px; padding: 14px 16px; margin: 14px 0; }
+    button { padding: 7px 14px; border: 1px solid #1155cc; border-radius: 6px; background: #1155cc; color: #fff; font-weight: 600; cursor: pointer; margin: 4px 6px 4px 0; }
+    button.secondary { background: #fff; color: #1155cc; }
+    button.danger { background: #fff; color: #b3261e; border-color: #b3261e; }
+    button:disabled { opacity: .5; cursor: default; }
+    input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; margin-right: 6px; }
+    .hint { color: #5b6573; font-size: 13px; margin: 4px 0 8px; }
+    .warn { background: #fff4e5; border: 1px solid #f0c48a; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+    pre { background: #f4f6fa; border-radius: 6px; padding: 10px; white-space: pre-wrap; font-size: 12.5px; margin: 8px 0 0; max-height: 360px; overflow: auto; }
+    table { border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+    td, th { border-bottom: 1px solid #e3e8ef; padding: 4px 10px 4px 0; text-align: left; }
+    #state { font-size: 15px; font-weight: 600; }
+    .ok { color: #137333; } .bad { color: #b3261e; }
+  </style>
+</head>
+<body>
+  <h1>Team sync test (1.2.2 step 2)</h1>
+  <p class="hint">A developer test page for the sync layer. Keep it (or the side panel) open while testing: Chrome lets the background use the team folder only while a SalesTeam page is open.</p>
+
+  <section>
+    <h2>Status</h2>
+    <div id="state">Loading…</div>
+    <p class="hint" id="local"></p>
+    <div id="members"></div>
+    <button id="sync-now">Sync now</button>
+    <pre id="status-out"></pre>
+  </section>
+
+  <section>
+    <h2>1. The team folder</h2>
+    <p class="hint">Use a NEW, EMPTY folder in OneDrive for creating the team (not the step 0 test folder). Joining: pick the same folder in the other profile.</p>
+    <button id="pick">Pick folder</button> <button id="reconnect" class="secondary">Reconnect</button>
+    <pre id="folder-out"></pre>
+  </section>
+
+  <section>
+    <h2>2a. Create a team (first profile)</h2>
+    <p class="hint">Your accounts, contacts, leads and shared settings become the team's starting data. A full backup is taken first.</p>
+    <input id="create-name" placeholder="Your name"> <input id="create-team" placeholder="Team name">
+    <button id="create">Back up and create the team</button>
+    <pre id="create-out"></pre>
+  </section>
+
+  <section>
+    <h2>2b. Join the team (second profile)</h2>
+    <div class="warn">Joining <b>replaces</b> this profile's accounts, contacts, leads and shared settings with the team's. Your API key, drafts, scanner settings and other personal data stay. A full backup is taken first. Stop the pipeline before joining.</div>
+    <p class="hint"></p>
+    <input id="join-name" placeholder="Your name"> <button id="join">Back up and join the team</button>
+    <pre id="join-out"></pre>
+  </section>
+
+  <section>
+    <h2>3. Leave</h2>
+    <p class="hint">Stops syncing. Your data stays as it is now (a solo copy); your files stay in the team folder.</p>
+    <button id="leave" class="danger">Leave the team</button>
+    <pre id="leave-out"></pre>
+  </section>
+
+  <section>
+    <h2>4. Storage keys not classified yet</h2>
+    <p class="hint">Every key in this profile's storage that is neither shared nor personal (team-keys.js). Should be empty, or only keys that are clearly personal.</p>
+    <button id="keys" class="secondary">Check</button>
+    <pre id="keys-out"></pre>
+  </section>
+
+  <script type="module" src="zz_team_sync.js"></script>
+</body>
+</html>

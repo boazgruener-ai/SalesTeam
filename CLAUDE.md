@@ -128,6 +128,11 @@ parser needs changing, add the case here first: it has already caught a regex th
 (`\b` never matches between a digit and a letter, so `/\bm\b/` missed the "m" in "1.5m") and a wrong
 assumption about which rule fires on an illogical value.
 
+**The team sync layer has its own harness.** `code/test_team_sync.py` runs the real `team-sync.js` (plus
+team-rows/keys/merge) for several simulated members, each in its own V8 context, with fake
+`chrome.storage`, fake timers, a fake IndexedDB and one in-memory shared folder; only `team-folder.js` and
+storage.js's account lock are stubbed. Run it after any change to the team-*.js files.
+
 ## Versioning and store submission
 
 - **Rule from 2026-09-28:** each store release is one whole work item (1.2.1 = onboarding

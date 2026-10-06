@@ -6,6 +6,8 @@
 // every wait is wrapped in withKeepAlive() so Chrome doesn't kill this service
 // worker as idle mid-scan. Results are merged, deduped, ranked, and negative
 // topics are (re-)applied before saving.
+import { initTeamSync, handleTeamMessage } from "./team-sync.js";
+import { teamBadgeFor } from "./team-badge.js";
 import {
   getTopics,
   getJobTopics,
@@ -41,7 +43,7 @@ import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
 import { recordLinkedinTouch, getLinkedinTouchStats, formatTouchRelease, countTouchesSince } from "./linkedin-touch-log.js";
 import { checkTouchBudget, TOUCH_BUDGET_STOP_MESSAGE } from "./touch-budget-guard.js";
-import { acquireBatch, BatchBusyError } from "./batch-jobs.js";
+import { acquireBatch, BatchBusyError, SCAN_BATCH_LABEL } from "./batch-jobs.js";
 import { startBulkResearch, stopBulkResearch } from "./bulk-research.js";
 import { startWebLane, stopWebLane, WEB_LANE_STATE_KEY } from "./web-lane.js";
 import { startWebDiscovery, stopWebDiscovery } from "./web-discovery.js";
@@ -115,6 +117,8 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Chrome starts. 20 s later, so the network is up (a lookup that times out counts as a failed day), and
 // still inside the 30 s a background worker lives without an event.
 chrome.runtime.onStartup.addListener(() => { setTimeout(() => { kickPipeline("startup").catch(() => {}); }, 20000); });
+// Team use 1.2.2 build step 2: the sync layer. Does nothing unless this browser has joined a team.
+initTeamSync();
 // A batch job ended (its record is removed on release, wherever it ran): a user's job ending frees the
 // pipeline to resume (U2). The pipeline's own per-account releases are ignored.
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -1004,9 +1008,17 @@ async function logScanTouches(startedAt) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Team use 1.2.2 (team-sync.js): create / join / leave, sync now, status.
+  const team = handleTeamMessage(message, sendResponse);
+  if (team !== null) return team;
+  if (message?.type === "TEAM_LINKEDIN_BADGE") {
+    // Step 6 (R6.5): the assignment badge on a LinkedIn company / profile page (team-badge-content-script.js).
+    teamBadgeFor(String(message.url || "")).then(sendResponse).catch(() => sendResponse({ show: false }));
+    return true;
+  }
   if (message?.type === "SCAN_ALL") {
     // one batch process at a time: the page checks first (and explains); this is the safety net
-    acquireBatch("Scanner (searching LinkedIn for posts and jobs)").then((release) => {
+    acquireBatch(SCAN_BATCH_LABEL).then((release) => {
       const startedAt = Date.now();
       scanAllTopics({ reapplyToExisting: Boolean(message.reapplyToExisting) }).finally(() => {
         release();
