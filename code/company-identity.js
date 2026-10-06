@@ -41,11 +41,18 @@ export function webCompanyId(website, name) {
 // 1.2.1), and/or a company name and website domain (proposed by onboarding research, which never visits
 // LinkedIn for an exclusion). Built once per list, not per row. `lifted`: LinkedIn slugs the user took off
 // the list, which also overrides the research workbook's own Excluded flag (storage.js isCompanyRowExcluded).
-export function buildExclusionMatcher(exclusions, lifted) {
+//
+// 1.2.3 (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.2): customer / partner entries are NOT exclusions - they are skipped
+// here even when still on the list (an old backup, a team member before the Team Admin's copy has moved them), so
+// no exclusion check hides a customer. `kept`: a relationship matcher (buildRelationshipMatcher) - a company on it
+// is not hidden by the research workbook's own Excluded flag either (isCompanyRowExcluded), like a lifted slug.
+const RELATIONSHIP_CATEGORY_SET = new Set(["customer", "partner"]);
+
+function identitySets(entries) {
   const slugs = new Set();
   const names = new Set();
   const domains = new Set();
-  for (const e of exclusions || []) {
+  for (const e of entries || []) {
     if (!e) continue;
     if (e.slug) slugs.add(String(e.slug).toLowerCase());
     const n = normalizeCompanyName(e.name || "");
@@ -53,8 +60,34 @@ export function buildExclusionMatcher(exclusions, lifted) {
     const d = websiteDomain(e.domain || "");
     if (d) domains.add(d);
   }
+  return { slugs, names, domains };
+}
+
+export function buildExclusionMatcher(exclusions, lifted, kept = null) {
+  const { slugs, names, domains } = identitySets((exclusions || []).filter((e) => e && !RELATIONSHIP_CATEGORY_SET.has(e.category)));
   const liftedSlugs = new Set((lifted || []).filter(Boolean).map((s) => String(s).toLowerCase()));
-  return { slugs, names, domains, lifted: liftedSlugs };
+  return { slugs, names, domains, lifted: liftedSlugs, kept: kept || null };
+}
+
+// { customer: {slugs,names,domains}, partner: {...} } from the relationship list plus any customer / partner
+// entries still on the exclusion list (design 3.2) - so tags are right before the move has happened.
+export function buildRelationshipMatcher(relationships, legacyExclusions) {
+  const all = [...(relationships || []), ...(legacyExclusions || []).filter((e) => e && RELATIONSHIP_CATEGORY_SET.has(e.category))];
+  return {
+    customer: identitySets(all.filter((e) => e && e.category === "customer")),
+    partner: identitySets(all.filter((e) => e && e.category === "partner")),
+  };
+}
+
+// The categories a company matches: [], ["customer"], ["partner"] or ["customer", "partner"].
+export function relationshipOf(matcher, company = {}) {
+  if (!matcher) return [];
+  return ["customer", "partner"].filter((c) => matcher[c] && matchesExclusion(matcher[c], company));
+}
+
+// true when the relationship matcher names the company in any category.
+export function matchesRelationship(matcher, company = {}) {
+  return relationshipOf(matcher, company).length > 0;
 }
 
 // true when the matcher names this company by its LinkedIn slug, its normalised name or its website domain.

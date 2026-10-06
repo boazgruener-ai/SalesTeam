@@ -51,6 +51,8 @@ export const TEAM_WHOLE_KEYS = [
 // customers, partners, recruiters): changed by the Team Admin only (Setup is the admin's, D3; R6.8 as changed 2026-10-05).
 export const TEAM_LIST_KEYS = [
   { key: "companyExclusions", e: "setting", prefix: "companyExclusions:", identity: ["category", "slug", "name", "domain"] },
+  // 1.2.3: customers and partners (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.3) - same shape, same rule (Team Admin only)
+  { key: "companyRelationships", e: "setting", prefix: "companyRelationships:", identity: ["category", "slug", "name", "domain"] },
 ];
 // The row id of one list entry: its identity fields, lower-cased (an entry that is not an object: its JSON).
 export function listEntryId(spec, entry) {
@@ -71,7 +73,7 @@ export const TEAM_PERSONAL_KEYS = [
   "discoveredCompanies", "discoveredContacts",
   "activityLog", "activityLogExportedDays", "activityLogPrunedDay",
   "targetAccountsImportedAt", "targetAccountsImportedFileName", "targetAccountsWorkbookImportedAt",
-  "companyExclusionsMigrated", "locationHeuristicV2Migrated", "locationHeuristicV3Migrated",
+  "companyExclusionsMigrated", "relationshipsMigrationNotice", "locationHeuristicV2Migrated", "locationHeuristicV3Migrated",
   // the team layer's own state
   "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices", "teamLog",
 ];

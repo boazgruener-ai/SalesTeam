@@ -7,7 +7,7 @@ import { getDecisionQueue } from "./storage.js";
 
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
-  "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
+  "companyExclusions", "companyExclusionsLifted", "companyRelationships", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
   "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Admin's join proposals
 ]);
 // Written by the Decisions page after the user's own choice (1.2.0.10): recount at once, not after the debounce -

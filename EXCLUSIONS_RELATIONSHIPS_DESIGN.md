@@ -116,6 +116,27 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
 - Team: admin-only is enforced in the UI (`applyTeamMemberReadOnly`, onboarding.js:3078;
   `teamAccounts.isAdmin()`), not by the sync layer.
 
+### 2.7 Step 0 as built (1.2.2.1, 2026-10-06)
+
+- New pure `relationships.js` (`splitCompanyLists`, `raisePriority`, `effectivePriority`, `relationshipPromptLine`,
+  `relationshipTagText`); company-identity.js: `buildExclusionMatcher` skips customer / partner and carries a `kept`
+  relationship matcher, new `buildRelationshipMatcher`, `relationshipOf`, `matchesRelationship`. 52 new checks
+  (676 in all); team-sync harness 125 checks unchanged.
+- storage.js: `companyRelationships` with `get` / `save`, `saveCompanyLists`, `getRelationshipMatcher`;
+  `getExclusionMatcher` passes the relationship matcher, so `isCompanyRowExcluded` lets a customer / partner
+  through the workbook's Excluded flag. `EXCLUSION_CATEGORIES` is now competitor / recruiter / other.
+- `migrateCompanyRelationshipsIfNeeded` runs on update (then one pipeline kick), at the end of
+  `restoreFullBackup` and after the import backfill (which now puts Customer / Partner reasons on the new list,
+  by slug, name or website). It writes the lists directly - a moved slug is not "lifted". Activity Log
+  `relationships_migrated`; one-time pop-up on Target Accounts (key `relationshipsMigrationNotice`, personal).
+- Team: list key appended in team-keys.js; backup wizard keys and the Decisions watch lists include it.
+- **Interim until step 3:** the Setup step keeps its five boxes; the customer and partner boxes read and save the
+  new list (`saveCompanyLists`). `parseCompanyListEntry` (3.2) moves to step 3, with the table that uses it.
+- **Dry run on Boaz's backup of 2026-10-06 18:03 (1.2.1.11):** 41 exclusion entries (29 competitors, 11
+  recruiters, 1 partner); one moves - IBM (partner, by LinkedIn slug), which is not an account, so no account comes
+  back. The workbook's 10 Excluded = Yes rows are all Competitor. No lead is hidden by the customer / partner
+  filters. So the live check on this data is small: IBM shows on the new list, nothing else changes.
+
 ---
 
 ## 3. Data

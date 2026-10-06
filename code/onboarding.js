@@ -18,7 +18,8 @@ import {
   getTargetUniverseConfig, saveTargetUniverseConfig,
   getTargetContactProfile, saveTargetContactProfile,
   getAccountPriorityGuidelines, saveAccountPriorityGuidelines,
-  getCompanyExclusions, saveCompanyExclusions, EXCLUSION_CATEGORIES, EXCLUSION_CATEGORY_LABELS,
+  getCompanyExclusions, EXCLUSION_CATEGORIES, EXCLUSION_CATEGORY_LABELS,
+  getCompanyRelationships, saveCompanyLists, RELATIONSHIP_CATEGORIES,
   getCompanyAliases, saveCompanyAliases,
   getOrganizationTypeEligibility, saveOrganizationTypeEligibility,
   getKeywordSearchLanguages, saveKeywordSearchLanguages, CONFIRMED_KEYWORD_LANGUAGES,
@@ -63,6 +64,7 @@ import {
 } from "./setup-proposals.js";
 import { renderProposalBanner, mountChecklist } from "./proposal-ui.js";
 import { normalizeCompanyName, websiteDomain, buildExclusionMatcher, matchesExclusion } from "./company-identity.js";
+import { splitCompanyLists } from "./relationships.js";
 import { startAutoBackup } from "./backup-restore.js";
 import { mountLocationPicker } from "./location-picker.js";
 import { AI_FIELD_ALIASES } from "./xlsx-lite.js";
@@ -1007,7 +1009,11 @@ function validateContactsStep() {
 // Config: which textarea feeds which category, in display order - the
 // single source of truth for the Exclusions step's validate/render/init
 // logic below, so adding a category later is a one-line change here.
-const EXCLUSION_CATEGORY_INPUTS = EXCLUSION_CATEGORIES.map((category) => ({
+// 1.2.3 build step 0 (until step 3 replaces the boxes with tables): the customer and partner boxes stay on this step,
+// but read and save the new companyRelationships list (saveCompanyLists sorts each entry onto its list).
+const WIZARD_LIST_CATEGORIES = [...EXCLUSION_CATEGORIES, ...RELATIONSHIP_CATEGORIES];
+const WIZARD_LIST_LABELS = { ...EXCLUSION_CATEGORY_LABELS, customer: "Existing customer", partner: "Existing partner / reseller" };
+const EXCLUSION_CATEGORY_INPUTS = WIZARD_LIST_CATEGORIES.map((category) => ({
   category,
   inputId: `exclusions-${category}-input`,
   listId: `exclusions-${category}-parsed-list`,
@@ -1422,7 +1428,7 @@ async function persistStep(step) {
       await saveTargetContactProfile(targetContactProfile);
       break;
     case "exclusions":
-      await saveCompanyExclusions(companyExclusions);
+      await saveCompanyLists({ exclusions: companyExclusions, relationships: [] });
       break;
     case "aliases":
       await saveCompanyAliases(companyAliases);
@@ -1595,11 +1601,12 @@ function renderSummaryInto(step, container) {
     }
     case "exclusions": {
       if (companyExclusions.length) {
-        for (const category of EXCLUSION_CATEGORIES) {
+        for (const category of WIZARD_LIST_CATEGORIES) {
           const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.name || e.slug || e.domain).filter(Boolean);
           if (slugs.length) {
+            const verb = RELATIONSHIP_CATEGORIES.includes(category) ? "Tagging (kept as accounts)" : "Excluding";
             appendPara(
-              container, `Excluding ${slugs.length} ${EXCLUSION_CATEGORY_LABELS[category].toLowerCase()}${slugs.length === 1 ? "" : "s"}: `,
+              container, `${verb} ${slugs.length} ${WIZARD_LIST_LABELS[category].toLowerCase()}${slugs.length === 1 ? "" : "s"}: `,
               { strong: slugs.join(", ") }, "."
             );
           }
@@ -2681,7 +2688,7 @@ function mountStepChecklists(step, p, accepted) {
     checklists[step] = mountChecklist(el("exclusions-checklist"),
       p.items.map((item, i) => ({
         text: item.name, checked: t[i], sourceUrl: item.sourceUrl, meta: item,
-        label: `${EXCLUSION_CATEGORY_LABELS[item.category] || item.category}${item.domain ? ` · ${item.domain}` : ""}`,
+        label: `${WIZARD_LIST_LABELS[item.category] || item.category}${item.domain ? ` · ${item.domain}` : ""}`,
       })),
       { title: "Found by the research - tick the ones to exclude (they appear in the boxes below)", addPlaceholder: "Add a company by name (excluded as Other)", onChange: syncExclusionTicks });
     syncExclusionTicks();
@@ -2899,7 +2906,10 @@ async function init() {
   // Recruiter defaults (well-known global agencies) are seeded once, inside
   // getCompanyExclusions itself (storage.js's migrateLegacyExclusionListsIfNeeded) -
   // this step just reads back whatever that returns, same as every other field.
-  companyExclusions = await getCompanyExclusions();
+  {
+    const split = splitCompanyLists(await getCompanyExclusions(), await getCompanyRelationships());
+    companyExclusions = [...split.exclusions, ...split.relationships];
+  }
   organizationTypeEligibility = await getOrganizationTypeEligibility();
   keywordSearchLanguages = await getKeywordSearchLanguages();
 

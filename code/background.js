@@ -38,6 +38,7 @@ import {
   getScanTargetCompanyIds,
   autoMergeDiscoveryResults,
   repairListingRevenueInMillions,
+  migrateCompanyRelationshipsIfNeeded,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
@@ -109,6 +110,11 @@ chrome.runtime.onInstalled.addListener((details) => {
   // replans so the web findings that only existed because of it are settled again.
   if (details.reason === "update") {
     repairListingRevenueInMillions().then((n) => { if (n) kickPipeline("data_repair").catch(() => {}); }).catch(() => {});
+    // 1.2.3 (R3.1): customers / partners leave the exclusion list - the accounts they hid come back and join the
+    // normal pipeline queue (one kick, no burst).
+    migrateCompanyRelationshipsIfNeeded({ trigger: "update" })
+      .then((moved) => { if (moved && moved.customer + moved.partner) kickPipeline("relationships_migrated").catch(() => {}); })
+      .catch(() => {});
   }
 });
 

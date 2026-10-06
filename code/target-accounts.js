@@ -92,6 +92,7 @@ import {
   importSettings,
   importLeads,
   getAccountReadiness, getTargetsStatus,
+  takeRelationshipsMigrationNotice, relationshipsMovedText,
 } from "./storage.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
 import { coverageLines } from "./pipeline-plan.js";
@@ -7365,6 +7366,10 @@ async function init() {
   await loadWorkbook();
   await route();
   openActionFromHash();
+  // 1.2.3 (R3.2): once, after customers / partners left the exclusion list (update, restore or import).
+  takeRelationshipsMigrationNotice().then((n) => {
+    if (n) showNotice(`${relationshipsMovedText(n)}. They join the normal research queue - nothing runs in a burst.`);
+  }).catch(() => {});
   initBatchStatus(onBulkStateChange);
   watchPipelineStatusLine(document.getElementById("pie-pipeline-status")); // build step 3, U3
   watchWebStatusLine(document.getElementById("pie-web-status")); // build step 5, W6

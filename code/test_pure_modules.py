@@ -31,7 +31,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
+PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1300,6 +1300,78 @@ def test_company_identity(ctx):
     check("a slug-only entry adds no name to match", ctx.eval("matchesExclusion(EXM, { name: 'Adecco Group' })"), False)
 
 
+def test_relationships(ctx):
+    """1.2.3 step 0: customers / partners leave the exclusion list (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.2, 4.1, 6.1, 7)."""
+    ctx.eval("""
+    var REL_EXCL = [
+      { slug: "adecco", category: "recruiter" },
+      { name: "Rival AG", category: "competitor" },
+      { slug: "nestle-s-a", name: "Nestle", category: "customer" },
+      { domain: "migros.ch", category: "customer", source: "research" },
+      { name: "Partner Co", category: "partner" },
+      { name: "Partner Co", category: "customer" },
+    ];
+    var REL_EXM = buildExclusionMatcher(REL_EXCL, []);
+    var REL_M = buildRelationshipMatcher([], REL_EXCL);
+    """)
+    # The exclusion matcher skips customer / partner entries even while they are still on the list.
+    check("a competitor is still excluded", ctx.eval("matchesExclusion(REL_EXM, { name: 'Rival' })"), True)
+    check("a recruiter is still excluded", ctx.eval("matchesExclusion(REL_EXM, { slug: 'adecco' })"), True)
+    check("a leftover customer entry excludes nothing (slug)", ctx.eval("matchesExclusion(REL_EXM, { slug: 'nestle-s-a' })"), False)
+    check("a leftover customer entry excludes nothing (domain)", ctx.eval("matchesExclusion(REL_EXM, { website: 'https://www.migros.ch' })"), False)
+    check("a leftover partner entry excludes nothing", ctx.eval("matchesExclusion(REL_EXM, { name: 'Partner Co AG' })"), False)
+    # The relationship matcher reads leftovers too, by slug, name or domain.
+    check("customer by slug", ctx.eval("JSON.stringify(relationshipOf(REL_M, { slug: 'Nestle-S-A' }))"), '["customer"]')
+    check("customer by website", ctx.eval("JSON.stringify(relationshipOf(REL_M, { name: 'Migros-Genossenschafts-Bund', website: 'migros.ch/de' }))"), '["customer"]')
+    check("customer and partner", ctx.eval("JSON.stringify(relationshipOf(REL_M, { name: 'Partner Co' }))"), '["customer","partner"]')
+    check("a competitor has no relationship", ctx.eval("JSON.stringify(relationshipOf(REL_M, { name: 'Rival AG' }))"), "[]")
+    check("no matcher: no relationship", ctx.eval("JSON.stringify(relationshipOf(null, { name: 'Nestle' }))"), "[]")
+    check("matchesRelationship", ctx.eval("matchesRelationship(REL_M, { slug: 'nestle-s-a' })"), True)
+    check("the exclusion matcher carries the kept matcher", ctx.eval("buildExclusionMatcher([], [], REL_M).kept === REL_M"), True)
+    check("no kept matcher by default", ctx.eval("buildExclusionMatcher([], []).kept"), None)
+
+    # splitCompanyLists: moves, keeps order of the rest, idempotent, no duplicates.
+    ctx.eval("""
+    var REL_S1 = splitCompanyLists(REL_EXCL, [{ name: "Nestle SA", category: "customer" }]);
+    var REL_S2 = splitCompanyLists(REL_S1.exclusions, REL_S1.relationships);
+    """)
+    check("exclusions keep only competitor / recruiter / other",
+          ctx.eval("JSON.stringify(REL_S1.exclusions.map(function (e) { return e.category; }))"), '["recruiter","competitor"]')
+    check("an equal entry already on the list is not added twice (name+slug differ -> added)",
+          ctx.eval("REL_S1.relationships.length"), 5)
+    check("moved counts", ctx.eval("JSON.stringify(REL_S1.moved)"), '{"customer":3,"partner":1}')
+    check("running it again moves nothing", ctx.eval("JSON.stringify(REL_S2.moved)"), '{"customer":0,"partner":0}')
+    check("running it again changes nothing", ctx.eval("REL_S2.relationships.length === REL_S1.relationships.length && REL_S2.exclusions.length === 2"), True)
+    check("an exact duplicate is not moved twice",
+          ctx.eval("splitCompanyLists([{ name: 'Nestle', category: 'customer' }], [{ name: 'Nestlé'.replace('é','e'), category: 'customer' }]).moved.customer"), 0)
+    check("empty input", ctx.eval("JSON.stringify(splitCompanyLists(null, null))"), '{"exclusions":[],"relationships":[],"moved":{"customer":0,"partner":0}}')
+
+    # Priority raise (R5.4, D3).
+    for base, raised in (("P1", "P1"), ("P2", "P1"), ("P3", "P2"), ("P4", "P3"), ("P5", "P4")):
+        check("raise %s" % base, ctx.eval("raisePriority('%s')" % base), raised)
+    check("raise: no priority", ctx.eval("raisePriority(null)"), None)
+    check("raise: unknown value untouched", ctx.eval("raisePriority('High')"), "High")
+    check("customer P3 -> P2, raised", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P3', relationship: ['customer'] }))"), '{"priority":"P2","raised":true}')
+    check("customer P1 stays P1, not marked raised", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P1', relationship: ['customer'] }))"), '{"priority":"P1","raised":false}')
+    check("partner only stays neutral", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P3', relationship: ['partner'] }))"), '{"priority":"P3","raised":false}')
+    check("customer and partner is raised", ctx.eval("effectivePriority({ priority: 'P4', relationship: ['customer', 'partner'] }).priority"), "P3")
+    check("a priority set by hand is never raised", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P3', manual: true, relationship: ['customer'] }))"), '{"priority":"P3","raised":false}')
+    check("no relationship: unchanged", ctx.eval("effectivePriority({ priority: 'P2' }).priority"), "P2")
+
+    # Prompt line and tag.
+    check("prompt line: customer", ctx.eval("relationshipPromptLine(['customer'], 'Nestle', 'TIMETOACT').indexOf('Nestle is an existing customer of TIMETOACT') >= 0"), True)
+    check("prompt line: partner", ctx.eval("relationshipPromptLine(['partner'], 'ALSO', 'TIMETOACT').indexOf('partner / reseller of TIMETOACT') >= 0"), True)
+    check("prompt line: both", ctx.eval("relationshipPromptLine(['customer','partner'], 'X', 'Y').indexOf('customer and a partner') >= 0"), True)
+    check("prompt line: none", ctx.eval("relationshipPromptLine([], 'X', 'Y')"), "")
+    check("tag text", ctx.eval("relationshipTagText(['customer','partner'])"), "Customer · Partner")
+    check("tag text: none", ctx.eval("relationshipTagText([])"), "")
+
+    # Team: the new list key is shared per entry, after companyExclusions.
+    check("companyRelationships is a team list key", ctx.eval("teamKeyKind('companyRelationships')"), "list")
+    check("companyExclusions stays the first list key", ctx.eval("TEAM_LIST_KEYS[0].key"), "companyExclusions")
+    check("the move notice is personal", ctx.eval("classifyStorageKey('relationshipsMigrationNotice')"), "personal")
+
+
 def test_per_field_research(ctx):
     """1.2.1 step 1 (design 5.3): each web value carries its own source; the old plain format is still read."""
     ctx.eval(r"""
@@ -2412,6 +2484,7 @@ def main():
     test_team_list_rows(ctx)
     test_team_claims(ctx)
     test_team_log_and_join(ctx)
+    test_relationships(ctx)
 
     print()
     for f in _failures:

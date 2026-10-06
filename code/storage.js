@@ -8,8 +8,10 @@ import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages,
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
-import { normalizeCompanyName, buildExclusionMatcher, matchesExclusion, websiteDomain, webCompanyId } from "./company-identity.js";
+import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, matchesExclusion, matchesRelationship, websiteDomain, webCompanyId } from "./company-identity.js";
+import { splitCompanyLists, isRelationshipCategory, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
+export { RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
 // post/job URL, with status, priority, and negative-topic-match reason), scan
@@ -597,13 +599,14 @@ export async function saveAccountPriorityGuidelines(guidelines) {
 // (parseLinkedinCompanySlug below), the same identity-based exclusion
 // reasoning as always - sidesteps the legal-suffix/short-name/misspelling
 // mess a name-based match would hit.
-export const EXCLUSION_CATEGORIES = ["competitor", "recruiter", "customer", "partner", "other"];
+// 1.2.3 (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.1): customer and partner are no longer exclusion categories - they
+// moved to companyRelationships (RELATIONSHIP_CATEGORIES, relationships.js). Old entries of those categories can
+// still sit in companyExclusions (an old backup, a team member before the move); the exclusion matcher skips them.
+export const EXCLUSION_CATEGORIES = ["competitor", "recruiter", "other"];
 
 export const EXCLUSION_CATEGORY_LABELS = {
   competitor: "Competitor",
   recruiter: "Recruiter / staffing agency",
-  customer: "Existing customer",
-  partner: "Existing partner / reseller",
   other: "Other",
 };
 
@@ -674,10 +677,95 @@ export async function getCompanyExclusionsLifted() {
   return data[COMPANY_EXCLUSIONS_LIFTED_KEY] || [];
 }
 
-// The matcher every exclusion check uses: the list plus the lifted slugs.
+// The matcher every exclusion check uses: the list plus the lifted slugs, and (1.2.3) the customers / partners,
+// which keep the workbook's own Excluded flag from hiding them (isCompanyRowExcluded).
 export async function getExclusionMatcher() {
-  const [exclusions, lifted] = await Promise.all([getCompanyExclusions(), getCompanyExclusionsLifted()]);
-  return buildExclusionMatcher(exclusions, lifted);
+  const [exclusions, lifted, relationships] = await Promise.all([getCompanyExclusions(), getCompanyExclusionsLifted(), getCompanyRelationships()]);
+  return buildExclusionMatcher(exclusions, lifted, buildRelationshipMatcher(relationships, exclusions));
+}
+
+// Customers and partners (1.2.3, design 3.1): { category: "customer" | "partner", slug?, name?, domain?, source?,
+// sourceUrl? } - the same shape and matching as companyExclusions. Shared per entry in a team (team-keys.js).
+const COMPANY_RELATIONSHIPS_KEY = "companyRelationships";
+
+export async function getCompanyRelationships() {
+  const data = await chrome.storage.local.get(COMPANY_RELATIONSHIPS_KEY);
+  return data[COMPANY_RELATIONSHIPS_KEY] || [];
+}
+
+export async function saveCompanyRelationships(relationships) {
+  await chrome.storage.local.set({ [COMPANY_RELATIONSHIPS_KEY]: (relationships || []).filter((e) => e && isRelationshipCategory(e.category)) });
+}
+
+// Both lists in one go (the Setup steps, Move to... - design 9.3): entries are sorted onto the right list by their
+// category, whichever argument they came in.
+export async function saveCompanyLists({ exclusions, relationships }) {
+  const split = splitCompanyLists(exclusions || [], []);
+  const keep = new Set();
+  const rels = [...(relationships || []), ...split.relationships].filter((e) => {
+    if (!e || !isRelationshipCategory(e.category)) return false;
+    const k = JSON.stringify([e.category, e.slug || "", normalizeCompanyName(e.name || ""), websiteDomain(e.domain || "") || ""]);
+    if (keep.has(k)) return false;
+    keep.add(k);
+    return true;
+  });
+  await saveCompanyExclusions(split.exclusions);
+  await saveCompanyRelationships(rels);
+}
+
+// relationshipOf(matcher, { slug, name, website }) -> [] | ["customer"] | ["partner"] | both (company-identity.js).
+export async function getRelationshipMatcher() {
+  const [relationships, exclusions] = await Promise.all([getCompanyRelationships(), getCompanyExclusions()]);
+  return buildRelationshipMatcher(relationships, exclusions);
+}
+
+// Design 4.1 / 4.2: moves customer / partner entries off the exclusion list onto companyRelationships. Idempotent
+// (splitCompanyLists), so it runs on every update, after a restore and after a workbook import. In a team only the
+// Team Admin's SalesTeam moves them - the sync layer carries the change to the members, whose matchers already
+// treat leftover entries right. Returns { customer, partner } moved, or null when nothing was left to move.
+const RELATIONSHIPS_NOTICE_KEY = "relationshipsMigrationNotice";
+
+export async function migrateCompanyRelationshipsIfNeeded({ trigger = "update" } = {}) {
+  const team = (await chrome.storage.local.get("teamMembership")).teamMembership;
+  if (team && team.role !== "admin") return null;
+  const [exclusions, relationships] = await Promise.all([getCompanyExclusions(), getCompanyRelationships()]);
+  const split = splitCompanyLists(exclusions, relationships);
+  if (split.exclusions.length === exclusions.length) return null;
+  // Written directly, not via saveCompanyExclusions: a moved entry is not one the user took off the list, so its
+  // slug is not "lifted".
+  await chrome.storage.local.set({
+    [COMPANY_EXCLUSIONS_KEY]: split.exclusions, [COMPANY_RELATIONSHIPS_KEY]: split.relationships,
+  });
+  const { customer, partner } = split.moved;
+  if (customer + partner) {
+    const prev = (await chrome.storage.local.get(RELATIONSHIPS_NOTICE_KEY))[RELATIONSHIPS_NOTICE_KEY];
+    await chrome.storage.local.set({
+      [RELATIONSHIPS_NOTICE_KEY]: { customer: customer + (prev?.customer || 0), partner: partner + (prev?.partner || 0), at: Date.now() },
+    });
+    await appendActivityLog({
+      actor: "system", action: "relationships_migrated",
+      label: `${relationshipsMovedText(split.moved)} (${trigger})`, newValue: { customer, partner, trigger },
+    }).catch(() => {});
+  }
+  return split.moved;
+}
+
+// "12 customers and 3 partners are no longer excluded - they are now accounts with a Relationship tag" (R3.2).
+export function relationshipsMovedText({ customer = 0, partner = 0 } = {}) {
+  const parts = [];
+  if (customer) parts.push(`${customer} customer${customer === 1 ? "" : "s"}`);
+  if (partner) parts.push(`${partner} partner${partner === 1 ? "" : "s"}`);
+  if (!parts.length) return "";
+  const many = customer + partner !== 1;
+  return `${parts.join(" and ")} ${many ? "are" : "is"} no longer excluded - ${many ? "they are now accounts" : "it is now an account"} with a Relationship tag`;
+}
+
+// The one-time pop-up after the move (R3.2): read once by a page, then cleared.
+export async function takeRelationshipsMigrationNotice() {
+  const notice = (await chrome.storage.local.get(RELATIONSHIPS_NOTICE_KEY))[RELATIONSHIPS_NOTICE_KEY];
+  if (!notice) return null;
+  await chrome.storage.local.remove(RELATIONSHIPS_NOTICE_KEY);
+  return notice;
 }
 
 export async function saveCompanyExclusions(exclusions) {
@@ -714,7 +802,9 @@ export function isCompanyRowExcluded(companyRow, matcher) {
   const slug = parseLinkedinCompanySlug(companyRow.linkedinLink || "");
   // The workbook's flag counts unless the user took this company off the list (companyExclusionsLifted).
   const lifted = Boolean(slug && matcher && matcher.lifted && matcher.lifted.has(String(slug).toLowerCase()));
-  if (isExcludedFlagTruthy(companyRow.excluded) && !lifted) return true;
+  // 1.2.3: nor when it is a customer / partner (matcher.kept) - those are accounts, not exclusions.
+  const kept = Boolean(matcher && matcher.kept && matchesRelationship(matcher.kept, { slug, name: companyRow.company, website: companyRow.website }));
+  if (isExcludedFlagTruthy(companyRow.excluded) && !lifted && !kept) return true;
   if (matcher instanceof Set) return slug ? matcher.has(slug) : false;
   return matchesExclusion(matcher, { slug, name: companyRow.company, website: companyRow.website });
 }
@@ -760,15 +850,33 @@ export async function backfillCompanyExclusionsFromWorkbook(workbook) {
   );
   const excludedCompanies = (workbook.companies || []).filter((c) => isExcludedFlagTruthy(c.excluded));
 
-  const [exclusions, lifted] = await Promise.all([getCompanyExclusions(), getCompanyExclusionsLifted()]);
+  const [exclusions, lifted, relationships] = await Promise.all([getCompanyExclusions(), getCompanyExclusionsLifted(), getCompanyRelationships()]);
   // A slug the user took off the list stays off (companyExclusionsLifted).
   const existingSlugs = new Set([...exclusions.map((e) => e.slug), ...lifted]);
   const added = [];
+  const addedRelationships = [];
+  const relMatcher = buildRelationshipMatcher(relationships, exclusions);
   let skippedNoLink = 0;
   let skippedUnrecognizedReason = 0;
 
   for (const company of excludedCompanies) {
     const slug = parseLinkedinCompanySlug(company.linkedinLink || "");
+    // 1.2.3 (R3.3): a Customer / Partner reason puts the company on the relationship list instead - it stays an
+    // account (isCompanyRowExcluded: the list overrides the row's Excluded flag). Needs no LinkedIn link.
+    const relReason = reasonByCompanyId.get(company.companyId);
+    const relCategory = relReason ? EXCLUSION_REASON_TO_CATEGORY[relReason] : null;
+    if (isRelationshipCategory(relCategory)) {
+      const ident = { slug, name: company.company, website: company.website };
+      if (!matchesExclusion(relMatcher[relCategory], ident)) {
+        const domain = websiteDomain(company.website || "");
+        const entry = {
+          category: relCategory, ...(slug ? { slug } : {}), ...(company.company ? { name: company.company } : {}),
+          ...(domain ? { domain } : {}), source: "workbook",
+        };
+        if (entry.slug || entry.name || entry.domain) addedRelationships.push(entry);
+      }
+      continue;
+    }
     if (!slug) { skippedNoLink++; continue; }
     if (existingSlugs.has(slug)) continue;
     const reason = reasonByCompanyId.get(company.companyId);
@@ -779,7 +887,13 @@ export async function backfillCompanyExclusionsFromWorkbook(workbook) {
   }
 
   if (added.length) await saveCompanyExclusions([...exclusions, ...added]);
-  return { addedCount: added.length, skippedNoLink, skippedUnrecognizedReason, totalExcluded: excludedCompanies.length };
+  if (addedRelationships.length) await saveCompanyRelationships([...relationships, ...addedRelationships]);
+  // Customer / partner entries an older import put on the exclusion list move as well (design 4.1).
+  await migrateCompanyRelationshipsIfNeeded({ trigger: "import" }).catch(() => null);
+  return {
+    addedCount: added.length, addedRelationshipCount: addedRelationships.length,
+    skippedNoLink, skippedUnrecognizedReason, totalExcluded: excludedCompanies.length,
+  };
 }
 
 // Organization-type eligibility (PRD 6.20, redesigned 2026-09-15 from an

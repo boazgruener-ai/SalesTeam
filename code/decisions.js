@@ -14,7 +14,7 @@ import { DECISION_TAKEN_KEY } from "./decisions-dot.js";
 
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
-  "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
+  "companyExclusions", "companyExclusionsLifted", "companyRelationships", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
   "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Admin's join proposals
 ]);
 
