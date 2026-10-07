@@ -158,6 +158,8 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
 - Pop-up text moved into relationships.js (`relationshipsMovedText`, tested): it now counts the accounts that really
   come back and says "None of them is one of your accounts" otherwise (the IBM case), plus leads restored.
 - Help: the Negative Topics entry no longer names the two filters. 681 pure checks, 125 team-sync checks.
+- **Live check passed 2026-10-07:** Scanner checkboxes gone; a P3 account added as customer showed P2 with the
+  reason line, the Mentor called it an existing customer, and removing it brought P3 back.
 
 ---
 
