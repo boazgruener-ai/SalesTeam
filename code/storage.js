@@ -714,6 +714,36 @@ export async function saveCompanyLists({ exclusions, relationships }) {
   await saveCompanyRelationships(rels);
 }
 
+// Design 8.3 (R2.5): the account page / list row "Relationship…" - ticks Customer and Partner for one company.
+// Ticking adds an entry (LinkedIn slug, name, website domain); unticking removes EVERY entry of that category that
+// matches the company (it may have been added by slug, name or domain), from the new list and from leftovers on the
+// exclusion list. Returns { added: [category], removed: { [category]: count } }.
+export async function setAccountRelationship({ slug, name, website }, wanted) {
+  const [relationships, exclusions] = await Promise.all([getCompanyRelationships(), getCompanyExclusions()]);
+  const ident = { slug, name, website };
+  const matches = (e) => matchesRelationship(buildRelationshipMatcher([e], []), ident);
+  const added = [];
+  const removed = {};
+  let rels = [...relationships];
+  let excl = [...exclusions];
+  for (const category of RELATIONSHIP_CATEGORIES) {
+    const has = [...rels, ...excl].some((e) => e && e.category === category && matches(e));
+    if (wanted[category] && !has) {
+      const domain = websiteDomain(website || "");
+      rels.push({ category, ...(slug ? { slug } : {}), ...(name ? { name } : {}), ...(domain ? { domain } : {}), source: "account" });
+      added.push(category);
+    } else if (!wanted[category] && has) {
+      const drop = (e) => e && e.category === category && matches(e);
+      removed[category] = rels.filter(drop).length + excl.filter(drop).length;
+      rels = rels.filter((e) => !drop(e));
+      excl = excl.filter((e) => !drop(e));
+    }
+  }
+  if (!added.length && !Object.keys(removed).length) return { added, removed };
+  await chrome.storage.local.set({ [COMPANY_RELATIONSHIPS_KEY]: rels, ...(excl.length !== exclusions.length ? { [COMPANY_EXCLUSIONS_KEY]: excl } : {}) });
+  return { added, removed };
+}
+
 // Design 6.2 (R5.4): the priority shown and used for an account - a customer's raised one level unless set by hand.
 // The stored priority is never changed; `base` is it. `row`: a workbook company row, `extra`: its targetAccountExtras.
 export function accountPriorityFor(row, extra, relMatcher) {

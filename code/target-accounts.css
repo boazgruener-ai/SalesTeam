@@ -1833,6 +1833,20 @@ thead .actions-col {
 .imported-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: #2e9e5b; vertical-align: middle; cursor: help; }
 
 /* Merge duplicate accounts dialog */
+/* 1.2.3: Customer / Partner tag (account page, lists, Leads Dashboard) and the Relationship dialog */
+.relationship-tag { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600; color: #4a148c; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 8px; padding: 0 6px; white-space: nowrap; vertical-align: middle; }
+#account-title-row .relationship-tag { font-size: 12px; padding: 1px 8px; margin-left: 0; }
+.col-filter-choices { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; font-size: 13px; }
+.col-filter-choice { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+#relationship-dialog { border: none; border-radius: 10px; padding: 20px 24px; width: 440px; max-width: 90vw; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); }
+#relationship-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+#relationship-dialog h3 { margin: 0 0 10px; color: var(--ink); font-size: 16px; }
+#relationship-dialog p { font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0 0 12px; }
+#relationship-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#relationship-dialog-save-btn { background: var(--blue); color: white; }
+#relationship-dialog-save-btn:disabled { opacity: 0.45; cursor: default; }
+#relationship-dialog-cancel-btn { background: #f0f0f0; color: var(--ink); }
+
 #merge-accounts-dialog {
   border: none;
   border-radius: 10px;

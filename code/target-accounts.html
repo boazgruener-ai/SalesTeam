@@ -127,6 +127,24 @@
     </div>
   </dialog>
 
+  <dialog id="relationship-dialog">
+    <h3>Relationship</h3>
+    <p>
+      <strong id="relationship-dialog-name"></strong> stays a normal account either way - fully researched, its
+      contacts found and its leads kept. A customer's priority is raised one level.
+    </p>
+    <fieldset class="merge-accounts-keep">
+      <legend>This company is:</legend>
+      <label><input type="checkbox" id="relationship-dialog-customer" /> An existing customer</label>
+      <label><input type="checkbox" id="relationship-dialog-partner" /> A partner / reseller</label>
+    </fieldset>
+    <p class="field-hint">Saved on the Customers and partners lists in Setup.</p>
+    <div class="dialog-actions">
+      <button type="button" id="relationship-dialog-cancel-btn">Cancel</button>
+      <button type="button" id="relationship-dialog-save-btn">Save</button>
+    </div>
+  </dialog>
+
   <dialog id="merge-accounts-dialog">
     <h3>Merge duplicate accounts</h3>
     <p>
@@ -451,6 +469,7 @@
       <a href="#" id="account-back-link">&larr; Back to Target Accounts</a>
       <div id="account-title-row">
         <h2 id="account-title"></h2>
+        <span id="account-relationship-tag" class="relationship-tag" hidden></span>
         <button id="account-actions-btn" class="kebab-btn" type="button" title="Actions">&#8942;</button>
       </div>
       <div id="account-overview" class="entity-overview"></div>

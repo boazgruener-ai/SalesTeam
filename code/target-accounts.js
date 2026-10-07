@@ -93,8 +93,9 @@ import {
   importLeads,
   getAccountReadiness, getTargetsStatus,
   takeRelationshipsMigrationNotice, relationshipsMovedText, getRelationshipMatcher, accountPriorityFor,
+  setAccountRelationship, parseLinkedinCompanySlug,
 } from "./storage.js";
-import { RAISED_REASON } from "./relationships.js";
+import { RAISED_REASON, relationshipTagText } from "./relationships.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
 import { coverageLines } from "./pipeline-plan.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBeforeRestore } from "./backup-restore.js";
@@ -706,6 +707,15 @@ const COMPANY_COLUMNS = [
   // applyCompanyPrioritizationResults). Distinct from the imported workbook's own
   // conclusion (aiPriority* / priorityRationale, labelled "Imported ..." below).
   { id: "salesTeamPriority", label: "Priority", visible: true, pill: true },
+  // 1.2.3 (R2.4, D5): Customer / Partner, computed from the Customers and partners lists - a choice filter, not text.
+  {
+    id: "relationship", label: "Relationship", visible: true,
+    filterOptions: [["customer", "Customer"], ["partner", "Partner"], ["none", "None"]],
+    filterMatch: (company, choice) => {
+      const rel = accountPriorityInfo(company).relationship;
+      return choice === "none" ? rel.length === 0 : rel.includes(choice);
+    },
+  },
   { id: "salesTeamPriorityScore", label: "Priority Score", visible: true, numeric: true },
   { id: "salesTeamPriorityReason", label: "Priority Reason", visible: true, longText: true },
   // Not a stored field - computed live from every lead matched to this company by
@@ -1041,6 +1051,7 @@ function rawValue(company, column) {
     return effectiveStatus(leadStatusBucket(findLeadsForContact(company, allLeads)), contactExtras[key]?.manualStatus);
   }
   if (company.fullName == null && column.id === "salesTeamPriority") return accountPriorityInfo(company).priority;
+  if (column.id === "relationship") return company.fullName == null ? (relationshipTagText(accountPriorityInfo(company).relationship) || null) : null;
   // A contact row always has fullName, a company row never does - reused
   // below to pick the right extras store without a second parameter.
   const overrides = (company.fullName != null
@@ -1134,6 +1145,11 @@ function matchesGlobalSearch(company, query) {
 
 function matchesColumnFilters(company) {
   for (const [colId, filter] of Object.entries(columnFilters)) {
+    if (filter && filter.choice) {
+      const column = COMPANY_COLUMNS.find((c) => c.id === colId);
+      if (column && column.filterMatch && !column.filterMatch(company, filter.choice)) return false;
+      continue;
+    }
     if (!filter || !filter.text) continue;
     const column = COMPANY_COLUMNS.find((c) => c.id === colId);
     if (!column) continue;
@@ -1181,6 +1197,11 @@ function appendImportedDot(td) {
 
 function renderCellContent(td, company, column) {
   const value = column.id === "companyType" ? localizeTypeWording(rawValue(company, column)) : rawValue(company, column);
+
+  if (column.id === "relationship") {
+    if (value) td.appendChild(relationshipTagNode(accountPriorityInfo(company).relationship));
+    return;
+  }
 
   if (company.fullName != null && column.id === "seniority") {
     td.textContent = value || "—";
@@ -1516,6 +1537,43 @@ function toggleColumnMenu(column, anchorEl) {
     renderTable();
   });
   popup.append(ascBtn, descBtn, document.createElement("hr"));
+
+  // A column with fixed values (Relationship - D5): radio buttons, applied on click; "Any" clears the filter.
+  if (column.filterOptions) {
+    const current = columnFilters[column.id]?.choice || "";
+    const group = document.createElement("div");
+    group.className = "col-filter-choices";
+    for (const [value, label] of [["", "Any"], ...column.filterOptions]) {
+      const row = document.createElement("label");
+      row.className = "col-filter-choice";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `col-filter-${column.id}`;
+      radio.checked = value === current;
+      radio.addEventListener("change", () => {
+        if (value) columnFilters[column.id] = { choice: value }; else delete columnFilters[column.id];
+        currentPage = 1;
+        saveFilterSortState();
+        closeColumnMenu();
+        renderTable();
+      });
+      row.append(radio, document.createTextNode(` ${label}`));
+      group.appendChild(row);
+    }
+    popup.append(group, document.createElement("hr"));
+    const hideChoiceBtn = document.createElement("button");
+    hideChoiceBtn.className = "col-menu-item";
+    hideChoiceBtn.title = `Hide the ${column.label} column - bring it back from the Columns button`;
+    hideChoiceBtn.textContent = "Hide This Column";
+    hideChoiceBtn.addEventListener("click", () => { closeColumnMenu(); setColumnHidden(column.id, true); });
+    popup.appendChild(hideChoiceBtn);
+    document.body.appendChild(popup);
+    const w = popup.offsetWidth;
+    popup.style.left = `${Math.max(8, Math.min(anchorRect.right - w, window.innerWidth - w - 8))}px`;
+    popup.style.top = `${anchorRect.bottom + 2}px`;
+    setTimeout(() => document.addEventListener("click", onDocumentClickCloseMenu, { once: true }), 0);
+    return;
+  }
 
   const filterInput = document.createElement("input");
   filterInput.type = "text";
@@ -1954,7 +2012,7 @@ function renderTableHead() {
       arrow.textContent = sortDirection === "asc" ? " ▲" : " ▼";
       th.appendChild(arrow);
     }
-    if (columnFilters[column.id]?.text) {
+    if (columnFilters[column.id]?.text || columnFilters[column.id]?.choice) {
       th.classList.add("col-filtered");
       const dot = document.createElement("span");
       dot.className = "filter-active-dot";
@@ -2060,6 +2118,11 @@ function tableFilterChips(searchEl, filters, columns) {
   if (searchEl.value.trim()) chips.push({ label: `Search: "${searchEl.value.trim()}"`, clear: () => { searchEl.value = ""; } });
   for (const column of columns) {
     const f = filters[column.id];
+    if (f?.choice) {
+      const option = (column.filterOptions || []).find(([v]) => v === f.choice);
+      chips.push({ label: `${column.label}: ${option ? option[1] : f.choice}`, clear: () => { filters[column.id] = null; } });
+      continue;
+    }
     if (!f?.text) continue;
     chips.push({
       label: `${column.label}: ${f.exclude ? "not " : ""}"${f.text}"`,
@@ -2138,6 +2201,27 @@ function onContactFiltersChanged() {
 const TEAM_OWNER_FILTER_STORAGE_KEY = "salesteam-team-owner-filter"; // per browser profile = per member
 let teamOwnerFilter = (() => { try { return localStorage.getItem(TEAM_OWNER_FILTER_STORAGE_KEY) || "all"; } catch { return "all"; } })();
 
+// 1.2.3 (R2.4): the Customer / Partner tag, or null when the company is neither.
+function relationshipTagNode(relationship) {
+  const text = relationshipTagText(relationship);
+  if (!text) return null;
+  const tag = document.createElement("span");
+  tag.className = "relationship-tag";
+  tag.textContent = text;
+  tag.title = "On your Customers and partners list (Setup) - a normal account, fully researched";
+  return tag;
+}
+
+function companyRowFor(companyName) {
+  const key = normalizeCompanyName(companyName || "");
+  return workbook.companies.find((c) => normalizeCompanyName(c.company) === key) || { company: companyName };
+}
+
+function appendRelationshipTag(el, companyName) {
+  const tag = relationshipTagNode(accountPriorityInfo(companyRowFor(companyName)).relationship);
+  if (tag) el.appendChild(tag);
+}
+
 function appendTeamBadge(td, companyKey) {
   const badge = teamAccounts.badge(companyKey);
   if (badge) td.appendChild(badge);
@@ -2168,9 +2252,53 @@ function accountMenuItems(companyKey, company, { onDetailPage = false } = {}) {
       ? [{ label: `Review web findings (${openFindingCount})…`, change: true, onClick: () => openWebFindingsReview(companyKey, { onSaved: afterSave }) }]
       : []),
     { label: "Merge…", change: true, onClick: () => openMergeAccountsDialog(companyKey) },
+    // 1.2.3 (R2.5): who may change the Customers / Partners lists - no team, or the Team Admin (like Setup).
+    ...(!teamAccounts.inTeam() || teamAccounts.isAdmin()
+      ? [{ label: "Relationship…", onClick: () => openRelationshipDialog(companyKey, company, { onDetailPage }) }]
+      : []),
     ...teamAssignMenuItems(companyKey, { onDetailPage }),
     ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, onClick: () => removeAccount(companyKey, company.company, { onDetailPage }) }] : []),
   ]);
+}
+
+// 1.2.3 design 8.3: tick Customer / Partner for one account; explicit Save. Writes the Customers and partners lists.
+async function openRelationshipDialog(companyKey, company, { onDetailPage = false } = {}) {
+  const dialog = document.getElementById("relationship-dialog");
+  const ov = accountExtras[companyKey]?.overrides || {};
+  const ident = {
+    slug: parseLinkedinCompanySlug(ov.linkedinLink || company.linkedinLink || ""),
+    name: company.company,
+    website: ov.website || company.website || null,
+  };
+  const current = accountPriorityInfo(company).relationship;
+  document.getElementById("relationship-dialog-name").textContent = company.company;
+  const customerBox = document.getElementById("relationship-dialog-customer");
+  const partnerBox = document.getElementById("relationship-dialog-partner");
+  const saveBtn = document.getElementById("relationship-dialog-save-btn");
+  customerBox.checked = current.includes("customer");
+  partnerBox.checked = current.includes("partner");
+  const dirty = () => customerBox.checked !== current.includes("customer") || partnerBox.checked !== current.includes("partner");
+  saveBtn.disabled = true;
+  customerBox.onchange = partnerBox.onchange = () => { saveBtn.disabled = !dirty(); };
+  document.getElementById("relationship-dialog-cancel-btn").onclick = () => dialog.close();
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    const result = await setAccountRelationship(ident, { customer: customerBox.checked, partner: partnerBox.checked });
+    dialog.close();
+    const names = { customer: "Customer", partner: "Partner" };
+    const parts = [
+      ...result.added.map((c) => `${names[c]} added`),
+      ...Object.entries(result.removed).map(([c, n]) => `${names[c]} removed${n > 1 ? ` (${n} entries matched this company)` : ""}`),
+    ];
+    appendActivityLog({
+      actor: "user", action: "account_relationship_changed", label: `"${company.company}": ${parts.join(", ")}`,
+      newValue: { customer: customerBox.checked, partner: partnerBox.checked }, relatedCompanyKey: companyKey,
+    }).catch(() => {});
+    await loadWorkbook();
+    if (onDetailPage) await renderAccountView(companyKey); else rerenderForScope("accounts");
+    if (Object.values(result.removed).some((n) => n > 1)) showNotice(`${company.company}: ${parts.join(", ")}.`);
+  };
+  dialog.showModal();
 }
 
 function contactMenuItems(contactKey, contact, { onDetailPage = false } = {}) {
@@ -2937,7 +3065,7 @@ function renderContactsTable() {
     for (const column of cols) {
       const td = document.createElement("td");
       renderCellContent(td, contact, column);
-      if (column.id === "company") appendTeamBadge(td, contactCompanyKey);
+      if (column.id === "company") { appendTeamBadge(td, contactCompanyKey); appendRelationshipTag(td, contact.company); }
       tr.appendChild(td);
     }
 
@@ -6356,6 +6484,13 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
   if (startInEdit) accountEditMode = true;
   const company = currentAccountCompanyRow();
   document.getElementById("account-title").textContent = company.company || "(unknown company)";
+  {
+    // 1.2.3 (R2.4): the tag between the title and the ⋮.
+    const tagEl = document.getElementById("account-relationship-tag");
+    const text = relationshipTagText(accountPriorityInfo(company).relationship);
+    tagEl.textContent = text;
+    tagEl.hidden = !text;
+  }
 
   const companyLeads = allLeads.filter((l) => normalizeCompanyName(l.company) === companyKey);
   const accountOverrides = accountExtras[companyKey]?.overrides || {};
@@ -6566,7 +6701,13 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
         }),
       },
       { label: "Title", value: effectiveContact.jobTitle },
-      { label: "Company", value: effectiveContact.company },
+      { label: "Company", node: (() => {
+        // 1.2.3 (R2.4): the account's Customer / Partner tag beside the company name.
+        const span = document.createElement("span");
+        span.textContent = effectiveContact.company || "—";
+        appendRelationshipTag(span, effectiveContact.company);
+        return span;
+      })() },
       { label: "Function", value: effectiveContact.function },
       { label: "Seniority", value: effectiveContact.seniority },
       { label: "LinkedIn", value: effectiveContact.lastVerified2, link: true },

@@ -49,6 +49,13 @@ import {
   getRelationshipMatcher,
 } from "./storage.js";
 import { relationshipOf } from "./company-identity.js";
+import { relationshipTagText } from "./relationships.js";
+
+// 1.2.3 (R2.4): the Customers and partners lists, for the tag in the Company column. Reloaded when they change.
+let relationshipMatcher = null;
+async function loadRelationshipMatcher() {
+  relationshipMatcher = await getRelationshipMatcher().catch(() => null);
+}
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
@@ -729,6 +736,15 @@ function companyCell(td, lead) {
   // 1.2.2 step 5b (R6.5): whose account the lead's company is.
   const badge = lead.company ? teamAccounts.badge(normalizeCompanyName(lead.company)) : null;
   if (badge) td.appendChild(badge);
+  // 1.2.3 (R2.4): Customer / Partner - leads from customers' and partners' people are kept.
+  const text = lead.company ? relationshipTagText(relationshipOf(relationshipMatcher, { name: lead.company })) : "";
+  if (text) {
+    const tag = document.createElement("span");
+    tag.className = "relationship-tag";
+    tag.textContent = text;
+    tag.title = "On your Customers and partners list (Setup)";
+    td.appendChild(tag);
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -2887,6 +2903,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.targetAccountsWorkbook) {
     loadTargetContacts().then(renderTable);
   }
+  if (changes.companyRelationships || changes.companyExclusions) loadRelationshipMatcher().then(renderTable);
   // Templates saved elsewhere (another tab, the onboarding wizard): refresh the saved copy. Unsaved edits here
   // live in templateEdits, so a re-render keeps them.
   if (changes.messageTemplates) {
@@ -2957,6 +2974,7 @@ function runActionFromHash() {
 
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+  await loadRelationshipMatcher();
   await teamAccounts.ready();
   // Assignments arrive from the team in the background: repaint the badges and the open lead's notice.
   teamAccounts.onChange(() => {

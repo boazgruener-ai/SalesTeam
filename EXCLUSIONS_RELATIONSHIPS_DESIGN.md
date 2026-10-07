@@ -161,6 +161,21 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
 - **Live check passed 2026-10-07:** Scanner checkboxes gone; a P3 account added as customer showed P2 with the
   reason line, the Mentor called it an existing customer, and removing it brought P3 back.
 
+### 2.9 Step 2 as built (1.2.2.3, 2026-10-07)
+
+- Tag `.relationship-tag` (purple outline pill; same style in dashboard.css): account page between the title and the
+  ⋮ (`#account-relationship-tag`), contact page beside the Company field, Target Contacts company cell (after the
+  team badge), Leads Dashboard Company column (matcher loaded at init, reloaded when either list key changes).
+- Target Accounts column `relationship` ("Relationship", shown by default, right after Priority). Column definitions
+  can now carry `filterOptions` + `filterMatch`: the header menu then shows Any / Customer / Partner / None radio
+  buttons (applied on click), stored as `{ choice }` in the same `columnFilters`, with the usual chip, `col-filtered`
+  mark and Clear all (D5). The CSV table export gets the column.
+- ⋮ "Relationship…" after "Merge…" (no team, or the Team Admin): `#relationship-dialog` with two checkboxes and an
+  explicit Save; `setAccountRelationship` (storage.js) adds an entry (slug, name, domain, `source: "account"`) or
+  removes every entry of that category matching the account (also leftovers on the exclusion list); a pop-up only
+  when more than one entry was removed. Activity Log `account_relationship_changed`.
+- Not checked in a browser stand-in (the old perf harness is gone): checked by Boaz in Chrome.
+
 ---
 
 ## 3. Data
