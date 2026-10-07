@@ -136,6 +136,9 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
   recruiters, 1 partner); one moves - IBM (partner, by LinkedIn slug), which is not an account, so no account comes
   back. The workbook's 10 Excluded = Yes rows are all Competitor. No lead is hidden by the customer / partner
   filters. So the live check on this data is small: IBM shows on the new list, nothing else changes.
+- **Live check passed 2026-10-07** (Reload on the live install): pop-up shown once, account count unchanged,
+  Activity Log line, IBM kept in the partner box across a Save. To fix in step 1: the pop-up says "it is now an
+  account" even when the moved company is not one of the accounts (IBM).
 
 ---
 
