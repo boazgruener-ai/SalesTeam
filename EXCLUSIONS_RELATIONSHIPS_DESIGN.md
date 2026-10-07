@@ -174,7 +174,8 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
   explicit Save; `setAccountRelationship` (storage.js) adds an entry (slug, name, domain, `source: "account"`) or
   removes every entry of that category matching the account (also leftovers on the exclusion list); a pop-up only
   when more than one entry was removed. Activity Log `account_relationship_changed`.
-- Not checked in a browser stand-in (the old perf harness is gone): checked by Boaz in Chrome.
+- **Live check passed 2026-10-07** (Boaz, Chrome): column, tags (Customer, Customer · Partner), choice filter + chip,
+  ⋮ Relationship… on list row and account page, P3 -> P2 and back.
 
 ---
 
