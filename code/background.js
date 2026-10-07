@@ -39,6 +39,7 @@ import {
   autoMergeDiscoveryResults,
   repairListingRevenueInMillions,
   migrateCompanyRelationshipsIfNeeded,
+  restoreRelationshipFilteredLeads,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { prioritizeLeads, PRIORITY_LEVELS, extractCompaniesForLeads } from "./agent-shared.js";
@@ -115,6 +116,8 @@ chrome.runtime.onInstalled.addListener((details) => {
     migrateCompanyRelationshipsIfNeeded({ trigger: "update" })
       .then((moved) => { if (moved && moved.customer + moved.partner) kickPipeline("relationships_migrated").catch(() => {}); })
       .catch(() => {});
+    // R5.1: leads the retired "Existing Customers / Partners" filters hid are New again.
+    restoreRelationshipFilteredLeads().catch(() => {});
   }
 });
 

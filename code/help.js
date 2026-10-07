@@ -101,7 +101,7 @@ const QA = [
     category: "Negative Topics & Filtering",
     question: "How do I stop competitors or recruiters from showing up as leads?",
     keywords: ["competitor", "competitors", "recruiter", "recruiters", "staffing", "headhunter", "head hunter", "hide competitors"],
-    answer: 'Several Negative Topics are built in for exactly this, in the Scanner tile. "Competitor Blocklist," "Recruiting Companies," "Existing Customers," and "Existing Partners" are each just a checkbox now - the actual company lists live in the Setup wizard, not here, so edit them there. "Recruiter/Staffing Headline Filter" is still its own separate, fully editable keyword list (it catches a person\'s own recruiter/staffing job title, not their employer). Add your own Negative Topic for any other kind of noise.',
+    answer: 'Several Negative Topics are built in for exactly this, in the Scanner tile. "Competitor Blocklist," "Recruiting Companies" and "Other Excluded Companies" are each just a checkbox now (customers and partners are not filtered out - leads from their people are kept) - the actual company lists live in the Setup wizard, not here, so edit them there. "Recruiter/Staffing Headline Filter" is still its own separate, fully editable keyword list (it catches a person\'s own recruiter/staffing job title, not their employer). Add your own Negative Topic for any other kind of noise.',
   },
   {
     id: "apply-negative-filters",

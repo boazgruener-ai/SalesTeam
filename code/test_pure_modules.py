@@ -1366,6 +1366,16 @@ def test_relationships(ctx):
     check("tag text", ctx.eval("relationshipTagText(['customer','partner'])"), "Customer · Partner")
     check("tag text: none", ctx.eval("relationshipTagText([])"), "")
 
+    # The pop-up / log text (R3.2, step 1): a moved company that is not an account is not called one.
+    check("moved, not an account", ctx.eval("relationshipsMovedText({ partner: 1 })"),
+          "1 partner moved from the exclusions to the new Customers and partners list - customers and partners are no longer excluded. None of them is one of your accounts, so Target Accounts does not change.")
+    check("moved, accounts back", ctx.eval("relationshipsMovedText({ customer: 12, partner: 3, accounts: 9 })"),
+          "12 customers and 3 partners moved from the exclusions to the new Customers and partners list - customers and partners are no longer excluded. 9 of them are accounts and are back in Target Accounts, with a Relationship tag; they join the normal research queue.")
+    check("one account back", ctx.eval("relationshipsMovedText({ customer: 1, accounts: 1 }).indexOf('1 of them is an account and is back') >= 0"), True)
+    check("leads only", ctx.eval("relationshipsMovedText({ leads: 4 })"),
+          "4 leads (posts) from customers' and partners' people are back in the Leads Dashboard as New.")
+    check("nothing", ctx.eval("relationshipsMovedText({})"), "")
+
     # Team: the new list key is shared per entry, after companyExclusions.
     check("companyRelationships is a team list key", ctx.eval("teamKeyKind('companyRelationships')"), "list")
     check("companyExclusions stays the first list key", ctx.eval("TEAM_LIST_KEYS[0].key"), "companyExclusions")

@@ -140,6 +140,25 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
   Activity Log line, IBM kept in the partner box across a Save. To fix in step 1: the pop-up says "it is now an
   account" even when the moved company is not one of the accounts (IBM).
 
+### 2.8 Step 1 as built (1.2.2.2, 2026-10-07)
+
+- Lead filters: `builtin-customers` / `builtin-partners` removed from the defaults and dropped from a stored list on
+  its next read (`RETIRED_NEGATIVE_TOPIC_IDS`); the Scanner's two checkboxes are gone. On update,
+  `restoreRelationshipFilteredLeads` re-judges **only** the leads whose Irrelevant reason starts "Existing
+  Customers / Partners" against the current filters (other leads never move) and counts them into the pop-up.
+- Priority: `accountPriorityFor(row, extra, relMatcher)` in storage.js (base, effective, raised, manual,
+  relationship) feeds `getAccountViews` (`salesTeamPriority` is the effective value; `basePriority`,
+  `priorityRaised`, `relationship` added) and lead matching in `partitionLeadsByTargetAccount`. Target Accounts
+  uses it for the Priority column, the priority pie, bulk edit, the HubSpot export (scope and exported value, D4) and
+  the account page (raised priority + "Raised one level: existing customer" line in the reason). The CSV table export
+  follows the column. Backups keep the stored value.
+- AI: `relationshipPromptLine` in the account overview (account / contact Mentor and Customer Voice), the lead Mentor
+  (Leads Dashboard), every outreach draft (`generateDraft` looks the company up itself) and the general Mentor's lead
+  list (`relationship` field).
+- Pop-up text moved into relationships.js (`relationshipsMovedText`, tested): it now counts the accounts that really
+  come back and says "None of them is one of your accounts" otherwise (the IBM case), plus leads restored.
+- Help: the Negative Topics entry no longer names the two filters. 681 pure checks, 125 team-sync checks.
+
 ---
 
 ## 3. Data

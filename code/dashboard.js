@@ -46,7 +46,9 @@ import {
   exportLeads,
   importSettings,
   importLeads,
+  getRelationshipMatcher,
 } from "./storage.js";
+import { relationshipOf } from "./company-identity.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
@@ -2182,10 +2184,12 @@ async function sendCannedMentorPrompt(text) {
   quickBtns.forEach((btn) => { btn.disabled = true; });
   try {
     const settings = await currentSettings();
+    // 1.2.3 (R5.2): the mentor is told when the lead's company is an existing customer / partner.
+    const leadRelationship = relationshipOf(await getRelationshipMatcher().catch(() => null), { name: currentDetailLead.company });
     await runAgentTurn(text, {
       history: mentorHistory,
       apiKey,
-      buildSystemPrompt: () => buildLeadScopedMentorPrompt(currentDetailLead, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }),
+      buildSystemPrompt: () => buildLeadScopedMentorPrompt({ ...currentDetailLead, relationship: leadRelationship }, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }),
       tools: currentDetailLead.type === "job" ? [] : [DRAFT_MESSAGE_TOOL],
       executeTool: async (name, input2) => {
         if (name === "draft_message") {

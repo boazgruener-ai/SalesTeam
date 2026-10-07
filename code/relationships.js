@@ -90,3 +90,19 @@ export function relationshipTagText(relationship) {
   const rel = relationship || [];
   return [rel.includes("customer") ? "Customer" : null, rel.includes("partner") ? "Partner" : null].filter(Boolean).join(" · ");
 }
+
+// The pop-up / log text (R3.2): what moved, how many accounts and leads (posts) came back.
+export function relationshipsMovedText({ customer = 0, partner = 0, accounts = 0, leads = 0 } = {}) {
+  const out = [];
+  const parts = [];
+  if (customer) parts.push(`${customer} customer${customer === 1 ? "" : "s"}`);
+  if (partner) parts.push(`${partner} partner${partner === 1 ? "" : "s"}`);
+  if (parts.length) {
+    out.push(`${parts.join(" and ")} moved from the exclusions to the new Customers and partners list - customers and partners are no longer excluded.`);
+    out.push(accounts
+      ? `${accounts} of them ${accounts === 1 ? "is an account and is" : "are accounts and are"} back in Target Accounts, with a Relationship tag; ${accounts === 1 ? "it joins" : "they join"} the normal research queue.`
+      : `None of them is one of your accounts, so Target Accounts does not change.`);
+  }
+  if (leads) out.push(`${leads} lead${leads === 1 ? "" : "s"} (posts) from customers' and partners' people ${leads === 1 ? "is" : "are"} back in the Leads Dashboard as New.`);
+  return out.join(" ");
+}

@@ -1197,8 +1197,6 @@ function persistNegativeTopics() {
 const NEGATIVE_TOPIC_SOURCE_LABELS = {
   competitors: "Filter out competitors, listed in the main settings",
   recruiters: "Filter out recruiting companies, listed in the main settings",
-  customers: "Filter out existing customers, listed in the main settings",
-  partners: "Filter out existing partners, listed in the main settings",
   others: "Filter out other excluded companies, listed in the main settings",
 };
 
@@ -2112,8 +2110,7 @@ navCollapseBtn.addEventListener("click", () => {
 });
 
 // Keeps the Author title filter and the wizard-list-backed Negative Topics
-// (Competitor Blocklist/Recruiting Companies/Existing Customers/Existing
-// Partners) in sync if the Setup wizard's underlying lists are edited on
+// (Competitor Blocklist/Recruiting Companies/Other Excluded Companies) in sync if the Setup wizard's underlying lists are edited on
 // another tab while this side panel stays open - getNegativeTopics() itself
 // already recomputes fresh on every call (so a scan always uses the current
 // lists regardless), this just keeps what's ON SCREEN here from going

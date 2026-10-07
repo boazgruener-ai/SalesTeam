@@ -9,9 +9,10 @@ import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, id
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
 import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, matchesExclusion, matchesRelationship, websiteDomain, webCompanyId } from "./company-identity.js";
-import { splitCompanyLists, isRelationshipCategory, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
+import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
+import { relationshipOf } from "./company-identity.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
-export { RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS };
+export { RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS, relationshipsMovedText };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
 // Topics/Job Topics/Negative Topics config, the deduped lead history (keyed by
 // post/job URL, with status, priority, and negative-topic-match reason), scan
@@ -713,6 +714,20 @@ export async function saveCompanyLists({ exclusions, relationships }) {
   await saveCompanyRelationships(rels);
 }
 
+// Design 6.2 (R5.4): the priority shown and used for an account - a customer's raised one level unless set by hand.
+// The stored priority is never changed; `base` is it. `row`: a workbook company row, `extra`: its targetAccountExtras.
+export function accountPriorityFor(row, extra, relMatcher) {
+  const ov = (extra && extra.overrides) || {};
+  const relationship = relationshipOf(relMatcher, {
+    slug: parseLinkedinCompanySlug(ov.linkedinLink || (row && row.linkedinLink) || ""),
+    name: row && row.company, website: ov.website || (row && row.website),
+  });
+  const manual = Boolean(ov.salesTeamPriority);
+  const base = ov.salesTeamPriority || (row && row.salesTeamPriority) || null;
+  const eff = effectivePriority({ priority: base, manual, relationship });
+  return { priority: eff.priority || null, base, raised: eff.raised, manual, relationship };
+}
+
 // relationshipOf(matcher, { slug, name, website }) -> [] | ["customer"] | ["partner"] | both (company-identity.js).
 export async function getRelationshipMatcher() {
   const [relationships, exclusions] = await Promise.all([getCompanyRelationships(), getCompanyExclusions()]);
@@ -738,27 +753,34 @@ export async function migrateCompanyRelationshipsIfNeeded({ trigger = "update" }
   });
   const { customer, partner } = split.moved;
   if (customer + partner) {
-    const prev = (await chrome.storage.local.get(RELATIONSHIPS_NOTICE_KEY))[RELATIONSHIPS_NOTICE_KEY];
-    await chrome.storage.local.set({
-      [RELATIONSHIPS_NOTICE_KEY]: { customer: customer + (prev?.customer || 0), partner: partner + (prev?.partner || 0), at: Date.now() },
-    });
-    await appendActivityLog({
-      actor: "system", action: "relationships_migrated",
-      label: `${relationshipsMovedText(split.moved)} (${trigger})`, newValue: { customer, partner, trigger },
-    }).catch(() => {});
+    // Which of the moved companies are accounts that were hidden and now come back (R3.2) - IBM on a partner list
+    // is not necessarily an account.
+    const moved = split.relationships.slice(relationships.filter(Boolean).length);
+    const movedMatcher = buildRelationshipMatcher(moved, []);
+    const [workbook, lifted] = await Promise.all([getTargetAccountsWorkbook(), getCompanyExclusionsLifted()]);
+    const nowMatcher = buildExclusionMatcher(split.exclusions, lifted, buildRelationshipMatcher(split.relationships, []));
+    const back = new Set((workbook.companies || [])
+      .filter((c) => c && c.company && matchesRelationship(movedMatcher, {
+        slug: parseLinkedinCompanySlug(c.linkedinLink || ""), name: c.company, website: c.website,
+      }) && !isCompanyRowExcluded(c, nowMatcher))
+      .map((c) => normalizeCompanyName(c.company)));
+    await addRelationshipsNotice({ customer, partner, accounts: back.size }, trigger);
   }
   return split.moved;
 }
 
-// "12 customers and 3 partners are no longer excluded - they are now accounts with a Relationship tag" (R3.2).
-export function relationshipsMovedText({ customer = 0, partner = 0 } = {}) {
-  const parts = [];
-  if (customer) parts.push(`${customer} customer${customer === 1 ? "" : "s"}`);
-  if (partner) parts.push(`${partner} partner${partner === 1 ? "" : "s"}`);
-  if (!parts.length) return "";
-  const many = customer + partner !== 1;
-  return `${parts.join(" and ")} ${many ? "are" : "is"} no longer excluded - ${many ? "they are now accounts" : "it is now an account"} with a Relationship tag`;
+// Adds to the one-time pop-up (counts add up until a page shows it) and writes one Activity Log line.
+async function addRelationshipsNotice(delta, trigger) {
+  const prev = (await chrome.storage.local.get(RELATIONSHIPS_NOTICE_KEY))[RELATIONSHIPS_NOTICE_KEY] || {};
+  const next = { at: Date.now() };
+  for (const k of ["customer", "partner", "accounts", "leads"]) next[k] = (prev[k] || 0) + (delta[k] || 0);
+  await chrome.storage.local.set({ [RELATIONSHIPS_NOTICE_KEY]: next });
+  await appendActivityLog({
+    actor: "system", action: "relationships_migrated",
+    label: `${relationshipsMovedText(delta)} (${trigger})`, newValue: { ...delta, trigger },
+  }).catch(() => {});
 }
+
 
 // The one-time pop-up after the move (R3.2): read once by a page, then cleared.
 export async function takeRelationshipsMigrationNotice() {
@@ -2571,28 +2593,8 @@ const DEFAULT_NEGATIVE_TOPICS = [
     matchField: "company",
     builtin: true,
   },
-  {
-    id: "builtin-customers",
-    name: "Existing Customers",
-    sourceList: "customers",
-    keywords: [],
-    andKeywords: [],
-    enabled: true,
-    appliesTo: "both",
-    matchField: "company",
-    builtin: true,
-  },
-  {
-    id: "builtin-partners",
-    name: "Existing Partners",
-    sourceList: "partners",
-    keywords: [],
-    andKeywords: [],
-    enabled: true,
-    appliesTo: "both",
-    matchField: "company",
-    builtin: true,
-  },
+  // builtin-customers / builtin-partners ("Existing Customers" / "Existing Partners") retired in 1.2.3: customers and
+  // partners are accounts, and their people's leads are kept (R5.1) - see RETIRED_NEGATIVE_TOPIC_IDS.
   // 1.2.0.25 (Boaz, 2026-10-01): companies excluded as "Other" are filtered out of lead scans too, so an excluded
   // company is never a lead whatever its category. Added to existing installs by the backfill in getNegativeTopics.
   {
@@ -2642,8 +2644,6 @@ function slugToCompanyKeyword(slug) {
 const NEGATIVE_TOPIC_SOURCE_CATEGORY = {
   competitors: "competitor",
   recruiters: "recruiter",
-  customers: "customer",
-  partners: "partner",
   others: "other",
 };
 
@@ -2671,6 +2671,11 @@ async function applyWizardSourceLists(topics) {
 // Negative topics & blocklist
 // --------------------------------------------------------------------------
 
+// 1.2.3 (R5.1): the two lead filters that hid customers' and partners' leads. Dropped from a stored list on its next
+// read; the leads they made Irrelevant come back once (restoreRelationshipFilteredLeads).
+const RETIRED_NEGATIVE_TOPIC_IDS = new Set(["builtin-customers", "builtin-partners"]);
+const RETIRED_NEGATIVE_TOPIC_REASON_RE = /^Existing (Customers|Partners)\b/;
+
 export async function getNegativeTopics() {
   const data = await chrome.storage.local.get([NEGATIVE_TOPICS_KEY, "competitorBlocklist", "recruiterHeadlineBlocklist"]);
   let topics = data[NEGATIVE_TOPICS_KEY];
@@ -2697,6 +2702,10 @@ export async function getNegativeTopics() {
     // missing/stale by id. Persisted immediately so future reads (and
     // sidepanel.js's own in-memory copy) don't need to re-backfill.
     let changed = false;
+    if (topics.some((t) => t && RETIRED_NEGATIVE_TOPIC_IDS.has(t.id))) {
+      topics = topics.filter((t) => !(t && RETIRED_NEGATIVE_TOPIC_IDS.has(t.id)));
+      changed = true;
+    }
     for (const def of DEFAULT_NEGATIVE_TOPICS) {
       if (!def.sourceList) continue;
       const existing = topics.find((t) => t.id === def.id);
@@ -2953,6 +2962,19 @@ export function applyNegativeTopicsToResultsMap(resultsMap, negativeTopics) {
     }
   }
   return { blockedCount, restoredCount, anyChanged };
+}
+
+// 1.2.3 (R5.1): leads made Irrelevant by the retired "Existing Customers" / "Existing Partners" filters are judged
+// again against the current filters - only those leads, nothing else moves. Returns how many are New again.
+export async function restoreRelationshipFilteredLeads() {
+  const results = await getResults();
+  const affected = Object.fromEntries(Object.entries(results)
+    .filter(([, l]) => l && l.status === "Irrelevant" && RETIRED_NEGATIVE_TOPIC_REASON_RE.test(l.irrelevantReason || "")));
+  if (!Object.keys(affected).length) return 0;
+  const { restoredCount, anyChanged } = applyNegativeTopicsToResultsMap(affected, await getNegativeTopics());
+  if (anyChanged) await saveResults(results);
+  if (restoredCount) await addRelationshipsNotice({ leads: restoredCount }, "update");
+  return restoredCount;
 }
 
 // The Scanner tile's on-demand "Apply Negative Filters" button - the
@@ -4190,6 +4212,7 @@ export async function partitionLeadsByTargetAccount(leads) {
   const accountExtras = await getTargetAccountExtras();
   const rules = await getPrioritizationRules();
   const ruleById = Object.fromEntries(rules.map((r) => [r.id, r]));
+  const relMatcher = await getRelationshipMatcher();
 
   const autoPriorities = [];
   const toScore = [];
@@ -4200,8 +4223,10 @@ export async function partitionLeadsByTargetAccount(leads) {
     }
     const leadCompanyKey = normalizeCompanyName(lead.company);
     const leadCompanyRow = companyByName.get(leadCompanyKey) || null;
+    // 1.2.3 (R5.4): the account's priority as shown - a customer's raised one level.
     const { match, qualifies } = evaluateTargetAccountMatch(lead.company, targetAccounts, minConfidence, leadCompanyRow,
-      accountExtras[leadCompanyKey]?.overrides?.salesTeamPriority || null);
+      (leadCompanyRow ? accountPriorityFor(leadCompanyRow, accountExtras[leadCompanyKey], relMatcher).priority : null)
+        || accountExtras[leadCompanyKey]?.overrides?.salesTeamPriority || null);
 
     if (match && lead.type === "job") {
       if (qualifies) {
@@ -5073,10 +5098,11 @@ function citedResearchWebsite(research) {
 // guess is never made again for that value.
 export async function getAccountViews({ persistDerived = true } = {}) {
   const data = await chrome.storage.local.get([TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY, TARGET_ACCOUNTS_IMPORTED_AT_KEY]);
-  const [map, workbook, extras, contactExtras, exclusions, contactProfile] = await Promise.all([
+  const [map, workbook, extras, contactExtras, exclusions, contactProfile, relationships] = await Promise.all([
     getTargetAccounts(), getTargetAccountsWorkbook(), getTargetAccountExtras(), getTargetContactExtras(),
-    getCompanyExclusions(), getTargetContactProfile(),
+    getCompanyExclusions(), getTargetContactProfile(), getCompanyRelationships(),
   ]);
+  const relMatcher = buildRelationshipMatcher(relationships, exclusions);
   const importedAt = data[TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY] || data[TARGET_ACCOUNTS_IMPORTED_AT_KEY] || null;
   const exclusionMatcher = await getExclusionMatcher();
   const seniorityLevels = contactProfile.seniorityLevels || [];
@@ -5105,6 +5131,7 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     const extra = extras[key] || {};
     const ov = extra.overrides || {};
     const mapEntry = map[key];
+    const prio = accountPriorityFor(row, extra, relMatcher);
     const view = {
       key,
       companyId: row.companyId,
@@ -5112,7 +5139,11 @@ export async function getAccountViews({ persistDerived = true } = {}) {
       source: row.source || "Imported",
       linkedinCompanyId: mapEntry?.linkedinCompanyId || row.linkedinCompanyId || null,
       linkedinLink: ov.linkedinLink || row.linkedinLink || mapEntry?.linkedinLink || null,
-      salesTeamPriority: ov.salesTeamPriority || row.salesTeamPriority || null,
+      // 1.2.3 (R5.4): a customer's priority raised one level - everything that reads the view follows.
+      salesTeamPriority: prio.priority,
+      basePriority: prio.base,
+      priorityRaised: prio.raised,
+      relationship: prio.relationship,
       evidenceStatus: row.evidenceStatus || null,
       lastVerified: row.lastVerified ?? null,
       deleted: Boolean(extra.deletedAt),

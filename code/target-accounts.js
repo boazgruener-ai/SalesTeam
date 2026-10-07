@@ -92,8 +92,9 @@ import {
   importSettings,
   importLeads,
   getAccountReadiness, getTargetsStatus,
-  takeRelationshipsMigrationNotice, relationshipsMovedText,
+  takeRelationshipsMigrationNotice, relationshipsMovedText, getRelationshipMatcher, accountPriorityFor,
 } from "./storage.js";
+import { RAISED_REASON } from "./relationships.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
 import { coverageLines } from "./pipeline-plan.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBeforeRestore } from "./backup-restore.js";
@@ -558,6 +559,12 @@ const contactsTableWrapEl = document.getElementById("contacts-table-wrap");
 let workbook = { companies: [], contacts: [], aiInitiatives: [], aiInvestment: [], sources: [] };
 let allLeads = []; // getResults() as an array - flags/last-communication/posts-by-contact all need this
 let accountExtras = {}; // getTargetAccountExtras() - due-dates drive the list view's flag column
+let relationshipMatcher = null; // 1.2.3: getRelationshipMatcher(), loaded with the workbook
+
+// 1.2.3 (R5.4): an account's priority as shown and used - a customer's raised one level unless set by hand.
+function accountPriorityInfo(company) {
+  return accountPriorityFor(company, accountExtras[normalizeCompanyName(company.company)], relationshipMatcher);
+}
 let contactExtras = {}; // getTargetContactExtras() - same, for the Target Contacts Dashboard's flag column
 let sortField = "salesTeamPriorityScore";
 let sortDirection = "desc";
@@ -1033,6 +1040,7 @@ function rawValue(company, column) {
     const key = contactKeyFor(company.company, company.fullName);
     return effectiveStatus(leadStatusBucket(findLeadsForContact(company, allLeads)), contactExtras[key]?.manualStatus);
   }
+  if (company.fullName == null && column.id === "salesTeamPriority") return accountPriorityInfo(company).priority;
   // A contact row always has fullName, a company row never does - reused
   // below to pick the right extras store without a second parameter.
   const overrides = (company.fullName != null
@@ -3512,6 +3520,7 @@ async function loadWorkbook() {
   // actually dropped from storage, so nothing is lost if either source
   // later stops flagging it.
   const exclusionMatcher = await getExclusionMatcher();
+  relationshipMatcher = await getRelationshipMatcher();
   const excludedCompanyKeys = new Set(
     wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionMatcher)).map((c) => normalizeCompanyName(c.company))
   );
@@ -5326,8 +5335,13 @@ async function refreshSettingsCache() {
   currentSettingsCache = { mentorPersona, companyContext, idealCustomerProfile, customerPersona, userProfile, outputLanguage };
 }
 
+// 1.2.3 (R5.2): with the account's relationship, which the AI prompts are told about.
+function withRelationship(row) {
+  return row && row.company ? { ...row, relationship: accountPriorityInfo(row).relationship } : row;
+}
+
 function currentAccountCompanyRow() {
-  return workbook.companies.find((c) => normalizeCompanyName(c.company) === currentAccountKey) || {};
+  return withRelationship(workbook.companies.find((c) => normalizeCompanyName(c.company) === currentAccountKey)) || {};
 }
 
 function currentContactRow() {
@@ -5336,7 +5350,7 @@ function currentContactRow() {
 
 function currentContactAccountRow() {
   const contact = currentContactRow();
-  return workbook.companies.find((c) => normalizeCompanyName(c.company) === normalizeCompanyName(contact.company));
+  return withRelationship(workbook.companies.find((c) => normalizeCompanyName(c.company) === normalizeCompanyName(contact.company)));
 }
 
 // ---- Account view ----
@@ -5842,7 +5856,7 @@ const BULK_TOPICS = {
 };
 
 function bulkAccountPriority(company) {
-  const p = accountExtras[normalizeCompanyName(company.company)]?.overrides?.salesTeamPriority || company.salesTeamPriority;
+  const p = accountPriorityInfo(company).priority;
   return ["P1", "P2", "P3", "P4", "P5"].includes(p) ? p : "none";
 }
 
@@ -6410,9 +6424,12 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
       {
         label: "SalesTeam Priority",
         node: salesTeamPriorityFieldNode(
-          company.salesTeamPriority,
+          // 1.2.3 (R5.4): a customer's automatic priority is shown raised, with the reason line.
+          accountPriorityInfo(company).raised ? accountPriorityInfo(company).priority : company.salesTeamPriority,
           company.salesTeamPriorityScore,
-          company.salesTeamPriorityReason,
+          accountPriorityInfo(company).raised
+            ? [company.salesTeamPriorityReason, RAISED_REASON].filter(Boolean).join("\n")
+            : company.salesTeamPriorityReason,
           accountOverrides.salesTeamPriority || null,
           accountOverrides.salesTeamPriorityReason || null,
           async (newPriority, newReason) => {
@@ -6807,9 +6824,9 @@ function hubspotExportSelection() {
   const maxRank = HUBSPOT_SCOPE_RANK[scope] || 99;
   const companies = workbook.companies.filter((c) => {
     if (maxRank === 99) return true;
-    const rank = Number(String(accountExtras[normalizeCompanyName(c.company)]?.overrides?.salesTeamPriority || c.salesTeamPriority || "P9").replace("P", ""));
+    const rank = Number(String(accountPriorityInfo(c).priority || "P9").replace("P", ""));
     return rank <= maxRank;
-  });
+  }).map((c) => ({ ...c, salesTeamPriority: accountPriorityInfo(c).priority })); // D4: exported as shown
   // "Export at most N companies" - applied before the contact set is derived, so the contacts that
   // come along are exactly the ones belonging to the companies actually exported. The scope dropdown
   // alone is too coarse to try HubSpot out: P1 on its own is already hundreds of accounts.
@@ -7368,7 +7385,7 @@ async function init() {
   openActionFromHash();
   // 1.2.3 (R3.2): once, after customers / partners left the exclusion list (update, restore or import).
   takeRelationshipsMigrationNotice().then((n) => {
-    if (n) showNotice(`${relationshipsMovedText(n)}. They join the normal research queue - nothing runs in a burst.`);
+    if (n) showNotice(relationshipsMovedText(n));
   }).catch(() => {});
   initBatchStatus(onBulkStateChange);
   watchPipelineStatusLine(document.getElementById("pie-pipeline-status")); // build step 3, U3
