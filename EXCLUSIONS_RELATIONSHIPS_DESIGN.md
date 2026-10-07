@@ -177,6 +177,24 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
 - **Live check passed 2026-10-07** (Boaz, Chrome): column, tags (Customer, Customer · Partner), choice filter + chip,
   ⋮ Relationship… on list row and account page, P3 -> P2 and back.
 
+### 2.10 Step 3 as built (1.2.2.4, 2026-10-07)
+
+- New `company-list-table.js` (DOM): one list as a table - Company, LinkedIn page, Website; A-Z; search; count;
+  + Add / Edit as an inline row (OK / Cancel, Enter / Escape) validated by the pure `parseCompanyListEntry`
+  (company-identity.js, with `linkedinCompanySlug` and `sameCompanyEntry`); row ⋮ Edit, Remove, Move to (the other
+  four lists); a nameless entry shows its slug or domain greyed; "found by research" link; red flag row (D2).
+- Setup: "Companies to exclude" = Competitors, Recruiters / staffing agencies, Other; new step **"Customers and
+  partners"** (`relationships`, right after it) = Customers, Partners / resellers. Both edit the one draft
+  `companyExclusions`; Save on either writes both lists (`saveCompanyLists`, D7). The five textareas and the line
+  parser are gone. Save is refused while a row is being edited.
+- Proposals: setup-proposals.js now builds `exclusions` (competitors) and `relationships` (customers, partners) from
+  one pass (a company named twice is still proposed once); a research stored before 1.2.3 is split on the fly
+  (`stepProposal`). Ticks add / remove the company in its table; **proposal-ui.js fix**: a tick now calls `onChange`.
+- Team member (R4.7): no + Add and no ⋮ (tables re-drawn once the read-only check has run).
+- Checked in a new browser stand-in (scratchpad shim: fake `chrome.*` seeded from the 2026-10-06 backup; launch.json
+  "st-shim"): load, Add with a bad LinkedIn link refused, Move to Customers + Save writes the right lists (IBM kept),
+  flag on both rows, Edit, search, member read-only, old research split and tick-to-table. 693 pure checks.
+
 ---
 
 ## 3. Data
@@ -417,7 +435,7 @@ works as today.
 | 0 | Data: `companyRelationships` key + storage functions; `relationships.js` (pure: `splitCompanyLists`, `raisePriority`, `effectivePriority`, `relationshipPromptLine`) and matcher changes in company-identity.js, all tested in `test_pure_modules.py`; team key, backup, decisions lists; migration (update, restore, import) with log line and pop-up; workbook flag override. **Dry run on the latest backup first: how many customers / partners move, how many accounts and leads come back.** | 1.2.2.1 |
 | 1 | Downstream: negative topics removed + leads restored, `partitionLeadsByTargetAccount`, priority raise in `getAccountViews` + the bypasses, reason line, AI prompt lines | 1.2.2.2 |
 | 2 | Display: tag on account / contact / Contacts list / Leads Dashboard; Relationship column + choice filter; ⋮ Relationship… | 1.2.2.3 |
-| 3 | Setup: `company-list-table.js`, the two steps, one draft, proposals into tables, tick-sync fix, team read-only | 1.2.2.4 |
+| 3 | Setup: `company-list-table.js`, the two steps, one draft, proposals into tables, tick-sync fix, team read-only (as built: 2.10) | 1.2.2.4 |
 | 4 | Help (Exclusions entry updated, new "Customers and partners"), PRD section + gen_docs mirror, release notes, workbook prompt/validator wording, listing/website check (R6) → **1.2.3** | 1.2.3 |
 
 Each step: `check_js_syntax.py`, `test_pure_modules.py`, `test_team_sync.py` (steps 0 and 3), then Reload on

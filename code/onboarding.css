@@ -923,3 +923,32 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 
 
 #nav-save-status.unsaved { color: #b05a00; font-weight: 600; }
+
+/* 1.2.3: the Setup company lists as tables (company-list-table.js) */
+.company-list { margin: 14px 0 18px; max-width: 900px; }
+.company-list-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.company-list-heading { margin: 0; font-size: 15px; flex: 1 1 auto; }
+.company-list-search { width: 200px; padding: 4px 8px; font-size: 13px; }
+.company-list-table { width: 100%; border-collapse: collapse; margin: 6px 0 2px; font-size: 13px; }
+.company-list-table th { text-align: left; font-size: 12px; color: var(--gray); padding: 4px 6px; border-bottom: 1px solid #d3e2f3; }
+.company-list-table td { padding: 4px 6px; border-bottom: 1px solid #eef2f7; vertical-align: middle; word-break: break-word; }
+.company-list-table td:nth-child(1) { width: 36%; }
+.company-list-table td:last-child { width: 1%; white-space: nowrap; text-align: right; }
+.company-list-table input { width: 100%; box-sizing: border-box; font-size: 13px; padding: 3px 6px; }
+.company-list-none { color: var(--gray-light); }
+.company-list-source { font-size: 11px; color: var(--gray); }
+.company-list-flag { font-size: 12px; color: var(--bad); font-weight: 600; margin-top: 2px; }
+.company-list-flagged td { background: #fdf0f0; }
+.company-list-error-row td { color: var(--bad); font-size: 12px; border-bottom: none; }
+.company-list-row-actions button { margin-left: 4px; font-size: 12px; }
+.company-list-row-save { background: var(--blue); color: white; border: none; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+.company-list-row-cancel { background: #f0f0f0; border: none; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+.company-list-kebab { border: none; background: transparent; font-size: 18px; line-height: 1; cursor: pointer; color: var(--gray); padding: 0 6px; }
+.company-list-kebab:hover { color: var(--ink); }
+.company-list-empty { margin: 4px 6px; font-size: 13px; color: var(--gray-light); }
+.company-list-menu { position: absolute; z-index: 1000; background: white; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15); padding: 4px 0; min-width: 190px; }
+.company-list-menu-item { display: block; width: 100%; text-align: left; border: none; background: none; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+.company-list-menu-item:hover { background: var(--blue-light); }
+.company-list-menu-item.danger { color: var(--bad); }
+.company-list-menu-item.indent { padding-left: 26px; }
+.company-list-menu-label { padding: 6px 14px 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gray); border-top: 1px solid #eef2f7; margin-top: 4px; }

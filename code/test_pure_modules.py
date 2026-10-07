@@ -1376,6 +1376,18 @@ def test_relationships(ctx):
           "4 leads (posts) from customers' and partners' people are back in the Leads Dashboard as New.")
     check("nothing", ctx.eval("relationshipsMovedText({})"), "")
 
+    # Setup table rows (design 9.2).
+    check("row: name only", ctx.eval("JSON.stringify(parseCompanyListEntry({ name: ' Acme AG ' }))"), '{"entry":{"name":"Acme AG"}}')
+    check("row: LinkedIn company page", ctx.eval("parseCompanyListEntry({ linkedin: 'https://www.linkedin.com/company/acme-ag/about/' }).entry.slug"), "acme-ag")
+    check("row: LinkedIn profile refused", ctx.eval("!!parseCompanyListEntry({ name: 'X', linkedin: 'https://www.linkedin.com/in/jane/' }).error"), True)
+    check("row: website kept as domain", ctx.eval("parseCompanyListEntry({ name: 'Acme', website: 'https://www.acme.ch/de' }).entry.domain"), "acme.ch")
+    check("row: LinkedIn link as website refused", ctx.eval("!!parseCompanyListEntry({ website: 'linkedin.com/company/acme' }).error"), True)
+    check("row: nothing entered", ctx.eval("!!parseCompanyListEntry({}).error"), True)
+    check("row: not a web address", ctx.eval("!!parseCompanyListEntry({ name: 'A', website: 'acme' }).error"), True)
+    check("same company by name", ctx.eval("sameCompanyEntry({ name: 'Acme AG' }, { name: 'ACME' })"), True)
+    check("same company by domain", ctx.eval("sameCompanyEntry({ domain: 'acme.ch' }, { name: 'Other', domain: 'https://www.acme.ch' })"), True)
+    check("different companies", ctx.eval("sameCompanyEntry({ name: 'Acme', slug: 'acme' }, { name: 'Beta', slug: 'beta' })"), False)
+
     # Team: the new list key is shared per entry, after companyExclusions.
     check("companyRelationships is a team list key", ctx.eval("teamKeyKind('companyRelationships')"), "list")
     check("companyExclusions stays the first list key", ctx.eval("TEAM_LIST_KEYS[0].key"), "companyExclusions")
@@ -1807,11 +1819,15 @@ def test_setup_proposals(ctx):
     check("offer line", ctx.eval("offerLine({ text: 'Data maturity report', url: 'https://acme.ch/report' })"), "Data maturity report - https://acme.ch/report")
     check("exclusions: no website/source dropped, seller dropped, listed twice dropped",
           j("SP.exclusions.items.map(e => e.category + ':' + e.name + ':' + (e.domain || ''))"),
-          '["competitor:Rival AG:rival.ch","customer:Big Bank:","partner:Cloudco:cloudco.com"]')
+          '["competitor:Rival AG:rival.ch"]')
+    check("relationships (1.2.3): customers and partners on their own step",
+          j("SP.relationships.items.map(e => e.category + ':' + e.name + ':' + (e.domain || ''))"),
+          '["customer:Big Bank:","partner:Cloudco:cloudco.com"]')
+    check("relationships: research again on that step rebuilds only it", j("Object.keys(buildSetupProposals(SP_RAW, SP_CTX, ['relationships']))"), '["relationships"]')
     check("about: site language -> output language", ctx.eval("SP.about.outputLanguage"), "german")
     check("about: Italian site -> no proposal", ctx.eval("outputLanguageForSite('it')"), None)
     check("only: one step rebuilt", j("Object.keys(buildSetupProposals(SP_RAW, SP_CTX, ['size']))"), '["size"]')
-    check("nothing found: empty answer", j("Object.values(buildSetupProposals({}, SP_CTX)).map(p => p.found)"), '[false,false,false,false,false,false,false,false,false]')
+    check("nothing found: empty answer", j("Object.values(buildSetupProposals({}, SP_CTX)).map(p => p.found)"), '[false,false,false,false,false,false,false,false,false,false]')
     check("source label", ctx.eval("sourceLabel('https://www.acme.ch/about/')"), "acme.ch/about")
     check("ticked: first setup, all", j("initiallyTicked(['a', 'b'], [], false)"), '[true,true]')
     check("ticked: completed before, only those saved", j("initiallyTicked(['a', 'B'], ['b'], true)"), '[false,true]')

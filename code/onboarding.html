@@ -409,33 +409,29 @@
       <div class="proposal-slot" id="proposal-exclusions" hidden></div>
       <div id="exclusions-checklist" hidden></div>
       <p class="step-intro">
-        A company here is never treated as a lead (post), regardless of anything else about it. One company per line
-        in each box below: its name, its LinkedIn company page, or both ("Name - https://www.linkedin.com/company/...").
-        A LinkedIn page is the surest match; a name alone also works, matched by name and website. Each line is
-        checked as you go.
+        A company on these lists never shows up in your Target Accounts and is never treated as a lead (post). Add
+        each company by its name, its LinkedIn company page or its website - a LinkedIn page is the surest match.
+        Customers and partners are not excluded: they have their own step next.
       </p>
+      <div id="company-list-competitor"></div>
+      <div id="company-list-recruiter"></div>
+      <div id="company-list-other"></div>
+      <p class="step-error" hidden></p>
+    </section>
 
-      <label for="exclusions-competitor-input">Competitors</label>
-      <textarea id="exclusions-competitor-input" placeholder="Example Competitor AG - https://www.linkedin.com/company/example/"></textarea>
-      <div id="exclusions-competitor-parsed-list"></div>
-
-      <label for="exclusions-recruiter-input">Recruiters / staffing agencies</label>
-      <p class="field-hint">Pre-filled with well-known global agencies to save you the lookup; add your local ones and remove any that don't apply, or clear the list entirely if you'd rather skip this.</p>
-      <textarea id="exclusions-recruiter-input" placeholder="Example Staffing - https://www.linkedin.com/company/example/"></textarea>
-      <div id="exclusions-recruiter-parsed-list"></div>
-
-      <label for="exclusions-customer-input">Existing customers</label>
-      <textarea id="exclusions-customer-input" placeholder="Example Customer AG - https://www.linkedin.com/company/example/"></textarea>
-      <div id="exclusions-customer-parsed-list"></div>
-
-      <label for="exclusions-partner-input">Existing partners / resellers</label>
-      <textarea id="exclusions-partner-input" placeholder="Example Partner - https://www.linkedin.com/company/example/"></textarea>
-      <div id="exclusions-partner-parsed-list"></div>
-
-      <label for="exclusions-other-input">Other</label>
-      <p class="field-hint">Anything else that doesn't fit the categories above.</p>
-      <textarea id="exclusions-other-input" placeholder="Example Company - https://www.linkedin.com/company/example/"></textarea>
-      <div id="exclusions-other-parsed-list"></div>
+    <!-- 1.2.3: Customers and partners - kept as accounts, with a Relationship tag (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 9) -->
+    <section id="enter-relationships" class="wizard-step" hidden>
+      <h2>Customers and partners (optional)</h2>
+      <div class="proposal-slot" id="proposal-relationships" hidden></div>
+      <div id="relationships-checklist" hidden></div>
+      <p class="step-intro">
+        Your existing customers and partners stay normal accounts - researched, their contacts found and their leads
+        kept - with a Customer or Partner tag. A customer's priority is raised one level, and the AI is told it is
+        not a cold prospect. A company can be both.
+      </p>
+      <div id="company-list-customer"></div>
+      <div id="company-list-partner"></div>
+      <p class="step-error" hidden></p>
     </section>
 
     <!-- Step 13: Company aliases (optional) -->
