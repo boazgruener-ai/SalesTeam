@@ -2147,7 +2147,7 @@ const checklists = {};
 let researchController = null;
 let researchSkipRequested = false;
 
-const RESEARCHED_STEPS_TEXT = "Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude";
+const RESEARCHED_STEPS_TEXT = "Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts, Companies to exclude and Customers and partners";
 const RESEARCH_AGAIN_COST_TEXT = "about US$0.10";
 
 const usd = (n) => `US$${(Number(n) || 0).toFixed(2)}`;

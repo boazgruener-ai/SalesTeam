@@ -73,7 +73,7 @@ const QA = [
     category: "Setup & Target Accounts",
     question: "Can SalesTeam fill in the Setup for me?",
     keywords: ["research my company", "propose", "proposal", "proposals", "about you", "website", "setup wizard", "onboarding", "fill in", "suggest settings", "improve setup"],
-    answer: 'Yes, as proposals you can accept or ignore. In the Setup\'s first step, About you, enter your company and its website and press "Research my company" (about US$0.30 on your Anthropic API key). SalesTeam reads the company\'s website and proposes answers for Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude. Each proposal is shown next to the current setting, and nothing changes unless you take it. If you finished the Setup before version 1.2.1, Settings offers this once; it stays available any time under Settings > User Profile > Open About you.',
+    answer: 'Yes, as proposals you can accept or ignore. In the Setup\'s first step, About you, enter your company and its website and press "Research my company" (about US$0.30 on your Anthropic API key). SalesTeam reads the company\'s website and proposes answers for Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts, Companies to exclude and Customers and partners. Each proposal is shown next to the current setting, and nothing changes unless you take it. If you finished the Setup before version 1.2.1, Settings offers this once; it stays available any time under Settings > User Profile > Open About you.',
   },
   {
     id: "find-new-accounts",
@@ -90,6 +90,20 @@ const QA = [
     answer: 'On the Target Accounts Dashboard, use "Export Accounts (CSV)" in the menu; on the Target Contacts Dashboard, "Export Contacts (CSV)". Each saves one file that opens in Excel, with every column of that table under SalesTeam\'s own column names. If a search or column filter is on, SalesTeam asks whether to export all of them or only the filtered ones. For HubSpot, "Export to HubSpot…" saves two files with HubSpot\'s own column names instead.',
   },
   {
+    id: "exclude-companies",
+    category: "Setup & Target Accounts",
+    question: "How do I exclude a company (a competitor or a recruiter)?",
+    keywords: ["exclude", "exclusion", "exclusions", "competitor", "competitors", "recruiter", "staffing", "blocklist", "hide company", "remove company", "never show", "companies to exclude", "move to", "other list"],
+    answer: 'In Settings > Change Settings > "Companies to exclude" (the same step as in the Setup). It has three tables - Competitors, Recruiters / staffing agencies and Other - each with Company, LinkedIn page and Website, sorted A-Z, with a search box and a count. "+ Add" opens an empty row: give the name, the LinkedIn company page or the website (a LinkedIn page is the surest match), then OK. Each row\'s ⋮ menu has Edit, Remove and, under the heading "Move to" (a heading, not an item to click), the other lists to move the company to - including Customers and Partners. Press Save to keep the changes. An excluded company never shows up as an account, is never researched and its people are never treated as leads (posts). In a team, only the Team Admin can change these lists.',
+  },
+  {
+    id: "customers-partners",
+    category: "Setup & Target Accounts",
+    question: "How do I mark a company as an existing customer or partner?",
+    keywords: ["customer", "customers", "existing customer", "partner", "partners", "reseller", "relationship", "tag", "upsell", "renewal", "not excluded", "customers and partners"],
+    answer: 'Customers and partners are not excluded: they stay normal accounts - researched, their contacts found and their leads (posts) kept - with a Customer or Partner tag on the account, its contacts and its leads. Mark one in either of two places: the account\'s ⋮ menu > "Relationship…" (tick Customer and/or Partner / reseller, then Save), or Settings > Change Settings > "Customers and partners", which has a Customers and a Partners / resellers table that work like the exclusion tables. A company can be both. A customer\'s priority is raised one level (P3 becomes P2, P2 becomes P1), with the line "Raised one level: existing customer" in its priority reason, unless you set the priority by hand; taking the tag off brings the old priority back. Sales Mentor, Customer Voice and every draft are told the company is a customer or partner, not a cold prospect. On Target Accounts the Relationship column shows the tag; its header menu filters by Any / Customer / Partner / None. If a company is on an exclusion list too, the exclusion wins and both rows are flagged red in Setup. In a team, only the Team Admin can change this.',
+  },
+  {
     id: "what-is-negative-topic",
     category: "Negative Topics & Filtering",
     question: "What is a Negative Topic?",
@@ -101,7 +115,7 @@ const QA = [
     category: "Negative Topics & Filtering",
     question: "How do I stop competitors or recruiters from showing up as leads?",
     keywords: ["competitor", "competitors", "recruiter", "recruiters", "staffing", "headhunter", "head hunter", "hide competitors"],
-    answer: 'Several Negative Topics are built in for exactly this, in the Scanner tile. "Competitor Blocklist," "Recruiting Companies" and "Other Excluded Companies" are each just a checkbox now (customers and partners are not filtered out - leads from their people are kept) - the actual company lists live in the Setup wizard, not here, so edit them there. "Recruiter/Staffing Headline Filter" is still its own separate, fully editable keyword list (it catches a person\'s own recruiter/staffing job title, not their employer). Add your own Negative Topic for any other kind of noise.',
+    answer: 'Several Negative Topics are built in for exactly this, in the Scanner tile. "Competitor Blocklist," "Recruiting Companies" and "Other Excluded Companies" are each just a checkbox now (customers and partners are not filtered out - leads from their people are kept) - the actual company lists live in the Setup\'s "Companies to exclude" step, not here, so edit them there (see "How do I exclude a company?"). "Recruiter/Staffing Headline Filter" is still its own separate, fully editable keyword list (it catches a person\'s own recruiter/staffing job title, not their employer). Add your own Negative Topic for any other kind of noise.',
   },
   {
     id: "apply-negative-filters",

@@ -292,6 +292,10 @@ add_bullets(doc, [
     "lead. Now every excluded company is filtered, whatever its category: builtin-other-exclusions (sourceList "
     "others -> category other), on by default and added to existing installs by the same backfill. The wizard's "
     "Exclusions step says so: an excluded company never shows up in Target Accounts and is never scanned for leads.",
+    "Existing Customers and Existing Partners filters retired (1.2.3, 2026-10-07) - customers and partners are no longer "
+    "exclusions (6.24): builtin-customers / builtin-partners left the defaults and are dropped from a stored list on its "
+    "next read (RETIRED_NEGATIVE_TOPIC_IDS); the Scanner's two checkboxes are gone. On update, only the leads whose "
+    "Irrelevant reason starts “Existing Customers / Partners” are re-judged against the current filters.",
     "The Scanner tile's “Author title contains” filter is wizard-list-backed too, same day - its "
     "free-text textarea duplicated the Setup wizard's own Target Contacts profile "
     "(targetContactProfile.exactTitles/titleKeywords, 6.20, also Phase 6 contact discovery's input). The "
@@ -1903,6 +1907,33 @@ add_bullets(doc, [
     'Not in 1.2.2 - advanced mode - admin-defined queues (territory, VIP, global) with members per queue and automatic assignment rules, replacing the Mine / Others filter (TEAM_USE_DESIGN.md section 11); a Microsoft Graph data layer (Option B) with real locks.',
 ])
 
+doc.add_heading('6.24 Exclusions and relationships (v1.2.3)', level=3)
+doc.add_paragraph('1.2.3 stops treating existing customers and partners as exclusions. Until 1.2.2 a Customer or Partner entry hid the company everywhere - no research, no contacts, no leads - which is wrong for upselling. Exclusions are now Competitors, Recruiters / staffing agencies and Other only; customers and partners stay normal accounts with a Relationship tag. The requirements (R1-R6, Q1-Q6) are in EXCLUSIONS_RELATIONSHIPS_REQUIREMENTS.md; the design, its decisions (D1-D8) and each step as built in EXCLUSIONS_RELATIONSHIPS_DESIGN.md.')
+p = doc.add_paragraph()
+p.add_run('Data').bold = True
+add_bullets(doc, [
+    'Two lists - companyExclusions (competitor, recruiter, other) and the new companyRelationships (customer, partner), same entry shape (category, slug, name, domain, source, sourceUrl) and the same matching (LinkedIn page, normalised name or website domain). A company that is both customer and partner has two entries. Shared in a team (team-keys.js); in full backups and the Decisions watch lists.',
+    'Matchers (pure, company-identity.js) - the exclusion matcher skips customer / partner entries, so none of the ~20 places that hide excluded companies changed; the relationship matcher reads companyRelationships plus any customer / partner entry still left in companyExclusions. relationshipOf gives [], customer, partner or both.',
+    "Migration - splitCompanyLists (pure, relationships.js) moves customer / partner entries to the new list. Idempotent and flag-free; runs on update, after a full restore and after a workbook import; in a team only for the Team Admin (a member's matchers already treat leftovers correctly). Activity Log relationships_migrated and a one-time pop-up that counts the accounts and leads that really come back.",
+    "Workbook - an Exclusion_List row with reason Customer or Partner adds the company to companyRelationships (by slug, name or website), and the workbook's Excluded = Yes is ignored for a company on the relationship lists, so a re-import keeps it visible. Research prompt V1.35 asks for existing customers and partners instead of customers to exclude; validate_workbook.py notes such rows.",
+])
+p = doc.add_paragraph()
+p.add_run('What a relationship changes').bold = True
+add_bullets(doc, [
+    "Leads - the Existing Customers / Existing Partners lead filters are retired and the leads they hid come back as New (D8); a customer's lead matches its target account.",
+    'Priority - a customer is raised one level when priority is read, never stored: effectivePriority (pure) turns P2 into P1, P3 into P2, P4 into P3 and P5 into P4 (D3); a manual priority is left as set; a partner only is neutral. accountPriorityFor (storage.js) feeds getAccountViews, so pipeline order, Ready selection, scannable scope and the decision queue follow, plus the Target Accounts column, pie, bulk edit, CSV and HubSpot export (the raised value, D4). The reason gets "Raised one level: existing customer". Removing the tag removes the raise at once.',
+    "AI - one relationship line (relationshipPromptLine) in the account overview (account and contact Sales Mentor, Customer Voice), the lead Sales Mentor, every outreach draft and the general Sales Mentor's lead list: an existing customer or partner, not a cold prospect.",
+])
+p = doc.add_paragraph()
+p.add_run('Screens').bold = True
+add_bullets(doc, [
+    'Tag - a purple outline pill (Customer, Partner, Customer · Partner), computed from the matcher, never stored: account page title, contact page Company field, Target Contacts company cell, Leads Dashboard Company column.',
+    'Target Accounts - a Relationship column (shown by default, after Priority) with a new choice filter in its header menu: Any / Customer / Partner / None, with the usual chip, tinted header and Clear all (D5).',
+    "⋮ Relationship… - in the account menu (list row and page, after Merge…), no team or the Team Admin only: two checkboxes and Save; ticking adds an entry from the account's LinkedIn page, name and website; unticking removes every matching entry of that category.",
+    'Setup - Companies to exclude has three tables (Competitors, Recruiters / staffing agencies, Other), and the new step Customers and partners (right after it) has two (Customers, Partners / resellers). One table component (company-list-table.js): Company, LinkedIn page, Website; A-Z; search; count; + Add and Edit as an inline row validated by parseCompanyListEntry; row ⋮ Edit, Remove and Move to the other four lists. A company on an exclusion list and a relationship list is flagged red on both rows; the exclusion wins (D2). Both steps edit one draft and Save on either writes both lists (D7). Research proposals stay a tick list above the tables (D6): competitors on the first step, customers and partners on the second. A team member sees the tables read-only.',
+    'Not in 1.2.3 - other relationship types (prospect, former customer, supplier - the lists are built so more can be added), customer data from a CRM (HubSpot / Salesforce import - a roadmap item of its own) and a per-contact relationship.',
+])
+
 doc.add_heading("7. Non-functional requirements", level=2)
 add_bullets(doc, [
     "No timers, one standing consent — the only alarms use is team sync (1.2.2, team members only; it never starts LinkedIn work). Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.",
@@ -2921,7 +2952,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.2.4."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.3."
 )
 
 for section in doc.sections:

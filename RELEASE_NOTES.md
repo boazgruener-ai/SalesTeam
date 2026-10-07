@@ -1,3 +1,43 @@
+# SalesTeam — v1.2.3
+
+## Exclusions and relationships: customers and partners stay accounts (builds 1.2.2.1-1.2.2.4)
+
+- **Customers and partners are no longer excluded** - until now, a company on the Setup's customer or partner list was
+  hidden everywhere: not researched, no contacts, no leads (posts). Now they stay normal accounts - researched, their
+  contacts found and their leads (posts) kept - with a **Customer** or **Partner** tag. Exclusions are Competitors,
+  Recruiters / staffing agencies and Other, and work as before.
+- **Moved for you** - on update, every customer and partner on your exclusion lists moves to the new lists. A pop-up
+  says how many, which of them come back as accounts and how many of their leads (posts) are back in the Leads Dashboard
+  as New. The same happens after a restore and after a workbook import. In a team, the Team Admin's copy does the move.
+- **The tag** - a purple Customer, Partner or Customer · Partner tag on the account page, the contact page, the Target
+  Contacts list and the Leads Dashboard. On Target Accounts a new **Relationship** column, filtered from its header
+  menu with **Any / Customer / Partner / None**, with the usual chip and Clear all.
+- **Relationship…** - in every account menu (no team, or the Team Admin): tick Customer and/or Partner / reseller and
+  Save.
+- **A customer's priority is raised one level** - P3 becomes P2, P2 becomes P1 (P4 becomes P3, so it enters the
+  scannable range), with "Raised one level: existing customer" in the priority reason. Everything that uses priority
+  follows: the preparation order, Ready accounts, the pie, bulk edit and the CSV and HubSpot exports. A priority you set
+  by hand stays as set; a partner only is unchanged; taking the tag off brings the old priority back at once.
+- **The AI knows** - Sales Mentor, Customer Voice and every outreach draft are told when a company is an existing
+  customer or partner, so they build on the relationship rather than write a first-contact message.
+- **Setup: tables instead of text boxes** - **Companies to exclude** has three tables (Competitors, Recruiters / staffing
+  agencies, Other) and a new step, **Customers and partners**, has two (Customers, Partners / resellers). Each table
+  shows Company, LinkedIn page and Website, sorted A-Z, with a search box, a count and **+ Add**; each row's ⋮ has Edit,
+  Remove and, under **Move to**, the other four lists. A company that is both excluded and a customer or partner is
+  flagged red on both rows - the exclusion wins until you decide. Save on either step saves both. Research proposals
+  for competitors, customers and partners are ticked straight into the tables. A team member sees the tables read-only.
+- **Lead filters** - the Scanner's "Existing Customers" and "Existing Partners" filters are gone; leads (posts) they hid
+  are back as New.
+- **Workbook import** - an Exclusion_List row with reason Customer or Partner now tags the company instead of hiding it,
+  even when the workbook marks it Excluded = Yes. The research prompt (V1.35, under Import Research Workbook…) asks for
+  existing customers and partners instead of customers to exclude.
+- **Fixed** - ticking or unticking a research proposal in a Setup list now takes effect in that step at once (before,
+  the tick did not reach the step).
+- **Help** - new entries "How do I exclude a company?" and "How do I mark a company as an existing customer or
+  partner?".
+
+---
+
 # SalesTeam — v1.2.2
 
 ## Team use: one set of accounts for the whole sales team (builds 1.2.1.2-1.2.1.11)

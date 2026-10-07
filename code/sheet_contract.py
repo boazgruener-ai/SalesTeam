@@ -139,7 +139,7 @@ SOURCES = [
 EXCLUSION_LIST = [
     ("Company_ID", R, "Must exist in Companies"),
     ("Company", R, ""),
-    ("Exclusion_Reason", R, "Competitor, Partner, Customer or Other"),
+    ("Exclusion_Reason", R, "Competitor, Partner, Customer or Other - Customer and Partner rows stay accounts, tagged"),
 ]
 
 ALIASES = [

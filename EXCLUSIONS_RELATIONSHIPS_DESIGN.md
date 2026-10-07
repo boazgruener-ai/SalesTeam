@@ -197,6 +197,19 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
 - **Live check passed 2026-10-07** (Boaz, Chrome): tables, search, + Add, Move to Customers across the steps + Save,
   Remove. Note from the test: "Move to" is a heading in the row menu, not an item - say so in test steps and Help.
 
+### 2.11 Step 4 as built (1.2.3, 2026-10-07)
+
+- Help: new entries "How do I exclude a company?" (says "Move to" is a heading, not an item) and "How do I mark a company
+  as an existing customer or partner?"; the competitors entry and the Setup research entry name the new step.
+  onboarding.js `RESEARCHED_STEPS_TEXT` names Customers and partners.
+- PRD 6.24 (+ gen_docs.py mirror) and a note in the negative-topics section that the two filters are retired; release
+  notes v1.2.3.
+- Research prompt V1.35 (ChatGPT Market Research; shipped as research-prompt.txt by gen_template.py): step 9 asks for
+  existing customers and partners, kept as accounts with Excluded = No. sheet_contract.py's Exclusion_Reason note says
+  so; validate_workbook.py prints a NOTE for Customer / Partner rows.
+- Store listing and website: neither mentions customer / partner exclusion - no change.
+- Checks: syntax clean, 693 pure checks, 125 team-sync checks; package builds/v1.2.3.
+
 ---
 
 ## 3. Data
