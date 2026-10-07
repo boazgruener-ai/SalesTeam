@@ -194,6 +194,8 @@ leads hidden as "Existing Customers (matched …)". Labels in scanner.js:1197-12
 - Checked in a new browser stand-in (scratchpad shim: fake `chrome.*` seeded from the 2026-10-06 backup; launch.json
   "st-shim"): load, Add with a bad LinkedIn link refused, Move to Customers + Save writes the right lists (IBM kept),
   flag on both rows, Edit, search, member read-only, old research split and tick-to-table. 693 pure checks.
+- **Live check passed 2026-10-07** (Boaz, Chrome): tables, search, + Add, Move to Customers across the steps + Save,
+  Remove. Note from the test: "Move to" is a heading in the row menu, not an item - say so in test steps and Help.
 
 ---
 
