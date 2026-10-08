@@ -1782,6 +1782,8 @@ function renderBulkBar(scope) {
   countEl.textContent = `${n} ${noun(n)} selected`;
   if (scope === "accounts") {
     for (const id of ["accounts-bulk-assign-btn", "accounts-bulk-release-btn"]) document.getElementById(id).hidden = !teamAccounts.inTeam();
+    // 1.2.2.7 (Boaz): the Team Lead (and the deputy) assigns many accounts to a member at once.
+    document.getElementById("accounts-bulk-assign-to-btn").hidden = !teamAccounts.inTeam() || !teamAccounts.hasLeadRights();
   }
   if (!extendEl) return;
 
@@ -1887,6 +1889,28 @@ for (const [id, type] of [["accounts-bulk-assign-btn", "TEAM_ASSIGN"], ["account
     clearSelection("accounts");
   });
 }
+document.getElementById("accounts-bulk-assign-to-btn").addEventListener("click", async () => {
+  const keys = [...selectionSet("accounts")];
+  if (!keys.length) return;
+  let st = null;
+  try { st = await chrome.runtime.sendMessage({ type: "TEAM_SYNC_STATUS" }); } catch { /* handled below */ }
+  if (!st?.member) { showNotice("The team status could not be read - try again in a moment.", { error: true }); return; }
+  // Current members only; each with how many of the selected accounts they may work (their groups, D10).
+  const members = [{ id: st.me.memberId, name: `${st.me.name} (you)` }, ...(st.members || []).filter((m) => !m.left && !m.removed)];
+  const choices = members.map((m) => {
+    const ok = keys.filter((k) => teamAccounts.mayAccess(m.id, k)).length;
+    return { value: m.id, label: ok === keys.length ? m.name : `${m.name} (${ok} of ${keys.length})`, ok };
+  }).filter((c) => c.ok > 0);
+  if (!choices.length) { showNotice("Nobody has access to these accounts - add a member to their groups first (Settings > Team).", { error: true }); return; }
+  const to = await askChoice(`Assign the ${keys.length} selected account${keys.length === 1 ? "" : "s"} to:`, choices);
+  if (!to) return;
+  const work = keys.filter((k) => teamAccounts.mayAccess(to, k) && teamAccounts.entry(k)?.a !== to);
+  const noAccess = keys.filter((k) => !teamAccounts.mayAccess(to, k)).length;
+  if (!work.length) { showNotice(`Nothing to do - ${noAccess ? "the others are " : ""}already assigned to them.`); return; }
+  showNotice(`Assigning ${work.length} account${work.length === 1 ? "" : "s"}…`, { working: true });
+  await teamAssignKeys(work, "TEAM_ASSIGN", { to, toName: choices.find((c) => c.value === to)?.label.replace(/ \(.*$/, ""), noAccess });
+  clearSelection("accounts");
+});
 document.getElementById("contacts-bulk-edit-btn").addEventListener("click", () => openBulkEditDialog("contacts"));
 document.getElementById("accounts-bulk-clear-btn").addEventListener("click", () => clearSelection("accounts"));
 document.getElementById("contacts-bulk-clear-btn").addEventListener("click", () => clearSelection("contacts"));
@@ -2355,21 +2379,23 @@ async function teamReassign(companyKey) {
 const TEAM_REFUSAL_TEXT = {
   offline: "the team folder is not connected on this PC", not_in_sync: "not in sync with the team",
   held: "a colleague is updating it", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
+  "no access": "not in a group of theirs",
 };
 
 // Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
-async function teamAssignKeys(keys, type) {
+async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess = 0 } = {}) {
   let done = 0;
   const refused = {};
+  if (noAccess) refused["no access"] = noAccess;
   for (const key of keys) {
     let r = null;
-    try { r = await chrome.runtime.sendMessage({ type, key }); } catch { /* counted as refused */ }
+    try { r = await chrome.runtime.sendMessage({ type, key, ...(to ? { to } : {}) }); } catch { /* counted as refused */ }
     if (r && r.ok !== false) done++;
     else { const why = r?.reason || "offline"; refused[why] = (refused[why] || 0) + 1; }
   }
-  const verb = type === "TEAM_ASSIGN" ? "assigned to you" : "released";
+  const verb = type === "TEAM_ASSIGN" ? (to ? `assigned to ${toName || "them"}` : "assigned to you") : "released";
   const skipped = Object.entries(refused).map(([why, n]) => `${n} not (${TEAM_REFUSAL_TEXT[why] || why})`).join(", ");
-  if (keys.length > 1 || skipped) {
+  if (keys.length > 1 || skipped || to) {
     showNotice(`${done} account${done === 1 ? "" : "s"} ${verb}${skipped ? `; ${skipped}` : ""}.`, { error: done === 0 });
   }
   appendActivityLog({ actor: "user", action: type === "TEAM_ASSIGN" ? "team_assigned" : "team_released", label: `${done} account${done === 1 ? "" : "s"} ${verb}` });
