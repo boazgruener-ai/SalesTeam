@@ -452,26 +452,25 @@
 
       <div id="team-join" hidden>
         <h4>Join a team</h4>
+        <p id="team-join-intro">Click <b>Find my team…</b>, choose your team and your invitation, and click <b>Join as …</b>.
+          The first time, Chrome asks for your <b>OneDrive folder</b>: click <b>OneDrive</b> on the left
+          ("OneDrive - <i>your company</i>" with a work account), then <b>Select Folder</b> and <b>Allow on every visit</b>.</p>
         <div class="team-warning">
           Joining <b>replaces</b> the accounts, contacts, leads (posts), Setup and rules in this browser with the team's.
-          Accounts you have that the team does not are listed for you to tick: the ones you tick are added to the team,
-          assigned to you; the rest are removed here - they stay in the backup SalesTeam saves first.
-          Your API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn limits and Activity Log stay as they are.
-          Everyone in the team sees the shared data, including who contacted whom.
+          Accounts only you have are listed for you to tick: the ones you tick go into the team, assigned to you. A full
+          backup is saved first. Your API key, User Profile, drafts and Activity Log stay as they are.
         </div>
-        <ol class="team-steps">
-          <li>Open the e-mail in which your Team Lead shared the team folder and click <b>Open</b>. The folder opens in
-            OneDrive in your browser. (No e-mail? Open OneDrive in the browser and click <b>Shared</b> on the left.)</li>
-          <li>Click <b>Add shortcut to My files</b> (at the top, or under <b>…</b> next to the folder's name).</li>
-          <li>Open <b>File Explorer &gt; OneDrive</b>. After a minute the folder appears there. Right-click it and choose
-            <b>Always keep on this device</b>, then wait until its files show a green tick.</li>
-          <li>If the bar at the top of SalesTeam says it is preparing accounts ("working on …"), click <b>Pause for today</b> first.</li>
-          <li>Here: click <b>Find my team…</b>. The first time, Chrome asks for your <b>OneDrive folder</b>: click <b>OneDrive</b>
-            in the list on the left ("OneDrive - <i>your company</i>" with a work account) and click <b>Select Folder</b>.
-            If Chrome asks whether SalesTeam may view and edit the files, choose <b>Allow on every visit</b>.</li>
-          <li>Choose your team in the list, check that your invitation is ticked and click <b>Join as …</b>. SalesTeam saves a
-            full backup of your data and joins the team by itself - the messages below show how far it is.</li>
-        </ol>
+        <details class="team-help">
+          <summary>Your team is not in the list? How to get it there</summary>
+          <ol class="team-steps">
+            <li>Open the e-mail in which your Team Lead shared the team folder and click <b>Open</b>. The folder opens in
+              OneDrive in your browser. (No e-mail? Open OneDrive in the browser and click <b>Shared</b> on the left.)</li>
+            <li>Click <b>Add shortcut to My files</b> (at the top, or under <b>…</b> next to the folder's name).</li>
+            <li>Open <b>File Explorer &gt; OneDrive</b>. After a minute the folder appears there. Right-click it and choose
+              <b>Always keep on this device</b>, then wait until its files show a green tick.</li>
+            <li>Back here, click <b>Look again</b> (or <b>Find my team…</b>).</li>
+          </ol>
+        </details>
         <div class="settings-buttons-row">
           <button type="button" id="team-find-btn" class="team-primary-btn">Find my team…</button>
           <button type="button" id="team-join-pick-btn" title="For a team folder that is not directly in OneDrive: choose the team folder yourself">Choose a folder instead…</button>

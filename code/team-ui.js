@@ -167,7 +167,33 @@ async function paintTeamClosed() {
   });
 }
 
+// 1.2.2.8 (Boaz): not in a team while an invitation for this person waits in OneDrive - said on every page, so nobody
+// goes on working alone without knowing. Looked for only when the OneDrive folder is already allowed (Chrome asks only
+// from a click), at most every 5 minutes per page.
+const INVITE_BAR_ID = "team-invite";
+const INVITE_LOOK_EVERY_MS = 5 * 60000;
+let inviteLookedAt = 0;
+
+async function paintTeamInvitation() {
+  if (await getMembership()) { clearStatusMessage(INVITE_BAR_ID); return; }
+  if (Date.now() - inviteLookedAt < INVITE_LOOK_EVERY_MS) return;
+  inviteLookedAt = Date.now();
+  const oneDrive = await oneDriveFolderIfAllowed();
+  const teams = oneDrive ? await withInvitations(await findTeams(oneDrive)) : [];
+  invitedCache = { at: Date.now(), teams };
+  const t = teams.find((x) => x.mine.length);
+  if (!t) { clearStatusMessage(INVITE_BAR_ID); return; }
+  setStatusMessage(INVITE_BAR_ID, {
+    text: `${t.mine[0].byName || "Your Team Lead"} has invited you to the team "${t.team.name}" - join it to share accounts, contacts and leads with your colleagues.`,
+    action: { label: "Join…", onClick: () => { location.href = chrome.runtime.getURL("settings.html?team=join#team-section"); } },
+  });
+}
+
 export function initTeamBar() {
+  const paintInvite = () => paintTeamInvitation().catch(() => {});
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[MEMBERSHIP_KEY]) { inviteLookedAt = 0; paintInvite(); } });
+  setInterval(paintInvite, 60000);
+  paintInvite();
   const paint = () => paintTeamBar().catch(() => {});
   const paintNotices = () => paintTeamNotices().catch(() => {});
   const paintClosed = () => paintTeamClosed().catch(() => {});
@@ -521,6 +547,9 @@ function showTeams(teams, via, foundAny) {
     $("team-join-btn").hidden = true;
   }
   if (teams.length) { $("team-join-team").hidden = false; $("team-join-btn").hidden = false; }
+  // Boaz (1.2.2.8 test): one way on - with the team listed, Find my team… and its explanation step back (Look again stays).
+  $("team-find-btn").hidden = teams.length > 0;
+  $("team-join-intro").hidden = teams.length > 0;
 }
 
 // Find my team… / Look again: the OneDrive folder (asked for once), then every team in it with an invitation open.
@@ -896,6 +925,8 @@ async function paintSoloInvitation() {
   const mine = invitedCache.teams.find((t) => t.mine.length);
   $("team-solo-invited").hidden = !mine;
   $("team-solo-create").hidden = Boolean(mine);
+  // Boaz (1.2.2.8 test): one Join button - the invitation's.
+  $("team-solo-join").hidden = Boolean(mine);
   if (mine) setText("team-solo-invited-text", `${mine.mine[0].byName || "Your Team Lead"} has invited you to ${mine.team.name}.`);
 }
 
@@ -1038,7 +1069,12 @@ export async function renderTeamSettings() {
 export function initTeamSettings() {
   if (!$("team-section")) return;
   $("team-show-create-btn").addEventListener("click", onShowCreate);
-  $("team-show-join-btn").addEventListener("click", () => { $("team-join-choose").hidden = true; showFlow("join"); });
+  $("team-show-join-btn").addEventListener("click", () => {
+    $("team-join-choose").hidden = true;
+    $("team-find-btn").hidden = false;
+    $("team-join-intro").hidden = false;
+    showFlow("join");
+  });
   $("team-solo-invited-btn").addEventListener("click", onSoloInvitedJoin);
   document.querySelectorAll("#team-section .team-cancel-btn").forEach((b) => b.addEventListener("click", () => {
     picked.create = null;
@@ -1088,4 +1124,10 @@ export function initTeamSettings() {
   let ticks = 0;
   setInterval(() => { ticks += 1; if (!$("team-section").hidden || ticks % 6 === 0) renderTeamSettings(); }, 5000);
   renderTeamSettings();
+  // From the top bar's "… has invited you - Join…": straight to the team list with the invitation ticked.
+  if (new URLSearchParams(location.search).get("team") === "join") {
+    history.replaceState(null, "", location.pathname + location.hash);
+    invitedCache.at = 0;
+    paintSoloInvitation().then(() => { if (invitedCache.teams.some((t) => t.mine.length)) onSoloInvitedJoin(); }).catch(() => {});
+  }
 }

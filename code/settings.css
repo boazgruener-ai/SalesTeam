@@ -851,6 +851,8 @@ textarea {
 .team-create-line { margin-top: 14px; }
 .team-onedrive-row { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
 .team-onedrive-row span.team-error { color: #b42318; }
+.team-help { margin: 4px 0 10px; font-size: 13px; }
+.team-help summary { cursor: pointer; color: #1155cc; }
 .team-link-btn { background: none; border: none; padding: 0; color: #1155cc; text-decoration: underline; cursor: pointer; font: inherit; }
 .team-invitee-row { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
 .team-invitee-row input { flex: 1; min-width: 0; padding: 5px 8px; }
