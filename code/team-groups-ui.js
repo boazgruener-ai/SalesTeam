@@ -9,7 +9,7 @@ import { askConfirm } from "./confirm-dialog.js";
 import { getAccountReadiness, SIZE_PRIORITY_BUCKETS } from "./storage.js";
 import { CONTINENT_LABELS } from "./geo-regions.js";
 import {
-  groupIndex, groupsOf, groupFacts, groupCounts, voidAssignments, groupProblem, OTHER_GROUP, GROUP_FILTER_FIELDS,
+  groupIndex, groupsOf, groupFacts, groupCounts, voidAssignments, groupProblem, matchesFilter, OTHER_GROUP, GROUP_FILTER_FIELDS,
 } from "./team-groups.js";
 
 const GROUPS_KEY = "teamGroups";
@@ -139,6 +139,19 @@ export function describeGroup(g) {
 }
 
 const namesOf = (ids, ctx) => ids.map((m) => (m === ctx.me ? `${ctx.names[m] || "you"} (you)` : ctx.names[m] || "a colleague"));
+
+// The filter fields an account has no value for ("no size yet") - such a field never matches (team-groups.js).
+const UNKNOWN_WORDS = { region: "no region", country: "no country", size: "no employee count", scope: "not known if local or global",
+  industry: "no industry", companyType: "no company type", priority: "no priority" };
+function unknownFields(a, g) {
+  return GROUP_FILTER_FIELDS.filter((f) => f !== "relationship" && (g.filter?.[f] || []).length && (a.facts[f] == null || a.facts[f] === ""));
+}
+const unknownText = (a, g) => unknownFields(a, g).map((f) => `${UNKNOWN_WORDS[f]} yet`).join(", ");
+function knownOnly(a, filter) {
+  const out = { ...(filter || {}) };
+  for (const f of GROUP_FILTER_FIELDS) if (a.facts[f] == null || a.facts[f] === "") delete out[f];
+  return out;
+}
 
 // ---------------------------------------------------------------------------------------------------
 // The table (10.2)
@@ -408,12 +421,22 @@ async function openEditor(groupId, { copyFrom = null } = {}) {
         const was = new Set(accounts.filter((a) => (before.byKey[a.key] || []).includes(id)).map((a) => a.key));
         const now = new Set(matched.map((a) => a.key));
         const join = [...now].filter((k) => !was.has(k)).length;
-        const leave = [...was].filter((k) => !now.has(k)).length;
+        const leavers = accounts.filter((a) => was.has(a.key) && !now.has(a.key));
         const lose = voidAssignments(before.assignments, after.byKey, after.index, ctx.leads).length;
-        lines.push(`+${join} join, −${leave} leave${lose ? `; ${plural(lose, "account")} lose${lose === 1 ? "s" : ""} its assignee (no access any more)` : ""}.`);
+        lines.push(`+${join} join, −${leavers.length} leave${lose ? `; ${plural(lose, "account")} lose${lose === 1 ? "s" : ""} its assignee (no access any more)` : ""}.`);
+        if (leavers.length) lines.push(`Leaving: ${leavers.slice(0, 8).map((a) => `${a.name}${unknownText(a, g) ? ` (${unknownText(a, g)})` : ""}`).join(", ")}${leavers.length > 8 ? ", …" : ""}.`);
       } else {
         const lose = voidAssignments(before.assignments, after.byKey, after.index, ctx.leads).length;
         if (lose) lines.push(`${plural(lose, "account")} would lose ${lose === 1 ? "its" : "their"} assignee (no access any more).`);
+      }
+      // Boaz 2026-10-08 (ticked every size, still "−5 leave"): an unknown value never matches a field that has values,
+      // so say how many accounts wait in Other only for a value research has not found yet.
+      if (kind === "filter") {
+        const waiting = accounts.filter((a) => !(after.byKey[a.key] || []).includes(id) && unknownText(a, g) && matchesFilter(a.facts, knownOnly(a, g.filter)));
+        if (waiting.length) {
+          lines.push(`${plural(waiting.length, "account")} would match but ${waiting.length === 1 ? "has" : "have"} no value yet for a field you set (${[...new Set(waiting.map((a) => unknownText(a, g)))].slice(0, 3).join("; ")}) - ` +
+            `${waiting.length === 1 ? "it waits" : "they wait"} in Other until research fills ${waiting.length === 1 ? "it" : "them"} in. To include them now, leave that field on Any.`);
+        }
       }
       const pinned = matched.filter((a) => pins[a.key]).length;
       if (pinned) lines.push(`${pinned} assigned account${pinned === 1 ? " is" : "s are"} held in ${pinned === 1 ? "its" : "their"} old groups until you decide in Decisions.`);
