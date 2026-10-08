@@ -720,7 +720,22 @@ export function initTeamSettings() {
     renderTeamSettings();
     paintTeamBar().catch(() => {});
   });
-  chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[MEMBERSHIP_KEY]) renderTeamSettings(); });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[MEMBERSHIP_KEY]) return;
+    // 1.2.2.7: membership ended (left, removed, team closed) - nothing started on this page for the old team still counts;
+    // the Create and Join buttons are usable again.
+    if (!changes[MEMBERSHIP_KEY].newValue) {
+      flowBusy = false;
+      picked.create = null;
+      picked.join = null;
+      $("team-create-btn").disabled = false;
+      $("team-join-btn").disabled = false;
+      setText("team-create-status", "");
+      setText("team-join-status", "");
+      showFlow(null);
+    }
+    renderTeamSettings();
+  });
   // The colleagues' "last seen" and the waiting count move on their own: every 5 s while the card is on screen, every
   // 30 s otherwise (the menu badge).
   let ticks = 0;

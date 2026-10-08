@@ -5,6 +5,7 @@
 //   if (!(await askConfirm("Clear this conversation?", { okLabel: "Clear conversation", cancelLabel: "Keep it", danger: true }))) return;
 
 let dialogEl = null;
+let pendingFinish = null; // the open askConfirm's answer: settled as "Cancel" when another one replaces it
 let noticeEl = null;
 let hideProgress = false; // the user closed a "Working…" pop-up: keep quiet until the final result
 let styleAdded = false;
@@ -54,6 +55,9 @@ function ensureDialog() {
 export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false } = {}) {
   return new Promise((resolve) => {
     const dialog = ensureDialog();
+    // 1.2.2.7 (Annick's Join button stayed disabled): a second askConfirm used to take over the dialog before the first
+    // had its answer - the first caller then waited for ever. It now gets "Cancel" first.
+    if (pendingFinish) pendingFinish(false);
     if (dialog.open) dialog.close();
     dialog.querySelector(".sc-message").textContent = message;
     const okBtn = dialog.querySelector(".sc-ok");
@@ -61,7 +65,11 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
     okBtn.textContent = okLabel;
     cancelBtn.textContent = cancelLabel;
     okBtn.classList.toggle("sc-danger", danger);
+    let settled = false;
     const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (pendingFinish === finish) pendingFinish = null;
       okBtn.onclick = null;
       cancelBtn.onclick = null;
       dialog.onclose = null;
@@ -71,6 +79,7 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
     okBtn.onclick = () => finish(true);
     cancelBtn.onclick = () => finish(false);
     dialog.onclose = () => finish(false); // Escape
+    pendingFinish = finish;
     dialog.showModal();
     cancelBtn.focus();
   });
