@@ -6,7 +6,7 @@
 //   - accounts only the member has are listed; the member ticks which to bring in. Those come back AFTER the replace
 //     as the member's own changes (addBackValues) - the sync layer then sends them out like any other edit;
 //   - accounts both have, where the member has worked (leads contacted, a follow-up date, a Sales Mentor
-//     conversation), become JOIN PROPOSALS: the Team Admin decides in Decisions who keeps each one. The member's
+//     conversation), become JOIN PROPOSALS: the Team Lead decides in Decisions who keeps each one. The member's
 //     contacted leads for those accounts come back too, so the team knows who was approached (no second approach).
 // Accounts are matched like everywhere else: the normalised company name, else the LinkedIn company id.
 
@@ -23,7 +23,7 @@ const has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
 // (live test 1.2.1.11: a member who had left and rejoins holds the team's own data - everyone's contacted leads and
 // follow-ups looked like hers, 19 accounts instead of the one she worked on). `team` null = nothing to compare with.
 // `details` (optional array): one entry per thing done - { what: "lead" | "contact" | "account" | "follow-up" |
-// "conversation", name, status, at } - for "Show details" on the Team Admin's card. `contactName(contact extras key)`:
+// "conversation", name, status, at } - for "Show details" on the Team Lead's card. `contactName(contact extras key)`:
 // the person's name as the list shows it (the key's name part is sorted, lower-case words).
 export function workedOn(key, values, normalize, team = null, teamKey = key, details = null, contactName = null) {
   const how = [];

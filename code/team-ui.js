@@ -116,7 +116,7 @@ async function paintTeamBar() {
   clearStatusMessage(BAR_ID);
 }
 
-// Step 5b (Boaz): an account of mine that the Team Admin reassigned or released - so it does not just "disappear".
+// Step 5b (Boaz): an account of mine that the Team Lead reassigned or released - so it does not just "disappear".
 // Its own message, below a folder problem (which is a priority message); stays until OK.
 const NOTICES_KEY = "teamNotices"; // team-sync.js TEAM_NOTICES_KEY
 const NOTICE_BAR_ID = "team-notices";
@@ -240,7 +240,7 @@ async function onCreate() {
     await renderTeamSettings();
     const c = r.counts || {};
     await askConfirm(
-      `The team "${teamName}" is set up, with you as Team Admin.\n\n` +
+      `The team "${teamName}" is set up, with you as Team Lead.\n\n` +
       `Its starting data: ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts), plus your Setup and rules.\n\n` +
       "Next: share the folder with your colleagues (right-click it in File Explorer > Share, \"Can edit\"). Each of them then opens Settings > Team > Join a team.\n\n" +
       "SalesTeam shares while a SalesTeam page or the side panel is open.",
@@ -254,7 +254,7 @@ async function onCreate() {
 }
 
 // Step 6 (R6.7): the accounts only this browser has - tick which to bring into the team. Resolves to the ticked keys,
-// or null on Cancel. `shared`: accounts the team has too that this member worked on (told; the Team Admin decides).
+// or null on Cancel. `shared`: accounts the team has too that this member worked on (told; the Team Lead decides).
 function chooseAccountsToBring(localOnly, shared) {
   return new Promise((resolve) => {
     const el = (tag, css, text) => { const n = document.createElement(tag); if (css) n.style.cssText = css; if (text) n.textContent = text; return n; };
@@ -287,7 +287,7 @@ function chooseAccountsToBring(localOnly, shared) {
       dlg.append(tools, list);
     }
     if (shared.length) {
-      dlg.append(el("p", "margin:0 0 6px", `${shared.length === 1 ? "This account you worked on is" : `These ${shared.length} accounts you worked on are`} also in the team's list. The team's version is kept; the Team Admin decides in Decisions whether you take ${shared.length === 1 ? "it" : "them"} over. Whom you contacted there (contacts and leads) is kept, so nobody approaches the same person twice.`));
+      dlg.append(el("p", "margin:0 0 6px", `${shared.length === 1 ? "This account you worked on is" : `These ${shared.length} accounts you worked on are`} also in the team's list. The team's version is kept; the Team Lead decides in Decisions whether you take ${shared.length === 1 ? "it" : "them"} over. Whom you contacted there (contacts and leads) is kept, so nobody approaches the same person twice.`));
       const list = el("ul", "max-height:200px;overflow:auto;margin:0 0 12px;padding-left:20px");
       for (const a of shared) {
         const li = el("li", "padding:1px 0");
@@ -357,7 +357,7 @@ async function onJoin() {
       `This browser now holds the team's ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts). ` +
       "Changes you make are shared with your colleagues, and theirs arrive here by themselves." +
       (r.brought?.accounts ? `\n\nYou brought ${r.brought.accounts} of your own account${r.brought.accounts === 1 ? "" : "s"} into the team${r.brought.assigned ? " - assigned to you" : ""}.` : "") +
-      (r.brought?.proposals ? `\n\n${r.brought.proposals} account${r.brought.proposals === 1 ? "" : "s"} you worked on ${r.brought.proposals === 1 ? "is" : "are"} waiting for the Team Admin's decision (Decisions).` : "") +
+      (r.brought?.proposals ? `\n\n${r.brought.proposals} account${r.brought.proposals === 1 ? "" : "s"} you worked on ${r.brought.proposals === 1 ? "is" : "are"} waiting for the Team Lead's decision (Decisions).` : "") +
       (missing.length ? `\n\nStill to do, for you alone: ${missing.join("; ")}.` : "") +
       "\n\nSalesTeam shares while a SalesTeam page or the side panel is open.",
       { okLabel: "OK", cancelLabel: "Close" });
@@ -394,7 +394,7 @@ async function onLeave() {
     if (!r.ok) throw new Error(r.error || "could not leave");
     setText("team-member-status", "");
     if (mine && !r.signedOff) {
-      await askConfirm("You have left the team. The team folder could not be reached, so your assigned accounts are still marked as yours for your colleagues - the Team Admin can release them (Settings > Team > Release all).", { okLabel: "OK", cancelLabel: "Close" });
+      await askConfirm("You have left the team. The team folder could not be reached, so your assigned accounts are still marked as yours for your colleagues - the Team Lead can release them (Settings > Team > Release all).", { okLabel: "OK", cancelLabel: "Close" });
     }
   } catch (err) {
     setText("team-member-status", `Could not leave: ${err.message}`, true);
@@ -454,7 +454,10 @@ export async function renderTeamSettings() {
     const { handle, permission } = await folderState();
     let st = null;
     try { st = await send({ type: "TEAM_SYNC_STATUS" }); } catch (err) { setText("team-member-sync", err.message, true); }
-    const role = m.role === "admin" ? "Team Admin" : "Member";
+    // 1.2.3 (design 3.2): the role comes from the team folder (st.lead), the stored role only until it is read.
+    const leads = st?.lead?.known ? st.lead : { lead: m.role === "admin" ? m.memberId : null, deputy: null };
+    const roleOf = (id) => (id === leads.lead ? "Team Lead" : id === leads.deputy ? "Deputy Team Lead" : "Member");
+    const role = roleOf(m.memberId);
     setText("team-member-who", `You are ${m.name} in the team "${m.teamName}" (${role}), since ${timeText(Date.parse(m.joinedAt))}.`);
     const connected = handle && permission === "granted";
     setText("team-member-folder",
@@ -475,7 +478,7 @@ export async function renderTeamSettings() {
       // Step 5 (R6.4): how many accounts each member has, and the admin's "release all" (someone who left).
       let counts = {};
       try { counts = (await send({ type: "TEAM_ASSIGN_COUNTS" })).counts || {}; } catch { /* the column stays empty */ }
-      const isAdmin = m.role === "admin";
+      const isAdmin = m.memberId === leads.lead || m.memberId === leads.deputy;
       const table = $("team-members-table");
       table.replaceChildren(memberRow(["Name", "Role", "Last seen", "", "Accounts assigned", ""]));
       table.firstChild.classList.add("team-members-head");
@@ -489,7 +492,7 @@ export async function renderTeamSettings() {
           head.classList.add("team-members-head");
           table.append(head);
         }
-        const row = memberRow([c.name, c.admin ? "Team Admin" : "Member", c.left ? `${c.removed ? "removed" : "left"} ${timeText(c.left)}` : timeText(c.lastSeen), c.online ? "online" : "", String(counts[c.id] || 0)]);
+        const row = memberRow([c.name, roleOf(c.id), c.left ? `${c.removed ? "removed" : "left"} ${timeText(c.left)}` : timeText(c.lastSeen), c.online ? "online" : "", String(counts[c.id] || 0)]);
         if (c.left) row.style.color = "#8a8f98";
         const td = document.createElement("td");
         if (isAdmin && counts[c.id]) {
@@ -511,7 +514,7 @@ They become unassigned - anyone in the team can then take them.`, { okLabel: "Re
           });
           td.append(b);
         }
-        if (isAdmin && !c.left && !c.admin) {
+        if (isAdmin && !c.left && c.id !== leads.lead) {
           const rm = document.createElement("button");
           rm.type = "button";
           rm.className = "secondary";

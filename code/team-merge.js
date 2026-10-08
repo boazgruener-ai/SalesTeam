@@ -6,6 +6,13 @@
 // the SAME set of records gives the SAME state on every PC, whatever order they arrive in and however often
 // one is read again. Each rule below keeps that property: values are last-writer-wins by stamp, deletes and
 // claims keep maxima/minima, and nothing depends on arrival order.
+//
+// 1.2.3 (TEAM_ADVANCED_MODE_DESIGN.md 3.1, 4.2): group rows (teamGroups:*) count only if their author had the Team
+// Lead's rights at their stamp. Who that was depends on the team|lead/deputy/takeover records, which may arrive
+// after the group records they decide - so group records are KEPT (state.gated) and their rows rebuilt from the
+// valid ones whenever either side changes. That keeps the merge order-free.
+
+import { teamLeadOf, leadRightsAt } from "./team-groups.js";
 
 // --------------------------------------------------------------------------
 // Stamps - a hybrid logical clock
@@ -79,12 +86,39 @@ export function observe(clock, stamp) {
 // }
 // state.lost = { "<e>|<id>|<field>|<stamp>": { e, id, field, v, t, by } }  values overwritten by a later one
 // state.seen = { "<stamp>|<e>|<id>": true }   records already applied (re-reading a file changes nothing)
+// 1.2.3:
+// state.gated    = { id: { stamp: record } }   every group record; its row holds only the valid ones (rebuildGated)
+// state.teamRecs = { stamp: { id, member } }  the Team Lead chain: lead / deputy / takeover records
+// state.days     = { member: { day: 1 } }      days a member wrote anything - a take-over needs the lead quiet (D13)
+// state.creator  = member | null              the team's creator (admins/ in the folder), the chain's start
 
 export const ENTITY_TYPES = ["account", "contact", "lead", "setting", "team"];
 export const OPS = ["set", "delete", "claim", "release", "assign", "unassign", "touch"];
 
 export function newState() {
-  return { entities: {}, lost: {}, seen: {} };
+  return { entities: {}, lost: {}, seen: {}, gated: {}, teamRecs: {}, days: {}, creator: null };
+}
+
+// Rows only the Team Lead (or the deputy) may write (design 4.2). Setup and rules keep their screen lock (D2).
+export const GATED_PREFIXES = ["teamGroups:"];
+export const isGatedRow = (e, id) => e === "setting" && GATED_PREFIXES.some((p) => String(id).startsWith(p));
+export const TEAM_RECORD_IDS = ["lead", "deputy", "takeover"];
+const MERGE_DAY_MS = 24 * 3600 * 1000;
+
+function noteDay(state, stamp) {
+  const p = parseStamp(stamp);
+  if (p) (state.days[p.member] || (state.days[p.member] = {}))[Math.floor(p.wall / MERGE_DAY_MS)] = 1;
+}
+
+// A state saved before 1.2.3 has none of the new parts. Its days come from the records already applied (seen).
+function ensureTeamParts(state) {
+  if (!state.gated) state.gated = {};
+  if (!state.teamRecs) state.teamRecs = {};
+  if (state.creator === undefined) state.creator = null;
+  if (!state.days) {
+    state.days = {};
+    for (const k of Object.keys(state.seen || {})) noteDay(state, k.split("|")[0]);
+  }
 }
 
 function record(state, e, id) {
@@ -118,6 +152,24 @@ export function applyChange(state, ch) {
   if (state.seen[seenKey]) return false;
   state.seen[seenKey] = true;
 
+  ensureTeamParts(state);
+  noteDay(state, t);
+  if (isGatedRow(e, id)) {
+    const byStamp = state.gated[String(id)] || (state.gated[String(id)] = {});
+    byStamp[t] = ch;
+    rebuildGated(state, String(id));
+    return true;
+  }
+  applyOp(state, ch, author);
+  if (e === "team" && TEAM_RECORD_IDS.includes(String(id)) && op === "set") {
+    state.teamRecs[t] = { id: String(id), member: ch.f?.member ?? null };
+    rebuildGated(state);
+  }
+  return true;
+}
+
+function applyOp(state, ch, author) {
+  const { t, e, id, op } = ch;
   const rec = record(state, e, String(id));
   rec.act[author] = maxStamp(rec.act[author], t);
 
@@ -162,7 +214,57 @@ export function applyChange(state, ch) {
       rec.tc[t] = { member: author, note: ch.note ?? null };
       break;
   }
+}
+
+// --------------------------------------------------------------------------
+// The Team Lead and the gated (group) rows - 1.2.3
+// --------------------------------------------------------------------------
+
+export function leadChain(state) {
+  ensureTeamParts(state);
+  const records = Object.entries(state.teamRecs).map(([t, r]) => ({ t, id: r.id, member: r.member }));
+  const activeWithin = (member, from, to) => {
+    const days = state.days[member] || {};
+    for (let d = Math.floor(from / MERGE_DAY_MS); d <= Math.floor(to / MERGE_DAY_MS); d++) if (days[d]) return true;
+    return false;
+  };
+  return teamLeadOf(state.creator, records, { activeWithin });
+}
+
+// The creator is read from the folder (admins/<member>.json). Returns true when it changed (the rows are rebuilt).
+export function setTeamCreator(state, member) {
+  ensureTeamParts(state);
+  if ((member || null) === state.creator) return false;
+  state.creator = member || null;
+  rebuildGated(state);
   return true;
+}
+
+// A gated row is rebuilt from scratch out of the records whose author had the Team Lead's rights at their stamp.
+// Without a known creator nobody has them (yet), so nothing counts until the first folder read.
+function rebuildGated(state, onlyId = null) {
+  const chain = leadChain(state);
+  for (const id of onlyId ? [onlyId] : Object.keys(state.gated)) {
+    if (state.entities.setting) delete state.entities.setting[id];
+    const prefix = `setting|${id}|`;
+    for (const k of Object.keys(state.lost)) if (k.startsWith(prefix)) delete state.lost[k];
+    const recs = Object.values(state.gated[id] || {}).sort((a, b) => compareStamps(a.t, b.t));
+    for (const r of recs) {
+      const author = stampMember(r.t);
+      if (leadRightsAt(chain, author, r.t)) applyOp(state, r, author);
+    }
+  }
+}
+
+// Group records ignored because their author was not Team Lead (or deputy) then - for the team log (4.2).
+export function ignoredGated(state) {
+  ensureTeamParts(state);
+  const chain = leadChain(state);
+  const out = [];
+  for (const byStamp of Object.values(state.gated)) {
+    for (const r of Object.values(byStamp)) if (!leadRightsAt(chain, stampMember(r.t), r.t)) out.push(r);
+  }
+  return out.sort((a, b) => compareStamps(a.t, b.t));
 }
 
 export function applyChanges(state, changes) {
@@ -348,29 +450,44 @@ export function activeAssignments(state, e, id) {
 // stamp, so a reader that already applied the original record skips the shortened one (same seen key) and a
 // reader that did not gets exactly the winning values. Every other op is kept as it is.
 
+// 1.2.3: the Team Lead chain and group records are kept whole - which of them counts depends on who was Team Lead
+// at each stamp, so an earlier one is never "superseded". And each day keeps at least one record (a shortened
+// one with no fields if need be): a take-over (D13) asks whether the Team Lead wrote anything in the last 30 days,
+// and that answer must not depend on whether a PC read the original files or the snapshot.
+const keptWhole = (ch) => ch.e === "team" || isGatedRow(ch.e, ch.id);
+
 export function compactChanges(records) {
   const latest = {};
   for (const ch of records || []) {
-    if (!ch || ch.op !== "set" || !ch.t) continue;
+    if (!ch || ch.op !== "set" || !ch.t || keptWhole(ch)) continue;
     for (const field of Object.keys(ch.f || {})) {
       const k = `${ch.e}|${ch.id}|${field}`;
       if (!latest[k] || ch.t > latest[k]) latest[k] = ch.t;
     }
   }
   const out = [];
+  const dropped = [];
   const kept = new Set();
   for (const ch of records || []) {
     if (!ch || !ch.t) continue;
     const seenKey = `${ch.t}|${ch.e}|${ch.id}`;
     if (kept.has(seenKey)) continue;
     kept.add(seenKey);
-    if (ch.op !== "set") {
+    if (ch.op !== "set" || keptWhole(ch)) {
       out.push(ch);
       continue;
     }
     const f = {};
     for (const [field, v] of Object.entries(ch.f || {})) if (latest[`${ch.e}|${ch.id}|${field}`] === ch.t) f[field] = v;
     if (Object.keys(f).length) out.push({ ...ch, f });
+    else dropped.push(ch);
+  }
+  const dayOf = (ch) => Math.floor(stampWall(ch.t) / MERGE_DAY_MS);
+  const days = new Set(out.map(dayOf));
+  for (const ch of dropped) {
+    if (days.has(dayOf(ch))) continue;
+    days.add(dayOf(ch));
+    out.push({ ...ch, f: {} });
   }
   return out.sort((a, b) => compareStamps(a.t, b.t));
 }

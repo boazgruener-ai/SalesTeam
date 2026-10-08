@@ -1,8 +1,10 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
+import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
+import { leadRightsOf } from "./team-groups.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { joinProposalItems, applyJoinProposal } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
-import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
+import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, sizeBucketKey } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
 import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages, initiativeCounts, targetsStatus } from "./pipeline-plan.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
@@ -766,13 +768,13 @@ export async function getRelationshipMatcher() {
 
 // Design 4.1 / 4.2: moves customer / partner entries off the exclusion list onto companyRelationships. Idempotent
 // (splitCompanyLists), so it runs on every update, after a restore and after a workbook import. In a team only the
-// Team Admin's SalesTeam moves them - the sync layer carries the change to the members, whose matchers already
+// Team Lead's SalesTeam moves them - the sync layer carries the change to the members, whose matchers already
 // treat leftover entries right. Returns { customer, partner } moved, or null when nothing was left to move.
 const RELATIONSHIPS_NOTICE_KEY = "relationshipsMigrationNotice";
 
 export async function migrateCompanyRelationshipsIfNeeded({ trigger = "update" } = {}) {
-  const team = (await chrome.storage.local.get("teamMembership")).teamMembership;
-  if (team && team.role !== "admin") return null;
+  const got = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  if (got.teamMembership && !leadRightsOf(got.teamMembership, got.teamAccountStates)) return null;
   const [exclusions, relationships] = await Promise.all([getCompanyExclusions(), getCompanyRelationships()]);
   const split = splitCompanyLists(exclusions, relationships);
   if (split.exclusions.length === exclusions.length) return null;
@@ -3032,24 +3034,8 @@ export async function reapplyBlocklist() {
 // Location filter - continents, countries, classification
 // --------------------------------------------------------------------------
 
-// Continent groupings shown in Settings (6.7) - modeled on the standard
-// Americas/EMEA/APAC sales-territory split, with each of those three broken
-// down one level further (Americas -> North America + Latin America; EMEA ->
-// Europe + Africa + Middle East; APAC stays whole as "South East Asia").
-// Deliberately not exhaustive of every country/territory on Earth - South
-// Asia, East Asia, Central Asia, and Oceania have no separate bucket of
-// their own and are folded into "South East Asia" (i.e. APAC, confirmed)
-// rather than adding a 7th "Other" bucket, so these 6 checkboxes fully
-// partition the globe. A location that still matches none of them is simply
-// left unclassified (classifyLocation returns null) rather than guessed at.
-export const CONTINENT_COUNTRIES = {
-  northAmerica: ["United States", "Canada"],
-  latinAmerica: ["Mexico", "Guatemala", "Belize", "Honduras", "El Salvador", "Nicaragua", "Costa Rica", "Panama", "Cuba", "Dominican Republic", "Haiti", "Jamaica", "Trinidad and Tobago", "Bahamas", "Barbados", "Colombia", "Venezuela", "Ecuador", "Peru", "Brazil", "Bolivia", "Paraguay", "Chile", "Argentina", "Uruguay", "Guyana", "Suriname"],
-  europe: ["United Kingdom", "Switzerland", "Germany", "France", "Italy", "Spain", "Portugal", "Netherlands", "Belgium", "Luxembourg", "Ireland", "Austria", "Sweden", "Norway", "Denmark", "Finland", "Iceland", "Poland", "Czech Republic", "Slovakia", "Hungary", "Romania", "Bulgaria", "Greece", "Croatia", "Slovenia", "Serbia", "Bosnia and Herzegovina", "Montenegro", "North Macedonia", "Albania", "Kosovo", "Estonia", "Latvia", "Lithuania", "Ukraine", "Belarus", "Moldova", "Malta", "Cyprus", "Liechtenstein", "Monaco", "San Marino", "Andorra", "Russia"],
-  africa: ["Nigeria", "Egypt", "South Africa", "Kenya", "Morocco", "Algeria", "Tunisia", "Libya", "Ethiopia", "Ghana", "Tanzania", "Uganda", "Angola", "Mozambique", "Cameroon", "Ivory Coast", "Senegal", "Zimbabwe", "Zambia", "Rwanda", "Botswana", "Namibia", "Mali", "Niger", "Chad", "Sudan", "South Sudan", "Somalia", "Madagascar", "Malawi", "Burkina Faso", "Benin", "Togo", "Sierra Leone", "Liberia", "Mauritius", "Gabon", "Congo", "Democratic Republic of the Congo", "Guinea", "Eritrea", "Djibouti", "Lesotho", "Eswatini", "Gambia", "Burundi", "Central African Republic"],
-  middleEast: ["Saudi Arabia", "United Arab Emirates", "Qatar", "Kuwait", "Bahrain", "Oman", "Yemen", "Iraq", "Iran", "Israel", "Jordan", "Lebanon", "Syria", "Palestine", "Turkey"],
-  southEastAsia: ["Indonesia", "Malaysia", "Singapore", "Thailand", "Vietnam", "Philippines", "Myanmar", "Cambodia", "Laos", "Brunei", "Timor-Leste", "India", "Pakistan", "Bangladesh", "Sri Lanka", "Nepal", "Bhutan", "Maldives", "Afghanistan", "China", "Japan", "South Korea", "North Korea", "Taiwan", "Hong Kong", "Mongolia", "Macau", "Kazakhstan", "Uzbekistan", "Turkmenistan", "Kyrgyzstan", "Tajikistan", "Australia", "New Zealand", "Papua New Guinea", "Fiji"],
-};
+// CONTINENT_COUNTRIES and CONTINENT_LABELS live in geo-regions.js (pure, 1.2.3) and are re-exported from here.
+export { CONTINENT_COUNTRIES, CONTINENT_LABELS };
 
 // Flattened, alphabetized list of every country CONTINENT_COUNTRIES/
 // classifyLocation actually recognizes - the single source Settings' country
@@ -3060,15 +3046,6 @@ export const CONTINENT_COUNTRIES = {
 // removes that failure mode by construction instead of trying to fuzzy-match
 // free text later.
 export const ALL_COUNTRIES = Object.values(CONTINENT_COUNTRIES).flat().sort((a, b) => a.localeCompare(b));
-
-export const CONTINENT_LABELS = {
-  northAmerica: "North America",
-  latinAmerica: "Latin America",
-  europe: "Europe (including UK and Switzerland)",
-  africa: "Africa",
-  middleEast: "Middle East",
-  southEastAsia: "South East Asia",
-};
 
 // A few common alternate names LinkedIn location text actually uses,
 // mapped to the canonical country name in CONTINENT_COUNTRIES above.
@@ -3765,10 +3742,11 @@ export function resolveLocationPriority(country, locationPriorities) {
 // get one: EPFL's employee count is stored as the STRING "6,500+" and ADM Switzerland's as ">5,000".
 // Both used to fall straight through this function as null, so those companies silently got no size
 // nudge at all when they were scored - a bug that was invisible because nothing anywhere said so.
+// 1.2.3 (team design 5.1): the pure sizeBucketKey - the same function team-groups.js uses for a group's Size, so the
+// Size column, size priority and group filters can never put one account in two different buckets.
 function resolveSizeBucket(employeeCount) {
-  const n = parseLooseNumber(employeeCount);
-  if (n === null) return null;
-  return SIZE_PRIORITY_BUCKETS.find((b) => n >= b.min && n <= b.max) || null;
+  const key = sizeBucketKey(employeeCount, SIZE_PRIORITY_BUCKETS);
+  return key ? SIZE_PRIORITY_BUCKETS.find((b) => b.key === key) : null;
 }
 
 // Free (no AI call) - runs for every Scenario 1/4 company. Starts from a
@@ -5203,6 +5181,8 @@ export async function getAccountViews({ persistDerived = true } = {}) {
     };
     view.pipeline = effectivePipeline(extra.pipeline, view.inputsKey);
     for (const field of PROVENANCE_FIELDS) view[field] = ov[field] ?? row[field] ?? null;
+    // 1.2.3 team groups (design 2.4): the two filter fields not already on the view, edits included.
+    for (const field of ["targetCountryRelationship", "companyType"]) view[field] = ov[field] ?? row[field] ?? null;
 
     // A contact is relevant when it is at one of the wizard's seniority levels (R3.6). The research
     // workbook's own Seniority column decides when it names a level ("Specialist" names none, and then
@@ -5940,7 +5920,7 @@ function buildDecisionQueueShared(views) {
 }
 
 export async function getDecisionQueue() {
-  // Team use step 6 (R6.7): the Team Admin's join proposals come first - a colleague is waiting on them.
+  // Team use step 6 (R6.7): the Team Lead's join proposals come first - a colleague is waiting on them.
   const [q, proposals] = await Promise.all([buildDecisionQueueShared(), joinProposalItems().catch(() => [])]);
   return proposals.length ? { items: [...proposals, ...q.items], count: q.count + proposals.length } : q;
 }

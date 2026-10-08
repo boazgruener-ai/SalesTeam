@@ -29,14 +29,19 @@ export const TEAM_MAP_KEYS = [
   { key: "results", e: "lead", prefix: "", personal: PERSONAL_LEAD_FIELDS },
   { key: "discoveryNameDecisions", e: "setting", prefix: "discoveryNameDecisions:" },
   { key: "companyLocationSizeCache", e: "setting", prefix: "companyLocationSizeCache:" },
-  // step 6 (R6.7): a joining member's claims on accounts the team already has - the Team Admin decides in Decisions
+  // step 6 (R6.7): a joining member's claims on accounts the team already has - the Team Lead decides in Decisions
   { key: "teamJoinProposals", e: "setting", prefix: "teamJoinProposals:" },
+  // 1.2.3 advanced mode (TEAM_ADVANCED_MODE_DESIGN.md 4.1, 8.2): account groups - one row per group, written only by
+  // the Team Lead or deputy (team-merge.js ignores anyone else's) - and the pins that hold an assigned account in its
+  // old groups until the Team Lead decides.
+  { key: "teamGroups", e: "setting", prefix: "teamGroups:" },
+  { key: "teamGroupPins", e: "setting", prefix: "teamGroupPins:" },
 ];
 
 export const TEAM_WHOLE_KEYS = [
   // accounts
   "keptSeparateAccountPairs",
-  // seller setup (D3: changed by the Team Admin only - enforced in step 5)
+  // seller setup (D3: changed by the Team Lead only - enforced in step 5)
   "companyContext", "companyWebsite", "sellerCompanyName", "setupResearch", "idealCustomerProfile",
   "targetUniverseConfig", "targetContactProfile", "accountPriorityGuidelines", "completionTargets",
   "initiativeStagePreference", "includedCompanies", "valueAddOffers", "messageTemplates",
@@ -48,10 +53,10 @@ export const TEAM_WHOLE_KEYS = [
 
 // list - an array whose entries are known by their content (step 5b): one row per entry, so two members adding at the
 // same time both keep theirs - as a whole key only the later list would survive. The exclusion list (competitors,
-// customers, partners, recruiters): changed by the Team Admin only (Setup is the admin's, D3; R6.8 as changed 2026-10-05).
+// customers, partners, recruiters): changed by the Team Lead only (Setup is the admin's, D3; R6.8 as changed 2026-10-05).
 export const TEAM_LIST_KEYS = [
   { key: "companyExclusions", e: "setting", prefix: "companyExclusions:", identity: ["category", "slug", "name", "domain"] },
-  // 1.2.3: customers and partners (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.3) - same shape, same rule (Team Admin only)
+  // 1.2.3: customers and partners (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.3) - same shape, same rule (Team Lead only)
   { key: "companyRelationships", e: "setting", prefix: "companyRelationships:", identity: ["category", "slug", "name", "domain"] },
 ];
 // The row id of one list entry: its identity fields, lower-cased (an entry that is not an object: its JSON).
@@ -75,7 +80,7 @@ export const TEAM_PERSONAL_KEYS = [
   "targetAccountsImportedAt", "targetAccountsImportedFileName", "targetAccountsWorkbookImportedAt",
   "companyExclusionsMigrated", "relationshipsMigrationNotice", "locationHeuristicV2Migrated", "locationHeuristicV3Migrated",
   // the team layer's own state
-  "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices", "teamLog",
+  "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices", "teamLog", "teamGroupNoticesSeen",
 ];
 
 export function teamKeyKind(key) {

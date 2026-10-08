@@ -7,9 +7,12 @@
 //   teamAccounts.offLimits(key)      - null, or { reason: "assigned" | "held" | "offline", name, since, text }
 //   teamAccounts.badge(key)          - a <span> for a list row ("Anna" / "Mine" / "Anna is updating"), or null
 //   teamAccounts.ownerFilter(key, f) - "mine" | "others" | "unassigned" | "all"
+//   teamAccounts.isTeamLead()        - 1.2.3: the Team Lead, as decided by the team folder (team-groups.js)
+//   teamAccounts.hasLeadRights()     - the Team Lead or the deputy (everything but hand-over, deputy, removing the lead)
 //   teamAccounts.onChange(fn)
 
 import { summaryOffLimits } from "./team-claims.js";
+import { leadRightsOf, isTeamLeadOf } from "./team-groups.js";
 
 const KEY = "teamAccountStates"; // team-sync.js TEAM_ACCOUNTS_KEY
 const MEMBERSHIP_KEY = "teamMembership";
@@ -46,11 +49,12 @@ export const teamAccounts = {
     return loaded;
   },
   inTeam: () => Boolean(membership),
-  isAdmin: () => Boolean(membership && (membership.role === "admin" || summary?.admin)),
+  isTeamLead: () => isTeamLeadOf(membership, summary),
+  hasLeadRights: () => leadRightsOf(membership, summary),
   me: () => membership?.memberId || null,
   myName: () => membership?.name || null,
-  // Step 5b (design 2.11): removing accounts or contacts is the Team Admin's in a team - it empties every member's list.
-  canRemove() { return !membership || this.isAdmin(); },
+  // Step 5b (design 2.11): removing accounts or contacts is the Team Lead's in a team - it empties every member's list.
+  canRemove() { return !membership || this.hasLeadRights(); },
   entry: (key) => (membership && key ? summary?.accounts?.[key] || null : null),
 
   // Everything that changes, researches, scans or contacts an account asks this first. Reading is never blocked.

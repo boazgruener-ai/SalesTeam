@@ -588,7 +588,7 @@ function isLocalMarketCountry(v) {
 
 // "International company - Swiss subsidiary" is GLOBAL: the group is abroad, and that is exactly the
 // case this rule exists for, so global is tested first.
-function localOrGlobal(effective) {
+export function localOrGlobal(effective) {
   for (const raw of [effective?.targetCountryRelationship, effective?.companyType]) {
     const t = String(raw ?? "").toLowerCase();
     if (!t.trim()) continue;

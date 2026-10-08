@@ -10,6 +10,7 @@
 import { rescoreDerivedPriorities } from "./auto-score.js";
 import { mountAdvancedSteps, persistAdvancedStep, discardAdvancedStep } from "./advanced-steps.js";
 import { askChoice } from "./confirm-dialog.js";
+import { leadRightsOf } from "./team-groups.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, CONSENT_TITLE, CONSENT_TEXT,
   setWebResearchAutomation, WEB_CONSENT_TITLE, WEB_CONSENT_TEXT, DEFAULT_WEB_BUDGET_USD,
@@ -261,7 +262,7 @@ function updateNavBar(step, index) {
     // Save is on only with unsaved changes. A team member can change only About you (their name, key, language) - Save
     // is off everywhere else.
     paintDirty();
-    el("nav-save-btn").title = teamMemberReadOnly && step !== "about" ? "Only the Team Admin can change this setting" : "";
+    el("nav-save-btn").title = teamMemberReadOnly && step !== "about" ? "Only the Team Lead can change this setting" : "";
     // Change Settings ends at the last setting: there is no Setup complete step after it.
     el("nav-next-btn").hidden = settingsMode && index >= STEP_ORDER.length - 2;
     // Boaz, 2026-10-01: on the last step "Next" did not say that Finish Setup comes after it.
@@ -2215,7 +2216,7 @@ el("about-research-btn").addEventListener("click", async () => {
 // a finished setup whose research never ran, and not declined.
 function renderSettingsResearchOffer() {
   let box = el("settings-research-offer");
-  // Not for a team member (D3): the research proposes changes to the shared setup, which is the Team Admin's.
+  // Not for a team member (D3): the research proposes changes to the shared setup, which is the Team Lead's.
   const show = completedBefore && setupResearch.status === "none" && !setupResearch.declinedInSettings && !teamMemberReadOnly;
   if (!show) {
     if (box) box.hidden = true;
@@ -3079,20 +3080,21 @@ async function init() {
 
 // The page stays hidden until init() has chosen what to show, so the default first step never flashes on screen
 // (reported 2026-09-21: Change Settings briefly showed a setup step before its own list).
-// Team use 1.2.2 step 5 (D3): the setup is shared with the whole team and changed by the Team Admin only. A member
+// Team use 1.2.2 step 5 (D3): the setup is shared with the whole team and changed by the Team Lead only. A member
 // sees it read-only; only their own name, API key and language (About you) stay editable.
 async function applyTeamMemberReadOnly() {
-  const membership = (await chrome.storage.local.get("teamMembership")).teamMembership;
-  if (!membership || membership.role === "admin") return;
+  const got = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const membership = got.teamMembership;
+  if (!membership || leadRightsOf(membership, got.teamAccountStates)) return;
   teamMemberReadOnly = true;
   document.body.classList.add("team-member-readonly");
   const offer = document.getElementById("settings-research-offer");
   if (offer) offer.hidden = true;
   const save = document.getElementById("nav-save-btn");
-  if (save && STEP_ORDER[currentStepIndex] !== "about") { save.disabled = true; save.title = "Only the Team Admin can change this setting"; }
+  if (save && STEP_ORDER[currentStepIndex] !== "about") { save.disabled = true; save.title = "Only the Team Lead can change this setting"; }
   const note = document.getElementById("team-member-setup-note");
   note.textContent = `You are a member of the team "${membership.teamName}". This setup is shared with the whole team and only the ` +
-    "Team Admin can change it - you can look at every step here, but changes are not possible. Your own name, Anthropic API key and " +
+    "Team Lead can change it - you can look at every step here, but changes are not possible. Your own name, Anthropic API key and " +
     "language (About you) are yours to change.";
   note.hidden = false;
   // Pointer clicks are off by CSS; this catches the keyboard.

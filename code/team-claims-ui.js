@@ -19,7 +19,7 @@ const REFUSALS = {
   not_in_sync: "Not in sync with the team - see the top bar.",
   held: "A colleague is updating this account right now - try again when they are done.",
   assigned: "A colleague already has this account.",
-  not_admin: "Only the Team Admin can release or reassign a colleague's account.",
+  not_lead: "Only the Team Lead can release or reassign a colleague's account.",
 };
 
 async function send(msg) {

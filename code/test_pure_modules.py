@@ -31,7 +31,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
+PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2465,6 +2465,181 @@ def test_team_log_and_join(ctx):
     check("join: proposals keyed per member and account",
           e("JSON.stringify(Object.keys(joinProposals(OV.shared, {memberId: 'm1', memberName: 'Eve', at: 1, assigneeOf: function () { return 'boaz'; }})))"), '["m1~beta"]')
 
+def test_team_groups(ctx):
+    """1.2.3 step 0 (TEAM_ADVANCED_MODE_DESIGN.md 3, 4.2, 5, 8.3, D9, D13): the Team Lead chain and account groups."""
+    e = lambda x: ctx.eval(x)
+
+    # Regions (geo-regions.js) - the six regions, an unknown country is never guessed.
+    check("region: Switzerland", e("regionOfCountry('Switzerland')"), "europe")
+    check("region: case and spaces", e("regionOfCountry('  united states ')"), "northAmerica")
+    check("region: Japan is South-East Asia (D4)", e("regionOfCountry('Japan')"), "southEastAsia")
+    check("region: unknown country", e("regionOfCountry('Atlantis')"), None)
+    check("region: no country", e("regionOfCountry(null)"), None)
+
+    # Size: storage.js's resolveSizeBucket now IS sizeBucketKey - same buckets, same edges, same loose numbers.
+    e("""var BUCKETS = [
+      { key: 'S', min: 0, max: 200 }, { key: 'M', min: 201, max: 500 }, { key: 'L', min: 501, max: 1000 },
+      { key: 'XL', min: 1001, max: 5000 }, { key: 'XXL', min: 5001, max: Infinity }];
+      function oldResolve(v) { var n = parseLooseNumber(v); if (n === null) return null;
+        var b = BUCKETS.find(function (x) { return n >= x.min && n <= x.max; }); return b ? b.key : null; }""")
+    same = e("""JSON.stringify([200, 201, 500, 501, 1000, 1001, 5000, 5001, '6,500+', '>5,000', '1.5k', null, 'n/a', 0, '']
+      .filter(function (v) { return sizeBucketKey(v, BUCKETS) !== oldResolve(v); }))""")
+    check("size: sizeBucketKey gives resolveSizeBucket's bucket for every edge", same, "[]")
+
+    # Facts and filters.
+    e("""var VIEW = { globalHqCountry: 'Switzerland', globalEmployees: '6,500+', targetCountryRelationship: 'Local company',
+        industry: 'Banking', companyType: 'Private', salesTeamPriority: 'P1', relationship: ['customer'] };
+      var F = groupFacts(VIEW, { buckets: BUCKETS });""")
+    check("facts: all fields", e("JSON.stringify(F)"),
+          '{"region":"europe","country":"Switzerland","size":"XXL","scope":"local","industry":"Banking","companyType":"Private","priority":"P1","relationship":["customer"]}')
+    check("facts: an empty view is all unknown", e("JSON.stringify(groupFacts({}, { buckets: BUCKETS }))"),
+          '{"region":null,"country":null,"size":null,"scope":null,"industry":null,"companyType":null,"priority":null,"relationship":[]}')
+    check("filter: any of a field's values", e("matchesFilter(F, { size: ['XL', 'XXL'] })"), True)
+    check("filter: all fields together", e("matchesFilter(F, { size: ['XXL'], region: ['africa'] })"), False)
+    check("filter: case-insensitive values", e("matchesFilter(F, { industry: ['banking'] })"), True)
+    check("filter: an empty field is no condition", e("matchesFilter(F, { size: [], region: ['europe'] })"), True)
+    check("filter: an unknown fact never matches (R2.5)", e("matchesFilter(groupFacts({ globalEmployees: 300 }, { buckets: BUCKETS }), { region: ['europe'] })"), False)
+    check("filter: relationship customer", e("matchesFilter(F, { relationship: ['customer'] })"), True)
+    check("filter: relationship none", e("matchesFilter(groupFacts({}, {}), { relationship: ['none'] })"), True)
+    check("filter: relationship none vs a customer", e("matchesFilter(F, { relationship: ['none'] })"), False)
+    check("save check: a filter with no condition is refused", e("groupProblem({ name: 'All', kind: 'filter', filter: {} })"),
+          "Add at least one condition - or use All accounts.")
+    check("save check: a named group is fine", e("groupProblem({ name: 'VIP', kind: 'named', accounts: [] })"), "")
+
+    # Groups, Other, pins, members (D9).
+    e("""var GROUPS = {
+        'g-swiss': { name: 'Swiss', kind: 'filter', filter: { country: ['Switzerland'] }, members: ['anna', 'luc', 'gone'] },
+        'g-vip':   { name: 'VIP', kind: 'named', accounts: ['roche', 'ubs'], members: ['boaz'] },
+        'g-old':   { name: 'Old', kind: 'filter', filter: { country: ['Switzerland'] }, members: ['fay'], deleted: true },
+        'g-empty': { name: 'Broken', kind: 'filter', filter: {}, members: ['luc'] },
+        other:     { members: [] } };
+      var TEAM = ['boaz', 'anna', 'luc', 'fay'];
+      var IX = groupIndex(GROUPS, TEAM);
+      var LEADS = { lead: 'boaz', deputy: null };
+      var SWISS = groupFacts({ globalHqCountry: 'Switzerland' }, {});
+      var US = groupFacts({ globalHqCountry: 'United States' }, {});""")
+    check("groups: filter + named list", e("JSON.stringify(groupsOf('roche', SWISS, IX))"), '["g-swiss","g-vip"]')
+    check("groups: no match -> Other", e("JSON.stringify(groupsOf('acme', US, IX))"), '["other"]')
+    check("groups: a deleted group catches nothing", e("IX.live.some(function (g) { return g.id === 'g-old'; })"), False)
+    check("groups: a filter with no conditions catches nothing", e("JSON.stringify(groupsOf('x', US, IX))"), '["other"]')
+    check("groups: a pin holds the old groups", e("JSON.stringify(groupsOf('roche', SWISS, IX, { roche: { groups: ['other'] } }))"), '["other"]')
+    check("groups: a pin to a deleted group falls back", e("JSON.stringify(groupsOf('roche', SWISS, IX, { roche: { groups: ['g-old'] } }))"), '["g-swiss","g-vip"]')
+    check("groups: on as soon as one live group exists", e("groupsOn(GROUPS) && !groupsOn({ other: { members: [] } })"), True)
+    check("members: a former member is not counted", e("JSON.stringify(membersOf('g-swiss', IX))"), '["anna","luc"]')
+    check("members: in no live group -> Other (D9)", e("JSON.stringify(membersOf('other', IX))"), '["fay"]')
+    check("members: a member's groups", e("JSON.stringify(memberGroups('anna', IX))"), '["g-swiss"]')
+
+    # Access and void assignments (D6).
+    check("access: Team Lead sees everything", e("mayAccess('boaz', ['other'], IX, LEADS)"), True)
+    check("access: deputy sees everything", e("mayAccess('fay', ['g-swiss'], IX, { lead: 'boaz', deputy: 'fay' })"), True)
+    check("access: member in the group", e("mayAccess('anna', ['g-swiss', 'g-vip'], IX, LEADS)"), True)
+    check("access: member not in the group", e("mayAccess('fay', ['g-swiss'], IX, LEADS)"), False)
+    check("access: no groups = 1.2.2, everyone sees all", e("mayAccess('fay', ['g-x'], groupIndex({}, TEAM), LEADS)"), True)
+    check("access: who", e("JSON.stringify(accessOf(['g-swiss'], IX, LEADS))"), '["anna","boaz","luc"]')
+    check("void: assignee left without access",
+          e("JSON.stringify(voidAssignments({ roche: 'anna', acme: 'anna', ubs: 'boaz', nestle: 'luc' }, { roche: ['g-swiss'], acme: ['other'], ubs: ['g-vip'], nestle: ['g-swiss'] }, IX, LEADS))"),
+          '[{"key":"acme","member":"anna"}]')
+    check("void: nothing in basic mode", e("voidAssignments({ a: 'x' }, { a: ['other'] }, groupIndex({}, TEAM), LEADS).length"), 0)
+    check("counts", e("JSON.stringify(groupCounts({ roche: ['g-swiss', 'g-vip'], ubs: ['g-vip'], acme: ['other'] }, IX, { assignments: { roche: 'anna' }, ready: { ubs: true, acme: true } }))"),
+          '{"g-empty":{"accounts":0,"assigned":0,"unassigned":0,"ready":0},"g-swiss":{"accounts":1,"assigned":1,"unassigned":0,"ready":0},"g-vip":{"accounts":2,"assigned":1,"unassigned":1,"ready":1},"other":{"accounts":1,"assigned":0,"unassigned":1,"ready":1}}')
+
+    # The Team Lead chain (3.1, 3.4, D13).
+    e("""var D = 24 * 3600 * 1000, T0 = 1759480000000;
+      function st2(wall, member) { return formatStamp(wall, 0, member); }
+      function lr(wall, author, id, member) { return { t: st2(wall, author), id: id, member: member === undefined ? null : member }; }
+      var never = function () { return false; }, always = function () { return true; };""")
+    check("lead: the creator", e("teamLeadOf('boaz', []).lead"), "boaz")
+    check("lead: unknown creator -> nobody", e("teamLeadOf(null, [lr(T0, 'boaz', 'lead', 'anna')]).lead"), None)
+    check("lead: hand-over", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna')]).lead"), "anna")
+    check("lead: a hand-over by a member is ignored", e("teamLeadOf('boaz', [lr(T0, 'luc', 'lead', 'luc')]).lead"), "boaz")
+    check("lead: hand-over and back", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna'), lr(T0 + 5, 'anna', 'lead', 'boaz')]).lead"), "boaz")
+    check("lead: the old lead cannot hand over again", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna'), lr(T0 + 5, 'boaz', 'lead', 'luc')]).lead"), "anna")
+    check("deputy: made by the lead", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay')]).deputy"), "fay")
+    check("deputy: made by a member is ignored", e("teamLeadOf('boaz', [lr(T0, 'fay', 'deputy', 'fay')]).deputy"), None)
+    check("deputy: a deputy cannot appoint another", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'fay', 'deputy', 'luc')]).deputy"), "fay")
+    check("deputy: a deputy cannot hand over the lead", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'fay', 'lead', 'fay')]).lead"), "boaz")
+    check("deputy: ended by the lead", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'boaz', 'deputy', null)]).deputy"), None)
+    check("deputy: ends with a hand-over", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'boaz', 'lead', 'anna')]).deputy"), None)
+    check("takeover: lead quiet, no deputy -> anyone",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: never }).lead"), "luc")
+    check("takeover: lead still active -> ignored",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: always }).lead"), "boaz")
+    check("takeover: without an activity check -> ignored",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D, 'luc', 'takeover', 'luc')]).lead"), "boaz")
+    check("takeover: with a deputy, only the deputy",
+          e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: never }).lead"), "boaz")
+    check("takeover: the deputy takes over",
+          e("JSON.stringify((function (c) { return [c.lead, c.deputy]; })(teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 40 * D, 'fay', 'takeover', 'fay')], { activeWithin: never })))"), '["fay",null]')
+    check("takeover: the first one wins",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D + 9, 'anna', 'takeover', 'anna'), lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: function (m) { return m !== 'boaz'; } }).lead"), "luc")
+    check("rights at a stamp: before and after a hand-over",
+          e("""(function () { var c = teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna')]);
+                return [leadRightsAt(c, 'boaz', st2(T0 - 1, 'boaz')), leadRightsAt(c, 'boaz', st2(T0 + 1, 'boaz')), leadRightsAt(c, 'anna', st2(T0 + 1, 'anna'))].join(); })()"""),
+          "true,false,true")
+
+    # The merge: only the Team Lead's (or deputy's) group records count - in any order of arrival (4.2).
+    e("""var GR = [
+        { t: st2(T0 + 1, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'EMEA', kind: 'filter', members: ['anna'] } },
+        { t: st2(T0 + 2, 'anna'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'Anna was here' } },
+        { t: st2(T0 + 3, 'luc'),  e: 'setting', id: 'teamGroups:g-2', op: 'set', f: { name: 'Luc only', kind: 'named' } },
+        { t: st2(T0 + 10, 'boaz'), e: 'team', id: 'lead', op: 'set', f: { member: 'anna' } },
+        { t: st2(T0 + 11, 'anna'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'EMEA (Anna)' } },
+        { t: st2(T0 + 12, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { members: ['boaz'] } },
+        { t: st2(T0 + 13, 'anna'), e: 'team', id: 'deputy', op: 'set', f: { member: 'fay' } },
+        { t: st2(T0 + 14, 'fay'),  e: 'setting', id: 'teamGroups:g-3', op: 'set', f: { name: 'Fay as deputy', kind: 'named' } },
+        { t: st2(T0 + 15, 'anna'), e: 'team', id: 'deputy', op: 'set', f: { member: null } },
+        { t: st2(T0 + 16, 'fay'),  e: 'setting', id: 'teamGroups:g-3', op: 'set', f: { name: 'Fay after' } },
+        { t: st2(T0 + 20, 'luc'),  e: 'account', id: 'wb:c-1', op: 'set', f: { company: 'Roche' } },
+      ];
+      function groupPicture(s) {
+        return JSON.stringify(['teamGroups:g-1', 'teamGroups:g-2', 'teamGroups:g-3', 'wb:c-1'].map(function (id) {
+          var v = entityView(s, id === 'wb:c-1' ? 'account' : 'setting', id); return v && v.exists ? v.values : null; })
+          .concat([leadChain(s).lead, leadChain(s).deputy, ignoredGated(s).length]));
+      }
+      var GS = newState(); setTeamCreator(GS, 'boaz'); applyChanges(GS, GR);
+      var GREF = groupPicture(GS);""")
+    check("merge: only valid group records count", e("GREF"),
+          '[{"kind":"filter","members":["anna"],"name":"EMEA (Anna)"},null,{"kind":"named","name":"Fay as deputy"},{"company":"Roche"},"anna",null,4]')
+    order_free = e("""(function () {
+        for (var seed = 1; seed <= 40; seed++) {
+          var s = newState();
+          if (seed % 2) setTeamCreator(s, 'boaz');
+          applyChanges(s, shuffled(GR, seed));
+          if (!(seed % 2)) setTeamCreator(s, 'boaz');       // the creator read after the records
+          applyChanges(s, shuffled(GR, seed + 50));
+          if (groupPicture(s) !== GREF) return seed;
+        }
+        return 0;
+      })()""")
+    check("merge: 40 shuffled orders (lead records late or early, creator before or after) give the same groups", order_free, 0)
+    check("merge: without a known creator no group record counts", e("""(function () {
+        var s = newState(); applyChanges(s, GR); var v = entityView(s, 'setting', 'teamGroups:g-1'); return Boolean(v && v.exists); })()"""), False)
+    check("merge: an old state (before 1.2.3) gains the new parts", e("""(function () {
+        var s = { entities: {}, lost: {}, seen: {} }; s.seen[st2(T0, 'boaz') + '|account|wb:c-9'] = true;
+        setTeamCreator(s, 'boaz'); applyChanges(s, GR); return groupPicture(s) === GREF && Boolean(s.days.boaz); })()"""), True)
+
+    # Compaction keeps the chain and the group records whole, and one record per day (D13 is snapshot-proof).
+    e("""var OWN = [
+        { t: st2(T0, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'New' } },
+        { t: st2(T0 + 2 * D, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'Met' } },
+        { t: st2(T0 + 1, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'A' } },
+        { t: st2(T0 + 2, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'B' } },
+        { t: st2(T0 + 3, 'boaz'), e: 'team', id: 'deputy', op: 'set', f: { member: 'fay' } },
+        { t: st2(T0 + 4, 'boaz'), e: 'team', id: 'deputy', op: 'set', f: { member: null } },
+      ];
+      var CO = compactChanges(OWN);""")
+    check("compaction: group and team records all kept", e("CO.filter(function (r) { return r.e === 'team' || r.id === 'teamGroups:g-1'; }).length"), 4)
+    check("compaction: a superseded day keeps an empty marker", e("JSON.stringify(CO.filter(function (r) { return r.id === 'wb:c-1'; }).map(function (r) { return r.f; }))"),
+          '[{"status":"Met"}]')
+    e("""var OWN2 = [
+        { t: st2(T0, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'New' } },
+        { t: st2(T0 + 2 * D, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'Met' } }];
+      var CO2 = compactChanges(OWN2);""")
+    check("compaction: the first day survives as an empty record", e("JSON.stringify(CO2.map(function (r) { return r.f; }))"), '[{},{"status":"Met"}]')
+    check("compaction: same activity days from the snapshot", e("""(function () {
+        var a = newState(); applyChanges(a, OWN2); var b = newState(); applyChanges(b, CO2);
+        return JSON.stringify(a.days) === JSON.stringify(b.days) && JSON.stringify(entityView(a, 'account', 'wb:c-1').values) === JSON.stringify(entityView(b, 'account', 'wb:c-1').values); })()"""), True)
+
 
 def main():
     ctx = MiniRacer()
@@ -2510,6 +2685,7 @@ def main():
     test_team_list_rows(ctx)
     test_team_claims(ctx)
     test_team_log_and_join(ctx)
+    test_team_groups(ctx)
     test_relationships(ctx)
 
     print()

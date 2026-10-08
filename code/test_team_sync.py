@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-sync.js"]
+REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -87,6 +87,11 @@ var chrome = {
 
 // storage.js stub: one writer at a time is all the test needs.
 function withAccountWriteLock(fn) { return fn(); }
+// 1.2.3: the account views the group computation reads (VIEWS - set by a test), and storage.js's size buckets.
+var VIEWS = [];
+function getAccountViews() { return Promise.resolve(clone(VIEWS)); }
+var SIZE_PRIORITY_BUCKETS = [{ key: 'S', min: 0, max: 200 }, { key: 'M', min: 201, max: 500 }, { key: 'L', min: 501, max: 1000 },
+  { key: 'XL', min: 1001, max: 5000 }, { key: 'XXL', min: 5001, max: Infinity }];
 function normalizeCompanyName(n) { return String(n || '').toLowerCase().trim(); }
 function contactKeyFor(company, fullName) { var c = normalizeCompanyName(company), n = String(fullName || '').toLowerCase().trim(); return c && n ? c + '::' + n : null; }
 
@@ -507,7 +512,7 @@ def main():
     r, folder = eli.call("assignAccount('acme ag')", folder)
     check("assign: Eli cannot take it", (r.get("ok"), r.get("reason")), (False, "assigned"))
     r, folder = eli.call("unassignAccount('acme ag')", folder)
-    check("assign: Eli cannot release Dora's account", (r.get("ok"), r.get("reason")), (False, "not_admin"))
+    check("assign: Eli cannot release Dora's account", (r.get("ok"), r.get("reason")), (False, "not_lead"))
     r, folder = eli.call("teamWorkGate().then(function (g) { return [g.mayWork('acme ag'), g.offLimits('acme ag')]; })", folder)
     check("assign: off-limits to Eli's pipeline and bulk research", (r[0], (r[1] or {}).get("reason"), (r[1] or {}).get("name")), (False, "assigned", "Dora"))
     summary = eli.local("teamAccountStates") or {}
@@ -546,7 +551,7 @@ def main():
     r, folder = eli.call("assignAccount('delta ag')", folder)
     r, folder = eli.call("assignAccount('epsilon ag')", folder)
     r, folder = eli.call("assignAccount('delta ag', { to: '%s' })" % dora_id, folder)
-    check("admin: a member cannot assign to someone else", (r.get("ok"), r.get("reason")), (False, "not_admin"))
+    check("admin: a member cannot assign to someone else", (r.get("ok"), r.get("reason")), (False, "not_lead"))
     r, folder = eli.sync(folder)
     r, folder = dora.sync(folder)
     r, folder = dora.call("assignAccount('delta ag', { to: '%s' })" % dora_id, folder)
@@ -565,6 +570,40 @@ def main():
     check("notice: Eli is told which accounts the admin took (reassigned / released)",
           notices, [("delta ag", "Dora", "Dora"), ("epsilon ag", "Dora", None)])
     check("notice: nothing for Dora - she did it herself", dora.local("teamNotices"), None)
+
+    # 1.2.3 step 0 (TEAM_ADVANCED_MODE_DESIGN.md 3.1, 4.2): the Team Lead comes from the folder; only the Team Lead's
+    # group records count - on every PC.
+    r, folder = dora.call("Promise.resolve(publishSummary ? 1 : 0)", folder)
+    st = dora.local("teamAccountStates") or {}
+    check("lead: Dora (the creator) is Team Lead, read from the folder", (st.get("lead"), st.get("leadKnown"), st.get("admin")), (dora_id, True, True))
+    r, folder = eli.sync(folder)
+    st = eli.local("teamAccountStates") or {}
+    check("lead: Eli sees Dora as Team Lead, himself without the rights", (st.get("lead"), st.get("leadKnown"), st.get("admin")), (dora_id, True, False))
+    dora.e("VIEWS = %s" % json.dumps([
+        {"key": "acme ag", "globalHqCountry": "Switzerland", "globalEmployees": 6000},
+        {"key": "beta sa", "globalHqCountry": "France", "globalEmployees": 300},
+        {"key": "gamma ag", "globalHqCountry": None}]))
+    dora.set_local({"teamGroups": {"g-ch": {"name": "Swiss", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id]}}})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("groups: the Team Lead's group reaches Eli", ((eli.local("teamGroups") or {}).get("g-ch") or {}).get("name"), "Swiss")
+    eli.set_local({"teamGroups": {"g-ch": {"name": "Eli renamed it", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id]},
+                                  "g-eli": {"name": "Eli's own", "kind": "named", "accounts": [], "members": [eli_id]}}})
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    groups = dora.local("teamGroups") or {}
+    check("groups: a member's group changes are ignored on the Team Lead's PC", (groups.get("g-ch", {}).get("name"), "g-eli" in groups), ("Swiss", False))
+    dora.advance(2500)
+    st = dora.local("teamAccountStates") or {}
+    check("groups: the summary carries each account's groups (unknown country -> Other)",
+          (st.get("groupsOn"), st.get("g")), (True, {"acme ag": ["g-ch"], "beta sa": ["other"], "gamma ag": ["other"]}))
+    check("groups: the Team Lead in no group is in Other (D9)", st.get("myGroups"), ["other"])
+    # Back to basic mode for the rest of the test: the group is deleted (marked).
+    dora.set_local({"teamGroups": {"g-ch": {"name": "Swiss", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id], "deleted": True}}})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    dora.advance(2500)
+    check("groups: deleted -> basic mode again", (dora.local("teamAccountStates") or {}).get("groupsOn"), None)
 
     # F. Step 5b - the do-not-contact list is one row per entry (R6.8): two members adding at once both keep theirs.
     base = [{"slug": "adecco", "category": "recruiter"}]

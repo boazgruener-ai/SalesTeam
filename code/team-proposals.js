@@ -1,7 +1,7 @@
 // Team use 1.2.2, build step 6 (TEAM_USE_DESIGN.md 9.2, R6.7): join proposals in Decisions. A member who joined with
 // accounts the team already had, and had worked on them, left one proposal per account (team-join.js); the Team
 // Admin decides who keeps each: the member who proposed it, or as it is now (the current assignee, or unassigned).
-// Shown to the Team Admin only. Deciding assigns through the sync layer (TEAM_ASSIGN) and removes the proposal.
+// Shown to the Team Lead only. Deciding assigns through the sync layer (TEAM_ASSIGN) and removes the proposal.
 import { JOIN_PROPOSALS_KEY } from "./team-join.js";
 
 const SUMMARY_KEY = "teamAccountStates"; // team-sync.js TEAM_ACCOUNTS_KEY
@@ -45,7 +45,7 @@ const REFUSED = {
   offline: "the team folder is not connected",
   not_in_sync: "SalesTeam is not in sync with the team",
   held: "a colleague is updating this account right now - try again in a few minutes",
-  not_admin: "only the Team Admin can do this",
+  not_lead: "only the Team Lead can do this",
 };
 
 export async function applyJoinProposal(item, choice) {

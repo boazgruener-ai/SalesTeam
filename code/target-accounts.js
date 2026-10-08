@@ -2252,8 +2252,8 @@ function accountMenuItems(companyKey, company, { onDetailPage = false } = {}) {
       ? [{ label: `Review web findings (${openFindingCount})…`, change: true, onClick: () => openWebFindingsReview(companyKey, { onSaved: afterSave }) }]
       : []),
     { label: "Merge…", change: true, onClick: () => openMergeAccountsDialog(companyKey) },
-    // 1.2.3 (R2.5): who may change the Customers / Partners lists - no team, or the Team Admin (like Setup).
-    ...(!teamAccounts.inTeam() || teamAccounts.isAdmin()
+    // 1.2.3 (R2.5): who may change the Customers / Partners lists - no team, or the Team Lead (like Setup).
+    ...(!teamAccounts.inTeam() || teamAccounts.hasLeadRights()
       ? [{ label: "Relationship…", onClick: () => openRelationshipDialog(companyKey, company, { onDetailPage }) }]
       : []),
     ...teamAssignMenuItems(companyKey, { onDetailPage }),
@@ -2314,13 +2314,13 @@ function contactMenuItems(contactKey, contact, { onDetailPage = false } = {}) {
   ]);
 }
 
-// Assign to me / Release, and for the Team Admin Reassign… - in the menus only; the line under the account's title
+// Assign to me / Release, and for the Team Lead Reassign… - in the menus only; the line under the account's title
 // just says who has it.
 function teamAssignMenuItems(companyKey, { onDetailPage = false } = {}) {
   if (!teamAccounts.inTeam()) return [];
   const e = teamAccounts.entry(companyKey);
   const mine = Boolean(e?.a) && e.a === teamAccounts.me();
-  const admin = teamAccounts.isAdmin();
+  const admin = teamAccounts.hasLeadRights();
   const done = () => { if (onDetailPage) accountClaimGuard.refresh(); };
   const run = (type) => teamAssignKeys([companyKey], type).then(done);
   const items = [];
@@ -2334,7 +2334,7 @@ function teamAssignMenuItems(companyKey, { onDetailPage = false } = {}) {
   return items;
 }
 
-// Team Admin: pick the member an account goes to.
+// Team Lead: pick the member an account goes to.
 async function teamReassign(companyKey) {
   let st = null;
   try { st = await chrome.runtime.sendMessage({ type: "TEAM_SYNC_STATUS" }); } catch { /* handled below */ }
@@ -2351,7 +2351,7 @@ async function teamReassign(companyKey) {
 
 const TEAM_REFUSAL_TEXT = {
   offline: "the team folder is not connected on this PC", not_in_sync: "not in sync with the team",
-  held: "a colleague is updating it", assigned: "a colleague already has it", not_admin: "only the Team Admin can release a colleague's account",
+  held: "a colleague is updating it", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
 };
 
 // Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
@@ -7384,7 +7384,7 @@ async function removeAccount(companyKey, companyName, { onDetailPage = false } =
     label: `Removed Target Account "${companyName}" from the list`,
     newValue: { companyKey },
   });
-  showNotice(`"${companyName}" removed.${teamAccounts.inTeam() ? " The Team Admin can bring it back with Removed…." : " Removed… brings it back."}`);
+  showNotice(`"${companyName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back with Removed…." : " Removed… brings it back."}`);
 }
 
 async function removeContact(contactKey, fullName, { onDetailPage = false } = {}) {
@@ -7399,7 +7399,7 @@ async function removeContact(contactKey, fullName, { onDetailPage = false } = {}
     label: `Removed Target Contact "${fullName}" from the list`,
     newValue: { contactKey },
   });
-  showNotice(`"${fullName}" removed.${teamAccounts.inTeam() ? " The Team Admin can bring it back with Removed…." : " Removed… brings it back."}`);
+  showNotice(`"${fullName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back with Removed…." : " Removed… brings it back."}`);
 }
 
 // PRD 6.20 Phase 10 (2026-09-17) - the detail page's own kebab, replacing

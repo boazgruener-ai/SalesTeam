@@ -13,13 +13,15 @@
 //   30 s alarm and, while the folder is usable, by in-worker timers. The folder is usable only while a SalesTeam
 //   page or the side panel is open (step 0); otherwise changes wait in the outbox.
 
-import { withAccountWriteLock, normalizeCompanyName, contactKeyFor } from "./storage.js";
+import { withAccountWriteLock, normalizeCompanyName, contactKeyFor, getAccountViews, SIZE_PRIORITY_BUCKETS } from "./storage.js";
 import { TEAM_SHARED_KEYS, isTeamSharedKey } from "./team-keys.js";
 import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchValue, rowTarget, rowKey, splitRowKey, canonicalRow } from "./team-rows.js";
 import {
   newState, applyChange, createClock, tick, observe, formatStamp, compactChanges, stampWall, priorOf, retractChanges,
   pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed, stampMember,
+  leadChain, setTeamCreator, isGatedRow,
 } from "./team-merge.js";
+import { groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, OTHER_GROUP } from "./team-groups.js";
 import {
   claimIdFor, accountKeyOfChange, activeMembersOf, claimView, assignmentView, offLimitsFor, teamAccountSummary,
 } from "./team-claims.js";
@@ -34,7 +36,7 @@ export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 // Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
 // (team-claims.js teamAccountSummary + who I am). Personal, rewritten only when it changes.
 export const TEAM_ACCOUNTS_KEY = "teamAccountStates";
-// Step 5b (Boaz): "the Team Admin reassigned / released your account" - shown in the top bar until OK. Personal.
+// Step 5b (Boaz): "the Team Lead reassigned / released your account" - shown in the top bar until OK. Personal.
 export const TEAM_NOTICES_KEY = "teamNotices";
 // Step 6 (R3.11, design 4.3): the team log shown in the Activity Log - built from the change records written and read
 // (team-log.js). Personal (each PC keeps what it has seen), backup-excluded.
@@ -300,7 +302,7 @@ async function recordTeamLog(records, priors = null) {
 
 async function applyRemote(records) {
   const affected = new Set();
-  // A colleague (the Team Admin) took one of my accounts away: remember whether it was mine before this batch.
+  // A colleague (the Team Lead) took one of my accounts away: remember whether it was mine before this batch.
   const me = membership?.memberId;
   const takenFrom = new Map(); // "@key" -> author
   for (const r of records) {
@@ -314,6 +316,8 @@ async function applyRemote(records) {
     observe(mem.clock, r.t);
     if (r.op === "claim" || r.op === "assign") ackDue = true;
     if (rowTarget(r.e, r.id)) affected.add(rowKey(r.e, r.id));
+    // 1.2.3: a Team Lead record decides which group records count - every group row may have changed.
+    if (r.e === "team") for (const rk of gatedRowKeys()) affected.add(rk);
   }
   await save(["state"]);
   if (affected.size) await writeBack(affected);
@@ -341,7 +345,7 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
   const update = { cursors: {}, lastFileWall: {}, hb: {}, profiles: {}, basesApplied: [], files: 0, bytes: 0, baseRecords: 0 };
   update.admins = (await listTeamNames(root, ["admins"], "file"))
     .map((n) => (/^(.+)\.json$/.exec(n) || [])[1]).filter(Boolean);
-  // Members the Team Admin removed (Boaz 2026-10-06): removed/<member>.json, written by the admin.
+  // Members the Team Lead removed (Boaz 2026-10-06): removed/<member>.json, written by the admin.
   update.removed = {};
   for (const n of await listTeamNames(root, ["removed"], "file")) {
     const id = (/^(.+)\.json$/.exec(n) || [])[1];
@@ -448,11 +452,26 @@ async function flush(root, me) {
   return true;
 }
 
+// 1.2.3 (design 3.1): the group rows in the merged state - rewritten whole when the Team Lead chain changes.
+function gatedRowKeys() {
+  return Object.keys(mem.state.gated || {}).filter((id) => isGatedRow("setting", id)).map((id) => rowKey("setting", id));
+}
+
+// The team's creator - the one admins/ file - starts the Team Lead chain. Once known, group records can be judged.
+async function noteCreator() {
+  const creator = [...(mem.meta.admins || [])].sort()[0] || null;
+  if (creator && setTeamCreator(mem.state, creator)) {
+    await save(["state"]);
+    await writeBack(new Set(gatedRowKeys()));
+  }
+}
+
 async function readRound(root, me) {
   const t0 = performance.now();
   const { records, update } = await readFolder(root, me);
   await enqueue(async () => {
     commitReadUpdate(update);
+    await noteCreator();
     for (const [id, r] of Object.entries(update.removed || {})) if (r.by && r.by !== me) await logMemberRemoved(id, r.by, r.at);
     const logged = records.slice(update.baseRecords);
     const priors = logged.length ? priorsFor(logged) : null; // before applying: the previous values
@@ -544,7 +563,7 @@ export async function runTick(reason = "alarm") {
     const readEvery = claimsPending() ? CLAIM_READ_EVERY_MS : READ_EVERY_MS;
     if (reason === "now" || now - mem.meta.lastReadAt >= readEvery - 1000) await readRound(root, me);
     if (mem?.meta.removed?.[me]) {
-      // The Team Admin removed this member: stop sharing, as Leave does (the local copy stays as a solo copy).
+      // The Team Lead removed this member: stop sharing, as Leave does (the local copy stays as a solo copy).
       await leaveLocally();
       return { removed: true };
     }
@@ -609,7 +628,88 @@ function claimContext(now = Date.now()) {
 
 const memberName = (m) => (m === membership?.memberId ? membership.name : mem.meta.profiles[m]?.name || mem.meta.hb[m]?.name || "A colleague");
 const inSyncNow = () => !(lastError && errorSince && Date.now() - errorSince >= NOT_IN_SYNC_AFTER_MS);
-const isAdmin = () => Boolean(membership) && (membership.role === "admin" || (mem?.meta.admins || []).includes(membership.memberId));
+// 1.2.3 (design 3.1, 3.2): the Team Lead is decided by the team folder - the creator, then the hand-over, deputy and
+// take-over records (team-groups.js teamLeadOf). Before the first folder read the creator is not known yet; until
+// then membership.role is the answer (create: Team Lead, join: Member). Every role check goes through these.
+function leadNow() {
+  const c = mem ? leadChain(mem.state) : null;
+  if (c && c.creator) return { lead: c.lead, deputy: c.deputy, known: true };
+  return { lead: membership?.role === "admin" ? membership.memberId : null, deputy: null, known: false };
+}
+const isTeamLead = (member = membership?.memberId) => Boolean(member) && leadNow().lead === member;
+// The Team Lead's rights: the Team Lead, or the deputy while there is one (3.4) - everything but hand-over, deputy
+// and removing the Team Lead.
+const hasLeadRights = (member = membership?.memberId) => {
+  const l = leadNow();
+  return Boolean(member) && (l.lead === member || l.deputy === member);
+};
+
+// --------------------------------------------------------------------------
+// Account groups (design 5.4) - computed here, published with the summary
+// --------------------------------------------------------------------------
+// Only in advanced mode (a live group exists). The groups of each account are recomputed when the groups, pins or
+// account data change, at most every 2 s; who is in which group (cheap) on every publish.
+const GROUP_INPUT_KEYS = ["teamGroups", "teamGroupPins", "targetAccountsWorkbook", "targetAccounts", "targetAccountExtras",
+  "companyRelationships", "companyExclusions"];
+const GROUPS_EVERY_MS = 2000;
+let groupsByKey = null; // { key: [group ids] } or null (basic mode)
+let groupsDirty = true;
+let groupsAt = 0;
+let groupsTimer = null;
+
+function currentTeam() {
+  const meta = mem.meta;
+  const me = membership.memberId;
+  return [me, ...Object.keys({ ...meta.cursors, ...meta.hb, ...meta.profiles })
+    .filter((m) => m !== me && !meta.hb[m]?.left && !meta.removed?.[m])].sort();
+}
+
+// groups: the teamGroups map; pins: teamGroupPins. Returns { byKey, accounts, viewsMs, ms }.
+async function computeGroupsOf(groups, pins, team) {
+  const t0 = performance.now();
+  const views = await getAccountViews({ persistDerived: false });
+  const t1 = performance.now();
+  const index = groupIndex(groups, team);
+  const byKey = {};
+  for (const v of views) byKey[v.key] = groupsOf(v.key, groupFacts(v, { buckets: SIZE_PRIORITY_BUCKETS }), index, pins || {});
+  return { byKey, index, accounts: views.length, viewsMs: Math.round(t1 - t0), ms: Math.round(performance.now() - t1) };
+}
+
+async function refreshGroups() {
+  const got = await chrome.storage.local.get(["teamGroups", "teamGroupPins"]);
+  if (!groupsOn(got.teamGroups)) { groupsByKey = null; return; }
+  const r = await computeGroupsOf(got.teamGroups, got.teamGroupPins, currentTeam());
+  groupsByKey = r.byKey;
+  measure({ kind: "groups", accounts: r.accounts, groups: r.index.live.length, views_ms: r.viewsMs, ms: r.ms });
+}
+
+function markGroupsDirty() {
+  groupsDirty = true;
+  if (groupsTimer) return;
+  groupsTimer = setTimeout(() => {
+    groupsTimer = null;
+    if (membership && mem) enqueue(publishSummary).catch(() => {});
+  }, GROUPS_EVERY_MS);
+}
+
+// Step 0 measurement on the live data (dev page): sample groups - one per region, a size filter, a 20-account list.
+export async function measureGroups() {
+  const sample = {};
+  for (const r of ["northAmerica", "latinAmerica", "europe", "africa", "middleEast", "southEastAsia"]) {
+    sample[`g-${r}`] = { name: r, kind: "filter", filter: { region: [r] }, members: [] };
+  }
+  sample["g-big"] = { name: "Big", kind: "filter", filter: { size: ["XL", "XXL"], scope: ["global"] }, members: [] };
+  const first = (await getAccountViews({ persistDerived: false })).slice(0, 20).map((v) => v.key);
+  sample["g-named"] = { name: "Named", kind: "named", accounts: first, members: [] };
+  const runs = [];
+  let last = null;
+  for (let i = 0; i < 3; i++) { last = await computeGroupsOf(sample, {}, []); runs.push({ views_ms: last.viewsMs, groups_ms: last.ms }); }
+  const counts = {};
+  for (const ids of Object.values(last.byKey)) for (const g of ids) counts[g] = (counts[g] || 0) + 1;
+  const l = membership && mem ? leadNow() : null;
+  return { ok: true, accounts: last.accounts, groups: Object.keys(sample).length, runs, counts,
+    lead: l ? { lead: l.lead && memberName(l.lead), deputy: l.deputy && memberName(l.deputy), fromFolder: l.known } : null };
+}
 
 // Inside the queue. The pages' copy of every account's assignment and active claim (TEAM_ACCOUNTS_KEY).
 let lastSummaryJson = null;
@@ -619,7 +719,28 @@ async function publishSummary() {
   const accounts = teamAccountSummary(mem.state, ctx);
   const names = {};
   for (const e of Object.values(accounts)) for (const m of [e.a, e.h]) if (m && !names[m]) names[m] = memberName(m);
-  const value = { me: ctx.me, admin: isAdmin(), inSync: folderState === "granted" && inSyncNow(), folder: folderState, names, accounts };
+  if (groupsDirty && Date.now() - groupsAt >= GROUPS_EVERY_MS) {
+    groupsDirty = false;
+    groupsAt = Date.now();
+    try { await refreshGroups(); } catch (err) { lastError = `groups: ${errText(err)}`; }
+  } else if (groupsDirty) {
+    markGroupsDirty();
+  }
+  const leads = leadNow();
+  // admin (= the Team Lead's rights) stays for the readers built before 1.2.3; lead / deputy are the answer now.
+  const value = {
+    me: ctx.me, admin: hasLeadRights(), lead: leads.lead, deputy: leads.deputy, leadKnown: leads.known,
+    inSync: folderState === "granted" && inSyncNow(), folder: folderState, names, accounts,
+  };
+  for (const m of [leads.lead, leads.deputy]) if (m && !names[m]) names[m] = memberName(m);
+  if (groupsByKey) {
+    // Design 5.4: per account its group ids (g), and the groups I am in (Other when none, D9).
+    const got = await chrome.storage.local.get("teamGroups");
+    value.groupsOn = true;
+    value.myGroups = memberGroups(ctx.me, groupIndex(got.teamGroups, currentTeam()));
+    if (!value.myGroups.length) value.myGroups = [OTHER_GROUP];
+    value.g = groupsByKey;
+  }
   const json = JSON.stringify(value);
   if (json === lastSummaryJson) return;
   lastSummaryJson = json;
@@ -748,7 +869,7 @@ function describeClaim(key) {
   const a = assignmentView(mem.state, key, ctx);
   const aside = mem.claims.aside[key];
   const lost = mem.claims.assignLost[key];
-  const admin = isAdmin();
+  const admin = hasLeadRights();
   return {
     member: true,
     key,
@@ -879,7 +1000,7 @@ export function discardKeptAside(key) {
 // Assign to me / release (build step 5, design 7, R6.1-R6.4)
 // --------------------------------------------------------------------------
 // "Assign to me" writes `assign`, "Release" writes `unassign`. An assignment does not expire. A member assigns only
-// a free account to itself and releases only its own; the Team Admin can also release or reassign anyone's. Nobody
+// a free account to itself and releases only its own; the Team Lead can also release or reassign anyone's. Nobody
 // assigns an account a colleague is updating right now (the claim says so) - try again when they are done.
 
 async function assignInner(key, to) {
@@ -889,8 +1010,8 @@ async function assignInner(key, to) {
   const ctx = claimContext();
   const me = ctx.me;
   const target = to || me;
-  const admin = isAdmin();
-  if (target !== me && !admin) return { ok: false, reason: "not_admin", ...describeClaim(key) };
+  const admin = hasLeadRights();
+  if (target !== me && !admin) return { ok: false, reason: "not_lead", ...describeClaim(key) };
   const a = assignmentView(mem.state, key, ctx);
   const current = a.assignee?.member || null;
   if (current === target) return { ok: true, ...describeClaim(key) };
@@ -928,8 +1049,8 @@ export function unassignAccount(key) {
     // take over; a member releases its own.
     const list = activeAssignments(mem.state, "account", claimIdFor(key));
     if (!list.length) return { ok: true, ...describeClaim(key) };
-    const admin = isAdmin();
-    if (list[0].member !== ctx.me && !admin) return { ok: false, reason: "not_admin", ...describeClaim(key) };
+    const admin = hasLeadRights();
+    if (list[0].member !== ctx.me && !admin) return { ok: false, reason: "not_lead", ...describeClaim(key) };
     const now = Date.now();
     for (const x of admin ? list : list.filter((y) => y.member === ctx.me)) {
       pushOwn({ t: tick(mem.clock, now), e: "account", id: claimIdFor(key), op: "unassign", ...(x.member === ctx.me ? {} : { member: x.member }) });
@@ -958,7 +1079,7 @@ export function unassignAllOf(member) {
   return enqueue(async () => {
     if (!(await loadMembership())) return { member: false, ok: false };
     await ensureLoaded();
-    if (!isAdmin()) return { ok: false, reason: "not_admin" };
+    if (!hasLeadRights()) return { ok: false, reason: "not_lead" };
     if (!(await connectedRoot()) || !inSyncNow()) return { ok: false, reason: "offline" };
     const now = Date.now();
     let count = 0;
@@ -977,7 +1098,7 @@ export function unassignAllOf(member) {
   });
 }
 
-// Boaz 2026-10-06: the Team Admin removes a member - e.g. an old membership of someone who left before "left" was
+// Boaz 2026-10-06: the Team Lead removes a member - e.g. an old membership of someone who left before "left" was
 // recorded, or a colleague who stopped without signing off. Their accounts are released and removed/<member>.json
 // tells every PC; they then show under "Former members". If that member's SalesTeam is still running, it leaves the
 // team on its next round (runTick).
@@ -985,8 +1106,9 @@ export function removeMember(member) {
   return enqueue(async () => {
     if (!(await loadMembership())) return { member: false, ok: false };
     await ensureLoaded();
-    if (!isAdmin()) return { ok: false, reason: "not_admin" };
+    if (!hasLeadRights()) return { ok: false, reason: "not_lead" };
     if (member === membership.memberId) return { ok: false, reason: "self" };
+    if (member === leadNow().lead) return { ok: false, reason: "not_lead" };
     const root = await connectedRoot();
     if (!root || !inSyncNow()) return { ok: false, reason: "offline" };
     const now = Date.now();
@@ -1106,6 +1228,7 @@ export function createTeam({ name, teamName }) {
       }
       mem.shadow[key] = diffRows({}, rows).shadow;
     }
+    setTeamCreator(mem.state, memberId);
     for (const r of base) applyChange(mem.state, r);
     await writeTeamJson(root, [], "team.json", { teamId: m.teamId, name: m.teamName, format: FORMAT, createdBy: memberId, createdAt: m.joinedAt });
     await writeTeamJson(root, ["admins"], `${memberId}.json`, { member: memberId, grantedBy: memberId, at: m.joinedAt });
@@ -1163,7 +1286,7 @@ export function previewJoin() {
 // A member: this browser's shared keys are REPLACED by the team picture (personal keys stay). The caller
 // (Settings > Team) takes a full backup first. Step 6 (R6.7): `addKeys` - accounts only this member has, which it
 // brings in (they come back after the replace as its own changes); accounts both have that this member worked on
-// become join proposals for the Team Admin, and its contacted leads for them come back too.
+// become join proposals for the Team Lead, and its contacted leads for them come back too.
 export function joinTeam({ name, addKeys = [] }) {
   return enqueue(async () => {
     if (await loadMembership()) throw new Error("This browser is already in a team - leave it first.");
@@ -1256,7 +1379,7 @@ function localCounts(values) {
 
 // The local copy stays as it is (a solo copy); this member's files stay in the folder for the record.
 // Boaz 2026-10-06: leaving hands back this member's assigned accounts and signs off (heartbeat `left`), so colleagues
-// see "left" and the accounts are free - when the folder is reachable. Otherwise the Team Admin uses Release all.
+// see "left" and the accounts are free - when the folder is reachable. Otherwise the Team Lead uses Release all.
 export async function leaveTeam() {
   let released = 0;
   let signedOff = false;
@@ -1327,7 +1450,8 @@ export async function getTeamSyncStatus() {
       return {
         id: m,
         name: meta.profiles[m]?.name || hb?.name || m,
-        admin: (meta.admins || []).includes(m),
+        admin: leadNow().lead === m,
+        deputy: leadNow().deputy === m,
         left: hb?.left || meta.removed?.[m]?.at || null,
         removed: Boolean(meta.removed?.[m]),
         online: !hb?.left && !meta.removed?.[m] && Date.now() - lastSeen <= ONLINE_MS,
@@ -1340,6 +1464,7 @@ export async function getTeamSyncStatus() {
   return {
     member: true,
     me: membership,
+    lead: leadNow(),
     folder: folderState,
     outbox: mem.outbox.length,
     inflight: mem.inflight ? { n: mem.inflight.n, records: mem.inflight.changes.length } : null,
@@ -1370,6 +1495,7 @@ export function initTeamSync() {
       membershipLoaded = true;
     }
     if (membershipLoaded && !membership) return;
+    if (membership && GROUP_INPUT_KEYS.some((k) => k in changes)) markGroupsDirty();
     let any = false;
     for (const key of Object.keys(changes)) {
       if (isTeamSharedKey(key)) {
@@ -1403,6 +1529,7 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_LEAVE": return reply(leaveTeam());
     case "TEAM_SYNC_NOW": return reply(runTick("now"));
     case "TEAM_SYNC_STATUS": return reply(getTeamSyncStatus());
+    case "TEAM_MEASURE_GROUPS": return reply(measureGroups());
     case "TEAM_CLAIM": return reply(claimAccount(message.key, { kind: message.kind || "edit" }));
     case "TEAM_RELEASE": return reply(releaseAccount(message.key));
     case "TEAM_CLAIM_STATUS": return reply(getClaimStatus(message.key));

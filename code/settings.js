@@ -12,6 +12,7 @@
 // next to the data it actually affects, not on a separate settings page).
 import { getApiUsage, sumDays, clearApiUsage, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
 import { askConfirm } from "./confirm-dialog.js";
+import { leadRightsOf } from "./team-groups.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine, kickPipelineFromPage, kickAndExplain } from "./pipeline-status.js";
 import {
@@ -784,9 +785,9 @@ window.addEventListener("hashchange", routeSettings);
 // "none"). Either way the action stays under User Profile > Open About you.
 async function renderSellerResearchOffer() {
   const offerEl = document.getElementById("seller-research-offer");
-  const [completedAt, research, team] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch(), chrome.storage.local.get("teamMembership")]);
-  // Team use (D3): the seller setup is the Team Admin's - a member is not offered to research it.
-  const member = team.teamMembership && team.teamMembership.role !== "admin";
+  const [completedAt, research, team] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch(), chrome.storage.local.get(["teamMembership", "teamAccountStates"])]);
+  // Team use (D3): the seller setup is the Team Lead's - a member is not offered to research it.
+  const member = team.teamMembership && !leadRightsOf(team.teamMembership, team.teamAccountStates);
   offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings) || Boolean(member);
   document.getElementById("seller-research-offer-text").textContent =
     "SalesTeam can research your company's website and propose improvements to the setup " +

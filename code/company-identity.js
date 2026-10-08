@@ -43,7 +43,7 @@ export function webCompanyId(website, name) {
 // the list, which also overrides the research workbook's own Excluded flag (storage.js isCompanyRowExcluded).
 //
 // 1.2.3 (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.2): customer / partner entries are NOT exclusions - they are skipped
-// here even when still on the list (an old backup, a team member before the Team Admin's copy has moved them), so
+// here even when still on the list (an old backup, a team member before the Team Lead's copy has moved them), so
 // no exclusion check hides a customer. `kept`: a relationship matcher (buildRelationshipMatcher) - a company on it
 // is not hidden by the research workbook's own Excluded flag either (isCompanyRowExcluded), like a lifted slug.
 const RELATIONSHIP_CATEGORY_SET = new Set(["customer", "partner"]);
