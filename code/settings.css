@@ -849,6 +849,8 @@ textarea {
 .team-invited-box { display: flex; gap: 12px; align-items: center; margin: 8px 0 12px; padding: 10px 14px; background: #e8f0fe; border: 1px solid #a8c2f0; border-radius: 8px; font-size: 13px; }
 .team-invited-box button.team-primary-btn { background: #1155cc; border-color: #1155cc; color: #fff; }
 .team-create-line { margin-top: 14px; }
+.team-onedrive-row { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
+.team-onedrive-row span.team-error { color: #b42318; }
 .team-link-btn { background: none; border: none; padding: 0; color: #1155cc; text-decoration: underline; cursor: pointer; font: inherit; }
 .team-invitee-row { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
 .team-invitee-row input { flex: 1; min-width: 0; padding: 5px 8px; }

@@ -415,23 +415,31 @@
         <p class="field-hint">You become the Team Lead. Your accounts, contacts, leads (posts), Setup and rules become the team's
           starting data. Everyone in the team sees the shared data, including who contacted whom.</p>
         <ol class="team-steps">
-          <li>Below: enter your name, the team's name, and the colleagues you invite (name and e-mail). You can invite more
+          <li>First, below: click <b>Choose your OneDrive folder…</b>. In the window that opens, click <b>OneDrive</b> in the
+            list on the left (with a work account it is called "OneDrive - <i>your company</i>") and click <b>Select Folder</b>.
+            If Chrome asks whether SalesTeam may view and edit the files, choose <b>Allow on every visit</b>. SalesTeam creates
+            the team's folder in it.</li>
+          <li>Enter your name, the team's name, and the colleagues you invite (name and e-mail). You can invite more
             later (Settings &gt; Team &gt; Add member…).</li>
-          <li>Click <b>Create the team…</b>. The first time, Chrome asks for your <b>OneDrive folder</b>: click <b>OneDrive</b>
-            in the list on the left (with a work account it is called "OneDrive - <i>your company</i>") and click
-            <b>Select Folder</b>. If Chrome asks whether SalesTeam may view and edit the files, choose <b>Allow on every visit</b>.</li>
-          <li>SalesTeam creates the folder <b>SalesTeam - <i>team name</i></b> in OneDrive, saves a full backup of your data and
-            copies it into the folder - the messages below the button show how far it is. This can take a minute.</li>
+          <li>Click <b>Create the team…</b>. SalesTeam creates the folder <b>SalesTeam - <i>team name</i></b> in your OneDrive
+            folder, saves a full backup of your data and copies it into the folder - the messages below the button show how
+            far it is. This can take a minute.</li>
           <li>Then open <b>File Explorer &gt; OneDrive</b>, right-click the new folder and choose <b>Always keep on this device</b>
             (on Windows 11 you may first need <b>Show more options</b>).</li>
           <li>Right-click the folder again, choose <b>Share</b>, type your colleagues' e-mail addresses, check that they
             <b>can edit</b>, and click <b>Send</b>. SalesTeam cannot share it for you.</li>
           <li>Each colleague then opens Settings &gt; Team &gt; <b>Join a team…</b> and accepts your invitation.</li>
         </ol>
+        <label>Your OneDrive folder</label>
+        <div class="team-onedrive-row">
+          <span id="team-create-onedrive">Not chosen yet</span>
+          <button type="button" id="team-create-onedrive-btn">Choose your OneDrive folder…</button>
+        </div>
         <label for="team-create-name">Your name</label>
         <input type="text" id="team-create-name" placeholder="e.g. Jane Doe" />
         <label for="team-create-team">Team name</label>
         <input type="text" id="team-create-team" placeholder="e.g. Sales Switzerland" />
+        <p class="field-hint" id="team-create-target"></p>
         <label>Colleagues to invite</label>
         <div id="team-create-invitees"></div>
         <div class="settings-buttons-row">

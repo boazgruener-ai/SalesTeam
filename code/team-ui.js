@@ -272,6 +272,39 @@ function inviteeEditor(rows = 1) {
 let createInvitees = null;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+// Boaz 2026-10-08: the OneDrive folder is chosen first, as its own step - the team folder is then created in it.
+// Shown with where the team folder will be ("OneDrive - TimeToAct\SalesTeam - Sales CH").
+async function paintCreateOneDrive() {
+  const handle = await getOneDriveFolder();
+  const permission = handle ? await teamFolderPermission(handle) : "none";
+  const label = $("team-create-onedrive");
+  label.classList.toggle("team-error", !handle);
+  label.textContent = !handle ? "Not chosen yet - choose it first."
+    : permission === "granted" ? `"${handle.name}" - allowed.`
+      : `"${handle.name}" - Chrome asks once more when you click Create the team….`;
+  $("team-create-onedrive-btn").textContent = handle ? "Choose another folder…" : "Choose your OneDrive folder…";
+  $("team-create-btn").disabled = flowBusy || !handle;
+  const teamName = $("team-create-team").value.trim();
+  setText("team-create-target", handle && teamName ? `The team folder will be "${handle.name}\\${teamFolderName(teamName)}".` : "");
+}
+
+async function onChooseOneDrive() {
+  const status = "team-create-status";
+  let handle = null;
+  try {
+    handle = await oneDriveFolderFromClick({ repick: true });
+  } catch (err) {
+    setText(status, `Could not open the folder: ${err.message}`, true);
+    return;
+  }
+  if (!handle) { await paintCreateOneDrive(); return; }
+  const team = await readTeamJson(handle, [], "team.json");
+  setText(status, team.status === "ok"
+    ? `"${handle.name}" is a team folder, not your OneDrive folder. Choose the OneDrive folder itself ("OneDrive - your company" on the left).`
+    : "", team.status === "ok");
+  await paintCreateOneDrive();
+}
+
 // D19: only a Team Lead creates a team - said once more before the Create form opens.
 async function onShowCreate() {
   const go = await askConfirm("Create a team as Team Lead?\n\nOnly the Team Lead creates the team. If a colleague has invited you, use Join a team instead.",
@@ -279,6 +312,7 @@ async function onShowCreate() {
   if (!go) return;
   showFlow("create");
   prefillName("team-create-name");
+  paintCreateOneDrive().catch(() => {});
   if (!createInvitees) {
     createInvitees = inviteeEditor(2);
     $("team-create-invitees").replaceChildren(createInvitees.el);
@@ -307,8 +341,9 @@ async function onCreate(ownFolder = false) {
       const first = await checkPickedFolder("create", handle);
       if (!first.ok) { setText(status, first.text, true); return; }
     } else {
+      if (!(await getOneDriveFolder())) { setText(status, "Choose your OneDrive folder first (Choose your OneDrive folder… above).", true); return; }
       oneDrive = await oneDriveFolderFromClick();
-      if (!oneDrive) { setText(status, "SalesTeam needs your OneDrive folder to create the team folder in. Click Create the team… again and allow it.", true); return; }
+      if (!oneDrive) { setText(status, "Chrome did not allow SalesTeam to use your OneDrive folder. Click Create the team… again and choose Allow.", true); return; }
       const folderName = teamFolderName(teamName);
       made = { name: folderName, ...(await makeTeamFolder(oneDrive, folderName)) };
       handle = made.handle;
@@ -355,8 +390,8 @@ async function onCreate(ownFolder = false) {
     if (!done && made?.created && oneDrive) await removeEmptyTeamFolder(oneDrive, made.name);
     flowBusy = false;
     picked.create = null;
-    $("team-create-btn").disabled = false;
     $("team-create-pick-btn").disabled = false;
+    await paintCreateOneDrive().catch(() => { $("team-create-btn").disabled = false; });
   }
 }
 
@@ -1015,6 +1050,8 @@ export function initTeamSettings() {
   }));
   $("team-create-btn").addEventListener("click", () => onCreate(false));
   $("team-create-pick-btn").addEventListener("click", () => onCreate(true));
+  $("team-create-onedrive-btn").addEventListener("click", onChooseOneDrive);
+  $("team-create-team").addEventListener("input", () => paintCreateOneDrive().catch(() => {}));
   $("team-find-btn").addEventListener("click", () => onFindTeams());
   $("team-look-again-btn").addEventListener("click", () => onFindTeams());
   $("team-join-pick-btn").addEventListener("click", onPickJoinFolder);
