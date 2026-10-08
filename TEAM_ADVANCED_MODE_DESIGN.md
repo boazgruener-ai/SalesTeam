@@ -585,6 +585,10 @@ with numbered test steps for two Chrome profiles (Team Lead and Member).
   - confirm: "Close the team 'TimeToAct2'? Everyone stops sharing; each person keeps a copy of the data as it is
     now. This cannot be undone. To keep the team going without you, make someone else Team Lead instead.";
   - a Team Lead who wants to leave hands the role over first (Make Team Lead…) and then leaves as a Member.
+  - **A team created by mistake** (Boaz, 2026-10-08 - e.g. the wrong folder, or a test): with no other member and no
+    accepted invitation, the confirm is short - "Close the team 'X'? Nobody else has joined it. Your data stays here
+    as it is." - and open invitations are cancelled with it. The Team Lead's PC is then a single user again, exactly
+    as before creating it, and can create or join another team at once.
   Built in step 1.
   **Answer 2026-10-08: agreed as proposed.**
 - **D17 — Invitations (Boaz, 2026-10-08: in 1.2.3, not later).** The Team Lead adds a member by name, e-mail and
