@@ -121,7 +121,7 @@ function buildModel(groups, pins, summary, accounts, ctx) {
   return { index, byKey, assignments, ready, counts: groupCounts(byKey, index, { assignments, ready }) };
 }
 
-// "Region Europe · Country Switzerland · Size M, L, XL"
+// "Region: Europe · Country: Switzerland · Size: M, L, XL"
 function valueLabel(field, v) {
   if (field === "region") return (CONTINENT_LABELS[v] || v).replace(/ \(.*\)$/, "");
   if (field === "scope") return SCOPE_LABELS[v] || v;
@@ -133,7 +133,7 @@ export function describeGroup(g) {
   const parts = [];
   for (const f of GROUP_FILTER_FIELDS) {
     const vals = g.filter?.[f];
-    if (Array.isArray(vals) && vals.length) parts.push(`${FIELD_LABELS[f]} ${vals.map((v) => valueLabel(f, v)).join(", ")}`);
+    if (Array.isArray(vals) && vals.length) parts.push(`${FIELD_LABELS[f]}: ${vals.map((v) => valueLabel(f, v)).join(", ")}`);
   }
   return parts.join(" · ") || "Filter (no condition)";
 }
