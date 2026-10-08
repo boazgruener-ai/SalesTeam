@@ -2409,7 +2409,7 @@ async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess =
   if (noAccess.length) {
     const names = new Map(rawWorkbook.companies.map((c) => [normalizeCompanyName(c.company), c.company]));
     const listed = noAccess.slice(0, 6).map((k) => `${names.get(k) || k} (${teamAccounts.groupNames(k) || "no group"})`).join(", ");
-    lines.push(`Not assigned - ${toName || "they"} is not in ${noAccess.length === 1 ? "its group" : "their groups"}: ${listed}${noAccess.length > 6 ? ", …" : ""}. ` +
+    lines.push(`${plural(noAccess.length)} not assigned - ${toName || "they"} is not in ${noAccess.length === 1 ? "its group" : "their groups"}: ${listed}${noAccess.length > 6 ? ", …" : ""}. ` +
       "Add them to that group in Settings > Team first.");
   }
   for (const [why, n] of Object.entries(refused)) lines.push(`${plural(n)} not ${type === "TEAM_ASSIGN" ? "assigned" : "released"} - ${TEAM_REFUSAL_TEXT[why] || why}.`);
