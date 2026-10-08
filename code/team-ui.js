@@ -176,6 +176,7 @@ let inviteLookedAt = 0;
 
 async function paintTeamInvitation() {
   if (await getMembership()) { clearStatusMessage(INVITE_BAR_ID); return; }
+  if (document.getElementById("team-join")?.hidden === false) { clearStatusMessage(INVITE_BAR_ID); return; }
   if (Date.now() - inviteLookedAt < INVITE_LOOK_EVERY_MS) return;
   inviteLookedAt = Date.now();
   const toJoin = () => { location.href = chrome.runtime.getURL("settings.html?team=join#team-section"); };
@@ -528,6 +529,20 @@ function showInvitesOf(index) {
   box.replaceChildren();
   if (!t) return;
   const pick = t.mine[0] || (t.open.length === 1 ? t.open[0] : null);
+  // Boaz (1.2.2.8 test): one invitation, in this person's name - said in one line, nothing to choose.
+  if (t.open.length === 1 && t.mine.length === 1) {
+    const inv = t.mine[0];
+    const rb = Object.assign(document.createElement("input"), { type: "radio", name: "team-invite", value: inv.id, checked: true, hidden: true });
+    const p = Object.assign(document.createElement("p"), { className: "team-join-invited" });
+    const b = document.createElement("strong");
+    b.textContent = inv.name;
+    p.append(rb, document.createTextNode(`${inv.byName || "The Team Lead"} invited you as `), b,
+      document.createTextNode(`${inv.at ? ` on ${dayText(inv.at)}` : ""}${inv.email ? ` (${inv.email})` : ""}.`));
+    box.append(p);
+    $("team-join-btn").textContent = `Join as ${inv.name}`;
+    $("team-join-btn").disabled = false;
+    return;
+  }
   box.append(Object.assign(document.createElement("p"), { className: "field-hint", textContent: "Your invitation:" }));
   for (const inv of t.open) {
     const lab = document.createElement("label");
@@ -561,15 +576,15 @@ function showTeams(teams, via, foundAny) {
     setText("team-join-status", foundAny
       ? `${foundAny} found, but no invitation is open there. Ask your Team Lead to add you (Settings > Team > Add member…), then click Find my team… again.`
       : "No team found in OneDrive yet - has the folder been shared with you and added to My files (steps 1-3)? It can take a minute to appear.", true);
-    // "Look again" stays reachable without a team in the list.
-    $("team-join-choose").hidden = false;
     $("team-join-invites").replaceChildren();
-    $("team-join-team").hidden = true;
-    $("team-join-btn").hidden = true;
   }
-  if (teams.length) { $("team-join-team").hidden = false; $("team-join-btn").hidden = false; }
-  // Boaz (1.2.2.8 test): one way on - with the team listed, Find my team… and its explanation step back (Look again stays).
-  $("team-find-btn").hidden = teams.length > 0;
+  // Boaz (1.2.2.8 test): one way on - with the team listed, Find my team… and its explanation step back (Look again
+  // stays, at the bottom). One team: its name is the heading, no list to choose from.
+  const one = teams.length === 1;
+  $("team-join-team").hidden = one;
+  $("team-join-team-label").hidden = one;
+  $("team-join-title").textContent = one ? `Join the team "${teams[0].team.name}"` : "Join a team";
+  $("team-find-row").hidden = teams.length > 0;
   $("team-join-intro").hidden = teams.length > 0;
 }
 
@@ -954,6 +969,11 @@ async function paintSoloInvitation() {
 function onSoloInvitedJoin() {
   const i = invitedCache.teams.findIndex((t) => t.mine.length);
   showFlow("join");
+  // Boaz (1.2.2.8 test): joining is the one thing on this screen - the page's own header and offers step back, and the
+  // top bar does not repeat the invitation shown right here.
+  document.body.classList.add("team-join-focus");
+  clearStatusMessage(INVITE_BAR_ID);
+  $("team-section").scrollIntoView({ block: "start" });
   showTeams(invitedCache.teams, "onedrive", invitedCache.teams.length);
   if (i > 0) { $("team-join-team").value = String(i); showInvitesOf(i); }
 }
@@ -1092,8 +1112,9 @@ export function initTeamSettings() {
   $("team-show-create-btn").addEventListener("click", onShowCreate);
   $("team-show-join-btn").addEventListener("click", () => {
     $("team-join-choose").hidden = true;
-    $("team-find-btn").hidden = false;
+    $("team-find-row").hidden = false;
     $("team-join-intro").hidden = false;
+    $("team-join-title").textContent = "Join a team";
     showFlow("join");
   });
   $("team-solo-invited-btn").addEventListener("click", onSoloInvitedJoin);
@@ -1102,6 +1123,7 @@ export function initTeamSettings() {
     picked.join = null;
     setText("team-create-status", "");
     setText("team-join-status", "");
+    document.body.classList.remove("team-join-focus");
     showFlow(null);
     renderTeamSettings();
   }));
