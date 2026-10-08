@@ -21,7 +21,7 @@ function ensureStyle() {
       box-shadow: 0 8px 30px rgba(0,0,0,.25); font-family: inherit; }
     #salesteam-confirm-dialog::backdrop { background: rgba(0,0,0,.5); }
     #salesteam-confirm-dialog .sc-message { white-space: pre-wrap; font-size: 13px; line-height: 1.5; margin: 0 0 16px; color: #1f2933; }
-    #salesteam-confirm-dialog .sc-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    #salesteam-confirm-dialog .sc-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
     #salesteam-confirm-dialog button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
     #salesteam-confirm-dialog .sc-ok { background: #0a66c2; color: #fff; }
     #salesteam-confirm-dialog .sc-ok.sc-danger { background: #b3261e; }
@@ -118,6 +118,8 @@ export function askChoice(message, choices, { cancelLabel = "Cancel" } = {}) {
       btn.type = "button";
       btn.className = i === choices.length - 1 ? "sc-ok" : "sc-cancel";
       btn.textContent = choice.label;
+      // A label never wraps; a "\n" in it starts a second line ("Anna" / "(3 of 4)").
+      btn.style.whiteSpace = "pre";
       btn.onclick = () => finish(choice.value);
       actions.appendChild(btn);
     });

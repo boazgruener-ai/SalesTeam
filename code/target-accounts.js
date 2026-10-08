@@ -1905,8 +1905,9 @@ document.getElementById("accounts-bulk-assign-to-btn").addEventListener("click",
   // Current members only; each with how many of the selected accounts they may work (their groups, D10).
   const members = [{ id: st.me.memberId, name: `${st.me.name} (you)` }, ...(st.members || []).filter((m) => !m.left && !m.removed)];
   const choices = members.map((m) => {
-    const ok = keys.filter((k) => teamAccounts.mayAccess(m.id, k)).length;
-    return { value: m.id, label: ok === keys.length ? m.name : `${m.name} (${ok} of ${keys.length})`, ok };
+    // Boaz 2026-10-08: "x of y" counts only what would really be assigned - with access, and not theirs already.
+    const ok = keys.filter((k) => teamAccounts.mayAccess(m.id, k) && teamAccounts.entry(k)?.a !== m.id).length;
+    return { value: m.id, label: ok === keys.length ? m.name : `${m.name}\n(${ok} of ${keys.length})`, ok, name: m.name.replace(/ \(you\)$/, "") };
   }).filter((c) => c.ok > 0);
   if (!choices.length) { showNotice("Nobody has access to these accounts - add a member to their groups first (Settings > Team).", { error: true }); return; }
   const to = await askChoice(`Assign the ${keys.length} selected account${keys.length === 1 ? "" : "s"} to:`, choices);
@@ -1915,7 +1916,8 @@ document.getElementById("accounts-bulk-assign-to-btn").addEventListener("click",
   const noAccess = keys.filter((k) => !teamAccounts.mayAccess(to, k));
   if (!work.length) { showNotice(`Nothing to do - the selected accounts ${noAccess.length ? "they may work are " : "are "}already assigned to them.`); return; }
   showNotice(`Assigning ${work.length} account${work.length === 1 ? "" : "s"}…`, { working: true });
-  await teamAssignKeys(work, "TEAM_ASSIGN", { to, toName: choices.find((c) => c.value === to)?.label.replace(/ \(.*$/, ""), noAccess });
+  await teamAssignKeys(work, "TEAM_ASSIGN", { to, toName: choices.find((c) => c.value === to)?.name, noAccess,
+    already: keys.filter((k) => teamAccounts.entry(k)?.a === to).length });
   clearSelection("accounts");
 });
 document.getElementById("contacts-bulk-edit-btn").addEventListener("click", () => openBulkEditDialog("contacts"));
@@ -2389,7 +2391,7 @@ const TEAM_REFUSAL_TEXT = {
 };
 
 // Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
-async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess = [] } = {}) {
+async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess = [], already = 0 } = {}) {
   let done = 0;
   const refused = {};
   for (const key of keys) {
@@ -2403,6 +2405,7 @@ async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess =
   // the member has no access to by name, with their groups.
   const plural = (n) => `${n} account${n === 1 ? "" : "s"}`;
   const lines = [`${plural(done)} ${verb}.`];
+  if (already) lines.push(`${plural(already)} already ${already === 1 ? "was" : "were"} ${toName || "theirs"}'s.`);
   if (noAccess.length) {
     const names = new Map(rawWorkbook.companies.map((c) => [normalizeCompanyName(c.company), c.company]));
     const listed = noAccess.slice(0, 6).map((k) => `${names.get(k) || k} (${teamAccounts.groupNames(k) || "no group"})`).join(", ");
