@@ -458,11 +458,8 @@ export async function renderTeamSettings() {
     const leads = st?.lead?.known ? st.lead : { lead: m.role === "admin" ? m.memberId : null, deputy: null };
     const roleOf = (id) => (id === leads.lead ? "Team Lead" : id === leads.deputy ? "Deputy Team Lead" : "Member");
     const role = roleOf(m.memberId);
-    // Boaz 2026-10-08: the Team Lead does not leave the team they lead (closing the team is a separate, later action),
-    // and needs no Sync now - the automatic sync runs every few seconds.
-    const amLead = m.memberId === leads.lead;
-    $("team-sync-now-btn").hidden = amLead;
-    $("team-leave-btn").hidden = amLead;
+    // Boaz 2026-10-08: the Team Lead does not leave the team they lead (Close the team, D16, comes in step 1).
+    $("team-leave-btn").hidden = m.memberId === leads.lead;
     setText("team-member-who", `You are ${m.name} in the team "${m.teamName}" (${role}), since ${timeText(Date.parse(m.joinedAt))}.`);
     const connected = handle && permission === "granted";
     setText("team-member-folder",
@@ -577,18 +574,6 @@ export function initTeamSettings() {
     setText("team-member-status", p === "granted" ? "Reconnected." : "Not reconnected - Chrome did not allow it.", p !== "granted");
     renderTeamSettings();
     paintTeamBar().catch(() => {});
-  });
-  $("team-sync-now-btn").addEventListener("click", async () => {
-    $("team-sync-now-btn").disabled = true;
-    try {
-      const r = await send({ type: "TEAM_SYNC_NOW" });
-      setText("team-member-status", r.ok ? `Synced at ${timeText(Date.now())}.` : r.folder ? "Not connected to the team folder." : `Problem: ${r.error || "unknown"}`, !r.ok);
-    } catch (err) {
-      setText("team-member-status", err.message, true);
-    } finally {
-      $("team-sync-now-btn").disabled = false;
-      renderTeamSettings();
-    }
   });
   chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[MEMBERSHIP_KEY]) renderTeamSettings(); });
   // The colleagues' "last seen" and the waiting count move on their own: every 5 s while the card is on screen, every

@@ -1,6 +1,6 @@
 # SalesTeam — Team Advanced Mode: Design
 
-Target release: **1.2.3, together with Exclusions & Relationships** (test builds 1.2.2.5, 1.2.2.6 …)
+Target release: **1.2.3, together with Exclusions & Relationships** (test builds 1.2.2.5, 1.2.2.6 …; step 1 from 1.2.2.7)
 Status: **Design — agreed 2026-10-08.** All decisions D1–D15 answered (section 13).
 Date: 2026-10-07
 Builds on: `TEAM_ADVANCED_MODE_REQUIREMENTS.md` (agreed 2026-10-07) and `TEAM_USE_DESIGN.md` (the 1.2.2 sync
@@ -442,12 +442,12 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 
 | Step | Content | Build |
 |---|---|---|
-| 0 | **Data and rules.** `team-groups.js` (pure: `teamLeadOf`, `groupFacts`, `matchesFilter`, `groupsOf`, `membersOf`, `mayAccess`, `voidAssignments`, `groupCounts`) and `geo-regions.js`, all in `test_pure_modules.py` (shuffle tests for the lead chain, null facts, Other, pins). `teamGroups` / `teamGroupPins` keys; Team-Lead-only rule in `applyChange` (two passes); `isTeamLead()` everywhere (the six direct reads); summary gains `g`, `myGroups`, `lead`. **Rename Team Admin → Team Lead** in all user text (~40 strings, help ids kept). Measure the group computation on the live data. | 1.2.2.5 |
-| 1 | **Settings > Team.** Members ⋮ (Make Team Lead…, Groups…, Release all, Remove…); Groups section, editor with preview, delete, counts; hand-over flow; Reassign candidates fixed (no former members, only those with access). `test_team_sync.py`: hand-over between two members, a non-lead's group record ignored on every PC. | 1.2.2.6 |
-| 2 | **Visibility.** `canSee` in the companies and contacts tables, Leads Dashboard, side panel, account/contact page, Decisions, exports, LinkedIn badge. | 1.2.2.7 |
-| 3 | **Picker, column, header, notices, log.** Shared picker on the three pages, deep links from the overview, Groups column, header line; notice detectors; team-log lines. | 1.2.2.8 |
-| 4 | **Group changes.** Add to / Remove from group… (row, page, bulk); pins from automatic work and `group_move` decisions; voided assignments and the Team Lead's explicit releases with the before-save count. `test_team_sync.py`: research moves an assigned account → pinned → approved → assignee loses it; unassigned moves at once. | 1.2.2.9 |
-| 5 | **Pipeline and Discovery.** Access in `mayWork`, candidates with access, Team Lead fills gaps, Discovery Team Lead only. `test_team_sync.py`: shares disjoint and covering per group; a group with nobody online goes to the Team Lead. | 1.2.2.10 |
+| 0 | **Data and rules.** `team-groups.js` (pure: `teamLeadOf`, `groupFacts`, `matchesFilter`, `groupsOf`, `membersOf`, `mayAccess`, `voidAssignments`, `groupCounts`) and `geo-regions.js`, all in `test_pure_modules.py` (shuffle tests for the lead chain, null facts, Other, pins). `teamGroups` / `teamGroupPins` keys; Team-Lead-only rule in `applyChange` (two passes); `isTeamLead()` everywhere (the six direct reads); summary gains `g`, `myGroups`, `lead`. **Rename Team Admin → Team Lead** in all user text (~40 strings, help ids kept). Measure the group computation on the live data. | 1.2.2.5; fixes 1.2.2.6 (clear "✓ Saved", creator from team.json, Team Lead has no Leave the team, Sync now removed) |
+| 1 | **Settings > Team.** Members ⋮ (Make Team Lead…, Groups…, Release all, Remove…); Groups section, editor with preview, delete, counts; hand-over flow; Reassign candidates fixed (no former members, only those with access). `test_team_sync.py`: hand-over between two members, a non-lead's group record ignored on every PC. **Close the team… (D16).** | 1.2.2.7 |
+| 2 | **Visibility.** `canSee` in the companies and contacts tables, Leads Dashboard, side panel, account/contact page, Decisions, exports, LinkedIn badge. | 1.2.2.8 |
+| 3 | **Picker, column, header, notices, log.** Shared picker on the three pages, deep links from the overview, Groups column, header line; notice detectors; team-log lines. | 1.2.2.9 |
+| 4 | **Group changes.** Add to / Remove from group… (row, page, bulk); pins from automatic work and `group_move` decisions; voided assignments and the Team Lead's explicit releases with the before-save count. `test_team_sync.py`: research moves an assigned account → pinned → approved → assignee loses it; unassigned moves at once. | 1.2.2.10 |
+| 5 | **Pipeline and Discovery.** Access in `mayWork`, candidates with access, Team Lead fills gaps, Discovery Team Lead only. `test_team_sync.py`: shares disjoint and covering per group; a group with nobody online goes to the Team Lead. | 1.2.2.11 |
 | 6 | Help ("Account groups", "Working as a team", Team Lead), PRD section + gen_docs mirror, one 1.2.3 release-notes entry covering both items, listing/website check → **1.2.3** rebuilt. | 1.2.3 |
 
 Each step: `check_js_syntax.py`, `test_pure_modules.py`, `test_team_sync.py`, then Reload on the live install
@@ -533,3 +533,14 @@ with numbered test steps for two Chrome profiles (Team Lead and Member).
 - **D14 — Picker as two dropdowns** (Group, Assigned) on all three pages, rather than one combined list ("EMEA —
   Mine", "EMEA — Unassigned" …). Agree?
   **Answer 2026-10-08: agreed**, with the second dropdown labelled **Assigned**.
+- **D16 — Close the team (Boaz, 2026-10-08).** The Team Lead does not leave a team they lead; "Leave the team" is
+  hidden for them (done in 1.2.2.6, together with removing "Sync now" for everyone - the automatic sync runs every few
+  seconds). Instead the Team Lead gets **Close the team…** (red, where Leave the team is for members; not for the
+  deputy):
+  - every PC stops sharing; each member keeps the data as it is at that moment, as their own copy;
+  - all assignments end; the team folder is marked closed, so nobody can join it again;
+  - confirm: "Close the team 'TimeToAct2'? Everyone stops sharing; each person keeps a copy of the data as it is
+    now. This cannot be undone. To keep the team going without you, make someone else Team Lead instead.";
+  - a Team Lead who wants to leave hands the role over first (Make Team Lead…) and then leaves as a Member.
+  Built in step 1.
+  **Answer 2026-10-08: agreed as proposed.**
