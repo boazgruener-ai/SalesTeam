@@ -845,6 +845,18 @@ textarea {
 .team-menu-item.danger { color: #b3261e; }
 .team-warn { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #fff4e5; border: 1px solid #f0c48a; color: #8a5300; font-size: 11px; font-weight: 600; }
 .team-warn-line { color: #8a5300; font-size: 12.5px; }
+/* 1.2.3 step 1b (D17-D19): invitations, the team list, Join first. */
+.team-invited-box { display: flex; gap: 12px; align-items: center; margin: 8px 0 12px; padding: 10px 14px; background: #e8f0fe; border: 1px solid #a8c2f0; border-radius: 8px; font-size: 13px; }
+.team-invited-box button.team-primary-btn { background: #1155cc; border-color: #1155cc; color: #fff; }
+.team-create-line { margin-top: 14px; }
+.team-link-btn { background: none; border: none; padding: 0; color: #1155cc; text-decoration: underline; cursor: pointer; font: inherit; }
+.team-invitee-row { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
+.team-invitee-row input { flex: 1; min-width: 0; padding: 5px 8px; }
+.team-invitee-row button { flex: none; }
+#team-join-choose { margin-top: 10px; }
+#team-join-choose select { display: block; min-width: 320px; max-width: 100%; padding: 4px 6px; margin-bottom: 8px; }
+.team-invite-choice { display: block; padding: 2px 0; cursor: pointer; font-weight: normal; }
+.team-invited-row td { color: #5a6270; font-style: italic; }
 .team-group-mine { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #e6f0ff; color: #1155cc; font-size: 11px; font-weight: 600; }
 .team-groups-table { border-collapse: collapse; font-size: 12.5px; margin: 4px 0 10px; }
 .team-groups-table td { border-bottom: 1px solid #e3e8ef; padding: 5px 14px 5px 0; vertical-align: top; }

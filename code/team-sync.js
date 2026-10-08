@@ -31,6 +31,7 @@ import {
 } from "./team-folder.js";
 import { teamLogEntries, appendTeamLog } from "./team-log.js";
 import { joinOverlap, addBackValues, joinProposals, JOIN_PROPOSALS_KEY } from "./team-join.js";
+import { INVITES_DIR, inviteState, inviteRefusal } from "./team-invites.js";
 
 export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 // Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
@@ -365,6 +366,21 @@ async function noteRoleChange(before, records) {
   await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((text) => ({ kind: "role", text, at: now }))].slice(-50) });
 }
 
+// 1.2.3 step 1b (10a.2): "Annick Zutter joined the team" - on the PCs with the Team Lead's rights, when an invitation
+// this PC knew as open is read back as accepted.
+async function noteInvitesAccepted(before) {
+  if (!hasLeadRights()) return;
+  const texts = [];
+  for (const [id, inv] of Object.entries(mem.meta.invites || {})) {
+    if (inviteState(before[id]) !== "open" || inviteState(inv) !== "accepted") continue;
+    texts.push(`${inv.name} joined the team. Add ${inv.name} to groups in Settings > Team (⋮ next to the name > Groups…).`);
+  }
+  if (!texts.length) return;
+  const now = Date.now();
+  const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
+  await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((text) => ({ kind: "joined", text, at: now }))].slice(-50) });
+}
+
 // Outside the queue (file reading is slow). Reads base files and every colleague's new change files in order.
 async function readFolder(root, me, { includeSelf = false } = {}) {
   const meta = mem.meta;
@@ -381,6 +397,12 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
   // D16: the Team Lead closed the team - closed.json at the top. Every PC stops sharing when it sees it.
   const closed = await readTeamJson(root, [], "closed.json");
   if (closed.status === "ok" && (!membership?.teamId || !closed.data.teamId || closed.data.teamId === membership.teamId)) update.closed = closed.data;
+  // 1.2.3 step 1b (D17): the invitations - a handful of small files, read every round (Invited rows, "X joined").
+  update.invites = {};
+  for (const n of await listTeamNames(root, [INVITES_DIR], "file")) {
+    const r = await readTeamJson(root, [INVITES_DIR], n);
+    if (r.status === "ok" && r.data && r.data.id) update.invites[r.data.id] = r.data;
+  }
   // Members the Team Lead removed (Boaz 2026-10-06): removed/<member>.json, written by the admin.
   update.removed = {};
   for (const n of await listTeamNames(root, ["removed"], "file")) {
@@ -456,6 +478,7 @@ function commitReadUpdate(update) {
   if (update.selfCursor != null) meta.selfCursor = update.selfCursor;
   if (update.removed) meta.removed = { ...(meta.removed || {}), ...update.removed };
   if (update.closed) meta.closed = update.closed;
+  if (update.invites) meta.invites = { ...(meta.invites || {}), ...update.invites };
   meta.lastReadAt = Date.now();
 }
 
@@ -517,8 +540,10 @@ async function readRound(root, me) {
   const t0 = performance.now();
   const { records, update } = await readFolder(root, me);
   await enqueue(async () => {
+    const invitesBefore = { ...(mem.meta.invites || {}) };
     commitReadUpdate(update);
     await noteCreator();
+    await noteInvitesAccepted(invitesBefore);
     for (const [id, r] of Object.entries(update.removed || {})) if (r.by && r.by !== me) await logMemberRemoved(id, r.by, r.at);
     // My own records read back are already in the log (written when they went out).
     const logged = records.slice(update.baseRecords).filter((r) => stampMember(r && r.t) !== me);
@@ -1243,12 +1268,60 @@ export async function closeTeam() {
     const root = await connectedRoot();
     if (!root) return { ok: false, reason: "offline" };
     await writeTeamJson(root, [], "closed.json", { teamId: membership.teamId, by: membership.memberId, byName: membership.name, at: Date.now() });
+    // D16: open invitations end with the team.
+    for (const n of await listTeamNames(root, [INVITES_DIR], "file")) {
+      const r = await readTeamJson(root, [INVITES_DIR], n);
+      if (r.status === "ok" && inviteState(r.data) === "open") {
+        await writeTeamJson(root, [INVITES_DIR], n, { ...r.data, status: "cancelled", cancelledBy: membership.memberId, cancelledByName: membership.name, cancelledAt: Date.now() });
+      }
+    }
     return { ok: true };
   });
   if (!r.ok) return r;
   leaving = true;
   try { await leaveLocally(); } finally { leaving = false; }
   return { ok: true, closed: true };
+}
+
+// 1.2.3 step 1b (D17, 10a.1): the Team Lead or the deputy invites a colleague by name and e-mail. No groups: those are
+// set after the colleague has joined (until then they are in Other). Written straight into the team folder.
+export function inviteMember({ name, email = "" } = {}) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!hasLeadRights()) return { ok: false, reason: "not_lead" };
+    const clean = String(name || "").trim();
+    if (!clean) return { ok: false, reason: "no_name" };
+    const root = await connectedRoot();
+    if (!root) return { ok: false, reason: "offline" };
+    const id = randomId("i");
+    const invite = { id, teamId: membership.teamId, name: clean, email: String(email || "").trim(), by: membership.memberId, byName: membership.name, at: Date.now(), status: "open" };
+    await writeTeamJson(root, [INVITES_DIR], `${id}.json`, invite);
+    mem.meta.invites = { ...(mem.meta.invites || {}), [id]: invite };
+    await save([]);
+    return { ok: true, invite };
+  });
+}
+
+// Marked cancelled, not deleted: a PC that joins with it later is refused.
+export function cancelInvite(id) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!hasLeadRights()) return { ok: false, reason: "not_lead" };
+    const root = await connectedRoot();
+    if (!root) return { ok: false, reason: "offline" };
+    const r = await readTeamJson(root, [INVITES_DIR], `${id}.json`);
+    if (r.status !== "ok") return { ok: false, reason: "missing" };
+    const state = inviteState(r.data);
+    if (state === "accepted") return { ok: false, reason: "accepted", name: r.data.name };
+    const next = state === "cancelled" ? r.data
+      : { ...r.data, status: "cancelled", cancelledBy: membership.memberId, cancelledByName: membership.name, cancelledAt: Date.now() };
+    if (state === "open") await writeTeamJson(root, [INVITES_DIR], `${id}.json`, next);
+    mem.meta.invites = { ...(mem.meta.invites || {}), [id]: next };
+    await save([]);
+    return { ok: true };
+  });
 }
 
 // For pages: how many accounts each member has assigned (Settings > Team).
@@ -1329,11 +1402,13 @@ async function setMembership(value) {
 
 async function writeProfile(root, m) {
   await writeTeamJson(root, ["members", m.memberId], "profile.json",
-    { member: m.memberId, name: m.name, joinedAt: m.joinedAt, version: chrome.runtime.getManifest().version });
+    { member: m.memberId, name: m.name, joinedAt: m.joinedAt, version: chrome.runtime.getManifest().version, ...(m.invite ? { invite: m.invite } : {}) });
 }
 
 // The creator: an empty folder becomes the team; this member's shared data becomes its base.
-export function createTeam({ name, teamName }) {
+// 1.2.3 step 1b (Boaz 2026-10-08): `invites` - [{ name, email }], the colleagues the Team Lead invites while setting
+// the team up, so each of them only accepts (Settings > Team > Join a team).
+export function createTeam({ name, teamName, invites = [] }) {
   return enqueue(async () => {
     if (await loadMembership()) throw new Error("This browser is already in a team - leave it first.");
     const root = await requireRoot();
@@ -1357,12 +1432,21 @@ export function createTeam({ name, teamName }) {
     setTeamCreator(mem.state, memberId);
     mem.meta.creator = memberId;
     for (const r of base) applyChange(mem.state, r);
-    await writeTeamJson(root, [], "team.json", { teamId: m.teamId, name: m.teamName, format: FORMAT, createdBy: memberId, createdAt: m.joinedAt });
+    await writeTeamJson(root, [], "team.json", { teamId: m.teamId, name: m.teamName, format: FORMAT, createdBy: memberId, createdByName: m.name, createdAt: m.joinedAt });
     await writeTeamJson(root, ["admins"], `${memberId}.json`, { member: memberId, grantedBy: memberId, at: m.joinedAt });
     await writeProfile(root, m);
     const baseName = `base-${m.joinedAt.replace(/[:.]/g, "-")}.json`;
     const w = await writeTeamJson(root, ["base"], baseName, { member: memberId, written: m.joinedAt, kind: "base", changes: base });
     mem.meta.basesApplied = [baseName];
+    mem.meta.invites = {};
+    for (const x of invites || []) {
+      const invName = String(x?.name || "").trim();
+      if (!invName) continue;
+      const id = randomId("i");
+      const invite = { id, teamId: m.teamId, name: invName, email: String(x.email || "").trim(), by: memberId, byName: m.name, at: Date.now(), status: "open" };
+      await writeTeamJson(root, [INVITES_DIR], `${id}.json`, invite);
+      mem.meta.invites[id] = invite;
+    }
     measure({ kind: "create", records: base.length, bytes: w.bytes, ms: Math.round(performance.now() - t0) });
     await save(["state", "shadow", "outbox", "inflight", "claims"]);
     await setMembership(m);
@@ -1370,7 +1454,7 @@ export function createTeam({ name, teamName }) {
     errorSince = 0;
     lastError = null;
     await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 });
-    return { ok: true, memberId, records: base.length, bytes: w.bytes, counts: localCounts(values) };
+    return { ok: true, memberId, records: base.length, bytes: w.bytes, counts: localCounts(values), invited: Object.keys(mem.meta.invites).length };
   });
 }
 
@@ -1389,13 +1473,14 @@ const JOIN_KEYS = ["targetAccounts", "targetAccountExtras", "targetContactExtras
 
 // Step 6 (R6.7): before joining - what this browser has that the team does not, and what both have that this member
 // has worked on. Reads the folder into a throw-away picture; nothing is saved.
-export function previewJoin() {
+export function previewJoin({ inviteId = null } = {}) {
   return enqueue(async () => {
     if (await loadMembership()) throw new Error("This browser is already in a team - leave it first.");
     const root = await requireRoot();
     const team = await readTeamJson(root, [], "team.json");
     if (team.status !== "ok") throw new Error("This folder has no team in it (team.json is missing or not synced yet).");
     await refuseClosed(root);
+    await readInvite(root, inviteId, team.data.teamId, null);
     await startFresh(randomId("m"));
     try {
       const { records } = await readFolder(root, "-");
@@ -1411,6 +1496,15 @@ export function previewJoin() {
   });
 }
 
+// D17: no joining without an open invitation. Returns the invitation; throws with the reason it cannot be used.
+async function readInvite(root, inviteId, teamId, memberId) {
+  const r = inviteId ? await readTeamJson(root, [INVITES_DIR], `${inviteId}.json`) : { status: "missing" };
+  const inv = r.status === "ok" ? r.data : null;
+  const refusal = inviteRefusal(inv, { teamId, memberId });
+  if (refusal) throw new Error(refusal);
+  return inv;
+}
+
 // D16: a closed team cannot be joined again.
 async function refuseClosed(root) {
   const c = await readTeamJson(root, [], "closed.json");
@@ -1421,16 +1515,35 @@ async function refuseClosed(root) {
 // (Settings > Team) takes a full backup first. Step 6 (R6.7): `addKeys` - accounts only this member has, which it
 // brings in (they come back after the replace as its own changes); accounts both have that this member worked on
 // become join proposals for the Team Lead, and its contacted leads for them come back too.
-export function joinTeam({ name, addKeys = [] }) {
+// 1.2.3 step 1b (D17, 10a.2): `inviteId` - the open invitation this PC joins with; its name is the member's name. It is
+// written back as accepted before anything here changes, and read back: a PC that accepted the same one a moment
+// earlier wins ("This invitation has just been used on another PC"). Should the join then fail, it is opened again.
+export function joinTeam({ name = null, addKeys = [], inviteId = null } = {}) {
   return enqueue(async () => {
     if (await loadMembership()) throw new Error("This browser is already in a team - leave it first.");
     const root = await requireRoot();
     const team = await readTeamJson(root, [], "team.json");
     if (team.status !== "ok") throw new Error("This folder has no team in it (team.json is missing or not synced yet).");
     await refuseClosed(root);
-    const t0 = performance.now();
     const memberId = randomId("m");
-    const m = { memberId, name: name || "Member", teamId: team.data.teamId, teamName: team.data.name, role: "member", joinedAt: new Date().toISOString() };
+    const inv = await readInvite(root, inviteId, team.data.teamId, memberId);
+    const file = `${inv.id}.json`;
+    await writeTeamJson(root, [INVITES_DIR], file, { ...inv, status: "accepted", acceptedBy: memberId, acceptedAt: Date.now() });
+    await readInvite(root, inv.id, team.data.teamId, memberId);
+    try {
+      return await joinWithInvite(root, team, memberId, inv.name || name, inv.id, addKeys);
+    } catch (err) {
+      const back = await readTeamJson(root, [INVITES_DIR], file).catch(() => null);
+      if (back?.status === "ok" && back.data.acceptedBy === memberId) await writeTeamJson(root, [INVITES_DIR], file, inv).catch(() => {});
+      throw err;
+    }
+  });
+}
+
+async function joinWithInvite(root, team, memberId, name, inviteId, addKeys) {
+  {
+    const t0 = performance.now();
+    const m = { memberId, name: name || "Member", teamId: team.data.teamId, teamName: team.data.name, role: "member", joinedAt: new Date().toISOString(), invite: inviteId };
     await startFresh(memberId);
     const { records, update } = await readFolder(root, memberId);
     commitReadUpdate(update);
@@ -1503,8 +1616,8 @@ export function joinTeam({ name, addKeys = [] }) {
     lastError = null;
     await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 });
     const after = await chrome.storage.local.get(["targetAccountsWorkbook", "results"]);
-    return { ok: true, memberId, files: update.files, records: records.length, counts: localCounts(after), brought };
-  });
+    return { ok: true, memberId, name: m.name, files: update.files, records: records.length, counts: localCounts(after), brought };
+  }
 }
 
 function localCounts(values) {
@@ -1609,6 +1722,7 @@ export async function getTeamSyncStatus() {
     lastReadAt: meta.lastReadAt,
     lastHeartbeatAt: meta.lastHeartbeatAt,
     members,
+    invites: Object.values(meta.invites || {}),
     online: members.filter((m) => m.online).length,
     lastOkAt,
     errorSince,
@@ -1659,7 +1773,7 @@ export function handleTeamMessage(message, sendResponse) {
   const reply = (p) => { p.then(sendResponse).catch((err) => sendResponse({ ok: false, error: err.message })); return true; };
   switch (message?.type) {
     case "TEAM_CREATE": return reply(createTeam(message));
-    case "TEAM_JOIN_PREVIEW": return reply(previewJoin());
+    case "TEAM_JOIN_PREVIEW": return reply(previewJoin({ inviteId: message.inviteId || null }));
     case "TEAM_JOIN": return reply(joinTeam(message));
     case "TEAM_LEAVE": return reply(leaveTeam());
     case "TEAM_SYNC_NOW": return reply(runTick("now"));
@@ -1679,6 +1793,8 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_MAKE_LEAD": return reply(makeTeamLead(message.member));
     case "TEAM_SET_DEPUTY": return reply(setDeputy(message.member || null));
     case "TEAM_CLOSE": return reply(closeTeam());
+    case "TEAM_INVITE": return reply(inviteMember({ name: message.name, email: message.email }));
+    case "TEAM_CANCEL_INVITE": return reply(cancelInvite(message.id));
     default: return null;
   }
 }

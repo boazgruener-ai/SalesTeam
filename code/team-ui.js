@@ -12,8 +12,10 @@ import { groupIndex, OTHER_GROUP } from "./team-groups.js";
 import { renderTeamGroups, editMemberGroups, kebabButton } from "./team-groups-ui.js";
 import {
   getTeamFolder, pickTeamFolder, saveTeamFolder, clearTeamFolder, teamFolderPermission, requestTeamFolderPermission,
-  readTeamJson, listTeamFolderTop,
+  readTeamJson, listTeamFolderTop, getOneDriveFolder, oneDriveFolderFromClick, oneDriveFolderIfAllowed, findTeams,
+  makeTeamFolder, removeEmptyTeamFolder, saveTeamFolderVia, teamFolderVia,
 } from "./team-folder.js";
+import { openInvites, inviteMatches, inviteState, teamFolderName } from "./team-invites.js";
 
 const MEMBERSHIP_KEY = "teamMembership"; // team-sync.js TEAM_MEMBERSHIP_KEY
 const PIPELINE_STATE_KEY = "pipelineState"; // pipeline-runner.js
@@ -52,7 +54,13 @@ async function folderState() {
 async function reconnect() {
   const { handle } = await folderState();
   if (!handle) return "none";
-  const permission = await requestTeamFolderPermission(handle);
+  // D18: a team folder reached through the OneDrive folder - Chrome asks for the OneDrive folder, which covers it.
+  if ((await teamFolderVia()) === "onedrive") {
+    const oneDrive = await getOneDriveFolder();
+    if (oneDrive) await requestTeamFolderPermission(oneDrive);
+  }
+  let permission = await teamFolderPermission(handle);
+  if (permission !== "granted") permission = await requestTeamFolderPermission(handle);
   if (permission === "granted") await send({ type: "TEAM_SYNC_NOW" }).catch(() => {});
   return permission;
 }
@@ -127,8 +135,10 @@ async function paintTeamNotices() {
   const all = (await chrome.storage.local.get(NOTICES_KEY))[NOTICES_KEY] || [];
   if (!all.length) { clearStatusMessage(NOTICE_BAR_ID); return; }
   // 1.2.3 step 1: "Boaz made you Team Lead" and the like - each its own sentence, before the accounts.
-  const roles = all.filter((n) => n.kind === "role").map((n) => n.text);
-  const notices = all.filter((n) => n.kind !== "role");
+  // 1.2.3 step 1b: "Annick Zutter joined the team" (kind "joined") is a sentence of its own too.
+  const isText = (n) => n.kind === "role" || n.kind === "joined";
+  const roles = all.filter(isText).map((n) => n.text);
+  const notices = all.filter((n) => !isText(n));
   if (!notices.length) {
     setStatusMessage(NOTICE_BAR_ID, { text: roles.join(" "), action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
     return;
@@ -230,53 +240,123 @@ async function backupFirst(status) {
   }
 }
 
-// Boaz 2026-10-08: one button, as for joining - choose the folder, and the backup and the setup follow by themselves.
-async function onCreate() {
+// Invitee rows (name, e-mail) - in Create and in Add member…. Returns { el, read() -> [{ name, email }] }.
+function inviteeEditor(rows = 1) {
+  const box = document.createElement("div");
+  const list = document.createElement("div");
+  const addRow = (focus = false) => {
+    const row = document.createElement("div");
+    row.className = "team-invitee-row";
+    const name = Object.assign(document.createElement("input"), { type: "text", placeholder: "Name, e.g. Annick Zutter" });
+    const email = Object.assign(document.createElement("input"), { type: "email", placeholder: "E-mail (to tell people of the same name apart)" });
+    const del = Object.assign(document.createElement("button"), { type: "button", textContent: "×", title: "Remove this row" });
+    del.addEventListener("click", () => { row.remove(); if (!list.children.length) addRow(); });
+    row.append(name, email, del);
+    list.append(row);
+    if (focus) name.focus();
+  };
+  for (let i = 0; i < rows; i++) addRow();
+  const more = Object.assign(document.createElement("button"), { type: "button", textContent: "+ Another colleague" });
+  more.addEventListener("click", () => addRow(true));
+  const tools = document.createElement("div");
+  tools.className = "settings-buttons-row";
+  tools.append(more);
+  box.append(list, tools);
+  const read = () => [...list.children].map((r) => {
+    const [n, e] = r.querySelectorAll("input");
+    return { name: n.value.trim(), email: e.value.trim() };
+  }).filter((x) => x.name || x.email);
+  return { el: box, read };
+}
+
+let createInvitees = null;
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+// D19: only a Team Lead creates a team - said once more before the Create form opens.
+async function onShowCreate() {
+  const go = await askConfirm("Create a team as Team Lead?\n\nOnly the Team Lead creates the team. If a colleague has invited you, use Join a team instead.",
+    { okLabel: "I am the Team Lead", cancelLabel: "Cancel" });
+  if (!go) return;
+  showFlow("create");
+  prefillName("team-create-name");
+  if (!createInvitees) {
+    createInvitees = inviteeEditor(2);
+    $("team-create-invitees").replaceChildren(createInvitees.el);
+  }
+}
+
+// 1.2.3 step 1b (D18, Boaz 2026-10-08): create by name - SalesTeam makes "SalesTeam - <team name>" in the OneDrive
+// folder itself, and writes the invitations typed in with it. `ownFolder`: "Use a folder I choose instead…".
+async function onCreate(ownFolder = false) {
   const status = "team-create-status";
   const name = $("team-create-name").value.trim();
   const teamName = $("team-create-team").value.trim();
   if (!name || !teamName) { setText(status, "Enter your name and the team's name first.", true); return; }
+  const invites = createInvitees ? createInvitees.read() : [];
+  const nameless = invites.filter((x) => !x.name);
+  if (nameless.length) { setText(status, `Enter a name for ${nameless.map((x) => x.email).join(", ")} - or remove the row.`, true); return; }
   if (flowBusy) return;
-  // The folder picker needs the click itself, so it comes first.
+  // The folder picker (or Chrome's permission question) needs the click itself, so it comes first.
   let handle = null;
+  let oneDrive = null;
+  let made = null;
   try {
-    handle = await pickTeamFolder({ save: false });
+    if (ownFolder) {
+      handle = await pickTeamFolder({ save: false });
+      if (!handle) return;
+      const first = await checkPickedFolder("create", handle);
+      if (!first.ok) { setText(status, first.text, true); return; }
+    } else {
+      oneDrive = await oneDriveFolderFromClick();
+      if (!oneDrive) { setText(status, "SalesTeam needs your OneDrive folder to create the team folder in. Click Create the team… again and allow it.", true); return; }
+      const folderName = teamFolderName(teamName);
+      made = { name: folderName, ...(await makeTeamFolder(oneDrive, folderName)) };
+      handle = made.handle;
+    }
   } catch (err) {
-    setText(status, `Could not open the folder: ${err.message}`, true);
+    setText(status, `Not created: ${err.message}`, true);
     return;
   }
-  if (!handle) return;
-  const first = await checkPickedFolder("create", handle);
-  if (!first.ok) { setText(status, first.text, true); return; }
   picked.create = handle;
-  setText(status, `${first.text}\nCreating the team - saving a full backup of your data first…`);
+  setText(status, `Team folder: "${handle.name}"${oneDrive ? ` in "${oneDrive.name}"` : ""}.\nCreating the team - saving a full backup of your data first…`);
   flowBusy = true;
   $("team-create-btn").disabled = true;
+  $("team-create-pick-btn").disabled = true;
+  let done = false;
   try {
     // The backup first, straight after the click: saving it may need Chrome's permission for the backup folder.
     const b = await backupFirst(status);
     const recheck = await checkPickedFolder("create", picked.create);
     if (!recheck.ok) throw new Error(recheck.text);
-    await saveTeamFolder(picked.create);
+    await saveTeamFolderVia(picked.create, oneDrive ? "onedrive" : null);
     setText(status, `${b}\nCreating the team - copying your data into the folder…`);
-    const r = await send({ type: "TEAM_CREATE", name, teamName });
+    const r = await send({ type: "TEAM_CREATE", name, teamName, invites });
     if (!r.ok) throw new Error(r.error || "the team could not be created");
+    done = true;
     picked.create = null;
+    createInvitees = null;
+    $("team-create-invitees").replaceChildren();
     showFlow(null);
     await renderTeamSettings();
     const c = r.counts || {};
+    const invitedNames = invites.map((x) => x.name);
     await askConfirm(
-      `The team "${teamName}" is set up, with you as Team Lead.\n\n` +
+      `The team "${teamName}" is set up, with you as Team Lead. Its folder is "${handle.name}"${oneDrive ? ` in "${oneDrive.name}"` : ""}.\n\n` +
       `Its starting data: ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts), plus your Setup and rules.\n\n` +
-      "Next: share the folder with your colleagues (right-click it in File Explorer > Share, \"Can edit\"). Each of them then opens Settings > Team > Join a team.\n\n" +
+      (invitedNames.length ? `Invited: ${invitedNames.join(", ")}. ` : "Nobody is invited yet - use Add member… below the members. ") +
+      `Next, in File Explorer > OneDrive: right-click "${handle.name}" > Always keep on this device; then right-click it > Share, ` +
+      "type your colleagues' e-mail addresses, \"Can edit\", Send. Each of them then opens Settings > Team > Join a team and accepts.\n\n" +
       "SalesTeam shares while a SalesTeam page or the side panel is open.",
       { okLabel: "OK", cancelLabel: "Close" });
   } catch (err) {
     setText(status, `Not created: ${err.message}`, true);
   } finally {
+    // The folder SalesTeam made for a team that was not created goes again (only while it is still empty).
+    if (!done && made?.created && oneDrive) await removeEmptyTeamFolder(oneDrive, made.name);
     flowBusy = false;
     picked.create = null;
     $("team-create-btn").disabled = false;
+    $("team-create-pick-btn").disabled = false;
   }
 }
 
@@ -339,19 +419,102 @@ function chooseAccountsToBring(localOnly, shared) {
   });
 }
 
-// Boaz 2026-10-08: one button - choose the folder, and the backup and the join follow by themselves, with messages.
-// (Pick the folder + Back up and join + a confirm was three steps for one decision, already taken by clicking Join.)
-async function onJoin() {
-  const status = "team-join-status";
-  const name = $("team-join-name").value.trim();
-  if (!name) { setText(status, "Enter your name first.", true); return; }
+// ---- Join (1.2.3 step 1b, D17, D18): the team from a list, then the invitation ----
+// join.teams: what the last look found - [{ handle, folderName, team, creatorName, invites, open, mine }]; join.via:
+// "onedrive" when found in the OneDrive folder, null when the team folder was chosen directly.
+const join = { teams: [], via: null };
+let invitedCache = { at: 0, teams: [] };
+
+function dayText(ms) {
+  return ms ? new Date(ms).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
+}
+
+// Teams with an open invitation; those whose invitation names this person (User Profile) first.
+async function withInvitations(found) {
+  let profile = null;
+  try { profile = await getUserProfile(); } catch { /* matched by nothing */ }
+  return found.map((t) => {
+    const open = openInvites(Object.fromEntries(t.invites.map((i) => [i.id, i])));
+    return { ...t, open, mine: open.filter((i) => inviteMatches(i, profile)) };
+  }).filter((t) => t.open.length)
+    .sort((a, b) => Boolean(b.mine.length) - Boolean(a.mine.length) || String(a.team.name).localeCompare(String(b.team.name)));
+}
+
+function showInvitesOf(index) {
+  const t = join.teams[index];
+  const box = $("team-join-invites");
+  box.replaceChildren();
+  if (!t) return;
+  const pick = t.mine[0] || (t.open.length === 1 ? t.open[0] : null);
+  box.append(Object.assign(document.createElement("p"), { className: "field-hint", textContent: "Your invitation:" }));
+  for (const inv of t.open) {
+    const lab = document.createElement("label");
+    lab.className = "team-invite-choice";
+    const rb = Object.assign(document.createElement("input"), { type: "radio", name: "team-invite", value: inv.id, checked: inv === pick });
+    rb.addEventListener("change", () => { $("team-join-btn").textContent = `Join as ${inv.name}`; $("team-join-btn").disabled = false; });
+    const b = document.createElement("strong");
+    b.textContent = inv.name;
+    lab.append(rb, document.createTextNode(` ${inv.byName || "The Team Lead"} invited: `), b,
+      document.createTextNode(`${inv.email ? ` (${inv.email})` : ""}${inv.at ? `, ${dayText(inv.at)}` : ""}`));
+    box.append(lab);
+  }
+  $("team-join-btn").textContent = pick ? `Join as ${pick.name}` : "Join";
+  $("team-join-btn").disabled = !pick;
+}
+
+function showTeams(teams, via, foundAny) {
+  join.teams = teams;
+  join.via = via;
+  const sel = $("team-join-team");
+  sel.replaceChildren();
+  for (const [i, t] of teams.entries()) {
+    const created = [t.creatorName ? `created by ${t.creatorName}` : "", dayText(Date.parse(t.team.createdAt))].filter(Boolean).join(", ");
+    sel.append(new Option(`${t.team.name}${created ? ` - ${created}` : ""}${t.mine.length ? "" : " (no invitation in your name)"}`, String(i)));
+  }
+  $("team-join-choose").hidden = !teams.length;
+  if (teams.length) {
+    showInvitesOf(0);
+    setText("team-join-status", teams.length === 1 ? "" : `${teams.length} teams have an invitation open - choose yours.`);
+  } else {
+    setText("team-join-status", foundAny
+      ? `${foundAny} found, but no invitation is open there. Ask your Team Lead to add you (Settings > Team > Add member…), then click Find my team… again.`
+      : "No team found in OneDrive yet - has the folder been shared with you and added to My files (steps 1-3)? It can take a minute to appear.", true);
+    // "Look again" stays reachable without a team in the list.
+    $("team-join-choose").hidden = false;
+    $("team-join-invites").replaceChildren();
+    $("team-join-team").hidden = true;
+    $("team-join-btn").hidden = true;
+  }
+  if (teams.length) { $("team-join-team").hidden = false; $("team-join-btn").hidden = false; }
+}
+
+// Find my team… / Look again: the OneDrive folder (asked for once), then every team in it with an invitation open.
+async function onFindTeams({ repick = false } = {}) {
   if (flowBusy) return;
-  const pipe = (await chrome.storage.local.get(PIPELINE_STATE_KEY))[PIPELINE_STATE_KEY];
-  if (pipelineRunning(pipe)) {
-    setText(status, "Automatic preparation is working right now. Click \"Pause for today\" in the bar at the top first, then click Join again.", true);
+  const status = "team-join-status";
+  let oneDrive = null;
+  try {
+    oneDrive = await oneDriveFolderFromClick({ repick });
+  } catch (err) {
+    setText(status, `Could not open the folder: ${err.message}`, true);
     return;
   }
-  // The folder picker needs the click itself, so it comes first.
+  if (!oneDrive) { setText(status, "SalesTeam needs your OneDrive folder to find the team. Click Find my team… again and allow it.", true); return; }
+  setText(status, `Looking for teams in "${oneDrive.name}"…`);
+  try {
+    const found = await findTeams(oneDrive);
+    const teams = await withInvitations(found);
+    invitedCache = { at: Date.now(), teams };
+    showTeams(teams, "onedrive", found.length ? plural(found.length, "team") : 0);
+  } catch (err) {
+    setText(status, `Could not look in "${oneDrive.name}": ${err.message}`, true);
+  }
+}
+
+// Fallback (10a.3): a team folder that is not directly in OneDrive, chosen by hand.
+async function onPickJoinFolder() {
+  if (flowBusy) return;
+  const status = "team-join-status";
   let handle = null;
   try {
     handle = await pickTeamFolder({ save: false });
@@ -362,8 +525,32 @@ async function onJoin() {
   if (!handle) return;
   const first = await checkPickedFolder("join", handle);
   if (!first.ok) { setText(status, first.text, true); return; }
-  picked.join = handle;
-  setText(status, `${first.text}\nJoining - saving a full backup of your data first…`);
+  const found = await findTeams(handle);
+  const teams = await withInvitations(found);
+  if (!teams.length) {
+    setText(status, "There is no invitation for you in this team. Ask the Team Lead to add you (Settings > Team > Add member…).", true);
+    return;
+  }
+  showTeams(teams, null, 1);
+}
+
+// Boaz 2026-10-08: one button - the backup and the join follow by themselves, with messages.
+async function onJoin() {
+  const status = "team-join-status";
+  const entry = join.teams[Number($("team-join-team").value)];
+  const inviteId = document.querySelector('input[name="team-invite"]:checked')?.value;
+  const inv = entry?.open.find((i) => i.id === inviteId);
+  if (!entry || !inv) { setText(status, "Choose the team and your invitation first.", true); return; }
+  if (flowBusy) return;
+  const pipe = (await chrome.storage.local.get(PIPELINE_STATE_KEY))[PIPELINE_STATE_KEY];
+  if (pipelineRunning(pipe)) {
+    setText(status, "Automatic preparation is working right now. Click \"Pause for today\" in the bar at the top first, then click Join again.", true);
+    return;
+  }
+  const first = await checkPickedFolder("join", entry.handle);
+  if (!first.ok) { setText(status, first.text, true); return; }
+  picked.join = entry.handle;
+  setText(status, `${first.text}\nJoining as ${inv.name} - saving a full backup of your data first…`);
   flowBusy = true;
   $("team-join-btn").disabled = true;
   try {
@@ -371,9 +558,13 @@ async function onJoin() {
     const b = await backupFirst(status);
     const recheck = await checkPickedFolder("join", picked.join);
     if (!recheck.ok) throw new Error(recheck.text);
-    await saveTeamFolder(picked.join);
+    const still = await readTeamJson(picked.join, ["invites"], `${inv.id}.json`);
+    if (still.status === "ok" && inviteState(still.data) !== "open") {
+      throw new Error(inviteState(still.data) === "cancelled" ? "The Team Lead cancelled this invitation. Ask for a new one." : "This invitation has just been used on another PC.");
+    }
+    await saveTeamFolderVia(picked.join, join.via);
     setText(status, `${b}\nReading the team's data to compare it with yours…`);
-    const preview = await send({ type: "TEAM_JOIN_PREVIEW" });
+    const preview = await send({ type: "TEAM_JOIN_PREVIEW", inviteId: inv.id });
     if (!preview.ok) { await clearTeamFolder(); throw new Error(preview.error || "could not read the team's data"); }
     let addKeys = [];
     if (preview.localOnly.length || preview.shared.length) {
@@ -381,15 +572,15 @@ async function onJoin() {
       if (addKeys === null) { await clearTeamFolder(); throw new Error("Cancelled - nothing was changed."); }
     }
     setText(status, `${b}\nJoining - reading the team's data…`);
-    const r = await send({ type: "TEAM_JOIN", name, addKeys });
-    if (!r.ok) throw new Error(r.error || "could not join");
+    const r = await send({ type: "TEAM_JOIN", inviteId: inv.id, addKeys });
+    if (!r.ok) { await clearTeamFolder(); throw new Error(r.error || "could not join"); }
     picked.join = null;
     showFlow(null);
     await renderTeamSettings();
     const c = r.counts || {};
     const missing = await personalGaps();
     await askConfirm(
-      `You are now in the team "${recheck.team?.name || ""}".\n\n` +
+      `You are now in the team "${recheck.team?.name || ""}", as ${r.name || inv.name}.\n\n` +
       `This browser now holds the team's ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts). ` +
       "Changes you make are shared with your colleagues, and theirs arrive here by themselves." +
       (r.brought?.accounts ? `\n\nYou brought ${r.brought.accounts} of your own account${r.brought.accounts === 1 ? "" : "s"} into the team${r.brought.assigned ? " - assigned to you" : ""}.` : "") +
@@ -592,6 +783,94 @@ async function onSetDeputy(c, ending, leads = null) {
   renderTeamSettings();
 }
 
+// ---- Invitations on the Team Lead's side (D17, 10a.1) ----
+
+let addMemberFolder = "";
+
+async function onAddMember() {
+  const dlg = document.createElement("dialog");
+  dlg.className = "team-group-dialog";
+  const h = document.createElement("h3");
+  h.textContent = "Add members";
+  const intro = document.createElement("p");
+  intro.className = "field-hint";
+  intro.textContent = "Each colleague gets an invitation in the team folder. They accept it in Settings > Team > Join a team. " +
+    "Groups are set after they have joined (⋮ next to the name > Groups…) - until then they are in Other.";
+  const rows = inviteeEditor(1);
+  const share = document.createElement("p");
+  share.className = "field-hint";
+  share.textContent = `Also share the folder${addMemberFolder ? ` "${addMemberFolder}"` : ""} with them in OneDrive (File Explorer > right-click the folder > Share, "Can edit") - SalesTeam cannot do that.`;
+  const msg = document.createElement("p");
+  msg.className = "field-hint team-status";
+  const actions = document.createElement("div");
+  actions.className = "settings-buttons-row team-dialog-actions";
+  const cancel = Object.assign(document.createElement("button"), { type: "button", textContent: "Cancel" });
+  const save = Object.assign(document.createElement("button"), { type: "button", textContent: "Save", className: "team-primary-btn" });
+  actions.append(cancel, save);
+  dlg.append(h, intro, rows.el, share, msg, actions);
+  const done = () => { dlg.close(); dlg.remove(); };
+  cancel.addEventListener("click", done);
+  dlg.addEventListener("cancel", (e) => { e.preventDefault(); done(); });
+  save.addEventListener("click", async () => {
+    const list = rows.read();
+    if (!list.length || list.some((x) => !x.name)) {
+      msg.textContent = list.length ? "Every row needs a name - or remove the row." : "Enter a name first.";
+      msg.classList.add("team-error");
+      return;
+    }
+    save.disabled = true;
+    const ok = [];
+    const failed = [];
+    for (const x of list) {
+      try {
+        const r = await send({ type: "TEAM_INVITE", name: x.name, email: x.email });
+        (r.ok ? ok : failed).push(r.ok ? x.name : `${x.name} (${REFUSALS[r.reason] || r.error || "try again in a moment"})`);
+      } catch (err) { failed.push(`${x.name} (${err.message})`); }
+    }
+    done();
+    setText("team-member-status", [ok.length ? `Invited: ${ok.join(", ")}.` : "", failed.length ? `Not invited: ${failed.join(", ")}.` : ""].filter(Boolean).join(" "), Boolean(failed.length));
+    renderTeamSettings();
+  });
+  document.body.append(dlg);
+  dlg.showModal();
+  dlg.querySelector("input")?.focus();
+}
+
+async function onCancelInvite(inv) {
+  if (!(await askConfirm(`Cancel the invitation of ${inv.name}${inv.email ? ` (${inv.email})` : ""}?\n\n${inv.name} can then no longer join with it. You can invite again at any time (Add member…).`,
+    { okLabel: "Cancel invitation", cancelLabel: "Keep it", danger: true }))) return;
+  try {
+    const r = await send({ type: "TEAM_CANCEL_INVITE", id: inv.id });
+    setText("team-member-status", r.ok ? `The invitation of ${inv.name} is cancelled.`
+      : r.reason === "accepted" ? `${inv.name} has already joined with this invitation.` : `Not cancelled: ${REFUSALS[r.reason] || r.error || "try again in a moment"}.`, !r.ok);
+  } catch (err) { setText("team-member-status", err.message, true); }
+  renderTeamSettings();
+}
+
+// D19: not in a team - an invitation waiting in OneDrive for this person replaces Create with "… has invited you". Looked
+// for without asking Chrome (only when the OneDrive folder is already allowed), at most once a minute.
+let soloScan = null;
+async function paintSoloInvitation() {
+  if (Date.now() - invitedCache.at > 60000 && !soloScan) {
+    soloScan = (async () => {
+      const oneDrive = await oneDriveFolderIfAllowed();
+      invitedCache = { at: Date.now(), teams: oneDrive ? await withInvitations(await findTeams(oneDrive)) : [] };
+    })().catch(() => { invitedCache = { at: Date.now(), teams: [] }; }).finally(() => { soloScan = null; });
+    await soloScan;
+  }
+  const mine = invitedCache.teams.find((t) => t.mine.length);
+  $("team-solo-invited").hidden = !mine;
+  $("team-solo-create").hidden = Boolean(mine);
+  if (mine) setText("team-solo-invited-text", `${mine.mine[0].byName || "Your Team Lead"} has invited you to ${mine.team.name}.`);
+}
+
+function onSoloInvitedJoin() {
+  const i = invitedCache.teams.findIndex((t) => t.mine.length);
+  showFlow("join");
+  showTeams(invitedCache.teams, "onedrive", invitedCache.teams.length);
+  if (i > 0) { $("team-join-team").value = String(i); showInvitesOf(i); }
+}
+
 let rendering = false;
 
 export async function renderTeamSettings() {
@@ -604,7 +883,11 @@ export async function renderTeamSettings() {
     $("team-member").hidden = !m;
     if (!m) {
       if (badge) badge.textContent = "";
-      if ($("team-create").hidden && $("team-join").hidden) $("team-solo").hidden = false;
+      $("team-add-member-btn").hidden = true;
+      if ($("team-create").hidden && $("team-join").hidden) {
+        $("team-solo").hidden = false;
+        if (!section.hidden) await paintSoloInvitation().catch(() => {});
+      }
       return;
     }
     $("team-solo").hidden = true;
@@ -671,9 +954,27 @@ export async function renderTeamSettings() {
       const self = memberRow([`${m.name} (you)`, role, groupsText(m.memberId), "now", connected ? "online" : "not connected"]);
       self.append(assignedCell(m.memberId, false), actionsCell({ id: m.memberId, name: m.name }, true));
       table.append(self);
+      // 1.2.3 step 1b (D17): open invitations as "Invited", after the current members and before the former ones.
+      const invited = openInvites(Object.fromEntries((st.invites || []).map((i) => [i.id, i])));
+      let invitedShown = false;
+      const showInvited = () => {
+        if (invitedShown) return;
+        invitedShown = true;
+        for (const inv of invited) {
+          const row = memberRow([inv.name, "Invited", "", `invited ${dayText(inv.at)}${inv.byName ? ` by ${inv.byName}` : ""}`, inv.email || "", ""]);
+          row.classList.add("team-invited-row");
+          const td = document.createElement("td");
+          if (hasRights) td.append(kebabButton(`invite-${inv.id}`, `Actions for ${inv.name}`, () => [{ label: "Cancel invitation…", danger: true, onClick: () => onCancelInvite(inv) }]));
+          row.append(td);
+          table.append(row);
+        }
+      };
+      $("team-add-member-btn").hidden = !hasRights;
+      addMemberFolder = handle?.name || "";
       let formerShown = false;
       const sortedMembers = [...(st.members || [])].sort((x, y) => Boolean(x.left) - Boolean(y.left));
       for (const c of sortedMembers) {
+        if (c.left) showInvited();
         if (c.left && !formerShown) {
           formerShown = true;
           const head = memberRow(["Former members", "", "", "", "", "", ""]);
@@ -686,7 +987,8 @@ export async function renderTeamSettings() {
         row.append(assignedCell(c.id, Boolean(c.left)), actionsCell(c, false));
         table.append(row);
       }
-      if (!(st.members || []).length) table.append(memberRow(["No colleague has joined yet.", "", "", "", "", "", ""]));
+      showInvited();
+      if (!(st.members || []).length && !invited.length) table.append(memberRow(["No colleague has joined yet - invite them with Add member….", "", "", "", "", "", ""]));
       // The group counts read every account: only while the card is on screen (the 5 s redraw then keeps them fresh).
       if (!section.hidden) renderTeamGroups(gctx).catch((err) => setText("team-member-status", `Groups: ${err.message}`, true));
       if (badge) badge.textContent = connected ? `${st.online} online` : "!";
@@ -700,17 +1002,25 @@ export async function renderTeamSettings() {
 
 export function initTeamSettings() {
   if (!$("team-section")) return;
-  $("team-show-create-btn").addEventListener("click", () => { showFlow("create"); prefillName("team-create-name"); });
-  $("team-show-join-btn").addEventListener("click", () => { showFlow("join"); prefillName("team-join-name"); });
+  $("team-show-create-btn").addEventListener("click", onShowCreate);
+  $("team-show-join-btn").addEventListener("click", () => { $("team-join-choose").hidden = true; showFlow("join"); });
+  $("team-solo-invited-btn").addEventListener("click", onSoloInvitedJoin);
   document.querySelectorAll("#team-section .team-cancel-btn").forEach((b) => b.addEventListener("click", () => {
     picked.create = null;
     picked.join = null;
     setText("team-create-status", "");
     setText("team-join-status", "");
     showFlow(null);
+    renderTeamSettings();
   }));
-  $("team-create-btn").addEventListener("click", onCreate);
+  $("team-create-btn").addEventListener("click", () => onCreate(false));
+  $("team-create-pick-btn").addEventListener("click", () => onCreate(true));
+  $("team-find-btn").addEventListener("click", () => onFindTeams());
+  $("team-look-again-btn").addEventListener("click", () => onFindTeams());
+  $("team-join-pick-btn").addEventListener("click", onPickJoinFolder);
+  $("team-join-team").addEventListener("change", (e) => showInvitesOf(Number(e.target.value)));
   $("team-join-btn").addEventListener("click", onJoin);
+  $("team-add-member-btn").addEventListener("click", onAddMember);
   $("team-leave-btn").addEventListener("click", onLeave);
   $("team-close-btn").addEventListener("click", onClose);
   $("team-repick-btn").addEventListener("click", onRepick);

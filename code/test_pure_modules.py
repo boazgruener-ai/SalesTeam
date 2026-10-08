@@ -31,7 +31,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
+PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2687,6 +2687,7 @@ def main():
     test_team_log_and_join(ctx)
     test_team_groups(ctx)
     test_relationships(ctx)
+    test_team_invites(ctx)
 
     print()
     for f in _failures:
@@ -2697,6 +2698,22 @@ def main():
         return 1
     print("%d checks passed." % _passes)
     return 0
+
+
+def test_team_invites(ctx):
+    """1.2.3 step 1b (D17-D19): invitations and the team folder's name."""
+    e = ctx.eval
+    check("invites: open, accepted, cancelled", e("[inviteState({ status: 'open' }), inviteState({ acceptedBy: 'm-1' }), inviteState({ status: 'cancelled', acceptedBy: 'm-1' }), inviteState(null)].join()"),
+          "open,accepted,cancelled,missing")
+    check("invites: matched by name, accents and spaces aside", e("inviteMatches({ name: 'Annick  Zütter' }, { name: ' annick zutter' })"), True)
+    check("invites: matched by e-mail", e("inviteMatches({ name: 'A Z', email: 'Anna@X.ch' }, { name: 'Annick', email: 'anna@x.ch' })"), True)
+    check("invites: an empty profile matches nothing", e("inviteMatches({ name: '', email: '' }, { name: '', email: '' })"), False)
+    check("invites: refused - missing / other team / cancelled / used", e("""[inviteRefusal(null), inviteRefusal({ teamId: 't-2', status: 'open' }, { teamId: 't-1' }),
+        inviteRefusal({ status: 'cancelled' }), inviteRefusal({ acceptedBy: 'm-1' }, { memberId: 'm-2' })].map(function (x) { return x.split(' ')[0]; }).join()"""),
+          "There,There,The,This")
+    check("invites: my own acceptance is no refusal", e("inviteRefusal({ acceptedBy: 'm-1' }, { memberId: 'm-1' })"), None)
+    check("invites: open, oldest first", e("openInvites({ a: { name: 'B', at: 2 }, b: { name: 'A', at: 1 }, c: { name: 'C', at: 0, status: 'cancelled' } }).map(function (i) { return i.name; }).join()"), "A,B")
+    check("team folder name: Windows-safe", e("teamFolderName('Sales: CH/DE?  ') + '|' + teamFolderName('...')"), "SalesTeam - Sales CH DE|SalesTeam - Team")
 
 
 if __name__ == "__main__":

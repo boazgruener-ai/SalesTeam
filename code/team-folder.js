@@ -89,7 +89,123 @@ export async function saveTeamFolder(handle) {
 }
 
 export async function clearTeamFolder() {
-  await tx(HANDLES, "readwrite", (s) => { s.delete(FOLDER_KEY); });
+  await tx(HANDLES, "readwrite", (s) => { s.delete(FOLDER_KEY); s.delete(VIA_KEY); });
+}
+
+// ---- the OneDrive folder (1.2.3 step 1b, D18) ----
+// Chrome lets SalesTeam use a folder only after the person picked it once. So Join and Create ask once for the OneDrive
+// folder itself; teams are then found in it (Join) or made in it (Create), and the team folder is reached through it.
+// VIA_KEY: the team folder was reached through the OneDrive folder - reconnecting then asks for the OneDrive folder.
+const ONEDRIVE_KEY = "onedrive";
+const VIA_KEY = "folderVia";
+
+export async function getOneDriveFolder() {
+  try {
+    return (await tx(HANDLES, "readonly", (s) => s.get(ONEDRIVE_KEY))) || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function teamFolderVia() {
+  try {
+    return (await tx(HANDLES, "readonly", (s) => s.get(VIA_KEY))) || null;
+  } catch {
+    return null;
+  }
+}
+
+// The team folder, reached through the OneDrive folder (or picked directly: via null).
+export async function saveTeamFolderVia(handle, via) {
+  await tx(HANDLES, "readwrite", (s) => {
+    s.put(handle, FOLDER_KEY);
+    if (via) s.put(via, VIA_KEY);
+    else s.delete(VIA_KEY);
+  });
+}
+
+// Page only, from a click: the stored OneDrive folder with permission asked for, or the picker the first time.
+// Resolves to the handle, or null (cancelled / not allowed).
+export async function oneDriveFolderFromClick({ repick = false } = {}) {
+  let handle = repick ? null : await getOneDriveFolder();
+  if (handle) {
+    const p = await teamFolderPermission(handle);
+    if (p === "granted" || (await requestTeamFolderPermission(handle)) === "granted") return handle;
+    return null;
+  }
+  try {
+    handle = await window.showDirectoryPicker({ id: "salesteam-onedrive", mode: "readwrite", startIn: "documents" });
+  } catch (err) {
+    if (err && err.name === "AbortError") return null;
+    throw err;
+  }
+  await tx(HANDLES, "readwrite", (s) => { s.put(handle, ONEDRIVE_KEY); });
+  return handle;
+}
+
+// The OneDrive folder without asking (null when there is none or it needs a click first).
+export async function oneDriveFolderIfAllowed() {
+  const handle = await getOneDriveFolder();
+  if (!handle) return null;
+  return (await teamFolderPermission(handle)) === "granted" ? handle : null;
+}
+
+// Every team in the OneDrive folder: the folder itself if it holds a team, and each folder one level down that does
+// (a shared folder added with "Add shortcut to My files" appears there). Closed teams are left out.
+// -> [{ handle, folderName, team, invites: [invitation, …] }]
+export async function findTeams(oneDrive) {
+  const out = [];
+  const look = async (handle) => {
+    const team = await readTeamJson(handle, [], "team.json");
+    if (team.status !== "ok" || !team.data?.teamId) return;
+    if ((await readTeamJson(handle, [], "closed.json")).status === "ok") return;
+    const invites = [];
+    for (const n of await listTeamNames(handle, ["invites"], "file").catch(() => [])) {
+      const r = await readTeamJson(handle, ["invites"], n);
+      if (r.status === "ok" && r.data?.id) invites.push(r.data);
+    }
+    let creatorName = team.data.createdByName || null;
+    if (!creatorName && team.data.createdBy) {
+      const p = await readTeamJson(handle, ["members", team.data.createdBy], "profile.json");
+      if (p.status === "ok") creatorName = p.data.name || null;
+    }
+    out.push({ handle, folderName: handle.name, team: team.data, creatorName, invites });
+  };
+  await look(oneDrive);
+  if (out.length) return out; // the OneDrive folder picked was a team folder itself
+  for await (const [, handle] of oneDrive.entries()) {
+    if (handle.kind !== "directory" || handle.name.startsWith(".")) continue;
+    try { await look(handle); } catch { /* a folder OneDrive cannot open right now - skipped */ }
+  }
+  return out.sort((a, b) => String(a.team.name).localeCompare(String(b.team.name)));
+}
+
+// Create (D18): the team folder `name` inside the OneDrive folder. An existing empty folder of that name is used; one
+// with something in it is refused. -> { handle, created }
+export async function makeTeamFolder(oneDrive, name) {
+  if ((await readTeamJson(oneDrive, [], "team.json")).status === "ok") {
+    throw new Error(`"${oneDrive.name}" is a team folder, not your OneDrive folder. Choose the OneDrive folder itself (Choose your OneDrive folder again…).`);
+  }
+  let existing = null;
+  try { existing = await oneDrive.getDirectoryHandle(name); } catch (err) { if (!isNotFound(err)) throw err; }
+  if (existing) {
+    const top = (await listTeamFolderTop(existing)).filter((n) => !n.startsWith(".") && n.toLowerCase() !== "desktop.ini");
+    if (top.length) throw new Error(`There is already a folder "${name}" in "${oneDrive.name}", and it is not empty. Choose another team name.`);
+    return { handle: existing, created: false };
+  }
+  return { handle: await oneDrive.getDirectoryHandle(name, { create: true }), created: true };
+}
+
+// Undo makeTeamFolder when creating the team did not go through (only while the folder is still empty).
+export async function removeEmptyTeamFolder(oneDrive, name) {
+  try {
+    const dir = await oneDrive.getDirectoryHandle(name);
+    if ((await listTeamFolderTop(dir)).length) return false;
+    await oneDrive.removeEntry(name);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Page only, from a click. Resolves to the handle, or null if the user cancelled the picker. `save: false` leaves the

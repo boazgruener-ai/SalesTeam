@@ -387,17 +387,27 @@
          Wired by team-ui.js. -->
     <section class="settings-card" id="team-section">
       <h3>Team</h3>
+      <!-- 1.2.3 step 1b (TEAM_ADVANCED_MODE_DESIGN.md 10a, D17-D19): Join first; Create is for the Team Lead. -->
       <div id="team-solo">
         <p class="field-hint">
           Work as a team: colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder your
           team owns. Every member's SalesTeam reads and writes that folder - there is no SalesTeam server and no sign-in.
           Your API key, User Profile, drafts, scanner settings and LinkedIn limits stay personal.
         </p>
-        <p class="field-hint">One person creates the team (and becomes its Team Lead); the others join it.</p>
-        <div class="settings-buttons-row">
-          <button type="button" id="team-show-create-btn">Create a team…</button>
-          <button type="button" id="team-show-join-btn">Join a team…</button>
+        <div class="team-invited-box" id="team-solo-invited" hidden>
+          <span id="team-solo-invited-text"></span>
+          <button type="button" id="team-solo-invited-btn" class="team-primary-btn">Join</button>
         </div>
+        <div id="team-solo-join">
+          <p>Your Team Lead invites you.</p>
+          <div class="settings-buttons-row">
+            <button type="button" id="team-show-join-btn" class="team-primary-btn">Join a team…</button>
+          </div>
+        </div>
+        <p class="field-hint team-create-line" id="team-solo-create">
+          Are you the Team Lead, setting up a team for your colleagues?
+          <button type="button" id="team-show-create-btn" class="team-link-btn">Create a team as Team Lead…</button>
+        </p>
       </div>
 
       <div id="team-create" hidden>
@@ -405,26 +415,28 @@
         <p class="field-hint">You become the Team Lead. Your accounts, contacts, leads (posts), Setup and rules become the team's
           starting data. Everyone in the team sees the shared data, including who contacted whom.</p>
         <ol class="team-steps">
-          <li>Open <b>File Explorer</b> and click <b>OneDrive</b> in the list on the left (with a work account it is called
-            "OneDrive - <i>your company</i>").</li>
-          <li>Right-click an empty spot, choose <b>New &gt; Folder</b> and name it, for example, <b>SalesTeam Team</b>. Leave it empty.</li>
-          <li>Right-click the new folder and choose <b>Always keep on this device</b> (on Windows 11 you may first need
-            <b>Show more options</b>).</li>
+          <li>Below: enter your name, the team's name, and the colleagues you invite (name and e-mail). You can invite more
+            later (Settings &gt; Team &gt; Add member…).</li>
+          <li>Click <b>Create the team…</b>. The first time, Chrome asks for your <b>OneDrive folder</b>: click <b>OneDrive</b>
+            in the list on the left (with a work account it is called "OneDrive - <i>your company</i>") and click
+            <b>Select Folder</b>. If Chrome asks whether SalesTeam may view and edit the files, choose <b>Allow on every visit</b>.</li>
+          <li>SalesTeam creates the folder <b>SalesTeam - <i>team name</i></b> in OneDrive, saves a full backup of your data and
+            copies it into the folder - the messages below the button show how far it is. This can take a minute.</li>
+          <li>Then open <b>File Explorer &gt; OneDrive</b>, right-click the new folder and choose <b>Always keep on this device</b>
+            (on Windows 11 you may first need <b>Show more options</b>).</li>
           <li>Right-click the folder again, choose <b>Share</b>, type your colleagues' e-mail addresses, check that they
-            <b>can edit</b>, and click <b>Send</b>. You can also do this later.</li>
-          <li>Here: enter your name and the team's name below, click <b>Choose the folder and create the team…</b> and
-            choose the new folder.</li>
-          <li>If Chrome asks whether SalesTeam may view and edit the files in the folder, choose <b>Allow on every visit</b>.
-            ("Allow this time" works too, but then SalesTeam asks you to reconnect every time you open it again.)</li>
-          <li>SalesTeam then saves a full backup of your data and copies it into the folder by itself - the messages
-            below the button show how far it is. This can take a minute.</li>
+            <b>can edit</b>, and click <b>Send</b>. SalesTeam cannot share it for you.</li>
+          <li>Each colleague then opens Settings &gt; Team &gt; <b>Join a team…</b> and accepts your invitation.</li>
         </ol>
         <label for="team-create-name">Your name</label>
         <input type="text" id="team-create-name" placeholder="e.g. Jane Doe" />
         <label for="team-create-team">Team name</label>
         <input type="text" id="team-create-team" placeholder="e.g. Sales Switzerland" />
+        <label>Colleagues to invite</label>
+        <div id="team-create-invitees"></div>
         <div class="settings-buttons-row">
-          <button type="button" id="team-create-btn" class="team-primary-btn">Choose the folder and create the team…</button>
+          <button type="button" id="team-create-btn" class="team-primary-btn">Create the team…</button>
+          <button type="button" id="team-create-pick-btn" title="For a team folder that is not directly in OneDrive: choose a new, empty folder yourself">Use a folder I choose instead…</button>
           <button type="button" class="team-cancel-btn">Cancel</button>
         </div>
         <p class="field-hint team-status" id="team-create-status" role="status"></p>
@@ -440,22 +452,31 @@
           Everyone in the team sees the shared data, including who contacted whom.
         </div>
         <ol class="team-steps">
-          <li>Open the e-mail in which your colleague shared the team folder and click <b>Open</b>. The folder opens in
+          <li>Open the e-mail in which your Team Lead shared the team folder and click <b>Open</b>. The folder opens in
             OneDrive in your browser. (No e-mail? Open OneDrive in the browser and click <b>Shared</b> on the left.)</li>
           <li>Click <b>Add shortcut to My files</b> (at the top, or under <b>…</b> next to the folder's name).</li>
           <li>Open <b>File Explorer &gt; OneDrive</b>. After a minute the folder appears there. Right-click it and choose
             <b>Always keep on this device</b>, then wait until its files show a green tick.</li>
           <li>If the bar at the top of SalesTeam says it is preparing accounts ("working on …"), click <b>Pause for today</b> first.</li>
-          <li>Here: enter your name below, click <b>Choose the team folder and join…</b> and choose that folder.</li>
-          <li>If Chrome asks whether SalesTeam may view and edit the files in the folder, choose <b>Allow on every visit</b>.</li>
-          <li>SalesTeam then saves a full backup of your data and joins the team by itself - the messages below the button
-            show how far it is.</li>
+          <li>Here: click <b>Find my team…</b>. The first time, Chrome asks for your <b>OneDrive folder</b>: click <b>OneDrive</b>
+            in the list on the left ("OneDrive - <i>your company</i>" with a work account) and click <b>Select Folder</b>.
+            If Chrome asks whether SalesTeam may view and edit the files, choose <b>Allow on every visit</b>.</li>
+          <li>Choose your team in the list, check that your invitation is ticked and click <b>Join as …</b>. SalesTeam saves a
+            full backup of your data and joins the team by itself - the messages below show how far it is.</li>
         </ol>
-        <label for="team-join-name">Your name</label>
-        <input type="text" id="team-join-name" placeholder="e.g. Jane Doe" />
         <div class="settings-buttons-row">
-          <button type="button" id="team-join-btn" class="team-primary-btn">Choose the team folder and join…</button>
+          <button type="button" id="team-find-btn" class="team-primary-btn">Find my team…</button>
+          <button type="button" id="team-join-pick-btn" title="For a team folder that is not directly in OneDrive: choose the team folder yourself">Choose a folder instead…</button>
           <button type="button" class="team-cancel-btn">Cancel</button>
+        </div>
+        <div id="team-join-choose" hidden>
+          <label for="team-join-team">Team</label>
+          <select id="team-join-team"></select>
+          <div id="team-join-invites"></div>
+          <div class="settings-buttons-row">
+            <button type="button" id="team-join-btn" class="team-primary-btn">Join</button>
+            <button type="button" id="team-look-again-btn">Look again</button>
+          </div>
         </div>
         <p class="field-hint team-status" id="team-join-status" role="status"></p>
       </div>
@@ -473,6 +494,9 @@
           wait on this PC and go out when you open SalesTeam again - nothing is lost.</p>
         <h4>Members</h4>
         <table id="team-members-table"></table>
+        <div class="settings-buttons-row">
+          <button type="button" id="team-add-member-btn" hidden title="Invite colleagues by name and e-mail - they then accept in Settings > Team > Join a team">Add member…</button>
+        </div>
         <!-- 1.2.3 step 1 (TEAM_ADVANCED_MODE_DESIGN.md 10.2): wired by team-groups-ui.js. -->
         <h4>Groups</h4>
         <div id="team-groups"></div>

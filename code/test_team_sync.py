@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-sync.js"]
+REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -236,6 +236,12 @@ def same(a, b):
     return json.dumps(deep_sorted(a)) == json.dumps(deep_sorted(b))
 
 
+def invite(lead, name, folder, email=""):
+    """1.2.3 step 1b (D17): nobody joins without an invitation - the Team Lead writes one first."""
+    r, folder = lead.call("inviteMember({ name: %s, email: %s })" % (json.dumps(name), json.dumps(email)), folder)
+    return (r.get("invite") or {}).get("id"), folder
+
+
 def main():
     folder = {}
     anna = Member("anna")
@@ -275,7 +281,26 @@ def main():
         "anthropicApiKey": "sk-ben",
     })
     r, folder = ben.call("joinTeam({ name: 'Ben' })", folder)
+    check("invite: joining without an invitation is refused", ("no invitation" in (r.get("error") or ""), ben.local("teamMembership")), (True, None))
+    inv, folder = invite(ben, "Ben", folder)
+    check("invite: a non-member cannot invite", inv, None)
+    inv, folder = invite(anna, "Ben", folder, "ben@example.com")
+    check("invite: the Team Lead invites - invites/<id>.json, open", json.loads(folder["invites/%s.json" % inv])["status"], "open")
+    r, folder = ben.call("joinTeam({ name: 'Benjamin', inviteId: '%s' })" % inv, folder)
     check("join: ok", r.get("ok"), True)
+    check("invite: Ben joins with the invitation's name", (r.get("name"), ben.local("teamMembership")["name"]), ("Ben", "Ben"))
+    acc = json.loads(folder["invites/%s.json" % inv])
+    check("invite: written back as accepted by Ben", (acc["status"], acc["acceptedBy"]), ("accepted", r.get("memberId")))
+    bob = Member("bob", now_offset=9)
+    r2, folder = bob.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    check("invite: an invitation cannot be used twice", ("another PC" in (r2.get("error") or ""), bob.local("teamMembership")), (True, None))
+    inv2, folder = invite(anna, "Bob", folder)
+    r2, folder = anna.call("cancelInvite('%s')" % inv2, folder)
+    check("invite: cancelled", (r2.get("ok"), json.loads(folder["invites/%s.json" % inv2])["status"]), (True, "cancelled"))
+    r2, folder = bob.call("joinTeam({ inviteId: '%s' })" % inv2, folder)
+    check("invite: a cancelled invitation is refused", ("cancelled" in (r2.get("error") or ""), bob.local("teamMembership")), (True, None))
+    r2, folder = anna.call("cancelInvite('%s')" % inv, folder)
+    check("invite: an accepted invitation cannot be cancelled", (r2.get("ok"), r2.get("reason")), (False, "accepted"))
     check("join: Ben has the team's picture", same(picture(ben), {**picture(anna), "results": {
         "lead-1": {"author": "Ann", "status": "New"}, "lead-2": {"author": "Bob", "status": "New"}}}), True)
     check("join: Ben keeps his API key", ben.local("anthropicApiKey"), "sk-ben")
@@ -368,7 +393,12 @@ def main():
     check("compact: one snapshot written", len(snaps), 1)
     check("compact: only the newest change file is left", len(left), 1)
     cleo = Member("cleo", now_offset=8 * 24 * 3600 * 1000 + 20)
-    r, folder = cleo.call("joinTeam({ name: 'Cleo' })", folder)
+    r, folder = anna.sync(folder)
+    check("invite: Anna is told Ben joined", [n["text"].split(".")[0] for n in anna.local("teamNotices") or [] if n.get("kind") == "joined"], ["Ben joined the team"])
+    st = anna.status()
+    check("invite: status lists the invitations", sorted(i["status"] for i in st.get("invites", [])), ["accepted", "cancelled"])
+    inv, folder = invite(anna, "Cleo", folder)
+    r, folder = cleo.call("joinTeam({ inviteId: '%s' })" % inv, folder)
     r, folder = ben.sync(folder)
     check("compact: Cleo joining after compaction has the same picture as Anna",
           same({k: v for k, v in picture(cleo).items() if k != "results"}, {k: v for k, v in picture(anna).items() if k != "results"}), True)
@@ -391,9 +421,12 @@ def main():
             {"companyId": "c-1", "company": "Acme AG"}, {"companyId": "c-2", "company": "Beta SA"}], "contacts": []},
         "targetAccountExtras": {"acme ag": {"status": "New"}, "beta sa": {"status": "New"}},
     })
-    r, folder = dora.call("createTeam({ name: 'Dora', teamName: 'Claims' })", folder)
+    r, folder = dora.call("createTeam({ name: 'Dora', teamName: 'Claims', invites: [{ name: 'Eli', email: 'eli@example.com' }, { name: 'Fay' }, { name: '' }] })", folder)
+    check("create with invitations: two written, open", (r.get("invited"), sorted(json.loads(v)["name"] for p, v in folder.items() if p.startswith("invites/"))), (2, ["Eli", "Fay"]))
+    invited = {json.loads(v)["name"]: json.loads(v)["id"] for p, v in folder.items() if p.startswith("invites/")}
+    check("create: team.json names the creator", json.loads(folder["team.json"]).get("createdByName"), "Dora")
     eli = Member("eli")
-    r, folder = eli.call("joinTeam({ name: 'Eli' })", folder)
+    r, folder = eli.call("joinTeam({ inviteId: '%s' })" % invited["Eli"], folder)
     r, folder = dora.sync(folder)
     r, folder = eli.sync(folder)
     dora_id = dora.status()["me"]["memberId"]
@@ -569,7 +602,7 @@ def main():
     notices = sorted((n["key"], n["by"], n["to"]) for n in (eli.local("teamNotices") or []))
     check("notice: Eli is told which accounts the admin took (reassigned / released)",
           notices, [("delta ag", "Dora", "Dora"), ("epsilon ag", "Dora", None)])
-    check("notice: nothing for Dora - she did it herself", dora.local("teamNotices"), None)
+    check("notice: nothing for Dora - she did it herself (only 'Eli joined')", [x for x in dora.local("teamNotices") or [] if x.get("kind") != "joined"], [])
 
     # 1.2.2.6 (Boaz: 13 assigned to him on Annick's PC, 0 on his own): a PC whose saved state is lost gets its own
     # changes back from its own files in the folder.
@@ -716,11 +749,11 @@ def main():
         "targetAccountsWorkbook": {"companies": [{"companyId": "c-1", "company": "Gamma"}, {"companyId": "c-7", "company": "Delta"}], "contacts": []},
         "results": {"lead-f1": {"author": "Pia", "company": "Acme AG", "status": "Contacted"}, "lead-f2": {"author": "Max", "company": "Delta", "status": "New"}},
     })
-    r, folder = fay.call("previewJoin()", folder)
+    r, folder = fay.call("previewJoin({ inviteId: '%s' })" % invited["Fay"], folder)
     check("join preview: accounts only Fay has", sorted(a["key"] for a in r.get("localOnly", [])), ["delta", "gamma"])
     check("join preview: shared and worked on", [(a["key"], a["worked"]) for a in r.get("shared", [])], [("acme ag", ["1 lead contacted"])])
     check("join preview: Fay is not in the team yet", fay.local("teamMembership"), None)
-    r, folder = fay.call("joinTeam({ name: 'Fay', addKeys: ['gamma'] })", folder)
+    r, folder = fay.call("joinTeam({ addKeys: ['gamma'], inviteId: '%s' })" % invited["Fay"], folder)
     check("join with own data: ok, 1 brought (assigned to Fay), 1 proposal", (r.get("ok"), r.get("brought")), (True, {"accounts": 1, "proposals": 1, "assigned": 1}))
     r, folder = fay.sync(folder)
     fay_id = fay.status()["me"]["memberId"]
@@ -774,7 +807,9 @@ def main():
 
     # 1.2.3 step 1 (D16): the Team Lead closes the team. Hal (a member) stops sharing and is told; nobody can join again.
     hal = Member("hal", now_offset=13)
-    r, folder = hal.call("joinTeam({ name: 'Hal' })", folder)
+    inv, folder = invite(dora, "Hal", folder)
+    r, folder = hal.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    inv_open, folder = invite(dora, "Jo", folder)
     r, folder = hal.sync(folder)
     r, folder = dora.sync(folder)
     r, folder = hal.call("closeTeam()", folder)
@@ -783,6 +818,7 @@ def main():
     r, folder = dora.call("closeTeam()", folder)
     check("close: the Team Lead closes it", (r.get("ok"), r.get("closed")), (True, True))
     check("close: closed.json written, Dora's PC stops sharing", ("closed.json" in folder, dora.local("teamMembership")), (True, None))
+    check("close: open invitations are cancelled with it", json.loads(folder["invites/%s.json" % inv_open])["status"], "cancelled")
     check("close: Dora keeps her data as it was", (same(picture(dora), kept), bool(kept["targetAccounts"])), (True, True))
     r, folder = hal.sync(folder)
     check("close: Hal's PC stops sharing by itself", (r.get("closed"), hal.local("teamMembership")), (True, None))
