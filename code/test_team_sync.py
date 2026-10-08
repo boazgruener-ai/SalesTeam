@@ -156,6 +156,8 @@ def check(label, actual, expected):
 def strip_module(name):
     src = io.open(os.path.join(CODE_DIR, name), encoding="utf-8").read()
     src = IMPORT_RE.sub("", src)
+    # The read-round size can be made small, so a long history is read back over several rounds as on a real PC.
+    src = src.replace("const MAX_FILES_PER_ROUND = ", "let MAX_FILES_PER_ROUND = ")
     return re.sub(r"^export\s+(?=(const|let|var|function|class|async)\b)", "", src, flags=re.M)
 
 
@@ -851,10 +853,13 @@ def main():
     r, folder = kim.sync(folder)
     check("lost state: Kim is Team Lead before", kim.status()["lead"]["lead"], kim_id)
     log_before = len([x for x in kim.local("teamLog") or [] if x.get("kind") == "team"])
-    kim.e("delete DB.state; delete DB.shadow; mem = null;")
-    r, folder = kim.sync(folder)
-    r, folder = kim.sync(folder)
+    kim.e("chrome.storage.local.remove('teamNotices')")
+    kim.e("delete DB.state; delete DB.shadow; mem = null; MAX_FILES_PER_ROUND = 1;")
+    for _ in range(8):
+        r, folder = kim.sync(folder)
+    kim.e("MAX_FILES_PER_ROUND = 300;")
     check("lost state: Kim is still Team Lead after", kim.status()["lead"]["lead"], kim_id)
+    check("lost state: the re-read history says nothing in the top bar (1.2.2.8)", kim.local("teamNotices") or [], [])
     check("lost state: the hand-overs are not logged twice", len([x for x in kim.local("teamLog") or [] if x.get("kind") == "team"]), log_before)
 
     print()

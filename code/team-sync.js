@@ -135,6 +135,9 @@ async function ensureLoaded() {
     mem.meta.cursors = {};
     mem.meta.basesApplied = [];
     mem.meta.rereadV = REREAD_VERSION;
+    // Re-reading the team's history from the start: what it holds already happened - no "made you Team Lead",
+    // "reassigned your account" or "joined" from it (1.2.2.8 test: a backlog of years-old role changes in the top bar).
+    mem.replaying = true;
   }
   mem.clock = createClock(membership?.memberId || "?", mem.meta.clockLast);
   return mem;
@@ -338,7 +341,7 @@ async function applyRemote(records) {
   await save(["state"]);
   if (affected.size) await writeBack(affected);
   await noteRoleChange(leadsBefore, records);
-  if (takenFrom.size) {
+  if (takenFrom.size && !mem.replaying) {
     const now = Date.now();
     const added = [];
     for (const [id, author] of takenFrom) {
@@ -358,6 +361,7 @@ async function applyRemote(records) {
 // 1.2.3 step 1 (design 3.3, 3.4): "Boaz made you Team Lead" / "… deputy" / "ended your deputy role" - in the top bar
 // until OK, on the PC whose role changed. Compared before and after a batch, so a record read twice says nothing.
 async function noteRoleChange(before, records) {
+  if (mem.replaying) return;
   const me = membership?.memberId;
   const after = leadNow();
   if (!me || !before.known || !after.known) return;
@@ -378,7 +382,7 @@ async function noteRoleChange(before, records) {
 // 1.2.3 step 1b (10a.2): "Annick Zutter joined the team" - on the PCs with the Team Lead's rights, when an invitation
 // this PC knew as open is read back as accepted.
 async function noteInvitesAccepted(before) {
-  if (!hasLeadRights()) return;
+  if (mem.replaying || !hasLeadRights()) return;
   const texts = [];
   for (const [id, inv] of Object.entries(mem.meta.invites || {})) {
     if (inviteState(before[id]) !== "open" || inviteState(inv) !== "accepted") continue;
@@ -561,6 +565,7 @@ async function readRound(root, me) {
     await recordTeamLog(logged, priors);
     measure({ kind: "read", files: update.files, bytes: update.bytes, records: records.length, rows, ms: Math.round(performance.now() - t0) });
     await save([]);
+    if (update.files < MAX_FILES_PER_ROUND) mem.replaying = false; // caught up: from here on, what is read is news
   });
 }
 
