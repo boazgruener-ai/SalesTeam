@@ -419,13 +419,23 @@ async function onLeave() {
   const m = await getMembership();
   if (!m) return;
   let mine = 0;
-  try { mine = ((await send({ type: "TEAM_ASSIGN_COUNTS" })).counts || {})[m.memberId] || 0; } catch { /* unknown */ }
+  // Boaz 2026-10-08 (Annick: "I pressed Leave the team but nothing happens"): say at once that something is happening,
+  // and never wait on the background for more than 5 s just to count the assigned accounts.
+  setText("team-member-status", "Leave the team: checking your assigned accounts…");
+  const counted = await Promise.race([
+    send({ type: "TEAM_ASSIGN_COUNTS" }).then((r) => ({ ok: true, r }), (err) => ({ ok: false, error: err.message })),
+    new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "SalesTeam's background did not answer within 5 seconds" }), 5000)),
+  ]);
+  if (counted.ok) mine = (counted.r.counts || {})[m.memberId] || 0;
+  setText("team-member-status", counted.ok ? "" : `Could not count your assigned accounts (${counted.error}) - you can still leave.`, !counted.ok);
+  if (!counted.ok) console.warn("SalesTeam Leave the team:", counted.error);
   const go = await askConfirm(
     `Leave the team "${m.teamName}"?\n\nThis browser stops sharing. The data here stays as it is now, as your own copy; ` +
     "your colleagues keep the team's data. What you wrote stays in the team folder." +
     (mine ? `\n\nYour ${mine} assigned account${mine === 1 ? "" : "s"} become${mine === 1 ? "s" : ""} unassigned, so colleagues can work on ${mine === 1 ? "it" : "them"}.` : ""),
     { okLabel: "Leave the team", cancelLabel: "Stay", danger: true });
   if (!go) return;
+  setText("team-member-status", "Leaving the team - handing back your accounts and signing off…");
   try {
     const r = await send({ type: "TEAM_LEAVE" });
     if (!r.ok) throw new Error(r.error || "could not leave");
