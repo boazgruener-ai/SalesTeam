@@ -586,6 +586,9 @@ function showTeams(teams, via, foundAny) {
   $("team-join-title").textContent = one ? `Join the team "${teams[0].team.name}"` : "Join a team";
   $("team-find-row").hidden = teams.length > 0;
   $("team-join-intro").hidden = teams.length > 0;
+  $("team-join-row").hidden = !teams.length;
+  // The ways round a team not found (help, Look again, another folder) only when no invitation in this name is listed.
+  $("team-join-more").hidden = teams.some((t) => t.mine.length);
 }
 
 // Find my team… / Look again: the OneDrive folder (asked for once), then every team in it with an invitation open.
@@ -599,7 +602,11 @@ async function onFindTeams({ repick = false } = {}) {
     setText(status, `Could not open the folder: ${err.message}`, true);
     return;
   }
-  if (!oneDrive) { setText(status, "SalesTeam needs your OneDrive folder to find the team. Click Find my team… again and allow it.", true); return; }
+  if (!oneDrive) {
+    setText(status, "SalesTeam needs your OneDrive folder to find the team. Click Find my team… again and allow it.", true);
+    $("team-join-more").hidden = false;
+    return;
+  }
   setText(status, `Looking for teams in "${oneDrive.name}"…`);
   try {
     const found = await findTeams(oneDrive);
@@ -1114,6 +1121,8 @@ export function initTeamSettings() {
     $("team-join-choose").hidden = true;
     $("team-find-row").hidden = false;
     $("team-join-intro").hidden = false;
+    $("team-join-row").hidden = true;
+    $("team-join-more").hidden = true;
     $("team-join-title").textContent = "Join a team";
     showFlow("join");
   });

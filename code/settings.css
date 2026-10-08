@@ -859,10 +859,8 @@ textarea {
 .team-invitee-row button { flex: none; }
 #team-join-choose { margin-top: 10px; }
 /* Boaz (1.2.2.8 test): opened from the top bar's invitation, the Join screen is all there is. */
-body.team-join-focus #seller-research-offer, body.team-join-focus #page-header-bar .page-subtitle,
-body.team-join-focus #linkedin-touch-stat { display: none !important; }
+body.team-join-focus #seller-research-offer, body.team-join-focus #page-header-bar { display: none !important; }
 .team-join-invited { font-size: 14px; margin: 4px 0 10px; }
-.team-join-more { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e3e6eb; }
 #team-join-choose select { display: block; min-width: 320px; max-width: 100%; padding: 4px 6px; margin-bottom: 8px; }
 .team-invite-choice { display: block; padding: 2px 0; cursor: pointer; font-weight: normal; }
 .team-invited-row td { color: #5a6270; font-style: italic; }

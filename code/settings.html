@@ -451,34 +451,33 @@
       </div>
 
       <div id="team-join" hidden>
-        <!-- Boaz (1.2.2.8 test): the screen is for joining - the invitation and its Join button first, the warning
-             under them, everything else (another folder, help) at the bottom. -->
+        <!-- Boaz (1.2.2.8 test): the screen is for joining - heading, the invitation, what joining does, Join. The ways
+             round a team that is not found show only when none is, behind one link under the team selection. -->
         <h4 id="team-join-title">Join a team</h4>
         <p id="team-join-intro">Click <b>Find my team…</b>, choose your team and your invitation, and click <b>Join as …</b>.
           The first time, Chrome asks for your <b>OneDrive folder</b>: click <b>OneDrive</b> on the left
           ("OneDrive - <i>your company</i>" with a work account), then <b>Select Folder</b> and <b>Allow on every visit</b>.</p>
         <div class="settings-buttons-row" id="team-find-row">
           <button type="button" id="team-find-btn" class="team-primary-btn">Find my team…</button>
-          <button type="button" class="team-cancel-btn">Cancel</button>
+          <button type="button" class="team-cancel-btn">Not now</button>
         </div>
         <div id="team-join-choose" hidden>
           <label for="team-join-team" id="team-join-team-label">Team</label>
           <select id="team-join-team"></select>
           <div id="team-join-invites"></div>
-          <div class="settings-buttons-row">
-            <button type="button" id="team-join-btn" class="team-primary-btn">Join</button>
-            <button type="button" class="team-cancel-btn">Cancel</button>
-          </div>
         </div>
-        <p class="field-hint team-status" id="team-join-status" role="status"></p>
         <div class="team-warning">
           Joining <b>replaces</b> the accounts, contacts, leads (posts), Setup and rules in this browser with the team's.
           Accounts only you have are listed for you to tick: the ones you tick go into the team, assigned to you. A full
           backup is saved first. Your API key, User Profile, drafts and Activity Log stay as they are.
         </div>
-        <div class="team-join-more">
-          <details class="team-help">
-          <summary>Your team is not in the list? How to get it there</summary>
+        <div class="settings-buttons-row" id="team-join-row" hidden>
+          <button type="button" id="team-join-btn" class="team-primary-btn">Join</button>
+          <button type="button" class="team-cancel-btn">Not now</button>
+        </div>
+        <p class="field-hint team-status" id="team-join-status" role="status"></p>
+        <details class="team-help" id="team-join-more" hidden>
+          <summary>Your team is not in the list?</summary>
           <ol class="team-steps">
             <li>Open the e-mail in which your Team Lead shared the team folder and click <b>Open</b>. The folder opens in
               OneDrive in your browser. (No e-mail? Open OneDrive in the browser and click <b>Shared</b> on the left.)</li>
@@ -487,12 +486,11 @@
               <b>Always keep on this device</b>, then wait until its files show a green tick.</li>
             <li>Back here, click <b>Look again</b> (or <b>Find my team…</b>).</li>
           </ol>
-        </details>
           <div class="settings-buttons-row">
             <button type="button" id="team-look-again-btn">Look again</button>
             <button type="button" id="team-join-pick-btn" title="For a team folder that is not directly in OneDrive: choose the team folder yourself">Choose a folder instead…</button>
           </div>
-        </div>
+        </details>
       </div>
 
       <div id="team-member" hidden>
