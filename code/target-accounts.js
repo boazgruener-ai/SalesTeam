@@ -2405,7 +2405,7 @@ async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess =
   // the member has no access to by name, with their groups.
   const plural = (n) => `${n} account${n === 1 ? "" : "s"}`;
   const lines = [`${plural(done)} ${verb}.`];
-  if (already) lines.push(`${plural(already)} already ${already === 1 ? "was" : "were"} ${toName || "theirs"}'s.`);
+  if (already) lines.push(`${plural(already)} ${already === 1 ? "was" : "were"} already assigned to ${toName || "them"}.`);
   if (noAccess.length) {
     const names = new Map(rawWorkbook.companies.map((c) => [normalizeCompanyName(c.company), c.company]));
     const listed = noAccess.slice(0, 6).map((k) => `${names.get(k) || k} (${teamAccounts.groupNames(k) || "no group"})`).join(", ");
