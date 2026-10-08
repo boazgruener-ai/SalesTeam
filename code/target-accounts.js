@@ -730,6 +730,11 @@ const COMPANY_COLUMNS = [
   // is unusable across hundreds of rows. Filter this column on "review" to list them.
   { id: "webFindings", label: "Web Findings", visible: true },
   { id: "linkedinLink", label: "LinkedIn Link", visible: true, link: true },
+  // 1.2.2.7 (Boaz): the Setup size bucket (S-XXL) of the employee count - the one group filters and size priority use.
+  { id: "sizeBucket", label: "Size", visible: true },
+  // 1.2.2.7: the account's groups in a team with groups (computed by the background, team-groups.js) - filter the
+  // column to list one group until the Group picker (design 7, step 3).
+  { id: "teamGroups", label: "Groups", visible: true },
   // Schema 1.1 (V1.32 research prompt): Target_Country_Relationship = "Local company" / "Global company" (where the
   // group is headquartered relative to the project's home market). Older workbooks have no such column - the value then
   // falls back to Company_Type, which in the first workbook (V66) carried that same classification.
@@ -738,11 +743,6 @@ const COMPANY_COLUMNS = [
   // carried the Local/Global classification that the column above already shows.
   { id: "companyType", label: "Company Type", visible: true },
   { id: "globalEmployees", label: "Employees", visible: true, numeric: true },
-  // 1.2.2.7 (Boaz): the Setup size bucket (S-XXL) of the employee count - the one group filters and size priority use.
-  { id: "sizeBucket", label: "Size", visible: true },
-  // 1.2.2.7: the account's groups in a team with groups (computed by the background, team-groups.js) - filter the
-  // column to list one group until the Group picker (design 7, step 3).
-  { id: "teamGroups", label: "Groups", visible: true },
   { id: "globalRevenue", label: "Global Revenue", visible: true, numeric: true, currencyField: "revenueCurrency" },
 
   // --- Hidden by default: imported research-workbook fields ---
@@ -919,7 +919,92 @@ function saveHiddenColumns() {
 }
 
 function visibleColumns() {
-  return COMPANY_COLUMNS.filter((c) => !hiddenColumns.has(c.id));
+  return orderedColumns(COMPANY_COLUMNS, COLUMN_ORDER_STORAGE_KEY).filter((c) => !hiddenColumns.has(c.id));
+}
+
+// --------------------------------------------------------------------------
+// Column order (Boaz 2026-10-08): drag a column title left or right to move the whole column. Remembered per table
+// in localStorage (a per-PC display preference, like the hidden columns); "Reset column order" in Columns undoes it.
+// --------------------------------------------------------------------------
+const COLUMN_ORDER_STORAGE_KEY = "salesteam-target-accounts-column-order-v1";
+const CONTACT_COLUMN_ORDER_STORAGE_KEY = "salesteam-target-contacts-column-order-v1";
+
+function savedColumnOrder(storageKey) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey));
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+}
+
+// The saved order, with any column it does not know yet (a new release) placed after the column it follows in `defs`.
+function orderedColumns(defs, storageKey) {
+  const known = new Set(defs.map((c) => c.id));
+  const ids = savedColumnOrder(storageKey).filter((id) => known.has(id));
+  defs.forEach((c, i) => {
+    if (ids.includes(c.id)) return;
+    let at = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      const k = ids.indexOf(defs[j].id);
+      if (k >= 0) { at = k + 1; break; }
+    }
+    ids.splice(at, 0, c.id);
+  });
+  const byId = new Map(defs.map((c) => [c.id, c]));
+  return ids.map((id) => byId.get(id));
+}
+
+function moveColumn(defs, storageKey, id, targetId, after) {
+  const ids = orderedColumns(defs, storageKey).map((c) => c.id).filter((x) => x !== id);
+  const at = ids.indexOf(targetId);
+  if (at < 0) return;
+  ids.splice(after ? at + 1 : at, 0, id);
+  try { localStorage.setItem(storageKey, JSON.stringify(ids)); } catch { /* kept for this visit only */ }
+}
+
+function resetColumnOrder(storageKey) {
+  try { localStorage.removeItem(storageKey); } catch { /* nothing saved */ }
+}
+
+let draggedColumn = null; // { id, key } while a column title is being dragged
+function makeColumnDraggable(th, column, defs, storageKey, rerender) {
+  th.draggable = true;
+  th.classList.add("th-draggable");
+  th.title = "Drag to move this column";
+  const clearMarks = () => th.classList.remove("th-drop-before", "th-drop-after");
+  const dropAfter = (e) => {
+    const r = th.getBoundingClientRect();
+    return e.clientX > r.left + r.width / 2;
+  };
+  th.addEventListener("dragstart", (e) => {
+    draggedColumn = { id: column.id, key: storageKey };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", column.id);
+    th.classList.add("th-dragging");
+  });
+  th.addEventListener("dragend", () => {
+    draggedColumn = null;
+    th.classList.remove("th-dragging");
+    document.querySelectorAll(".th-drop-before, .th-drop-after").forEach((x) => x.classList.remove("th-drop-before", "th-drop-after"));
+  });
+  th.addEventListener("dragover", (e) => {
+    if (!draggedColumn || draggedColumn.key !== storageKey || draggedColumn.id === column.id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const after = dropAfter(e);
+    th.classList.toggle("th-drop-after", after);
+    th.classList.toggle("th-drop-before", !after);
+  });
+  th.addEventListener("dragleave", clearMarks);
+  th.addEventListener("drop", (e) => {
+    if (!draggedColumn || draggedColumn.key !== storageKey || draggedColumn.id === column.id) return;
+    e.preventDefault();
+    clearMarks();
+    moveColumn(defs, storageKey, draggedColumn.id, column.id, dropAfter(e));
+    draggedColumn = null;
+    rerender();
+  });
 }
 
 // Always leaves at least one column visible - hiding every column would
@@ -1656,7 +1741,14 @@ function toggleColumnsPanel() {
   const popup = document.createElement("div");
   popup.className = "col-menu-popup columns-panel";
 
-  for (const column of COMPANY_COLUMNS) {
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "col-menu-item";
+  reset.textContent = "Reset column order";
+  reset.title = "Put the columns back in their original order (hidden columns stay hidden)";
+  reset.addEventListener("click", () => { resetColumnOrder(COLUMN_ORDER_STORAGE_KEY); closeColumnMenu(); renderTable(); });
+  popup.append(reset, document.createElement("hr"));
+  for (const column of orderedColumns(COMPANY_COLUMNS, COLUMN_ORDER_STORAGE_KEY)) {
     const row = document.createElement("label");
     row.className = "columns-panel-row";
     const checkbox = document.createElement("input");
@@ -2026,6 +2118,7 @@ function renderTableHead() {
   tr.appendChild(flagTh);
   for (const column of visibleColumns()) {
     const th = document.createElement("th");
+    makeColumnDraggable(th, column, COMPANY_COLUMNS, COLUMN_ORDER_STORAGE_KEY, () => renderTable());
 
     const label = document.createElement("span");
     label.className = "th-label";
@@ -2742,7 +2835,7 @@ function saveContactHiddenColumns() {
 }
 
 function visibleContactColumns() {
-  return CONTACT_LIST_COLUMNS.filter((c) => !contactHiddenColumns.has(c.id));
+  return orderedColumns(CONTACT_LIST_COLUMNS, CONTACT_COLUMN_ORDER_STORAGE_KEY).filter((c) => !contactHiddenColumns.has(c.id));
 }
 
 function setContactColumnHidden(columnId, hidden) {
@@ -2955,7 +3048,14 @@ function toggleContactColumnsPanel() {
   const popup = document.createElement("div");
   popup.className = "col-menu-popup columns-panel";
 
-  for (const column of CONTACT_LIST_COLUMNS) {
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "col-menu-item";
+  reset.textContent = "Reset column order";
+  reset.title = "Put the columns back in their original order (hidden columns stay hidden)";
+  reset.addEventListener("click", () => { resetColumnOrder(CONTACT_COLUMN_ORDER_STORAGE_KEY); closeColumnMenu(); renderContactsTable(); });
+  popup.append(reset, document.createElement("hr"));
+  for (const column of orderedColumns(CONTACT_LIST_COLUMNS, CONTACT_COLUMN_ORDER_STORAGE_KEY)) {
     const row = document.createElement("label");
     row.className = "columns-panel-row";
     const checkbox = document.createElement("input");
@@ -3006,6 +3106,7 @@ function renderContactsTableHead() {
   tr.appendChild(flagTh);
   for (const column of visibleContactColumns()) {
     const th = document.createElement("th");
+    makeColumnDraggable(th, column, CONTACT_LIST_COLUMNS, CONTACT_COLUMN_ORDER_STORAGE_KEY, () => renderContactsTable());
     const label = document.createElement("span");
     label.className = "th-label";
     label.textContent = column.label;

@@ -2224,3 +2224,9 @@ body {
   z-index: 4;
   box-shadow: inset 0 -2px 0 var(--border), -6px 0 6px -6px rgba(0, 0, 0, 0.2);
 }
+
+/* Column order by drag and drop (Boaz 2026-10-08, target-accounts.js makeColumnDraggable) */
+th.th-draggable { cursor: grab; }
+th.th-dragging { opacity: .45; }
+th.th-drop-before { box-shadow: inset 3px 0 0 #1155cc; }
+th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc; }
