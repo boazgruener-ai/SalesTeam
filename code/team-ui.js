@@ -140,7 +140,7 @@ async function paintTeamNotices() {
   const roles = all.filter(isText).map((n) => n.text);
   const notices = all.filter((n) => !isText(n));
   if (!notices.length) {
-    setStatusMessage(NOTICE_BAR_ID, { text: roles.join(" "), action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
+    setStatusMessage(NOTICE_BAR_ID, { priority: true, text: roles.join(" "), action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
     return;
   }
   // "Boaz took over your account Amcor" when the admin reassigned it to themselves - not "… to Boaz" (1.2.1.9 test).
@@ -151,7 +151,7 @@ async function paintTeamNotices() {
   const text = [...roles, notices.length === 1
     ? `${single(notices[0])}.`
     : `${byWho} changed ${notices.length} of your accounts: ${notices.slice(0, 6).map(one).join(", ")}${notices.length > 6 ? ", …" : ""}.`].join(" ");
-  setStatusMessage(NOTICE_BAR_ID, { text, action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
+  setStatusMessage(NOTICE_BAR_ID, { priority: true, text, action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
 }
 
 // D16: the Team Lead closed the team - told once on each member's PC, which stopped sharing by itself.
@@ -161,7 +161,7 @@ const CLOSED_BAR_ID = "team-closed";
 async function paintTeamClosed() {
   const c = (await chrome.storage.local.get(CLOSED_KEY))[CLOSED_KEY];
   if (!c) { clearStatusMessage(CLOSED_BAR_ID); return; }
-  setStatusMessage(CLOSED_BAR_ID, {
+  setStatusMessage(CLOSED_BAR_ID, { priority: true,
     text: `${c.by} closed the team "${c.teamName}" (${timeText(c.at)}). SalesTeam no longer shares on this PC; the data here stays as your own copy.`,
     action: { label: "OK", onClick: () => chrome.storage.local.remove(CLOSED_KEY) },
   });
