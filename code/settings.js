@@ -11,7 +11,7 @@
 // to target-accounts.js instead (2026-09-16, reported directly: it belongs
 // next to the data it actually affects, not on a separate settings page).
 import { getApiUsage, sumDays, clearApiUsage, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
-import { askConfirm } from "./confirm-dialog.js";
+import { askConfirm, markSaved } from "./confirm-dialog.js";
 import { leadRightsOf } from "./team-groups.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine, kickPipelineFromPage, kickAndExplain } from "./pipeline-status.js";
@@ -100,8 +100,7 @@ function mountCardSave(cardId, { current, stored, save, revert }) {
     saveBtn.disabled = true;
     await save(current());
     refresh();
-    note.textContent = "Saved ✓";
-    setTimeout(() => { if (note.textContent === "Saved ✓") note.textContent = ""; }, 2500);
+    markSaved(note);
   });
   cancelBtn.addEventListener("click", () => { revert(); refresh(); });
   refresh();
@@ -158,8 +157,7 @@ apiKeySaveBtn.addEventListener("click", async () => {
   // Deliberately never logs the actual key value - only that it changed.
   appendActivityLog({ actor: "user", action: "api_key_changed", label: value ? "Anthropic API key changed" : "Anthropic API key removed" });
   refreshApiKeyButtons();
-  apiKeyStatusEl.textContent = "Saved ✓";
-  setTimeout(() => { if (apiKeyStatusEl.textContent === "Saved ✓") apiKeyStatusEl.textContent = ""; }, 2500);
+  markSaved(apiKeyStatusEl);
 });
 apiKeyCancelBtn.addEventListener("click", () => {
   anthropicApiKeyInput.value = storedApiKey;
@@ -494,7 +492,7 @@ document.getElementById("company-discovery-max-save-btn").addEventListener("clic
     return;
   }
   await saveTargetUniverseConfig({ ...(await getTargetUniverseConfig()), maxCompanies: value });
-  statusEl.textContent = "Saved ✓";
+  markSaved(statusEl);
 });
 
 document.getElementById("company-discovery-start-btn").addEventListener("click", async () => {
@@ -1013,8 +1011,7 @@ billingWarningInput.addEventListener("input", () => {
 billingWarningSaveBtn.addEventListener("click", async () => {
   await saveCostWarningUsd(Number(billingWarningInput.value));
   await loadWarningLimit();
-  billingWarningStatus.textContent = "Saved ✓";
-  setTimeout(() => { if (billingWarningStatus.textContent === "Saved ✓") billingWarningStatus.textContent = ""; }, 2500);
+  markSaved(billingWarningStatus);
 });
 loadWarningLimit();
 initBatchStatus();

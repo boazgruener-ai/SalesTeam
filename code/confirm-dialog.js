@@ -14,6 +14,8 @@ function ensureStyle() {
   styleAdded = true;
   const style = document.createElement("style");
   style.textContent = `
+    .save-confirm { display: inline-block; background: #e6f4ea; color: #137333; border: 1px solid #81c995; border-radius: 6px;
+      padding: 4px 10px; font-weight: 700; font-size: 13px; }
     #salesteam-confirm-dialog { border: none; border-radius: 10px; padding: 20px 24px; width: 480px; max-width: 90vw;
       box-shadow: 0 8px 30px rgba(0,0,0,.25); font-family: inherit; }
     #salesteam-confirm-dialog::backdrop { background: rgba(0,0,0,.5); }
@@ -116,6 +118,20 @@ export function askChoice(message, choices, { cancelLabel = "Cancel" } = {}) {
     dialog.showModal();
     cancelBtn.focus();
   });
+}
+
+// 1.2.2.5 (Boaz: "did not get any feedback on the Save"): a Save's confirmation used to be small grey text gone after
+// 2.5 s. Now a clear green "Saved" next to the buttons that stays until the next change on the page.
+export function markSaved(el, text = "✓ Saved") {
+  if (!el) return;
+  ensureStyle();
+  el.textContent = text;
+  el.classList.add("save-confirm");
+  const clear = () => {
+    el.classList.remove("save-confirm");
+    if (el.textContent === text) el.textContent = "";
+  };
+  document.addEventListener("input", clear, { once: true, capture: false });
 }
 
 // A result / progress pop-up with a single OK (or Close, while the action is still running) button - used instead of a

@@ -9,7 +9,7 @@
 // consume everything captured here.
 import { rescoreDerivedPriorities } from "./auto-score.js";
 import { mountAdvancedSteps, persistAdvancedStep, discardAdvancedStep } from "./advanced-steps.js";
-import { askChoice } from "./confirm-dialog.js";
+import { askChoice, markSaved } from "./confirm-dialog.js";
 import { leadRightsOf } from "./team-groups.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, CONSENT_TITLE, CONSENT_TEXT,
@@ -474,8 +474,7 @@ el("nav-save-btn").addEventListener("click", async () => {
     return;
   }
   if ((step === "value-add-offers" || step === "contacts") && checklists[step]) renderProposalForStep(step);
-  status.textContent = "Saved ✓";
-  setTimeout(() => { if (status.textContent === "Saved ✓") status.textContent = ""; }, 2500);
+  markSaved(status);
 });
 
 // "Exit" (added 2026-09-16, reported directly: "if I just want to look at

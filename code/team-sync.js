@@ -345,6 +345,12 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
   const update = { cursors: {}, lastFileWall: {}, hb: {}, profiles: {}, basesApplied: [], files: 0, bytes: 0, baseRecords: 0 };
   update.admins = (await listTeamNames(root, ["admins"], "file"))
     .map((n) => (/^(.+)\.json$/.exec(n) || [])[1]).filter(Boolean);
+  // 1.2.3: the creator starts the Team Lead chain - read from team.json (createdBy), which names exactly one person;
+  // admins/ may hold a leftover file from an earlier test team in the same folder.
+  if (!meta.creator) {
+    const tj = await readTeamJson(root, [], "team.json");
+    if (tj.status === "ok" && tj.data.createdBy && (!membership?.teamId || tj.data.teamId === membership.teamId)) update.creator = tj.data.createdBy;
+  }
   // Members the Team Lead removed (Boaz 2026-10-06): removed/<member>.json, written by the admin.
   update.removed = {};
   for (const n of await listTeamNames(root, ["removed"], "file")) {
@@ -410,6 +416,7 @@ function commitReadUpdate(update) {
   Object.assign(meta.profiles, update.profiles);
   meta.basesApplied = [...new Set([...meta.basesApplied, ...update.basesApplied])];
   if (update.admins) meta.admins = update.admins;
+  if (update.creator) meta.creator = update.creator;
   if (update.removed) meta.removed = { ...(meta.removed || {}), ...update.removed };
   meta.lastReadAt = Date.now();
 }
@@ -457,9 +464,11 @@ function gatedRowKeys() {
   return Object.keys(mem.state.gated || {}).filter((id) => isGatedRow("setting", id)).map((id) => rowKey("setting", id));
 }
 
-// The team's creator - the one admins/ file - starts the Team Lead chain. Once known, group records can be judged.
+// The team's creator starts the Team Lead chain. Once known, group records can be judged.
 async function noteCreator() {
-  const creator = [...(mem.meta.admins || [])].sort()[0] || null;
+  // team.json's createdBy; failing that, admins/ only when it names one person - never a guess between several.
+  const admins = mem.meta.admins || [];
+  const creator = mem.meta.creator || (admins.length === 1 ? admins[0] : null);
   if (creator && setTeamCreator(mem.state, creator)) {
     await save(["state"]);
     await writeBack(new Set(gatedRowKeys()));
@@ -1229,6 +1238,7 @@ export function createTeam({ name, teamName }) {
       mem.shadow[key] = diffRows({}, rows).shadow;
     }
     setTeamCreator(mem.state, memberId);
+    mem.meta.creator = memberId;
     for (const r of base) applyChange(mem.state, r);
     await writeTeamJson(root, [], "team.json", { teamId: m.teamId, name: m.teamName, format: FORMAT, createdBy: memberId, createdAt: m.joinedAt });
     await writeTeamJson(root, ["admins"], `${memberId}.json`, { member: memberId, grantedBy: memberId, at: m.joinedAt });
