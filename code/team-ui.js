@@ -190,21 +190,6 @@ async function checkPickedFolder(which, handle) {
   return { ok: true, text: `Folder: "${handle.name}" - team "${team.data.name}", created ${timeText(Date.parse(team.data.createdAt))}.`, team: team.data };
 }
 
-async function onPick(which) {
-  const status = `team-${which}-status`;
-  try {
-    const handle = await pickTeamFolder({ save: false });
-    if (!handle) return;
-    const check = await checkPickedFolder(which, handle);
-    picked[which] = check.ok ? handle : null;
-    setText(status, check.text, !check.ok);
-  } catch (err) {
-    picked[which] = null;
-    setText(status, `Could not open the folder: ${err.message}`, true);
-  }
-  $(`team-${which}-btn`).disabled = !picked[which];
-}
-
 // A full backup before the local data is turned into team data or replaced by it (design 9.1-9.2, R8 migration).
 async function backupFirst(status) {
   setText(status, "Saving a full backup of your data first…");
@@ -218,12 +203,26 @@ async function backupFirst(status) {
   }
 }
 
+// Boaz 2026-10-08: one button, as for joining - choose the folder, and the backup and the setup follow by themselves.
 async function onCreate() {
   const status = "team-create-status";
   const name = $("team-create-name").value.trim();
   const teamName = $("team-create-team").value.trim();
   if (!name || !teamName) { setText(status, "Enter your name and the team's name first.", true); return; }
-  if (!picked.create || flowBusy) return;
+  if (flowBusy) return;
+  // The folder picker needs the click itself, so it comes first.
+  let handle = null;
+  try {
+    handle = await pickTeamFolder({ save: false });
+  } catch (err) {
+    setText(status, `Could not open the folder: ${err.message}`, true);
+    return;
+  }
+  if (!handle) return;
+  const first = await checkPickedFolder("create", handle);
+  if (!first.ok) { setText(status, first.text, true); return; }
+  picked.create = handle;
+  setText(status, `${first.text}\nCreating the team - saving a full backup of your data first…`);
   flowBusy = true;
   $("team-create-btn").disabled = true;
   try {
@@ -249,7 +248,8 @@ async function onCreate() {
     setText(status, `Not created: ${err.message}`, true);
   } finally {
     flowBusy = false;
-    $("team-create-btn").disabled = !picked.create;
+    picked.create = null;
+    $("team-create-btn").disabled = false;
   }
 }
 
@@ -567,12 +567,10 @@ export function initTeamSettings() {
   document.querySelectorAll("#team-section .team-cancel-btn").forEach((b) => b.addEventListener("click", () => {
     picked.create = null;
     picked.join = null;
-    $("team-create-btn").disabled = true;
     setText("team-create-status", "");
     setText("team-join-status", "");
     showFlow(null);
   }));
-  $("team-create-pick-btn").addEventListener("click", () => onPick("create"));
   $("team-create-btn").addEventListener("click", onCreate);
   $("team-join-btn").addEventListener("click", onJoin);
   $("team-leave-btn").addEventListener("click", onLeave);
