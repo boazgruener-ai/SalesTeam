@@ -89,8 +89,11 @@ export function teamLogEntries(records, state, normalize, priors = null) {
 // The stored log with new entries added: newest last, at most TEAM_LOG_KEPT, none older than TEAM_LOG_DAYS.
 export function appendTeamLog(log, entries, now) {
   const cutoff = now - TEAM_LOG_DAYS * 24 * 3600 * 1000;
+  // 1.2.2.8: a record read a second time (the folder re-read after this PC's team state was lost) is logged once.
+  const seen = new Set();
+  const sig = (e) => JSON.stringify([e.at, e.m, e.op, e.kind, e.key, e.ref, e.fields, e.to]);
   return [...(Array.isArray(log) ? log : []), ...entries]
-    .filter((e) => e && e.at >= cutoff)
+    .filter((e) => e && e.at >= cutoff && !seen.has(sig(e)) && seen.add(sig(e)))
     .sort((a, b) => a.at - b.at)
     .slice(-TEAM_LOG_KEPT);
 }

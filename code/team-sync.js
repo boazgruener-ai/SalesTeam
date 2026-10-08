@@ -63,6 +63,7 @@ const ACTIVE_MS = 10 * 60000;
 const CLAIM_READ_EVERY_MS = 5000;
 const CLAIM_REFRESH_MS = 60000;
 const NOT_IN_SYNC_AFTER_MS = 2 * 60000;
+const REREAD_VERSION = 1;
 
 let membership = null;      // { memberId, name, teamId, teamName, role, joinedAt } or null
 let membershipLoaded = false;
@@ -125,8 +126,16 @@ async function ensureLoaded() {
     // for a claim to be confirmed; aside: { key: { records, at, lostTo } } - held edits of a lost claim (R3.3).
     claims: { ...emptyClaims(), ...(got.claims || {}) },
   };
-  // No saved state (cleared, or lost): my own files are read back from the start (readFolder), so my own changes return.
-  if (!got.state) mem.meta.selfCursor = 0;
+  // No saved state (cleared, or lost): EVERY file is read again from the start - mine and my colleagues'. 1.2.2.8 (Boaz's
+  // PC, 8 Oct): only my own files were re-read; the colleagues' cursors stayed, so their earlier records - among them
+  // the Team Lead hand-backs - were gone from the state for good and this PC named a former member Team Lead.
+  // REREAD_VERSION: the same full re-read once on every PC, to repair a state that lost records that way.
+  if (!got.state || (mem.meta.rereadV || 0) < REREAD_VERSION) {
+    mem.meta.selfCursor = 0;
+    mem.meta.cursors = {};
+    mem.meta.basesApplied = [];
+    mem.meta.rereadV = REREAD_VERSION;
+  }
   mem.clock = createClock(membership?.memberId || "?", mem.meta.clockLast);
   return mem;
 }
@@ -1387,6 +1396,7 @@ async function startFresh(memberId) {
   await teamDbClear();
   mem = { state: newState(), shadow: {}, outbox: [], inflight: null, meta: emptyMeta(), claims: emptyClaims() };
   mem.clock = createClock(memberId);
+  mem.meta.rereadV = REREAD_VERSION; // a new state reads everything anyway
   recentWriteBack.clear();
 }
 

@@ -831,6 +831,32 @@ def main():
     r, folder = ivy.call("joinTeam({ name: 'Ivy' })", folder)
     check("close: ... not even directly", ("closed" in (r.get("error") or ""), ivy.local("teamMembership")), (True, None))
 
+    # 1.2.2.8 (Boaz's PC, 8 Oct): the saved team state is lost while the cursors survive. Every file is read again, so
+    # the colleague's hand-back is not lost and the Team Lead stays right; nothing is logged twice.
+    folder = {}
+    kim = Member("kim")
+    kim.set_local({"targetAccounts": {"acme ag": {"score": 1}}})
+    r, folder = kim.call("createTeam({ name: 'Kim', teamName: 'Lost state' })", folder)
+    inv, folder = invite(kim, "Lou", folder)
+    lou = Member("lou", now_offset=5)
+    r, folder = lou.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    kim_id, lou_id = kim.status()["me"]["memberId"], lou.status()["me"]["memberId"]
+    r, folder = kim.sync(folder)
+    r, folder = kim.call("makeTeamLead('%s')" % lou_id, folder)
+    r, folder = kim.sync(folder)
+    r, folder = lou.sync(folder)
+    r, folder = lou.call("makeTeamLead('%s')" % kim_id, folder)
+    check("lost state: Lou hands it back", r.get("ok"), True)
+    r, folder = lou.sync(folder)
+    r, folder = kim.sync(folder)
+    check("lost state: Kim is Team Lead before", kim.status()["lead"]["lead"], kim_id)
+    log_before = len([x for x in kim.local("teamLog") or [] if x.get("kind") == "team"])
+    kim.e("delete DB.state; delete DB.shadow; mem = null;")
+    r, folder = kim.sync(folder)
+    r, folder = kim.sync(folder)
+    check("lost state: Kim is still Team Lead after", kim.status()["lead"]["lead"], kim_id)
+    check("lost state: the hand-overs are not logged twice", len([x for x in kim.local("teamLog") or [] if x.get("kind") == "team"]), log_before)
+
     print()
     for f in _failures:
         print("FAIL  %s" % f)
