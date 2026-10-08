@@ -31,12 +31,14 @@ export function personKey(s) {
     .replace(/\s+/g, " ").trim();
 }
 
-// The invitation is for this person: the User Profile's name or e-mail is the invitation's.
+// The invitation is for this person: the User Profile's name or e-mail is the invitation's. Names are compared on their
+// letters and digits only - 1.2.2.8 live test: invited as "member2", profile "Member 2", and the invitation went unseen.
+const nameKey = (s) => personKey(s).replace(/[^a-z0-9]/g, "");
 export function inviteMatches(inv, profile) {
   if (!inv || !profile) return false;
-  const name = personKey(profile.name);
+  const name = nameKey(profile.name);
   const email = personKey(profile.email);
-  return Boolean((name && personKey(inv.name) === name) || (email && personKey(inv.email) === email));
+  return Boolean((name && nameKey(inv.name) === name) || (email && personKey(inv.email) === email));
 }
 
 // Why this invitation cannot be used to join (null = it can). `memberId`: the PC that tries.

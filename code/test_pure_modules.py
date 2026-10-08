@@ -2706,7 +2706,9 @@ def test_team_invites(ctx):
     check("invites: open, accepted, cancelled", e("[inviteState({ status: 'open' }), inviteState({ acceptedBy: 'm-1' }), inviteState({ status: 'cancelled', acceptedBy: 'm-1' }), inviteState(null)].join()"),
           "open,accepted,cancelled,missing")
     check("invites: matched by name, accents and spaces aside", e("inviteMatches({ name: 'Annick  Zütter' }, { name: ' annick zutter' })"), True)
-    check("invites: matched by e-mail", e("inviteMatches({ name: 'A Z', email: 'Anna@X.ch' }, { name: 'Annick', email: 'anna@x.ch' })"), True)
+    check("invites: matched by name, spaces and punctuation aside", e("inviteMatches({ name: 'member2' }, { name: 'Member 2' })"), True)
+    check("invites: a different name does not match", e("inviteMatches({ name: 'Member 3' }, { name: 'Member 2' })"), False)
+    check("invites: matched by e-mail",e("inviteMatches({ name: 'A Z', email: 'Anna@X.ch' }, { name: 'Annick', email: 'anna@x.ch' })"), True)
     check("invites: an empty profile matches nothing", e("inviteMatches({ name: '', email: '' }, { name: '', email: '' })"), False)
     check("invites: refused - missing / other team / cancelled / used", e("""[inviteRefusal(null), inviteRefusal({ teamId: 't-2', status: 'open' }, { teamId: 't-1' }),
         inviteRefusal({ status: 'cancelled' }), inviteRefusal({ acceptedBy: 'm-1' }, { memberId: 'm-2' })].map(function (x) { return x.split(' ')[0]; }).join()"""),

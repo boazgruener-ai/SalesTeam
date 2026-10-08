@@ -178,14 +178,35 @@ async function paintTeamInvitation() {
   if (await getMembership()) { clearStatusMessage(INVITE_BAR_ID); return; }
   if (Date.now() - inviteLookedAt < INVITE_LOOK_EVERY_MS) return;
   inviteLookedAt = Date.now();
+  const toJoin = () => { location.href = chrome.runtime.getURL("settings.html?team=join#team-section"); };
+  // 1.2.2.8 live test: the bar stayed empty and nobody could tell why - so it now says when it cannot look, and when an
+  // invitation is there but not in this person's name, instead of going quiet.
+  const saved = await getOneDriveFolder();
+  if (!saved) { clearStatusMessage(INVITE_BAR_ID); return; }
   const oneDrive = await oneDriveFolderIfAllowed();
-  const teams = oneDrive ? await withInvitations(await findTeams(oneDrive)) : [];
+  if (!oneDrive) {
+    setStatusMessage(INVITE_BAR_ID, {
+      text: "You are not in a team. To look for a team invitation in your OneDrive folder, Chrome needs your permission again.",
+      action: { label: "Allow…", onClick: async () => { await requestTeamFolderPermission(saved); inviteLookedAt = 0; paintTeamInvitation().catch(() => {}); } },
+    });
+    return;
+  }
+  const teams = await withInvitations(await findTeams(oneDrive));
   invitedCache = { at: Date.now(), teams };
   const t = teams.find((x) => x.mine.length);
-  if (!t) { clearStatusMessage(INVITE_BAR_ID); return; }
+  if (t) {
+    setStatusMessage(INVITE_BAR_ID, {
+      text: `${t.mine[0].byName || "Your Team Lead"} has invited you to the team "${t.team.name}" - join it to share accounts, contacts and leads with your colleagues.`,
+      action: { label: "Join…", onClick: toJoin },
+    });
+    return;
+  }
+  const other = teams[0];
+  if (!other) { clearStatusMessage(INVITE_BAR_ID); return; }
+  const names = other.open.map((i) => `"${i.name}"`).join(", ");
   setStatusMessage(INVITE_BAR_ID, {
-    text: `${t.mine[0].byName || "Your Team Lead"} has invited you to the team "${t.team.name}" - join it to share accounts, contacts and leads with your colleagues.`,
-    action: { label: "Join…", onClick: () => { location.href = chrome.runtime.getURL("settings.html?team=join#team-section"); } },
+    text: `The team "${other.team.name}" has an open invitation for ${names} - not the name or e-mail in your User Profile (Settings). If it is for you, join with it.`,
+    action: { label: "Join…", onClick: toJoin },
   });
 }
 
