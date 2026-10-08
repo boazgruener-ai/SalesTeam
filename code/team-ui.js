@@ -458,6 +458,11 @@ export async function renderTeamSettings() {
     const leads = st?.lead?.known ? st.lead : { lead: m.role === "admin" ? m.memberId : null, deputy: null };
     const roleOf = (id) => (id === leads.lead ? "Team Lead" : id === leads.deputy ? "Deputy Team Lead" : "Member");
     const role = roleOf(m.memberId);
+    // Boaz 2026-10-08: the Team Lead does not leave the team they lead (closing the team is a separate, later action),
+    // and needs no Sync now - the automatic sync runs every few seconds.
+    const amLead = m.memberId === leads.lead;
+    $("team-sync-now-btn").hidden = amLead;
+    $("team-leave-btn").hidden = amLead;
     setText("team-member-who", `You are ${m.name} in the team "${m.teamName}" (${role}), since ${timeText(Date.parse(m.joinedAt))}.`);
     const connected = handle && permission === "granted";
     setText("team-member-folder",
