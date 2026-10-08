@@ -176,10 +176,11 @@ let inviteLookedAt = 0;
 
 async function paintTeamInvitation() {
   if (await getMembership()) { clearStatusMessage(INVITE_BAR_ID); return; }
-  if (document.getElementById("team-join")?.hidden === false) { clearStatusMessage(INVITE_BAR_ID); return; }
   if (Date.now() - inviteLookedAt < INVITE_LOOK_EVERY_MS) return;
   inviteLookedAt = Date.now();
   const toJoin = () => { location.href = chrome.runtime.getURL("settings.html?team=join#team-section"); };
+  // Boaz (1.2.2.8 test): with the Join screen open, the bar's Join… is greyed out - it was pressed already.
+  const joinOpen = () => document.getElementById("team-join")?.hidden === false; // read when the bar is set, after the scan
   // 1.2.2.8 live test: the bar stayed empty and nobody could tell why - so it now says when it cannot look, and when an
   // invitation is there but not in this person's name, instead of going quiet. Priority: under the always-present pipeline line it was never seen.
   const saved = await getOneDriveFolder();
@@ -198,7 +199,7 @@ async function paintTeamInvitation() {
   if (t) {
     setStatusMessage(INVITE_BAR_ID, { priority: true,
       text: `${t.mine[0].byName || "Your Team Lead"} has invited you to the team "${t.team.name}" - join it to share accounts, contacts and leads with your colleagues.`,
-      action: { label: "Join…", onClick: toJoin },
+      action: { label: "Join…", onClick: toJoin, disabled: joinOpen() },
     });
     return;
   }
@@ -207,7 +208,7 @@ async function paintTeamInvitation() {
   const names = other.open.map((i) => `"${i.name}"`).join(", ");
   setStatusMessage(INVITE_BAR_ID, { priority: true,
     text: `The team "${other.team.name}" has an open invitation for ${names} - not the name or e-mail in your User Profile (Settings). If it is for you, join with it.`,
-    action: { label: "Join…", onClick: toJoin },
+    action: { label: "Join…", onClick: toJoin, disabled: joinOpen() },
   });
 }
 
@@ -539,7 +540,7 @@ function showInvitesOf(index) {
     p.append(rb, document.createTextNode(`${inv.byName || "The Team Lead"} invited you as `), b,
       document.createTextNode(`${inv.at ? ` on ${dayText(inv.at)}` : ""}${inv.email ? ` (${inv.email})` : ""}.`));
     box.append(p);
-    $("team-join-btn").textContent = `Join as ${inv.name}`;
+    $("team-join-btn").textContent = "Join Team";
     $("team-join-btn").disabled = false;
     return;
   }
@@ -548,14 +549,14 @@ function showInvitesOf(index) {
     const lab = document.createElement("label");
     lab.className = "team-invite-choice";
     const rb = Object.assign(document.createElement("input"), { type: "radio", name: "team-invite", value: inv.id, checked: inv === pick });
-    rb.addEventListener("change", () => { $("team-join-btn").textContent = `Join as ${inv.name}`; $("team-join-btn").disabled = false; });
+    rb.addEventListener("change", () => { $("team-join-btn").disabled = false; });
     const b = document.createElement("strong");
     b.textContent = inv.name;
     lab.append(rb, document.createTextNode(` ${inv.byName || "The Team Lead"} invited: `), b,
       document.createTextNode(`${inv.email ? ` (${inv.email})` : ""}${inv.at ? `, ${dayText(inv.at)}` : ""}`));
     box.append(lab);
   }
-  $("team-join-btn").textContent = pick ? `Join as ${pick.name}` : "Join";
+  $("team-join-btn").textContent = "Join Team"; // Boaz: nobody can join as someone else - the name says nothing
   $("team-join-btn").disabled = !pick;
 }
 
@@ -979,7 +980,8 @@ function onSoloInvitedJoin() {
   // Boaz (1.2.2.8 test): joining is the one thing on this screen - the page's own header and offers step back, and the
   // top bar does not repeat the invitation shown right here.
   document.body.classList.add("team-join-focus");
-  clearStatusMessage(INVITE_BAR_ID);
+  inviteLookedAt = 0;
+  paintTeamInvitation().catch(() => {});
   $("team-section").scrollIntoView({ block: "start" });
   showTeams(invitedCache.teams, "onedrive", invitedCache.teams.length);
   if (i > 0) { $("team-join-team").value = String(i); showInvitesOf(i); }
@@ -1134,6 +1136,8 @@ export function initTeamSettings() {
     setText("team-join-status", "");
     document.body.classList.remove("team-join-focus");
     showFlow(null);
+    inviteLookedAt = 0;
+    paintTeamInvitation().catch(() => {});
     renderTeamSettings();
   }));
   $("team-create-btn").addEventListener("click", () => onCreate(false));

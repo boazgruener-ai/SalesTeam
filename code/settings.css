@@ -860,6 +860,8 @@ textarea {
 #team-join-choose { margin-top: 10px; }
 /* Boaz (1.2.2.8 test): opened from the top bar's invitation, the Join screen is all there is. */
 body.team-join-focus #seller-research-offer, body.team-join-focus #page-header-bar { display: none !important; }
+/* A display rule (.settings-buttons-row, the team select) outranks the hidden attribute - in the Team card it must not. */
+#team-section [hidden] { display: none !important; }
 .team-join-invited { font-size: 14px; margin: 4px 0 10px; }
 #team-join-choose select { display: block; min-width: 320px; max-width: 100%; padding: 4px 6px; margin-bottom: 8px; }
 .team-invite-choice { display: block; padding: 2px 0; cursor: pointer; font-weight: normal; }
