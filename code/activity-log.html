@@ -33,6 +33,7 @@
         Errors only
       </label>
       <span id="log-count" class="log-count"></span>
+      <button type="button" id="log-columns-btn" class="log-columns-btn" title="Show or hide columns, or reset their order">Columns ▾</button>
     </div>
 
     <p id="log-empty-state" class="empty-state" hidden>No activity logged yet.</p>
@@ -40,15 +41,8 @@
 
     <div id="log-table-wrap">
       <table id="log-table" hidden>
-        <thead>
-          <tr>
-            <th>Date &amp; Time</th>
-            <th>Actor</th>
-            <th>Action</th>
-            <th>Previous Value</th>
-            <th>New Value</th>
-          </tr>
-        </thead>
+        <!-- Built by activity-log.js: sort, filter, hide and drag-to-move, as on Target Accounts (Boaz 2026-10-08). -->
+        <thead id="log-thead"></thead>
         <tbody id="log-tbody"></tbody>
       </table>
     </div>

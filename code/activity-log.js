@@ -7,6 +7,7 @@
 // window), not via any action on this page.
 import { getActivityLog } from "./storage.js";
 import { teamLogText, fieldName, shownFields } from "./team-log.js";
+import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 // Team use step 6 (R3.11): the team log (team-sync.js TEAM_LOG_KEY) - who in the team changed what. "Team" shows
 // everyone's shared changes, mine included; "All actors" adds only colleagues' lines (mine are already here as User
@@ -66,8 +67,9 @@ function applyFilters() {
     if (!show) return false;
     if (errorsOnly && !entry.error) return false;
     if (!entryMatchesSearch(entry, query)) return false;
-    return true;
+    return matchesColumnFilters(entry);
   });
+  sortEntries(filtered);
 
   renderRows(filtered);
   countEl.textContent = allEntries.length === 0
@@ -117,43 +119,236 @@ function renderRows(entries) {
   noMatchStateEl.hidden = true;
   tableEl.hidden = false;
 
+  renderHead();
+  const cols = visibleColumns();
   for (const entry of entries) {
     const tr = document.createElement("tr");
     if (entry.error) tr.className = "log-row-error";
-
-    const timeTd = document.createElement("td");
-    timeTd.className = "log-timestamp";
-    timeTd.textContent = formatTimestamp(entry.timestamp);
-
-    const actorTd = document.createElement("td");
-    const actorPill = document.createElement("span");
-    actorPill.className = `log-actor-pill log-actor-${entry.actor}`;
-    // The same names as the filter: Me / Automatic / the colleague's name.
-    actorPill.textContent = entry.team ? (entry.mine ? "Me" : entry.who) : entry.actor === "extension" ? "Automatic" : "Me";
-    actorTd.appendChild(actorPill);
-
-    const actionTd = document.createElement("td");
-    if (entry.error) {
-      const icon = document.createElement("span");
-      icon.className = "log-error-icon";
-      icon.textContent = "⚠";
-      actionTd.appendChild(icon);
-    }
-    actionTd.appendChild(document.createTextNode(entry.label || entry.action || ""));
-    if (entry.error && entry.errorMessage) {
-      const errDetail = document.createElement("div");
-      errDetail.className = "log-value";
-      errDetail.style.color = "var(--error-red)";
-      errDetail.style.fontSize = "12px";
-      errDetail.textContent = entry.errorMessage;
-      actionTd.appendChild(errDetail);
-    }
-
-    tr.append(timeTd, actorTd, actionTd, valueCell(entry.prevValue), valueCell(entry.newValue, { wide: true }));
+    for (const c of cols) tr.appendChild(c.render(entry));
     tbodyEl.appendChild(tr);
   }
   markExpandableValues();
 }
+
+// --------------------------------------------------------------------------
+// Columns (Boaz 2026-10-08: every data table has the same column features as Target Accounts) - click a title to
+// sort, ▾ for sort / filter / hide, Columns to show / hide or reset the order, drag a title to move the column.
+// Sort, filters and hidden columns are remembered in this browser (localStorage), like the other tables.
+// --------------------------------------------------------------------------
+const actorText = (entry) => (entry.team ? (entry.mine ? "Me" : entry.who) : entry.actor === "extension" ? "Automatic" : "Me");
+const COLUMNS = [
+  {
+    id: "time", label: "Date & Time", sortValue: (e) => e.timestamp || 0, text: (e) => formatTimestamp(e.timestamp),
+    render(entry) {
+      const td = document.createElement("td");
+      td.className = "log-timestamp";
+      td.textContent = formatTimestamp(entry.timestamp);
+      return td;
+    },
+  },
+  {
+    id: "actor", label: "Actor", text: actorText,
+    render(entry) {
+      const td = document.createElement("td");
+      const pill = document.createElement("span");
+      pill.className = `log-actor-pill log-actor-${entry.actor}`;
+      // The same names as the filter: Me / Automatic / the colleague's name.
+      pill.textContent = actorText(entry);
+      td.appendChild(pill);
+      return td;
+    },
+  },
+  {
+    id: "action", label: "Action", text: (e) => `${e.label || e.action || ""}${e.errorMessage ? ` ${e.errorMessage}` : ""}`,
+    render(entry) {
+      const td = document.createElement("td");
+      if (entry.error) {
+        const icon = document.createElement("span");
+        icon.className = "log-error-icon";
+        icon.textContent = "⚠";
+        td.appendChild(icon);
+      }
+      td.appendChild(document.createTextNode(entry.label || entry.action || ""));
+      if (entry.error && entry.errorMessage) {
+        const errDetail = document.createElement("div");
+        errDetail.className = "log-value";
+        errDetail.style.color = "var(--error-red)";
+        errDetail.style.fontSize = "12px";
+        errDetail.textContent = entry.errorMessage;
+        td.appendChild(errDetail);
+      }
+      return td;
+    },
+  },
+  { id: "prev", label: "Previous Value", text: (e) => formatValue(e.prevValue), render: (e) => valueCell(e.prevValue) },
+  { id: "new", label: "New Value", text: (e) => formatValue(e.newValue), render: (e) => valueCell(e.newValue, { wide: true }) },
+];
+const ORDER_KEY = "salesteam-activity-log-column-order-v1";
+const STATE_KEY = "salesteam-activity-log-columns-v1";
+
+let colState = { hidden: [], sort: { id: "time", dir: "desc" }, filters: {} };
+try {
+  const saved = JSON.parse(localStorage.getItem(STATE_KEY));
+  if (saved && typeof saved === "object") colState = { ...colState, ...saved, filters: saved.filters || {} };
+} catch { /* defaults */ }
+function saveColState() {
+  try { localStorage.setItem(STATE_KEY, JSON.stringify(colState)); } catch { /* this visit only */ }
+}
+
+function visibleColumns() {
+  return orderedColumns(COLUMNS, ORDER_KEY).filter((c) => !colState.hidden.includes(c.id));
+}
+
+function matchesColumnFilters(entry) {
+  for (const [id, f] of Object.entries(colState.filters)) {
+    const col = COLUMNS.find((c) => c.id === id);
+    if (!col || !f?.text) continue;
+    const has = String(col.text(entry) || "").toLowerCase().includes(f.text.toLowerCase());
+    if (f.exclude ? has : !has) return false;
+  }
+  return true;
+}
+
+function sortEntries(list) {
+  const col = COLUMNS.find((c) => c.id === colState.sort?.id) || COLUMNS[0];
+  const dir = colState.sort?.dir === "asc" ? 1 : -1;
+  const key = col.sortValue || ((e) => String(col.text(e) || "").toLowerCase());
+  list.sort((a, b) => {
+    const x = key(a);
+    const y = key(b);
+    return (x < y ? -1 : x > y ? 1 : 0) * dir || (b.timestamp || 0) - (a.timestamp || 0);
+  });
+}
+
+function setSort(id, dir) {
+  colState.sort = { id, dir };
+  saveColState();
+  applyFilters();
+}
+
+let openPopup = null;
+function closeColumnMenu() {
+  if (openPopup) { openPopup.remove(); openPopup = null; }
+}
+function showPopup(anchor, popup) {
+  closeColumnMenu();
+  document.body.appendChild(popup);
+  const r = anchor.getBoundingClientRect();
+  popup.style.left = `${Math.max(8, Math.min(r.right - popup.offsetWidth, window.innerWidth - popup.offsetWidth - 8))}px`;
+  popup.style.top = `${r.bottom + 2}px`;
+  openPopup = popup;
+  setTimeout(() => document.addEventListener("click", function close(e) {
+    if (popup.contains(e.target)) { document.addEventListener("click", close, { once: true }); return; }
+    closeColumnMenu();
+  }, { once: true }), 0);
+}
+function menuItem(text, onClick, { disabled = false } = {}) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "col-menu-item";
+  b.textContent = text;
+  b.disabled = disabled;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// ▾ on a column: Sort A→Z / Z→A, a "contains" filter (or "does not contain"), Hide.
+function openColumnMenu(col, th) {
+  if (openPopup?.dataset.col === col.id) { closeColumnMenu(); return; }
+  const popup = document.createElement("div");
+  popup.className = "col-menu-popup";
+  popup.dataset.col = col.id;
+  const asc = col.id === "time" ? "Oldest first" : "Sort A → Z";
+  const desc = col.id === "time" ? "Newest first" : "Sort Z → A";
+  popup.append(menuItem(asc, () => { closeColumnMenu(); setSort(col.id, "asc"); }), menuItem(desc, () => { closeColumnMenu(); setSort(col.id, "desc"); }));
+  popup.appendChild(document.createElement("hr"));
+  const f = colState.filters[col.id] || { text: "", exclude: false };
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "col-menu-filter";
+  input.placeholder = "Filter: contains…";
+  input.value = f.text || "";
+  const ex = document.createElement("label");
+  ex.className = "col-menu-check";
+  const exBox = document.createElement("input");
+  exBox.type = "checkbox";
+  exBox.checked = Boolean(f.exclude);
+  ex.append(exBox, document.createTextNode(" Does not contain"));
+  const apply = () => {
+    const text = input.value.trim();
+    if (text) colState.filters[col.id] = { text, exclude: exBox.checked };
+    else delete colState.filters[col.id];
+    saveColState();
+    applyFilters();
+  };
+  input.addEventListener("input", apply);
+  exBox.addEventListener("change", apply);
+  popup.append(input, ex, menuItem("Clear filter", () => { input.value = ""; exBox.checked = false; apply(); }, { disabled: !f.text }));
+  popup.appendChild(document.createElement("hr"));
+  popup.appendChild(menuItem("Hide this column", () => { closeColumnMenu(); setHidden(col.id, true); }, { disabled: visibleColumns().length <= 1 }));
+  showPopup(th, popup);
+  input.focus();
+}
+
+function setHidden(id, hidden) {
+  const set = new Set(colState.hidden);
+  if (hidden) set.add(id); else set.delete(id);
+  if (COLUMNS.length - set.size < 1) return false;
+  colState.hidden = [...set];
+  saveColState();
+  applyFilters();
+  return true;
+}
+
+function openColumnsPanel(btn) {
+  if (openPopup?.dataset.col === "*") { closeColumnMenu(); return; }
+  const popup = document.createElement("div");
+  popup.className = "col-menu-popup columns-panel";
+  popup.dataset.col = "*";
+  popup.append(resetOrderItem(ORDER_KEY, closeColumnMenu, applyFilters), document.createElement("hr"));
+  for (const col of orderedColumns(COLUMNS, ORDER_KEY)) {
+    const row = document.createElement("label");
+    row.className = "columns-panel-row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !colState.hidden.includes(col.id);
+    cb.addEventListener("change", () => { if (!setHidden(col.id, !cb.checked)) cb.checked = true; });
+    row.append(cb, document.createTextNode(col.label));
+    popup.appendChild(row);
+  }
+  showPopup(btn, popup);
+}
+
+function renderHead() {
+  const thead = document.getElementById("log-thead");
+  const tr = document.createElement("tr");
+  for (const col of visibleColumns()) {
+    const th = document.createElement("th");
+    makeColumnDraggable(th, col, COLUMNS, ORDER_KEY, applyFilters);
+    const label = document.createElement("span");
+    label.className = "th-label";
+    label.textContent = col.label;
+    label.title = "Click to sort";
+    label.addEventListener("click", () => setSort(col.id, colState.sort?.id === col.id && colState.sort.dir === "desc" ? "asc" : "desc"));
+    th.appendChild(label);
+    if (colState.sort?.id === col.id) th.appendChild(document.createTextNode(colState.sort.dir === "asc" ? " ▲" : " ▼"));
+    if (colState.filters[col.id]?.text) {
+      th.classList.add("col-filtered");
+      th.title = `Filtered: ${colState.filters[col.id].exclude ? "does not contain" : "contains"} "${colState.filters[col.id].text}"`;
+    }
+    const menu = document.createElement("button");
+    menu.type = "button";
+    menu.className = "col-menu-btn";
+    menu.textContent = "▾";
+    menu.title = "Sort / Filter / Hide this column";
+    menu.addEventListener("click", (e) => { e.stopPropagation(); openColumnMenu(col, th); });
+    th.appendChild(menu);
+    tr.appendChild(th);
+  }
+  thead.replaceChildren(tr);
+}
+
+document.getElementById("log-columns-btn").addEventListener("click", (e) => { e.stopPropagation(); openColumnsPanel(e.currentTarget); });
 
 // "field: value" lines for the Previous / New Value columns (null = empty).
 function fieldLines(values, fields) {
