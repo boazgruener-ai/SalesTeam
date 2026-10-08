@@ -2225,8 +2225,30 @@ body {
   box-shadow: inset 0 -2px 0 var(--border), -6px 0 6px -6px rgba(0, 0, 0, 0.2);
 }
 
-/* Column order by drag and drop (Boaz 2026-10-08, target-accounts.js makeColumnDraggable) */
+
+/* Column order by drag and drop (Boaz 2026-10-08, column-order.js) */
 th.th-draggable { cursor: grab; }
 th.th-dragging { opacity: .45; }
-th.th-drop-before { box-shadow: inset 3px 0 0 #1155cc; }
-th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc; }
+th.th-drop-before { box-shadow: inset 3px 0 0 #1155cc !important; }
+th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc !important; }
+
+/* Boaz 2026-10-08: the tick boxes stay at the left edge while the table scrolls right (as the ⋮ column stays right). */
+#companies-table th.select-cell,
+#companies-table td.select-cell,
+#contacts-table th.select-cell,
+#contacts-table td.select-cell {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 2;
+  box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.2);
+}
+#companies-table thead th.select-cell,
+#contacts-table thead th.select-cell {
+  z-index: 4;
+  box-shadow: inset 0 -2px 0 var(--border), 6px 0 6px -6px rgba(0, 0, 0, 0.2);
+}
+.company-row:hover td.select-cell,
+.company-row.expanded td.select-cell {
+  background: var(--blue-light);
+}

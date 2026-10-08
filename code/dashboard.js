@@ -74,6 +74,7 @@ import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, r
 import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
 import { initDecisionsDot } from "./decisions-dot.js";
 import { teamAccounts } from "./team-accounts-ui.js";
+import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -1054,8 +1055,11 @@ let hiddenColumns = new Set();
 // A hidden column's own filter/sort (if it had one set before being hidden)
 // stays in effect - this only controls what's rendered, not what's applied
 // to applyFilterSortSearch, which still iterates every column in COLUMNS.
+// Boaz 2026-10-08: drag a column title to move the column (column-order.js, as on Target Accounts).
+const COLUMN_ORDER_STORAGE_KEY = "salesteam-dashboard-column-order-v1";
+
 function visibleColumns() {
-  return COLUMNS.filter((c) => !hiddenColumns.has(c.id));
+  return orderedColumns(COLUMNS, COLUMN_ORDER_STORAGE_KEY).filter((c) => !hiddenColumns.has(c.id));
 }
 
 function loadPageSize() {
@@ -1467,8 +1471,9 @@ function toggleColumnsPanel() {
   const anchorRect = columnsBtn.getBoundingClientRect();
   const popup = document.createElement("div");
   popup.className = "col-menu-popup columns-panel";
+  popup.append(resetOrderItem(COLUMN_ORDER_STORAGE_KEY, closeColumnMenu, () => renderTable()), document.createElement("hr"));
 
-  for (const column of COLUMNS) {
+  for (const column of orderedColumns(COLUMNS, COLUMN_ORDER_STORAGE_KEY)) {
     const row = document.createElement("label");
     row.className = "columns-panel-row";
     const checkbox = document.createElement("input");
@@ -1544,6 +1549,7 @@ function renderTableHead() {
   for (const column of visibleColumns()) {
     const th = document.createElement("th");
     th.className = "resizable-th";
+    makeColumnDraggable(th, column, COLUMNS, COLUMN_ORDER_STORAGE_KEY, () => renderTable(), { noDragFrom: ".col-resize-handle" });
 
     const label = document.createElement("span");
     label.className = "th-label";
