@@ -227,7 +227,7 @@ const QA = [
     category: "Team",
     question: "How do I start a team?",
     keywords: ["create team", "start team", "new team", "set up team", "team lead", "team admin", "team folder", "share folder"],
-    answer: 'Open Settings > Team > Create a team… and follow the numbered steps there: create an empty folder in OneDrive, right-click it and choose "Always keep on this device", share it with your colleagues so they can edit, then enter your name and the team\'s name, pick the folder and click "Back up and create the team". If Chrome asks whether SalesTeam may view and edit the folder, choose "Allow on every visit". SalesTeam saves a full backup first, then copies your accounts, contacts, leads (posts), Setup and rules into the folder as the team\'s starting data. You become the Team Lead.',
+    answer: 'Open Settings > Team > Create a team… and follow the numbered steps there: create an empty folder in OneDrive, right-click it and choose "Always keep on this device", share it with your colleagues so they can edit, then enter your name and the team\'s name, click "Choose the folder and create the team…" and choose the folder. If Chrome asks whether SalesTeam may view and edit the folder, choose "Allow on every visit". SalesTeam saves a full backup first, then copies your accounts, contacts, leads (posts), Setup and rules into the folder as the team\'s starting data. You become the Team Lead.',
   },
   {
     id: "team-join",
