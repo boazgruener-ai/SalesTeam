@@ -835,3 +835,39 @@ textarea {
 #team-members-table td { border-bottom: 1px solid #e3e8ef; padding: 5px 14px 5px 0; }
 #team-members-table tr.team-members-head td { font-weight: 600; color: var(--gray-light); }
 
+
+/* Settings > Team, 1.2.3 step 1 (team-ui.js, team-groups-ui.js): the ⋮ menus, the Groups table and the group editor */
+.team-kebab { border: none; background: none; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 8px; border-radius: 4px; color: #4a5260; }
+.team-kebab:hover { background: #eef1f5; }
+.team-menu-popup { position: absolute; z-index: 1000; min-width: 170px; background: #fff; border: 1px solid #d0d7de; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.15); padding: 4px 0; }
+.team-menu-item { display: block; width: 100%; text-align: left; border: none; background: none; padding: 7px 14px; font-size: 13px; cursor: pointer; color: #1f2933; }
+.team-menu-item:hover { background: #eef3fc; }
+.team-menu-item.danger { color: #b3261e; }
+.team-warn { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #fff4e5; border: 1px solid #f0c48a; color: #8a5300; font-size: 11px; font-weight: 600; }
+.team-warn-line { color: #8a5300; font-size: 12.5px; }
+.team-group-mine { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: #e6f0ff; color: #1155cc; font-size: 11px; font-weight: 600; }
+.team-groups-table { border-collapse: collapse; font-size: 12.5px; margin: 4px 0 10px; }
+.team-groups-table td { border-bottom: 1px solid #e3e8ef; padding: 5px 14px 5px 0; vertical-align: top; }
+.team-groups-table tr.team-members-head td { font-weight: 600; color: var(--gray-light); }
+.team-groups-table td.team-num { text-align: right; }
+.team-group-kind { color: #4a5260; max-width: 320px; }
+.team-group-dialog { border: none; border-radius: 10px; padding: 20px 24px; width: 640px; max-width: 94vw; max-height: 90vh; overflow: auto; box-shadow: 0 8px 30px rgba(0,0,0,.25); font-size: 13px; line-height: 1.5; color: #1f2933; }
+.team-group-dialog-small { width: 480px; }
+.team-group-dialog h3 { margin: 0 0 10px; }
+.team-group-dialog > label { display: block; font-weight: 600; margin: 10px 0 4px; }
+.team-group-dialog input[type="text"], .team-group-dialog input[type="search"] { display: block; width: 100%; box-sizing: border-box; padding: 5px 8px; }
+.team-kind-row label { display: block; font-weight: normal; margin: 2px 0; }
+.team-filter-box, .team-named-box { margin-top: 10px; }
+.team-filter-row { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0; }
+.team-filter-label { width: 120px; flex: none; padding-top: 4px; font-weight: 600; }
+.team-ms { flex: 1; border: 1px solid #d0d7de; border-radius: 6px; padding: 3px 8px; background: #fff; }
+.team-ms summary { cursor: pointer; }
+.team-ms summary.team-ms-any { color: var(--gray-light); }
+.team-ms-list { max-height: 180px; overflow: auto; padding: 4px 0; }
+.team-ms-item { display: block; padding: 1px 0; cursor: pointer; font-weight: normal; }
+.team-named-list, .team-members-ticks { max-height: 220px; overflow: auto; border: 1px solid #d0d7de; border-radius: 6px; padding: 6px 10px; }
+.team-preview { border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 12px; background: #f7f9fc; max-height: 220px; overflow: auto; }
+.team-preview-line { margin: 0 0 4px; font-weight: 600; }
+.team-preview-list { margin: 4px 0 0; padding-left: 20px; columns: 2; font-size: 12px; }
+.team-dialog-actions { justify-content: flex-end; margin-top: 14px; }
+.team-group-dialog .team-primary-btn { background: #1155cc; border-color: #1155cc; color: #fff; }

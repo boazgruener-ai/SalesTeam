@@ -32,6 +32,8 @@ function subjectOf(state, r, normalize) {
     return { kind: r.e, key: null, ref: id };
   }
   if (r.e === "lead") return { kind: "lead", key: null, ref: id };
+  // 1.2.3: the Team Lead chain (team|lead, team|deputy, team|takeover).
+  if (r.e === "team") return { kind: "team", key: null, ref: id };
   return { kind: "setting", key: null, ref: id.replace(/:.*$/, "") || id };
 }
 
@@ -62,6 +64,7 @@ export function teamLogEntries(records, state, normalize, priors = null) {
       entry = { at, m, op, kind: s.kind, key: s.key, ref: s.ref, label: null, fields: [], rows: 0, before: {}, after: {} };
       if (op === "assign" || op === "unassign") entry.to = r.member || m;
       if (s.kind === "lead") entry.label = leadLabel(state, s.ref);
+      if (s.kind === "team") entry.to = r.f?.member || r.f?.was || null;
       groups.set(g, entry);
     }
     entry.at = Math.max(entry.at, at);
@@ -125,6 +128,11 @@ export function teamLogText(entry, name, who) {
   if (entry.kind === "setting" && entry.ref === "teamJoinProposals") {
     const n = entry.rows > 1 ? `${entry.rows} join proposals` : "a join proposal";
     return entry.op === "delete" ? `settled ${n}` : `made ${n} (accounts they had worked on before joining)`;
+  }
+  if (entry.kind === "team") {
+    if (entry.ref === "lead") return `made ${who(entry.to)} Team Lead`;
+    if (entry.ref === "deputy") return entry.after?.member ? `made ${who(entry.to)} deputy Team Lead` : `ended ${entry.to ? `${who(entry.to)}'s` : "the"} deputy role`;
+    if (entry.ref === "takeover") return "took over as Team Lead";
   }
   switch (entry.op) {
     case "assign": return entry.to === entry.m ? `assigned ${what} to themselves` : `assigned ${what} to ${who(entry.to)}`;

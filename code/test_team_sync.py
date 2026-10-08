@@ -617,6 +617,77 @@ def main():
     dora.advance(2500)
     check("groups: deleted -> basic mode again", (dora.local("teamAccountStates") or {}).get("groupsOn"), None)
 
+    # 1.2.3 step 1 (design 3.3, 3.4): hand-over and deputy. Each PC reaches the same Team Lead; a group record counts
+    # only from whoever had the rights at its stamp.
+    merged_groups = lambda m: sorted(k[len("teamGroups:"):] for k in json.loads(m.e("JSON.stringify(Object.keys(mem.state.entities.setting || {}))")) if k.startswith("teamGroups:"))
+    with_group = lambda m, gid, name: dict(m.local("teamGroups") or {}, **{gid: {"name": name, "kind": "named", "accounts": ["acme ag"], "members": []}})
+    r, folder = eli.call("makeTeamLead('%s')" % dora_id, folder)
+    check("hand-over: a Member cannot hand over", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    r, folder = dora.call("makeTeamLead('%s')" % eli_id, folder)
+    check("hand-over: Dora makes Eli Team Lead", r.get("ok"), True)
+    st = dora.local("teamAccountStates") or {}
+    check("hand-over: Dora's PC follows at once (no rights any more)", (st.get("lead"), st.get("admin")), (eli_id, False))
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    st = eli.local("teamAccountStates") or {}
+    check("hand-over: Eli's PC sees Eli as Team Lead", (st.get("lead"), st.get("admin")), (eli_id, True))
+    check("hand-over: Eli is told in the top bar", any(n.get("kind") == "role" and n.get("text", "").startswith("Dora made you Team Lead") for n in eli.local("teamNotices") or []), True)
+    check("hand-over: Dora's team log says so", any(x.get("kind") == "team" and x.get("ref") == "lead" and x.get("to") == eli_id for x in dora.local("teamLog") or []), True)
+    r, folder = dora.call("makeTeamLead('%s')" % dora_id, folder)
+    check("hand-over: the former Team Lead cannot take it back", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    dora.set_local({"teamGroups": with_group(dora, "g-dora", "Dora after the hand-over")})
+    r, folder = dora.sync(folder)
+    eli.set_local({"teamGroups": with_group(eli, "g-eli2", "Eli as Team Lead")})
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    check("hand-over: the former Team Lead's group record is ignored on both PCs",
+          ("g-dora" in merged_groups(eli), "g-dora" in merged_groups(dora), "g-dora" in (eli.local("teamGroups") or {})), (False, False, False))
+    check("hand-over: the new Team Lead's group reaches Dora", ((dora.local("teamGroups") or {}).get("g-eli2") or {}).get("name"), "Eli as Team Lead")
+    # Deputy: Eli makes Dora deputy - her group records count; ended - they do not.
+    r, folder = dora.call("setDeputy('%s')" % dora_id, folder)
+    check("deputy: a Member cannot name a deputy", r.get("reason"), "not_lead")
+    r, folder = eli.call("setDeputy('%s')" % dora_id, folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    st = dora.local("teamAccountStates") or {}
+    check("deputy: Dora is deputy, with the rights", (st.get("deputy"), st.get("admin")), (dora_id, True))
+    check("deputy: Dora is told", any(n.get("kind") == "role" and "made you deputy" in n.get("text", "") for n in dora.local("teamNotices") or []), True)
+    r, folder = dora.call("setDeputy(null)", folder)
+    check("deputy: a deputy cannot end or name a deputy", r.get("reason"), "not_lead")
+    r, folder = dora.call("makeTeamLead('%s')" % dora_id, folder)
+    check("deputy: a deputy cannot make themselves Team Lead", r.get("reason"), "not_lead")
+    dora.set_local({"teamGroups": with_group(dora, "g-dep", "Dora as deputy")})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("deputy: the deputy's group reaches Eli", ((eli.local("teamGroups") or {}).get("g-dep") or {}).get("name"), "Dora as deputy")
+    r, folder = eli.call("setDeputy(null)", folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    st = dora.local("teamAccountStates") or {}
+    check("deputy: ended - Dora is a Member again", (st.get("deputy"), st.get("admin")), (None, False))
+    check("deputy: the team log names whose deputy role ended",
+          any(x.get("kind") == "team" and x.get("ref") == "deputy" and x.get("to") == dora_id and not (x.get("after") or {}).get("member") for x in dora.local("teamLog") or []), True)
+    dora.set_local({"teamGroups": with_group(dora, "g-late", "Dora after the deputy role")})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("deputy: after it ends, her group records are ignored again", "g-late" in merged_groups(eli), False)
+    check("deputy: what she wrote as deputy stays", "g-dep" in merged_groups(eli), True)
+    # Back to Dora as Team Lead for the rest of the test; the groups are deleted (marked) - basic mode again.
+    r, folder = eli.call("makeTeamLead('%s')" % dora_id, folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    check("hand-over: and back to Dora", ((dora.local("teamAccountStates") or {}).get("lead"), (eli.local("teamAccountStates") or {}).get("lead")), (dora_id, dora_id))
+    gone = {k: dict(v, deleted=True) for k, v in (dora.local("teamGroups") or {}).items() if k != "other"}
+    dora.set_local({"teamGroups": gone})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    dora.advance(2500)
+    check("hand-over: groups deleted again -> basic mode", (dora.local("teamAccountStates") or {}).get("groupsOn"), None)
+    dora.e("chrome.storage.local.remove('teamNotices')")
+    eli.e("chrome.storage.local.remove('teamNotices')")
+    dora.settle()
+    eli.settle()
+
     # F. Step 5b - the do-not-contact list is one row per entry (R6.8): two members adding at once both keep theirs.
     base = [{"slug": "adecco", "category": "recruiter"}]
     dora.set_local({"companyExclusions": base})
@@ -700,6 +771,29 @@ def main():
     check("remove member: Dora lists Eli as removed", [(bool(m.get("removed")), m["online"]) for m in st["members"] if m["id"] == eli_id], [(True, False)])
     r, folder = eli.sync(folder)
     check("remove member: Eli's own PC stops sharing", eli.local("teamMembership"), None)
+
+    # 1.2.3 step 1 (D16): the Team Lead closes the team. Hal (a member) stops sharing and is told; nobody can join again.
+    hal = Member("hal", now_offset=13)
+    r, folder = hal.call("joinTeam({ name: 'Hal' })", folder)
+    r, folder = hal.sync(folder)
+    r, folder = dora.sync(folder)
+    r, folder = hal.call("closeTeam()", folder)
+    check("close: a Member cannot close the team", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    kept = picture(dora)
+    r, folder = dora.call("closeTeam()", folder)
+    check("close: the Team Lead closes it", (r.get("ok"), r.get("closed")), (True, True))
+    check("close: closed.json written, Dora's PC stops sharing", ("closed.json" in folder, dora.local("teamMembership")), (True, None))
+    check("close: Dora keeps her data as it was", (same(picture(dora), kept), bool(kept["targetAccounts"])), (True, True))
+    r, folder = hal.sync(folder)
+    check("close: Hal's PC stops sharing by itself", (r.get("closed"), hal.local("teamMembership")), (True, None))
+    check("close: Hal is told who closed it", (hal.local("teamClosedNotice") or {}).get("by"), "Dora")
+    by_id = lambda pic: dict(pic, targetAccountsWorkbook=dict(pic["targetAccountsWorkbook"], companies=sorted(pic["targetAccountsWorkbook"]["companies"], key=lambda c: c["companyId"])))
+    check("close: Hal keeps the team's data as his own copy (row order aside)", same(by_id(picture(hal)), by_id(kept)), True)
+    ivy = Member("ivy", now_offset=15)
+    r, folder = ivy.call("previewJoin()", folder)
+    check("close: a closed team cannot be joined", "closed" in (r.get("error") or ""), True)
+    r, folder = ivy.call("joinTeam({ name: 'Ivy' })", folder)
+    check("close: ... not even directly", ("closed" in (r.get("error") or ""), ivy.local("teamMembership")), (True, None))
 
     print()
     for f in _failures:

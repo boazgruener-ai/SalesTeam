@@ -2340,8 +2340,11 @@ async function teamReassign(companyKey) {
   try { st = await chrome.runtime.sendMessage({ type: "TEAM_SYNC_STATUS" }); } catch { /* handled below */ }
   if (!st?.member) { showNotice("The team status could not be read - try again in a moment.", { error: true }); return; }
   const current = teamAccounts.entry(companyKey)?.a || null;
-  const choices = [{ value: st.me.memberId, label: `${st.me.name} (you)` }, ...(st.members || []).map((m) => ({ value: m.id, label: m.name }))]
-    .filter((c) => c.value !== current);
+  // 1.2.3 step 1 (D10): current members only (not those who left or were removed), and only those with access.
+  const choices = [{ value: st.me.memberId, label: `${st.me.name} (you)` },
+    ...(st.members || []).filter((m) => !m.left && !m.removed).map((m) => ({ value: m.id, label: m.name }))]
+    .filter((c) => c.value !== current && teamAccounts.mayAccess(c.value, companyKey));
+  if (!choices.length) { showNotice("Nobody else has access to this account - add a member to one of its groups first (Settings > Team).", { error: true }); return; }
   const to = await askChoice("Assign this account to:", choices);
   if (!to) return;
   let r = null;

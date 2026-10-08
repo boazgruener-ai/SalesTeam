@@ -41,6 +41,9 @@ export const TEAM_NOTICES_KEY = "teamNotices";
 // Step 6 (R3.11, design 4.3): the team log shown in the Activity Log - built from the change records written and read
 // (team-log.js). Personal (each PC keeps what it has seen), backup-excluded.
 export const TEAM_LOG_KEY = "teamLog";
+// 1.2.3 step 1 (D16): "Boaz closed the team" - set on a member's PC when it stops sharing because the Team Lead closed
+// the team, shown in the top bar until OK. Personal; cleared when this PC creates or joins a team.
+export const TEAM_CLOSED_NOTICE_KEY = "teamClosedNotice";
 const FORMAT = 1;
 const ALARM = "team-sync";
 const DIFF_DEBOUNCE_MS = 1000;
@@ -307,6 +310,7 @@ async function applyRemote(records) {
   // A colleague (the Team Lead) took one of my accounts away: remember whether it was mine before this batch.
   const me = membership?.memberId;
   const takenFrom = new Map(); // "@key" -> author
+  const leadsBefore = leadNow();
   for (const r of records) {
     if (r.op !== "unassign" || r.e !== "account" || !String(r.id).startsWith("@")) continue;
     const author = stampMember(r.t);
@@ -323,6 +327,7 @@ async function applyRemote(records) {
   }
   await save(["state"]);
   if (affected.size) await writeBack(affected);
+  await noteRoleChange(leadsBefore, records);
   if (takenFrom.size) {
     const now = Date.now();
     const added = [];
@@ -340,6 +345,26 @@ async function applyRemote(records) {
   return affected.size;
 }
 
+// 1.2.3 step 1 (design 3.3, 3.4): "Boaz made you Team Lead" / "… deputy" / "ended your deputy role" - in the top bar
+// until OK, on the PC whose role changed. Compared before and after a batch, so a record read twice says nothing.
+async function noteRoleChange(before, records) {
+  const me = membership?.memberId;
+  const after = leadNow();
+  if (!me || !before.known || !after.known) return;
+  const teamRecs = records.filter((r) => r && r.e === "team").sort((a, b) => (a.t < b.t ? 1 : -1));
+  if (!teamRecs.length) return;
+  const by = memberName(stampMember(teamRecs[0].t));
+  const texts = [];
+  if (after.lead === me && before.lead !== me) texts.push(`${by} made you Team Lead. You see every account and edit the groups.`);
+  else if (before.lead === me && after.lead !== me) texts.push(`${memberName(after.lead)} is Team Lead now. You are a Member.`);
+  if (after.deputy === me && before.deputy !== me) texts.push(`${by} made you deputy Team Lead: you have the Team Lead's rights until ${by} ends it.`);
+  else if (before.deputy === me && after.deputy !== me && after.lead !== me) texts.push(`${by} ended your deputy role. You are a Member again.`);
+  if (!texts.length) return;
+  const now = Date.now();
+  const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
+  await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((text) => ({ kind: "role", text, at: now }))].slice(-50) });
+}
+
 // Outside the queue (file reading is slow). Reads base files and every colleague's new change files in order.
 async function readFolder(root, me, { includeSelf = false } = {}) {
   const meta = mem.meta;
@@ -353,6 +378,9 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
     const tj = await readTeamJson(root, [], "team.json");
     if (tj.status === "ok" && tj.data.createdBy && (!membership?.teamId || tj.data.teamId === membership.teamId)) update.creator = tj.data.createdBy;
   }
+  // D16: the Team Lead closed the team - closed.json at the top. Every PC stops sharing when it sees it.
+  const closed = await readTeamJson(root, [], "closed.json");
+  if (closed.status === "ok" && (!membership?.teamId || !closed.data.teamId || closed.data.teamId === membership.teamId)) update.closed = closed.data;
   // Members the Team Lead removed (Boaz 2026-10-06): removed/<member>.json, written by the admin.
   update.removed = {};
   for (const n of await listTeamNames(root, ["removed"], "file")) {
@@ -427,6 +455,7 @@ function commitReadUpdate(update) {
   if (update.creator) meta.creator = update.creator;
   if (update.selfCursor != null) meta.selfCursor = update.selfCursor;
   if (update.removed) meta.removed = { ...(meta.removed || {}), ...update.removed };
+  if (update.closed) meta.closed = update.closed;
   meta.lastReadAt = Date.now();
 }
 
@@ -581,6 +610,14 @@ export async function runTick(reason = "alarm") {
     const now = Date.now();
     const readEvery = claimsPending() ? CLAIM_READ_EVERY_MS : READ_EVERY_MS;
     if (reason === "now" || now - mem.meta.lastReadAt >= readEvery - 1000) await readRound(root, me);
+    if (mem?.meta.closed) {
+      // D16: the Team Lead closed the team - stop sharing; the data here stays as this member's own copy.
+      const c = mem.meta.closed;
+      const teamName = membership.teamName;
+      await leaveLocally();
+      await chrome.storage.local.set({ [TEAM_CLOSED_NOTICE_KEY]: { teamName, by: c.byName || "The Team Lead", at: c.at || Date.now() } });
+      return { closed: true };
+    }
     if (mem?.meta.removed?.[me]) {
       // The Team Lead removed this member: stop sharing, as Leave does (the local copy stays as a solo copy).
       await leaveLocally();
@@ -756,8 +793,11 @@ async function publishSummary() {
     // Design 5.4: per account its group ids (g), and the groups I am in (Other when none, D9).
     const got = await chrome.storage.local.get("teamGroups");
     value.groupsOn = true;
-    value.myGroups = memberGroups(ctx.me, groupIndex(got.teamGroups, currentTeam()));
+    const index = groupIndex(got.teamGroups, currentTeam());
+    value.myGroups = memberGroups(ctx.me, index);
     if (!value.myGroups.length) value.myGroups = [OTHER_GROUP];
+    // Step 1: everyone's groups - Reassign to… offers only members with access to the account.
+    value.ofMember = index.ofMember;
     value.g = groupsByKey;
   }
   const json = JSON.stringify(value);
@@ -1147,6 +1187,56 @@ export function removeMember(member) {
   });
 }
 
+// 1.2.3 step 1 (design 3.3, 3.4, D15): hand-over and deputy - a team|lead / team|deputy record, valid only from the
+// Team Lead (team-groups.js teamLeadOf), so only the Team Lead may write one. Sent at once; this PC follows the new
+// rule straight away (leadNow reads the merged state), so a former Team Lead cannot keep editing groups meanwhile.
+function writeLeadRecord(id, member) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!isTeamLead()) return { ok: false, reason: "not_lead" };
+    const l = leadNow();
+    if (member && (member === l.lead || !currentTeam().includes(member))) return { ok: false, reason: "not_member" };
+    if (id === "deputy" && (member || null) === (l.deputy || null)) return { ok: true, lead: l };
+    if (!(await connectedRoot()) || !inSyncNow()) return { ok: false, reason: "offline" };
+    const f = { member: member || null };
+    if (id === "deputy" && !member) f.was = l.deputy; // for the team log: whose deputy role ended
+    pushOwn({ t: tick(mem.clock, Date.now()), e: "team", id, op: "set", f });
+    await save(["state", "outbox"]);
+    markGroupsDirty();
+    await publishSummary();
+    scheduleTick(0);
+    return { ok: true, lead: leadNow() };
+  });
+}
+
+export function makeTeamLead(member) {
+  if (!member) return Promise.resolve({ ok: false, reason: "not_member" });
+  return writeLeadRecord("lead", member);
+}
+
+export function setDeputy(member) {
+  return writeLeadRecord("deputy", member || null);
+}
+
+// D16: the Team Lead closes the team. closed.json tells every PC to stop sharing (each keeps its data as its own copy);
+// assignments and claims end with the team, and nobody can join the folder again. Then this PC stops sharing too.
+export async function closeTeam() {
+  const r = await enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!isTeamLead()) return { ok: false, reason: "not_lead" };
+    const root = await connectedRoot();
+    if (!root) return { ok: false, reason: "offline" };
+    await writeTeamJson(root, [], "closed.json", { teamId: membership.teamId, by: membership.memberId, byName: membership.name, at: Date.now() });
+    return { ok: true };
+  });
+  if (!r.ok) return r;
+  leaving = true;
+  try { await leaveLocally(); } finally { leaving = false; }
+  return { ok: true, closed: true };
+}
+
 // For pages: how many accounts each member has assigned (Settings > Team).
 export function assignmentCounts() {
   return enqueue(async () => {
@@ -1216,7 +1306,10 @@ async function startFresh(memberId) {
 async function setMembership(value) {
   membership = value;
   membershipLoaded = true;
-  if (value) await chrome.storage.local.set({ [TEAM_MEMBERSHIP_KEY]: value });
+  if (value) {
+    await chrome.storage.local.set({ [TEAM_MEMBERSHIP_KEY]: value });
+    await chrome.storage.local.remove(TEAM_CLOSED_NOTICE_KEY);
+  }
   else await chrome.storage.local.remove(TEAM_MEMBERSHIP_KEY);
 }
 
@@ -1288,6 +1381,7 @@ export function previewJoin() {
     const root = await requireRoot();
     const team = await readTeamJson(root, [], "team.json");
     if (team.status !== "ok") throw new Error("This folder has no team in it (team.json is missing or not synced yet).");
+    await refuseClosed(root);
     await startFresh(randomId("m"));
     try {
       const { records } = await readFolder(root, "-");
@@ -1303,6 +1397,12 @@ export function previewJoin() {
   });
 }
 
+// D16: a closed team cannot be joined again.
+async function refuseClosed(root) {
+  const c = await readTeamJson(root, [], "closed.json");
+  if (c.status === "ok") throw new Error(`This team was closed${c.data.byName ? ` by ${c.data.byName}` : ""} - it cannot be joined any more.`);
+}
+
 // A member: this browser's shared keys are REPLACED by the team picture (personal keys stay). The caller
 // (Settings > Team) takes a full backup first. Step 6 (R6.7): `addKeys` - accounts only this member has, which it
 // brings in (they come back after the replace as its own changes); accounts both have that this member worked on
@@ -1313,6 +1413,7 @@ export function joinTeam({ name, addKeys = [] }) {
     const root = await requireRoot();
     const team = await readTeamJson(root, [], "team.json");
     if (team.status !== "ok") throw new Error("This folder has no team in it (team.json is missing or not synced yet).");
+    await refuseClosed(root);
     const t0 = performance.now();
     const memberId = randomId("m");
     const m = { memberId, name: name || "Member", teamId: team.data.teamId, teamName: team.data.name, role: "member", joinedAt: new Date().toISOString() };
@@ -1561,6 +1662,9 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_UNASSIGN_ALL": return reply(unassignAllOf(message.member));
     case "TEAM_REMOVE_MEMBER": return reply(removeMember(message.member));
     case "TEAM_ASSIGN_COUNTS": return reply(assignmentCounts());
+    case "TEAM_MAKE_LEAD": return reply(makeTeamLead(message.member));
+    case "TEAM_SET_DEPUTY": return reply(setDeputy(message.member || null));
+    case "TEAM_CLOSE": return reply(closeTeam());
     default: return null;
   }
 }

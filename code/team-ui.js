@@ -2,12 +2,14 @@
 //   initTeamBar()      - every SalesTeam page (from initBatchStatus): the one top-bar message when this browser is in
 //                        a team but cannot share - "Click to reconnect to the team folder" or "Not in sync". Nothing
 //                        while all is well, so the pipeline's line keeps the bar.
-//   initTeamSettings() - Settings > Team: create / join / leave, the folder, colleagues, sync state.
+//   initTeamSettings() - Settings > Team: create / join / leave / close, the folder, members (⋮), groups, sync state.
 // The folder work itself runs in the background worker (team-sync.js); this file only asks it (TEAM_* messages).
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 import { askConfirm } from "./confirm-dialog.js";
 import { backupNow } from "./backup-restore.js";
 import { getUserProfile } from "./storage.js";
+import { groupIndex, OTHER_GROUP } from "./team-groups.js";
+import { renderTeamGroups, editMemberGroups, kebabButton } from "./team-groups-ui.js";
 import {
   getTeamFolder, pickTeamFolder, saveTeamFolder, clearTeamFolder, teamFolderPermission, requestTeamFolderPermission,
   readTeamJson, listTeamFolderTop,
@@ -122,24 +124,47 @@ const NOTICES_KEY = "teamNotices"; // team-sync.js TEAM_NOTICES_KEY
 const NOTICE_BAR_ID = "team-notices";
 
 async function paintTeamNotices() {
-  const notices = (await chrome.storage.local.get(NOTICES_KEY))[NOTICES_KEY] || [];
-  if (!notices.length) { clearStatusMessage(NOTICE_BAR_ID); return; }
+  const all = (await chrome.storage.local.get(NOTICES_KEY))[NOTICES_KEY] || [];
+  if (!all.length) { clearStatusMessage(NOTICE_BAR_ID); return; }
+  // 1.2.3 step 1: "Boaz made you Team Lead" and the like - each its own sentence, before the accounts.
+  const roles = all.filter((n) => n.kind === "role").map((n) => n.text);
+  const notices = all.filter((n) => n.kind !== "role");
+  if (!notices.length) {
+    setStatusMessage(NOTICE_BAR_ID, { text: roles.join(" "), action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
+    return;
+  }
   // "Boaz took over your account Amcor" when the admin reassigned it to themselves - not "… to Boaz" (1.2.1.9 test).
   const one = (n) => `${n.name} (${!n.to ? "now unassigned" : n.to === n.by ? `taken over by ${n.by}` : `now ${n.to}'s`})`;
   const byWho = [...new Set(notices.map((n) => n.by))].join(" and ");
   const single = (n) => (!n.to ? `${n.by} released your account ${n.name} - it is unassigned now`
     : n.to === n.by ? `${n.by} took over your account ${n.name}` : `${n.by} reassigned your account ${n.name} to ${n.to}`);
-  const text = notices.length === 1
+  const text = [...roles, notices.length === 1
     ? `${single(notices[0])}.`
-    : `${byWho} changed ${notices.length} of your accounts: ${notices.slice(0, 6).map(one).join(", ")}${notices.length > 6 ? ", …" : ""}.`;
+    : `${byWho} changed ${notices.length} of your accounts: ${notices.slice(0, 6).map(one).join(", ")}${notices.length > 6 ? ", …" : ""}.`].join(" ");
   setStatusMessage(NOTICE_BAR_ID, { text, action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });
+}
+
+// D16: the Team Lead closed the team - told once on each member's PC, which stopped sharing by itself.
+const CLOSED_KEY = "teamClosedNotice"; // team-sync.js TEAM_CLOSED_NOTICE_KEY
+const CLOSED_BAR_ID = "team-closed";
+
+async function paintTeamClosed() {
+  const c = (await chrome.storage.local.get(CLOSED_KEY))[CLOSED_KEY];
+  if (!c) { clearStatusMessage(CLOSED_BAR_ID); return; }
+  setStatusMessage(CLOSED_BAR_ID, {
+    text: `${c.by} closed the team "${c.teamName}" (${timeText(c.at)}). SalesTeam no longer shares on this PC; the data here stays as your own copy.`,
+    action: { label: "OK", onClick: () => chrome.storage.local.remove(CLOSED_KEY) },
+  });
 }
 
 export function initTeamBar() {
   const paint = () => paintTeamBar().catch(() => {});
   const paintNotices = () => paintTeamNotices().catch(() => {});
+  const paintClosed = () => paintTeamClosed().catch(() => {});
   chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[NOTICES_KEY]) paintNotices(); });
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[CLOSED_KEY]) paintClosed(); });
   paintNotices();
+  paintClosed();
   chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes[MEMBERSHIP_KEY]) paint(); });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") paint(); });
   setInterval(paint, 15000);
@@ -187,6 +212,8 @@ async function checkPickedFolder(which, handle) {
   const team = await readTeamJson(handle, [], "team.json");
   if (team.status === "missing") return { ok: false, text: `The folder "${handle.name}" has no team in it. Pick the folder your colleague shared - or, if it is the right one, wait until OneDrive has copied its files (green ticks) and pick it again.` };
   if (team.status !== "ok") return { ok: false, text: `The folder "${handle.name}" is still being copied by OneDrive. Wait a minute and pick it again.` };
+  const closed = await readTeamJson(handle, [], "closed.json");
+  if (closed.status === "ok") return { ok: false, text: `The team "${team.data.name}" in "${handle.name}" was closed${closed.data.byName ? ` by ${closed.data.byName}` : ""} - it cannot be joined any more.` };
   return { ok: true, text: `Folder: "${handle.name}" - team "${team.data.name}", created ${timeText(Date.parse(team.data.createdAt))}.`, team: team.data };
 }
 
@@ -412,6 +439,44 @@ async function onLeave() {
   renderTeamSettings();
 }
 
+// D16: the Team Lead closes the team instead of leaving it. Every PC stops sharing and keeps its data as its own copy.
+async function onClose() {
+  const m = await getMembership();
+  if (!m) return;
+  let st = null;
+  try { st = await send({ type: "TEAM_SYNC_STATUS" }); } catch { /* counted as nobody below */ }
+  const others = (st?.members || []).filter((c) => !c.left && !c.removed);
+  const text = others.length
+    ? `Close the team "${m.teamName}"?\n\nEveryone stops sharing; each person keeps a copy of the data as it is now. ` +
+      "All assignments end, and nobody can join the team folder again. This cannot be undone.\n\n" +
+      "To keep the team going without you, make someone else Team Lead instead (⋮ next to their name > Make Team Lead…), then leave as a Member."
+    : `Close the team "${m.teamName}"?\n\nNobody else has joined it. Your data stays here as it is.`;
+  if (!(await askConfirm(text, { okLabel: "Close the team", cancelLabel: "Cancel", danger: true }))) return;
+  $("team-close-btn").disabled = true;
+  try {
+    const r = await send({ type: "TEAM_CLOSE" });
+    if (!r.ok) {
+      throw new Error(r.reason === "offline" ? "the team folder is not connected on this PC - reconnect it first, so your colleagues are told"
+        : r.reason === "not_lead" ? "only the Team Lead can close the team" : r.error || "try again in a moment");
+    }
+    setText("team-member-status", "");
+    await askConfirm(`The team "${m.teamName}" is closed.\n\nThis browser works on its own again, with the data as it is now. ` +
+      (others.length ? "Your colleagues' SalesTeam stops sharing the next time it reads the team folder, and tells them. " : "") +
+      "You can create or join another team at any time.", { okLabel: "OK", cancelLabel: "Close" });
+  } catch (err) {
+    setText("team-member-status", `Not closed: ${err.message}`, true);
+  } finally {
+    $("team-close-btn").disabled = false;
+  }
+  renderTeamSettings();
+}
+
+const REFUSALS = {
+  offline: "the team folder is not connected on this PC, or not in sync",
+  not_lead: "only the Team Lead can do this",
+  not_member: "that person is not a current member of the team",
+};
+
 async function onRepick() {
   const m = await getMembership();
   if (!m) return;
@@ -443,6 +508,80 @@ function memberRow(cells) {
   return tr;
 }
 
+// One member's ⋮ (design 10.1, D10, D15). No placeholder items: what this person may not do is simply not there.
+function memberMenuItems(c, { isSelf, isLead, hasRights, leads, counts, gctx, current }) {
+  const items = [];
+  if (!hasRights) return items;
+  const n = counts[c.id] || 0;
+  if (current && !isSelf && isLead) {
+    items.push({ label: "Make Team Lead…", onClick: () => onMakeLead(c, leads) });
+    if (leads.deputy === c.id) items.push({ label: "End deputy", onClick: () => onSetDeputy(null, c) });
+    else items.push({ label: "Make deputy…", onClick: () => onSetDeputy(c, null, leads) });
+  }
+  if (current) items.push({ label: "Groups…", onClick: () => editMemberGroups(c.id, gctx) });
+  if (n) {
+    items.push({
+      label: "Release all",
+      title: `Unassign all ${n} accounts of ${c.name} - e.g. when ${c.name} has left the team`,
+      onClick: async () => {
+        if (!(await askConfirm(`Release all ${n} accounts assigned to ${c.name}?\n\nThey become unassigned - anyone in the team can then take them.`, { okLabel: "Release all", cancelLabel: "Cancel" }))) return;
+        try {
+          const r = await send({ type: "TEAM_UNASSIGN_ALL", member: c.id });
+          setText("team-member-sync", r.ok ? `${r.count} account${r.count === 1 ? "" : "s"} of ${c.name} released.` : "Could not release them - the team folder is not connected or not in sync.", !r.ok);
+        } catch (err) { setText("team-member-sync", err.message, true); }
+        renderTeamSettings();
+      },
+    });
+  }
+  // The deputy cannot remove the Team Lead (3.4); nobody removes themselves (they leave).
+  if (current && !isSelf && c.id !== leads.lead) {
+    items.push({
+      label: "Remove from team…", danger: true,
+      title: `Take ${c.name} off the team - e.g. an old membership, or a colleague who stopped without leaving`,
+      onClick: async () => {
+        if (!(await askConfirm(`Remove ${c.name} (last seen ${timeText(c.lastSeen) || "never"}) from the team?\n\n` +
+          (n ? `Their ${n} assigned account${n === 1 ? "" : "s"} become${n === 1 ? "s" : ""} unassigned. ` : "") +
+          `${c.name} is listed under Former members; what they changed stays in the team log. If their SalesTeam is still running, it stops sharing. To come back, they join the team again.`,
+        { okLabel: "Remove from team", cancelLabel: "Cancel", danger: true }))) return;
+        try {
+          const r = await send({ type: "TEAM_REMOVE_MEMBER", member: c.id });
+          setText("team-member-sync", r.ok ? `${c.name} removed from the team${r.count ? ` - ${r.count} account${r.count === 1 ? "" : "s"} released` : ""}.` : "Could not remove - the team folder is not connected or not in sync.", !r.ok);
+        } catch (err) { setText("team-member-sync", err.message, true); }
+        renderTeamSettings();
+      },
+    });
+  }
+  return items;
+}
+
+// Hand-over (design 3.3): the record is written and sent at once; this PC follows the new rule straight away.
+async function onMakeLead(c, leads) {
+  const deputyNote = leads.deputy && leads.deputy !== c.id ? " The deputy role ends with the hand-over." : "";
+  if (!(await askConfirm(`Make ${c.name} Team Lead?\n\n${c.name} becomes Team Lead. You become a Member and see only the accounts of your groups. ` +
+    `${c.name} can make you Team Lead again.${deputyNote}`, { okLabel: `Make ${c.name} Team Lead`, cancelLabel: "Cancel" }))) return;
+  try {
+    const r = await send({ type: "TEAM_MAKE_LEAD", member: c.id });
+    setText("team-member-status", r.ok ? `${c.name} is Team Lead now. You are a Member.` : `Not changed: ${REFUSALS[r.reason] || r.error || "try again in a moment"}.`, !r.ok);
+  } catch (err) { setText("team-member-status", err.message, true); }
+  renderTeamSettings();
+}
+
+// Deputy (design 3.4, D15): c = the new deputy, or null with `ending` = the one whose deputy role ends.
+async function onSetDeputy(c, ending, leads = null) {
+  if (c) {
+    const replaces = leads?.deputy ? ` This replaces the current deputy.` : "";
+    if (!(await askConfirm(`Make ${c.name} deputy Team Lead?\n\nWhile deputy, ${c.name} has your rights: sees every account, edits groups, members and Setup, ` +
+      `answers Decisions, reassigns and releases accounts. ${c.name} cannot remove you or name another deputy.${replaces}\n\n` +
+      "When you are back, end it with ⋮ > End deputy - it needs nothing from them.", { okLabel: `Make ${c.name} deputy`, cancelLabel: "Cancel" }))) return;
+  }
+  try {
+    const r = await send({ type: "TEAM_SET_DEPUTY", member: c ? c.id : null });
+    const ok = c ? `${c.name} is deputy Team Lead now.` : `${ending.name} is a Member again.`;
+    setText("team-member-status", r.ok ? ok : `Not changed: ${REFUSALS[r.reason] || r.error || "try again in a moment"}.`, !r.ok);
+  } catch (err) { setText("team-member-status", err.message, true); }
+  renderTeamSettings();
+}
+
 let rendering = false;
 
 export async function renderTeamSettings() {
@@ -468,8 +607,9 @@ export async function renderTeamSettings() {
     const leads = st?.lead?.known ? st.lead : { lead: m.role === "admin" ? m.memberId : null, deputy: null };
     const roleOf = (id) => (id === leads.lead ? "Team Lead" : id === leads.deputy ? "Deputy Team Lead" : "Member");
     const role = roleOf(m.memberId);
-    // Boaz 2026-10-08: the Team Lead does not leave the team they lead (Close the team, D16, comes in step 1).
+    // Boaz 2026-10-08: the Team Lead does not leave the team they lead - they close it (D16), or hand over first.
     $("team-leave-btn").hidden = m.memberId === leads.lead;
+    $("team-close-btn").hidden = m.memberId !== leads.lead;
     setText("team-member-who", `You are ${m.name} in the team "${m.teamName}" (${role}), since ${timeText(Date.parse(m.joinedAt))}.`);
     const connected = handle && permission === "granted";
     setText("team-member-folder",
@@ -487,70 +627,58 @@ export async function renderTeamSettings() {
       ];
       if (st.lastError) lines.push(`Last problem: ${st.lastError}${st.errorSince ? ` (since ${timeText(st.errorSince)})` : ""}. SalesTeam tries again by itself.`);
       setText("team-member-sync", lines.join("\n"), Boolean(st.lastError));
-      // Step 5 (R6.4): how many accounts each member has, and the admin's "release all" (someone who left).
+      // Step 5 (R6.4): how many accounts each member has. 1.2.3 step 1 (design 10.1, D10): the actions are in a ⋮ per
+      // row (Make Team Lead…, Make deputy… / End deputy, Groups…, Release all, Remove from team…), plus a Groups column.
       let counts = {};
       try { counts = (await send({ type: "TEAM_ASSIGN_COUNTS" })).counts || {}; } catch { /* the column stays empty */ }
-      const isAdmin = m.memberId === leads.lead || m.memberId === leads.deputy;
+      const isLead = m.memberId === leads.lead;
+      const hasRights = isLead || m.memberId === leads.deputy;
+      const current = (st.members || []).filter((c) => !c.left && !c.removed);
+      const team = [m.memberId, ...current.map((c) => c.id)].sort();
+      const names = { [m.memberId]: m.name };
+      for (const c of st.members || []) names[c.id] = c.name;
+      const groups = (await chrome.storage.local.get("teamGroups")).teamGroups || {};
+      const index = groupIndex(groups, team);
+      const groupNames = Object.fromEntries([...index.live.map((g) => [g.id, g.name]), [OTHER_GROUP, "Other"]]);
+      const groupsText = (id) => (index.on ? (index.ofMember[id] || [OTHER_GROUP]).map((g) => groupNames[g] || g).join(", ") : "");
+      const gctx = { team, names, leads: { lead: leads.lead, deputy: leads.deputy }, me: m.memberId, canEdit: hasRights };
       const table = $("team-members-table");
-      table.replaceChildren(memberRow(["Name", "Role", "Last seen", "", "Accounts assigned", ""]));
+      table.replaceChildren(memberRow(["Name", "Role", "Groups", "Last seen", "", "Accounts assigned", ""]));
       table.firstChild.classList.add("team-members-head");
-      table.append(memberRow([`${m.name} (you)`, role, "now", connected ? "online" : "not connected", String(counts[m.memberId] || 0), ""]));
+      const actionsCell = (c, isSelf) => {
+        const td = document.createElement("td");
+        const items = memberMenuItems(c, { isSelf, isLead, hasRights, leads, counts, gctx, current: !c.left && !c.removed });
+        if (items.length) td.append(kebabButton(`member-${c.id}`, `Actions for ${c.name}`, () => items));
+        return td;
+      };
+      const assignedCell = (id, left) => {
+        const td = document.createElement("td");
+        td.textContent = String(counts[id] || 0);
+        // R8.2: a member with groups and nothing assigned - work may be waiting.
+        if (index.on && !left && !counts[id] && id !== leads.lead) td.append(Object.assign(document.createElement("span"), { className: "team-warn", textContent: "nothing assigned" }));
+        return td;
+      };
+      const self = memberRow([`${m.name} (you)`, role, groupsText(m.memberId), "now", connected ? "online" : "not connected"]);
+      self.append(assignedCell(m.memberId, false), actionsCell({ id: m.memberId, name: m.name }, true));
+      table.append(self);
       let formerShown = false;
       const sortedMembers = [...(st.members || [])].sort((x, y) => Boolean(x.left) - Boolean(y.left));
       for (const c of sortedMembers) {
         if (c.left && !formerShown) {
           formerShown = true;
-          const head = memberRow(["Former members", "", "", "", "", ""]);
+          const head = memberRow(["Former members", "", "", "", "", "", ""]);
           head.classList.add("team-members-head");
           table.append(head);
         }
-        const row = memberRow([c.name, roleOf(c.id), c.left ? `${c.removed ? "removed" : "left"} ${timeText(c.left)}` : timeText(c.lastSeen), c.online ? "online" : "", String(counts[c.id] || 0)]);
+        const row = memberRow([c.name, c.left ? "" : roleOf(c.id), c.left ? "" : groupsText(c.id),
+          c.left ? `${c.removed ? "removed" : "left"} ${timeText(c.left)}` : timeText(c.lastSeen), c.online ? "online" : ""]);
         if (c.left) row.style.color = "#8a8f98";
-        const td = document.createElement("td");
-        if (isAdmin && counts[c.id]) {
-          const b = document.createElement("button");
-          b.type = "button";
-          b.className = "secondary";
-          b.textContent = "Release all";
-          b.title = `Unassign all ${counts[c.id]} accounts of ${c.name} - e.g. when ${c.name} has left the team`;
-          b.addEventListener("click", async () => {
-            if (!(await askConfirm(`Release all ${counts[c.id]} accounts assigned to ${c.name}?
-
-They become unassigned - anyone in the team can then take them.`, { okLabel: "Release all", cancelLabel: "Cancel" }))) return;
-            b.disabled = true;
-            try {
-              const r = await send({ type: "TEAM_UNASSIGN_ALL", member: c.id });
-              setText("team-member-sync", r.ok ? `${r.count} account${r.count === 1 ? "" : "s"} of ${c.name} released.` : "Could not release them - the team folder is not connected or not in sync.", !r.ok);
-            } catch (err) { setText("team-member-sync", err.message, true); }
-            renderTeamSettings();
-          });
-          td.append(b);
-        }
-        if (isAdmin && !c.left && c.id !== leads.lead) {
-          const rm = document.createElement("button");
-          rm.type = "button";
-          rm.className = "secondary";
-          rm.textContent = "Remove from team…";
-          rm.title = `Take ${c.name} off the team - e.g. an old membership, or a colleague who stopped without leaving`;
-          rm.addEventListener("click", async () => {
-            const n = counts[c.id] || 0;
-            if (!(await askConfirm(`Remove ${c.name} (last seen ${timeText(c.lastSeen) || "never"}) from the team?\n\n` +
-              (n ? `Their ${n} assigned account${n === 1 ? "" : "s"} become${n === 1 ? "s" : ""} unassigned. ` : "") +
-              `${c.name} is listed under Former members; what they changed stays in the team log. If their SalesTeam is still running, it stops sharing. To come back, they join the team again.`,
-              { okLabel: "Remove from team", cancelLabel: "Cancel", danger: true }))) return;
-            rm.disabled = true;
-            try {
-              const r = await send({ type: "TEAM_REMOVE_MEMBER", member: c.id });
-              setText("team-member-sync", r.ok ? `${c.name} removed from the team${r.count ? ` - ${r.count} account${r.count === 1 ? "" : "s"} released` : ""}.` : "Could not remove - the team folder is not connected or not in sync.", !r.ok);
-            } catch (err) { setText("team-member-sync", err.message, true); }
-            renderTeamSettings();
-          });
-          td.append(rm);
-        }
-        row.append(td);
+        row.append(assignedCell(c.id, Boolean(c.left)), actionsCell(c, false));
         table.append(row);
       }
-      if (!(st.members || []).length) table.append(memberRow(["No colleague has joined yet.", "", "", "", "", ""]));
+      if (!(st.members || []).length) table.append(memberRow(["No colleague has joined yet.", "", "", "", "", "", ""]));
+      // The group counts read every account: only while the card is on screen (the 5 s redraw then keeps them fresh).
+      if (!section.hidden) renderTeamGroups(gctx).catch((err) => setText("team-member-status", `Groups: ${err.message}`, true));
       if (badge) badge.textContent = connected ? `${st.online} online` : "!";
     } else if (badge) {
       badge.textContent = connected ? "" : "!";
@@ -574,6 +702,7 @@ export function initTeamSettings() {
   $("team-create-btn").addEventListener("click", onCreate);
   $("team-join-btn").addEventListener("click", onJoin);
   $("team-leave-btn").addEventListener("click", onLeave);
+  $("team-close-btn").addEventListener("click", onClose);
   $("team-repick-btn").addEventListener("click", onRepick);
   $("team-reconnect-btn").addEventListener("click", async () => {
     const p = await reconnect();

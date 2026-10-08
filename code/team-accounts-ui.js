@@ -9,6 +9,7 @@
 //   teamAccounts.ownerFilter(key, f) - "mine" | "others" | "unassigned" | "all"
 //   teamAccounts.isTeamLead()        - 1.2.3: the Team Lead, as decided by the team folder (team-groups.js)
 //   teamAccounts.hasLeadRights()     - the Team Lead or the deputy (everything but hand-over, deputy, removing the lead)
+//   teamAccounts.mayAccess(m, key)   - 1.2.3: may this member see and work the account (always, without groups)
 //   teamAccounts.onChange(fn)
 
 import { summaryOffLimits } from "./team-claims.js";
@@ -104,6 +105,15 @@ export const teamAccounts = {
     if (filter === "mine") return a === summary?.me;
     if (filter === "others") return Boolean(a) && a !== summary?.me;
     return !a;
+  },
+
+  // 1.2.3 step 1 (D10): Reassign to… offers only members with access - the Team Lead, the deputy, or a member of one of
+  // the account's groups (a member in no group is in Other). Without groups everyone has access (R9.1).
+  mayAccess(member, key) {
+    if (!membership || !summary?.groupsOn) return true;
+    if (member === summary.lead || member === summary.deputy) return true;
+    const mine = summary.ofMember?.[member] || ["other"];
+    return (summary.g?.[key] || ["other"]).some((g) => mine.includes(g));
   },
 
   onChange(fn) { listeners.add(fn); },
