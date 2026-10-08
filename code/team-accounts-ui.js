@@ -17,6 +17,8 @@ import { leadRightsOf, isTeamLeadOf } from "./team-groups.js";
 
 const KEY = "teamAccountStates"; // team-sync.js TEAM_ACCOUNTS_KEY
 const MEMBERSHIP_KEY = "teamMembership";
+const GROUPS_KEY = "teamGroups";
+let groupRows = {};
 
 let summary = null;
 let membership = null;
@@ -31,7 +33,8 @@ function dayText(ms) {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || (!changes[KEY] && !changes[MEMBERSHIP_KEY])) return;
+  if (area !== "local" || (!changes[KEY] && !changes[MEMBERSHIP_KEY] && !changes[GROUPS_KEY])) return;
+  if (changes[GROUPS_KEY]) groupRows = changes[GROUPS_KEY].newValue || {};
   if (changes[KEY]) summary = changes[KEY].newValue || null;
   if (changes[MEMBERSHIP_KEY]) membership = changes[MEMBERSHIP_KEY].newValue || null;
   for (const fn of listeners) { try { fn(); } catch { /* one page's redraw must not stop another's */ } }
@@ -42,7 +45,8 @@ const nameOf = (m) => (m === summary?.me ? "you" : summary?.names?.[m] || "a col
 export const teamAccounts = {
   ready() {
     if (!loaded) {
-      loaded = chrome.storage.local.get([KEY, MEMBERSHIP_KEY]).then((d) => {
+      loaded = chrome.storage.local.get([KEY, MEMBERSHIP_KEY, GROUPS_KEY]).then((d) => {
+        groupRows = d[GROUPS_KEY] || {};
         summary = d[KEY] || null;
         membership = d[MEMBERSHIP_KEY] || null;
       }).catch(() => {});
@@ -105,6 +109,12 @@ export const teamAccounts = {
     if (filter === "mine") return a === summary?.me;
     if (filter === "others") return Boolean(a) && a !== summary?.me;
     return !a;
+  },
+
+  // 1.2.2.7: "Strategic Accounts, Swiss Accounts" - the account's groups by name (null without groups).
+  groupNames(key) {
+    if (!membership || !summary?.groupsOn) return null;
+    return (summary.g?.[key] || ["other"]).map((g) => (g === "other" ? "Other" : groupRows[g]?.name || g)).join(", ");
   },
 
   // 1.2.3 step 1 (D10): Reassign to… offers only members with access - the Team Lead, the deputy, or a member of one of

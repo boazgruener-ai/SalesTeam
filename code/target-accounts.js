@@ -104,7 +104,7 @@ import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
 import { DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
-import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
+import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES, sizeBucketKey } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine } from "./pipeline-status.js";
@@ -738,6 +738,11 @@ const COMPANY_COLUMNS = [
   // carried the Local/Global classification that the column above already shows.
   { id: "companyType", label: "Company Type", visible: true },
   { id: "globalEmployees", label: "Employees", visible: true, numeric: true },
+  // 1.2.2.7 (Boaz): the Setup size bucket (S-XXL) of the employee count - the one group filters and size priority use.
+  { id: "sizeBucket", label: "Size", visible: true },
+  // 1.2.2.7: the account's groups in a team with groups (computed by the background, team-groups.js) - filter the
+  // column to list one group until the Group picker (design 7, step 3).
+  { id: "teamGroups", label: "Groups", visible: true },
   { id: "globalRevenue", label: "Global Revenue", visible: true, numeric: true, currencyField: "revenueCurrency" },
 
   // --- Hidden by default: imported research-workbook fields ---
@@ -1050,6 +1055,8 @@ function rawValue(company, column) {
     const key = contactKeyFor(company.company, company.fullName);
     return effectiveStatus(leadStatusBucket(findLeadsForContact(company, allLeads)), contactExtras[key]?.manualStatus);
   }
+  if (column.id === "sizeBucket") return company.fullName == null ? sizeBucketKey(effectiveEmployees(company).value, SIZE_PRIORITY_BUCKETS) : null;
+  if (column.id === "teamGroups") return company.fullName == null ? teamAccounts.groupNames(normalizeCompanyName(company.company)) : null;
   if (company.fullName == null && column.id === "salesTeamPriority") return accountPriorityInfo(company).priority;
   if (column.id === "relationship") return company.fullName == null ? (relationshipTagText(accountPriorityInfo(company).relationship) || null) : null;
   // A contact row always has fullName, a company row never does - reused
