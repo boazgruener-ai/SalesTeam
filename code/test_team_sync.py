@@ -571,6 +571,18 @@ def main():
           notices, [("delta ag", "Dora", "Dora"), ("epsilon ag", "Dora", None)])
     check("notice: nothing for Dora - she did it herself", dora.local("teamNotices"), None)
 
+    # 1.2.2.6 (Boaz: 13 assigned to him on Annick's PC, 0 on his own): a PC whose saved state is lost gets its own
+    # changes back from its own files in the folder.
+    r, folder = dora.call("assignmentCounts()", folder)
+    before = r.get("counts", {})
+    dora.e("DB.state = undefined; mem = null;")
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("assignmentCounts()", folder)
+    check("lost state: Dora's own assignments come back from her files", (r.get("counts", {}), bool(before)), (before, True))
+    log_before = len(dora.local("teamLog") or [])
+    r, folder = dora.sync(folder)
+    check("lost state: reading my own files back adds no team-log lines", len(dora.local("teamLog") or []), log_before)
+
     # 1.2.3 step 0 (TEAM_ADVANCED_MODE_DESIGN.md 3.1, 4.2): the Team Lead comes from the folder; only the Team Lead's
     # group records count - on every PC.
     r, folder = dora.call("Promise.resolve(publishSummary ? 1 : 0)", folder)

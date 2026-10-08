@@ -121,6 +121,8 @@ async function ensureLoaded() {
     // for a claim to be confirmed; aside: { key: { records, at, lostTo } } - held edits of a lost claim (R3.3).
     claims: { ...emptyClaims(), ...(got.claims || {}) },
   };
+  // No saved state (cleared, or lost): my own files are read back from the start (readFolder), so my own changes return.
+  if (!got.state) mem.meta.selfCursor = 0;
   mem.clock = createClock(membership?.memberId || "?", mem.meta.clockLast);
   return mem;
 }
@@ -370,14 +372,19 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
     update.bytes += r.bytes;
   }
   for (const m of await listTeamNames(root, ["members"], "directory")) {
-    if (m === me && !includeSelf) continue;
-    const hb = await readTeamJson(root, ["members", m], "heartbeat.json");
-    if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0, clock: hb.data.clock || null, left: hb.data.left || null };
-    if (!meta.profiles[m]) {
-      const p = await readTeamJson(root, ["members", m], "profile.json");
-      if (p.status === "ok") update.profiles[m] = p.data;
+    // 1.2.2.6 (Boaz: "Boaz has 13 accounts assigned" on a colleague's PC, 0 on his own): my own files are read back
+    // too, with their own cursor. A PC knew its own changes only from its saved state; if that was ever reset, its own
+    // assignments, claims and edits were gone on that PC for good. Applying a record twice changes nothing.
+    const self = m === me && !includeSelf;
+    if (!self) {
+      const hb = await readTeamJson(root, ["members", m], "heartbeat.json");
+      if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0, clock: hb.data.clock || null, left: hb.data.left || null };
+      if (!meta.profiles[m]) {
+        const p = await readTeamJson(root, ["members", m], "profile.json");
+        if (p.status === "ok") update.profiles[m] = p.data;
+      }
     }
-    let cursor = meta.cursors[m] || 0;
+    let cursor = self ? meta.selfCursor || 0 : meta.cursors[m] || 0;
     let snapshots = null;
     while (update.files < MAX_FILES_PER_ROUND) {
       const r = await readTeamJson(root, ["members", m, "changes"], `c-${cursor + 1}.json`);
@@ -385,7 +392,7 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
         records.push(...(r.data.changes || []));
         cursor += 1;
         // The newest stamp counts too: it follows the writer's clock, which has seen every claim it had read.
-        update.lastFileWall[m] = Math.max(Date.parse(r.data.written) || 0, ...(r.data.changes || []).map((c) => stampWall(c && c.t)));
+        if (!self) update.lastFileWall[m] = Math.max(Date.parse(r.data.written) || 0, ...(r.data.changes || []).map((c) => stampWall(c && c.t)));
         update.files += 1;
         update.bytes += r.bytes;
         continue;
@@ -403,7 +410,8 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
       update.files += 1;
       update.bytes += s.bytes;
     }
-    update.cursors[m] = cursor;
+    if (self) update.selfCursor = cursor;
+    else update.cursors[m] = cursor;
   }
   return { records, update };
 }
@@ -417,6 +425,7 @@ function commitReadUpdate(update) {
   meta.basesApplied = [...new Set([...meta.basesApplied, ...update.basesApplied])];
   if (update.admins) meta.admins = update.admins;
   if (update.creator) meta.creator = update.creator;
+  if (update.selfCursor != null) meta.selfCursor = update.selfCursor;
   if (update.removed) meta.removed = { ...(meta.removed || {}), ...update.removed };
   meta.lastReadAt = Date.now();
 }
@@ -482,7 +491,8 @@ async function readRound(root, me) {
     commitReadUpdate(update);
     await noteCreator();
     for (const [id, r] of Object.entries(update.removed || {})) if (r.by && r.by !== me) await logMemberRemoved(id, r.by, r.at);
-    const logged = records.slice(update.baseRecords);
+    // My own records read back are already in the log (written when they went out).
+    const logged = records.slice(update.baseRecords).filter((r) => stampMember(r && r.t) !== me);
     const priors = logged.length ? priorsFor(logged) : null; // before applying: the previous values
     const rows = records.length ? await applyRemote(records) : 0;
     await recordTeamLog(logged, priors);
