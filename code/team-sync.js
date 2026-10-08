@@ -739,13 +739,30 @@ async function refreshGroups() {
   measure({ kind: "groups", accounts: r.accounts, groups: r.index.live.length, views_ms: r.viewsMs, ms: r.ms });
 }
 
-function markGroupsDirty() {
+let groupsRunning = false;
+function startGroupsRefresh() {
+  if (groupsRunning) return;
+  const wait = GROUPS_EVERY_MS - (Date.now() - groupsAt);
+  if (wait > 0) { markGroupsDirty(wait); return; }
+  groupsRunning = true;
+  groupsDirty = false;
+  groupsAt = Date.now();
+  refreshGroups()
+    .catch((err) => { lastError = `groups: ${errText(err)}`; })
+    .finally(() => {
+      groupsRunning = false;
+      groupsAt = Date.now(); // the next run starts at least 2 s after this one ended
+      if (membership && mem) enqueue(publishSummary).catch(() => {});
+    });
+}
+
+function markGroupsDirty(delay = GROUPS_EVERY_MS) {
   groupsDirty = true;
   if (groupsTimer) return;
   groupsTimer = setTimeout(() => {
     groupsTimer = null;
-    if (membership && mem) enqueue(publishSummary).catch(() => {});
-  }, GROUPS_EVERY_MS);
+    if (membership && mem) startGroupsRefresh();
+  }, delay);
 }
 
 // Step 0 measurement on the live data (dev page): sample groups - one per region, a size filter, a 20-account list.
@@ -775,13 +792,10 @@ async function publishSummary() {
   const accounts = teamAccountSummary(mem.state, ctx);
   const names = {};
   for (const e of Object.values(accounts)) for (const m of [e.a, e.h]) if (m && !names[m]) names[m] = memberName(m);
-  if (groupsDirty && Date.now() - groupsAt >= GROUPS_EVERY_MS) {
-    groupsDirty = false;
-    groupsAt = Date.now();
-    try { await refreshGroups(); } catch (err) { lastError = `groups: ${errText(err)}`; }
-  } else if (groupsDirty) {
-    markGroupsDirty();
-  }
+  // 1.2.2.7 (Annick's Leave the team took minutes): the groups are recomputed OUTSIDE the queue - reading every
+  // account takes ~0.5 s and ran on every account change, so Settings > Team, Leave and Assign waited behind it.
+  // The summary goes out now with the groups as last computed; a fresh computation publishes again when done.
+  if (groupsDirty) startGroupsRefresh();
   const leads = leadNow();
   // admin (= the Team Lead's rights) stays for the readers built before 1.2.3; lead / deputy are the answer now.
   const value = {
