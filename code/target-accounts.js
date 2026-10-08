@@ -1912,8 +1912,8 @@ document.getElementById("accounts-bulk-assign-to-btn").addEventListener("click",
   const to = await askChoice(`Assign the ${keys.length} selected account${keys.length === 1 ? "" : "s"} to:`, choices);
   if (!to) return;
   const work = keys.filter((k) => teamAccounts.mayAccess(to, k) && teamAccounts.entry(k)?.a !== to);
-  const noAccess = keys.filter((k) => !teamAccounts.mayAccess(to, k)).length;
-  if (!work.length) { showNotice(`Nothing to do - ${noAccess ? "the others are " : ""}already assigned to them.`); return; }
+  const noAccess = keys.filter((k) => !teamAccounts.mayAccess(to, k));
+  if (!work.length) { showNotice(`Nothing to do - the selected accounts ${noAccess.length ? "they may work are " : "are "}already assigned to them.`); return; }
   showNotice(`Assigning ${work.length} account${work.length === 1 ? "" : "s"}…`, { working: true });
   await teamAssignKeys(work, "TEAM_ASSIGN", { to, toName: choices.find((c) => c.value === to)?.label.replace(/ \(.*$/, ""), noAccess });
   clearSelection("accounts");
@@ -2386,14 +2386,12 @@ async function teamReassign(companyKey) {
 const TEAM_REFUSAL_TEXT = {
   offline: "the team folder is not connected on this PC", not_in_sync: "not in sync with the team",
   held: "a colleague is updating it", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
-  "no access": "not in a group of theirs",
 };
 
 // Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
-async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess = 0 } = {}) {
+async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess = [] } = {}) {
   let done = 0;
   const refused = {};
-  if (noAccess) refused["no access"] = noAccess;
   for (const key of keys) {
     let r = null;
     try { r = await chrome.runtime.sendMessage({ type, key, ...(to ? { to } : {}) }); } catch { /* counted as refused */ }
@@ -2401,10 +2399,18 @@ async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess =
     else { const why = r?.reason || "offline"; refused[why] = (refused[why] || 0) + 1; }
   }
   const verb = type === "TEAM_ASSIGN" ? (to ? `assigned to ${toName || "them"}` : "assigned to you") : "released";
-  const skipped = Object.entries(refused).map(([why, n]) => `${n} not (${TEAM_REFUSAL_TEXT[why] || why})`).join(", ");
-  if (keys.length > 1 || skipped || to) {
-    showNotice(`${done} account${done === 1 ? "" : "s"} ${verb}${skipped ? `; ${skipped}` : ""}.`, { error: done === 0 });
+  // Boaz 2026-10-08: "1 not (not in a group of theirs)" read awkwardly - one sentence per reason, and the accounts
+  // the member has no access to by name, with their groups.
+  const plural = (n) => `${n} account${n === 1 ? "" : "s"}`;
+  const lines = [`${plural(done)} ${verb}.`];
+  if (noAccess.length) {
+    const names = new Map(rawWorkbook.companies.map((c) => [normalizeCompanyName(c.company), c.company]));
+    const listed = noAccess.slice(0, 6).map((k) => `${names.get(k) || k} (${teamAccounts.groupNames(k) || "no group"})`).join(", ");
+    lines.push(`Not assigned - ${toName || "they"} is not in ${noAccess.length === 1 ? "its group" : "their groups"}: ${listed}${noAccess.length > 6 ? ", …" : ""}. ` +
+      "Add them to that group in Settings > Team first.");
   }
+  for (const [why, n] of Object.entries(refused)) lines.push(`${plural(n)} not ${type === "TEAM_ASSIGN" ? "assigned" : "released"} - ${TEAM_REFUSAL_TEXT[why] || why}.`);
+  if (keys.length > 1 || lines.length > 1 || to) showNotice(lines.join("\n"), { error: done === 0 });
   appendActivityLog({ actor: "user", action: type === "TEAM_ASSIGN" ? "team_assigned" : "team_released", label: `${done} account${done === 1 ? "" : "s"} ${verb}` });
 }
 
