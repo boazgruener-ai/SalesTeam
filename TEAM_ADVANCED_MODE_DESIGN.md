@@ -1,7 +1,7 @@
 # SalesTeam — Team Advanced Mode: Design
 
 Target release: **1.2.3, together with Exclusions & Relationships** (test builds 1.2.2.5, 1.2.2.6 …; step 1 = 1.2.2.7, step 1b = 1.2.2.8)
-Status: **Design — agreed 2026-10-08.** All decisions D1–D15 answered (section 13).
+Status: **Design — agreed 2026-10-08.** All decisions D1–D18 answered (section 13).
 Date: 2026-10-07
 Builds on: `TEAM_ADVANCED_MODE_REQUIREMENTS.md` (agreed 2026-10-07) and `TEAM_USE_DESIGN.md` (the 1.2.2 sync
 layer). Requirement numbers (R2.5, R5.3 …) refer to the requirements.
@@ -421,35 +421,36 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 
 ### 10a.1 The Team Lead invites (D17)
 - Settings > Team, below the members table: **Add member…** (Team Lead and deputy). The dialog asks for the
-  colleague's **name**, their **e-mail** (only shown, to tell two people of the same name apart) and their **groups**
-  (ticks; none = Other, D9). Save writes `invites/<invite id>.json` into the team folder:
-  `{ member: "m-<reserved id>", name, email, by, at }`.
-- The member id is **reserved** in the invitation, so the Team Lead can put the colleague into groups straight away:
-  the group rows simply list that id. It counts as a member only once it has joined (`groupIndex` is given the
-  current team), so nothing is visible to anyone before that.
-- The members table lists them as **Invited** (name, e-mail, groups, "invited 8 Oct by Boaz"). Their ⋮ has
-  **Groups…** and **Cancel invitation…** (the file is marked cancelled, not deleted, so a late join is refused).
+  colleague's **name** and **e-mail** (the e-mail is only shown, to tell two people of the same name apart). Save
+  writes `invites/<invite id>.json` into the team folder: `{ name, email, by, at }`.
+- **No groups in the invitation** (Boaz, 2026-10-08 - simpler): after the colleague has joined, the Team Lead puts
+  them into groups like any member (⋮ Groups…). Until then they are in Other (D9).
+- The members table lists them as **Invited** (name, e-mail, "invited 8 Oct by Boaz"). Their ⋮ has **Cancel
+  invitation…** (the file is marked cancelled, not deleted, so a late join is refused).
 - The Team Lead still shares the folder in OneDrive (right-click > Share, "Can edit") - SalesTeam cannot do that.
   The dialog's last line says so, with the folder's name.
 
 ### 10a.2 The member accepts
 - Join a team, after the team is chosen (10a.3): SalesTeam reads the open invitations and shows them -
-  "Boaz invited: **Annick Zutter** (anna@…) - groups EMEA, VIP". The one whose name matches the User Profile name
-  is preselected. **Join as Annick Zutter** joins with the reserved id, the name from the invitation and the groups
-  already set. The backup and the "accounts to bring" question stay as today.
+  "Boaz invited: **Annick Zutter** (anna@…)". The one whose name matches the User Profile name is preselected.
+  **Join as Annick Zutter** joins with the name from the invitation. The backup and the "accounts to bring" question
+  stay as today.
 - The PC writes `invites/<id>.json` back as accepted (with the time). An invitation that is accepted or cancelled
-  is not offered again; two PCs accepting the same one at once: the member folder of the reserved id already
-  exists for the second, which is refused with "This invitation has just been used on another PC".
-- **Without an invitation** (D17 question below): proposal - joining still works as today; the newcomer is in Other
-  (D9) and the Team Lead gets a top-bar notice "Fay joined without an invitation - add her to groups?".
+  is not offered again; two PCs accepting the same one at once: the later acceptance is refused with "This
+  invitation has just been used on another PC".
+- **No joining without an invitation** (Boaz, 2026-10-08 - the Team Lead controls who is in the team): a team with no
+  open invitation for this person is not offered. Chosen by folder (fallback), it is refused with "There is no
+  invitation for you in this team. Ask the Team Lead to add you (Settings > Team > Add member…)."
+- The Team Lead gets a top-bar notice when an invitation is accepted: "Annick Zutter joined the team - add her to
+  groups?".
 
 ### 10a.3 Choosing the team from a list instead of a folder (D18)
 - Chrome lets SalesTeam use a folder only after the person picked it once. So the first time, Join and Create ask
   for the **OneDrive folder itself** ("Choose your OneDrive folder" - the step-by-step text names it, e.g.
   "OneDrive - TimeToAct"), with "Allow on every visit". SalesTeam keeps that permission.
 - **Join:** SalesTeam looks one level down for folders holding a `team.json` (a shared folder added with "Add
-  shortcut to My files" appears there) and shows a dropdown: **TimeToAct2 - created by Boaz, 5 Oct**. Choosing one
-  is all; no folder picking. None found: "No team found in OneDrive yet - has the folder been shared with you and
+  shortcut to My files" appears there) and shows a dropdown of the teams **with an open invitation for this person**:
+  **TimeToAct2 - created by Boaz, 5 Oct**. Choosing one is all; no folder picking. None found: "No team found in OneDrive yet - has the folder been shared with you and
   added to My files? It can take a minute to appear." and a Look again button.
 - **Create:** the team name is typed as today; SalesTeam creates the folder `SalesTeam - <team name>` in OneDrive
   itself (no empty folder to make by hand). Sharing it stays the Team Lead's step in OneDrive.
@@ -485,7 +486,7 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 |---|---|---|
 | 0 | **Data and rules.** `team-groups.js` (pure: `teamLeadOf`, `groupFacts`, `matchesFilter`, `groupsOf`, `membersOf`, `mayAccess`, `voidAssignments`, `groupCounts`) and `geo-regions.js`, all in `test_pure_modules.py` (shuffle tests for the lead chain, null facts, Other, pins). `teamGroups` / `teamGroupPins` keys; Team-Lead-only rule in `applyChange` (two passes); `isTeamLead()` everywhere (the six direct reads); summary gains `g`, `myGroups`, `lead`. **Rename Team Admin → Team Lead** in all user text (~40 strings, help ids kept). Measure the group computation on the live data. | 1.2.2.5; fixes 1.2.2.6 (clear "✓ Saved", creator from team.json, Team Lead has no Leave the team, Sync now removed) |
 | 1 | **Settings > Team.** Members ⋮ (Make Team Lead…, Groups…, Release all, Remove…); Groups section, editor with preview, delete, counts; hand-over flow; Reassign candidates fixed (no former members, only those with access). `test_team_sync.py`: hand-over between two members, a non-lead's group record ignored on every PC. **Close the team… (D16).** | 1.2.2.7 |
-| 1b | **Invitations and the team list (D17, D18).** Add member… (name, e-mail, groups) writes an invitation with a reserved member id; the members table shows "Invited" with ⋮ Cancel invitation; Join and Create start from "Choose your OneDrive folder" once, then a dropdown of the teams found there; joining shows the open invitations, the member picks theirs and joins with name and groups already set. `test_team_sync.py`: invited member joins with their reserved id and is in their groups at once; an invitation cannot be used twice. | 1.2.2.8 |
+| 1b | **Invitations and the team list (D17, D18).** Add member… (name, e-mail) writes an invitation; the members table shows "Invited" with ⋮ Cancel invitation; Join and Create start from "Choose your OneDrive folder" once; Join lists only teams with an invitation for this person, and refuses without one; Create makes the team folder itself. `test_team_sync.py`: an invited member joins with the invitation's name; joining without an invitation is refused; an invitation cannot be used twice. | 1.2.2.8 |
 | 2 | **Visibility.** `canSee` in the companies and contacts tables, Leads Dashboard, side panel, account/contact page, Decisions, exports, LinkedIn badge. | 1.2.2.9 |
 | 3 | **Picker, column, header, notices, log.** Shared picker on the three pages, deep links from the overview, Groups column, header line; notice detectors; team-log lines. | 1.2.2.10 |
 | 4 | **Group changes.** Add to / Remove from group… (row, page, bulk); pins from automatic work and `group_move` decisions; voided assignments and the Team Lead's explicit releases with the before-save count. `test_team_sync.py`: research moves an assigned account → pinned → approved → assignee loses it; unassigned moves at once. | 1.2.2.11 |
@@ -591,6 +592,9 @@ with numbered test steps for two Chrome profiles (Team Lead and Member).
   without an invitation?** Proposal: yes - they land in Other and the Team Lead is told (the folder's OneDrive
   sharing already decides who can reach it). Alternative: invitation required - a member without one is refused
   with "Ask your Team Lead for an invitation".
+  **Answer 2026-10-08: invitations yes, with two changes - (1) no groups in the invitation: the Team Lead assigns
+  groups after the member has joined; (2) no joining without an invitation - the Team Lead controls everything.**
 - **D18 — Team from a list (Boaz, 2026-10-08).** Join and Create start from the OneDrive folder, chosen once;
   joining picks the team from a dropdown, creating makes the team folder itself (10a.3). Agree, including
   SalesTeam creating the team folder on Create?
+  **Answer 2026-10-08: agreed, including SalesTeam creating the team folder.**
