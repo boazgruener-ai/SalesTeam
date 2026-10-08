@@ -1,7 +1,7 @@
 # SalesTeam — Team Advanced Mode: Design
 
 Target release: **1.2.3, together with Exclusions & Relationships** (test builds 1.2.2.5, 1.2.2.6 …; step 1 = 1.2.2.7, step 1b = 1.2.2.8)
-Status: **Design — agreed 2026-10-08.** All decisions D1–D18 answered (section 13).
+Status: **Design — agreed 2026-10-08.** All decisions D1–D19 answered (section 13).
 Date: 2026-10-07
 Builds on: `TEAM_ADVANCED_MODE_REQUIREMENTS.md` (agreed 2026-10-07) and `TEAM_USE_DESIGN.md` (the 1.2.2 sync
 layer). Requirement numbers (R2.5, R5.3 …) refer to the requirements.
@@ -459,6 +459,21 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 - The team folder is then reached through the OneDrive folder; reconnecting after a Chrome restart asks for the
   OneDrive folder once, as it asks for the team folder today.
 
+### 10a.4 Not in a team yet: Join first, Create for the Team Lead only (D19 - Boaz, 2026-10-08)
+- Only a Team Lead creates a team; members never do. A PC that is not in a team cannot know which one its user will
+  be (there is no account or server holding roles - whoever creates the team becomes its Team Lead), so the screen
+  steers instead:
+  - **Main text and button for members:** "Your Team Lead invites you. **Join a team…**" (the dropdown of D18 offers
+    only teams holding an invitation for this person).
+  - **Create as a smaller line below:** "Are you the Team Lead, setting up a team for your colleagues? **Create a team
+    as Team Lead…**". Its confirm repeats: "Only the Team Lead creates the team. If a colleague has invited you, use
+    Join a team instead."
+  - **An invitation waiting in OneDrive for this person:** Create is not offered at all - only "Boaz has invited you
+    to TimeToAct2 - **Join**".
+- Inside a team, Create and Join are hidden as today. A strict rule (who may ever be a Team Lead) needs the
+  company-wide Admin role - a later item.
+- Built in step 1b with the invitations.
+
 ## 11. Notices and team log (R3.4, R10.3)
 
 - **New detectors in `applyRemote`,** next to today's reassign detector, each a `teamNotices` entry with OK in
@@ -486,7 +501,7 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 |---|---|---|
 | 0 | **Data and rules.** `team-groups.js` (pure: `teamLeadOf`, `groupFacts`, `matchesFilter`, `groupsOf`, `membersOf`, `mayAccess`, `voidAssignments`, `groupCounts`) and `geo-regions.js`, all in `test_pure_modules.py` (shuffle tests for the lead chain, null facts, Other, pins). `teamGroups` / `teamGroupPins` keys; Team-Lead-only rule in `applyChange` (two passes); `isTeamLead()` everywhere (the six direct reads); summary gains `g`, `myGroups`, `lead`. **Rename Team Admin → Team Lead** in all user text (~40 strings, help ids kept). Measure the group computation on the live data. | 1.2.2.5; fixes 1.2.2.6 (clear "✓ Saved", creator from team.json, Team Lead has no Leave the team, Sync now removed) |
 | 1 | **Settings > Team.** Members ⋮ (Make Team Lead…, Groups…, Release all, Remove…); Groups section, editor with preview, delete, counts; hand-over flow; Reassign candidates fixed (no former members, only those with access). `test_team_sync.py`: hand-over between two members, a non-lead's group record ignored on every PC. **Close the team… (D16).** | 1.2.2.7 |
-| 1b | **Invitations and the team list (D17, D18).** Add member… (name, e-mail) writes an invitation; the members table shows "Invited" with ⋮ Cancel invitation; Join and Create start from "Choose your OneDrive folder" once; Join lists only teams with an invitation for this person, and refuses without one; Create makes the team folder itself. `test_team_sync.py`: an invited member joins with the invitation's name; joining without an invitation is refused; an invitation cannot be used twice. | 1.2.2.8 |
+| 1b | **Invitations and the team list (D17, D18).** Add member… (name, e-mail) writes an invitation; the members table shows "Invited" with ⋮ Cancel invitation; Join and Create start from "Choose your OneDrive folder" once; Join lists only teams with an invitation for this person, and refuses without one; Create makes the team folder itself. `test_team_sync.py`: an invited member joins with the invitation's name; joining without an invitation is refused; an invitation cannot be used twice. Not-in-a-team screen: Join first, Create as Team Lead only, hidden when invited (D19). | 1.2.2.8 |
 | 2 | **Visibility.** `canSee` in the companies and contacts tables, Leads Dashboard, side panel, account/contact page, Decisions, exports, LinkedIn badge. | 1.2.2.9 |
 | 3 | **Picker, column, header, notices, log.** Shared picker on the three pages, deep links from the overview, Groups column, header line; notice detectors; team-log lines. | 1.2.2.10 |
 | 4 | **Group changes.** Add to / Remove from group… (row, page, bulk); pins from automatic work and `group_move` decisions; voided assignments and the Team Lead's explicit releases with the before-save count. `test_team_sync.py`: research moves an assigned account → pinned → approved → assignee loses it; unassigned moves at once. | 1.2.2.11 |
@@ -602,3 +617,6 @@ with numbered test steps for two Chrome profiles (Team Lead and Member).
   joining picks the team from a dropdown, creating makes the team folder itself (10a.3). Agree, including
   SalesTeam creating the team folder on Create?
   **Answer 2026-10-08: agreed, including SalesTeam creating the team folder.**
+- **D19 — Create a team is for the Team Lead (Boaz, 2026-10-08).** Not-in-a-team screen leads with Join; Create is a
+  smaller "as Team Lead" line, hidden when an invitation for this person is waiting (10a.4).
+  **Answer 2026-10-08: agreed.**
