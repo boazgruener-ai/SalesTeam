@@ -180,12 +180,12 @@ async function paintTeamInvitation() {
   inviteLookedAt = Date.now();
   const toJoin = () => { location.href = chrome.runtime.getURL("settings.html?team=join#team-section"); };
   // 1.2.2.8 live test: the bar stayed empty and nobody could tell why - so it now says when it cannot look, and when an
-  // invitation is there but not in this person's name, instead of going quiet.
+  // invitation is there but not in this person's name, instead of going quiet. Priority: under the always-present pipeline line it was never seen.
   const saved = await getOneDriveFolder();
   if (!saved) { clearStatusMessage(INVITE_BAR_ID); return; }
   const oneDrive = await oneDriveFolderIfAllowed();
   if (!oneDrive) {
-    setStatusMessage(INVITE_BAR_ID, {
+    setStatusMessage(INVITE_BAR_ID, { priority: true,
       text: "You are not in a team. To look for a team invitation in your OneDrive folder, Chrome needs your permission again.",
       action: { label: "Allow…", onClick: async () => { await requestTeamFolderPermission(saved); inviteLookedAt = 0; paintTeamInvitation().catch(() => {}); } },
     });
@@ -195,7 +195,7 @@ async function paintTeamInvitation() {
   invitedCache = { at: Date.now(), teams };
   const t = teams.find((x) => x.mine.length);
   if (t) {
-    setStatusMessage(INVITE_BAR_ID, {
+    setStatusMessage(INVITE_BAR_ID, { priority: true,
       text: `${t.mine[0].byName || "Your Team Lead"} has invited you to the team "${t.team.name}" - join it to share accounts, contacts and leads with your colleagues.`,
       action: { label: "Join…", onClick: toJoin },
     });
@@ -204,7 +204,7 @@ async function paintTeamInvitation() {
   const other = teams[0];
   if (!other) { clearStatusMessage(INVITE_BAR_ID); return; }
   const names = other.open.map((i) => `"${i.name}"`).join(", ");
-  setStatusMessage(INVITE_BAR_ID, {
+  setStatusMessage(INVITE_BAR_ID, { priority: true,
     text: `The team "${other.team.name}" has an open invitation for ${names} - not the name or e-mail in your User Profile (Settings). If it is for you, join with it.`,
     action: { label: "Join…", onClick: toJoin },
   });
