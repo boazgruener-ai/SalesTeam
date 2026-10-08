@@ -312,22 +312,31 @@ function chooseAccountsToBring(localOnly, shared) {
   });
 }
 
+// Boaz 2026-10-08: one button - choose the folder, and the backup and the join follow by themselves, with messages.
+// (Pick the folder + Back up and join + a confirm was three steps for one decision, already taken by clicking Join.)
 async function onJoin() {
   const status = "team-join-status";
   const name = $("team-join-name").value.trim();
   if (!name) { setText(status, "Enter your name first.", true); return; }
-  if (!picked.join || flowBusy) return;
+  if (flowBusy) return;
   const pipe = (await chrome.storage.local.get(PIPELINE_STATE_KEY))[PIPELINE_STATE_KEY];
   if (pipelineRunning(pipe)) {
     setText(status, "Automatic preparation is working right now. Click \"Pause for today\" in the bar at the top first, then click Join again.", true);
     return;
   }
-  const go = await askConfirm(
-    "Join the team?\n\nThe accounts, contacts, leads (posts), Setup and rules in this browser are replaced by the team's. " +
-    "Next you choose which of your own accounts to bring into the team; anything else you have that the team does not is removed here - it stays in the backup saved next.\n\n" +
-    "Your API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn limits and Activity Log stay as they are.",
-    { okLabel: "Back up and join", cancelLabel: "Cancel" });
-  if (!go) return;
+  // The folder picker needs the click itself, so it comes first.
+  let handle = null;
+  try {
+    handle = await pickTeamFolder({ save: false });
+  } catch (err) {
+    setText(status, `Could not open the folder: ${err.message}`, true);
+    return;
+  }
+  if (!handle) return;
+  const first = await checkPickedFolder("join", handle);
+  if (!first.ok) { setText(status, first.text, true); return; }
+  picked.join = handle;
+  setText(status, `${first.text}\nJoining - saving a full backup of your data first…`);
   flowBusy = true;
   $("team-join-btn").disabled = true;
   try {
@@ -365,7 +374,8 @@ async function onJoin() {
     setText(status, `Not joined: ${err.message}`, true);
   } finally {
     flowBusy = false;
-    $("team-join-btn").disabled = !picked.join;
+    picked.join = null;
+    $("team-join-btn").disabled = false;
   }
 }
 
@@ -558,13 +568,11 @@ export function initTeamSettings() {
     picked.create = null;
     picked.join = null;
     $("team-create-btn").disabled = true;
-    $("team-join-btn").disabled = true;
     setText("team-create-status", "");
     setText("team-join-status", "");
     showFlow(null);
   }));
   $("team-create-pick-btn").addEventListener("click", () => onPick("create"));
-  $("team-join-pick-btn").addEventListener("click", () => onPick("join"));
   $("team-create-btn").addEventListener("click", onCreate);
   $("team-join-btn").addEventListener("click", onJoin);
   $("team-leave-btn").addEventListener("click", onLeave);
