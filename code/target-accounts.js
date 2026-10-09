@@ -109,13 +109,13 @@ import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
-import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney } from "./value-normalize.js";
+import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber } from "./value-normalize.js";
 import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES, sizeBucketKey } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine } from "./pipeline-status.js";
 import { parseCsv, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
-import { detectImportFile, describeImportFile, salesteamCsvRows, applyFileCurrency } from "./csv-import.js";
+import { detectImportFile, describeImportFile, salesteamCsvRows, applyFileCurrency, fileNeedsCurrency, currencyPlausibility } from "./csv-import.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
 import { runContactDiscoveryForExistingCompanies } from "./contact-discovery-extraction.js";
@@ -1102,6 +1102,38 @@ function rawValue(company, column) {
 // cached here and refreshed by loadWorkbook() rather than read per comparison.
 let moneySettings = { targetCurrency: DEFAULT_EXCHANGE_RATES.base, rates: DEFAULT_EXCHANGE_RATES };
 
+// 1.2.3 one currency (D13): a revenue cell shows the amount in the default currency (Change Settings > Advanced >
+// Revenue & Currency); the stored amount and its currency stay as found and are named in the tooltip, so changing the
+// default currency later loses nothing. Sorting, filters and every export use this shown amount (D14). A local revenue
+// without a currency of its own is in the global one, as in the web-findings comparison.
+// -> { amount, currency, converted, original, originalCurrency } or null when the cell is empty or not a number.
+function shownMoney(company, column) {
+  const value = rawValue(company, column);
+  if (value == null || value === "") return null;
+  const overrides = accountExtras[normalizeCompanyName(company.company)]?.overrides || {};
+  const own = (field) => (Object.prototype.hasOwnProperty.call(overrides, field) ? overrides[field] : company[field]);
+  const currency = own(column.currencyField) || own("revenueCurrency") || null;
+  const m = normalizeMoney(value, currency, moneySettings.targetCurrency, moneySettings.rates);
+  if (m.amount === null) return null;
+  const amount = Math.abs(m.amount) >= 1000 ? Math.round(m.amount) : Math.round(m.amount * 100) / 100;
+  return { amount, currency: m.currency, converted: m.converted, original: parseLooseNumber(value), originalCurrency: m.converted ? String(currency).toUpperCase() : null };
+}
+
+function shownMoneyText(money) {
+  return money ? `${formatNumber(money.amount)} ${money.currency || ""}`.trim() : "—";
+}
+
+function shownMoneyOrigin(money) {
+  return money && money.converted ? `from ${formatNumber(money.original)} ${money.originalCurrency}` : "";
+}
+
+// The account page: "1,250,000 USD (from 1,000,000 CHF)" - there is no tooltip there.
+function overviewMoney(company, id) {
+  const money = shownMoney(company, COMPANY_COLUMNS.find((c) => c.id === id));
+  if (!money) return null;
+  return shownMoneyOrigin(money) ? `${shownMoneyText(money)} (${shownMoneyOrigin(money)})` : shownMoneyText(money);
+}
+
 let seniorityLevelConfig = [];
 function effectiveContactSeniority(contact) {
   const discovered = contact.source === "Discovered";
@@ -1147,12 +1179,14 @@ function sortValue(company, column) {
     const m = typeof ev === "string" ? ev.replace(/,/g, "").match(/\d+/) : null;
     return m ? Number(m[0]) : null;
   }
+  if (company.fullName == null && column.currencyField) return shownMoney(company, column)?.amount ?? null;
   const v = column.id === "companyType" ? localizeTypeWording(rawValue(company, column)) : rawValue(company, column);
   if (column.numeric || column.date) return typeof v === "number" ? v : (v == null || v === "" ? null : parseFloat(v));
   return v == null ? "" : String(v).toLowerCase();
 }
 
 function filterText(company, column) {
+  if (company.fullName == null && column.currencyField) return String(shownMoney(company, column)?.amount ?? "");
   const v = column.id === "companyType" ? localizeTypeWording(rawValue(company, column)) : rawValue(company, column);
   return v == null ? "" : String(v).toLowerCase();
 }
@@ -1314,9 +1348,12 @@ function renderCellContent(td, company, column) {
   let text;
   if (column.date) text = formatExcelDate(value);
   else if (column.percent) text = value == null || value === "" ? "—" : `${Math.round(value * 100)}%`;
-  else if (column.numeric) {
+  else if (column.currencyField && value != null && value !== "") {
+    const money = shownMoney(company, column);
+    text = money ? shownMoneyText(money) : formatValue(value);
+    if (shownMoneyOrigin(money)) td.title = shownMoneyOrigin(money);
+  } else if (column.numeric) {
     text = formatNumber(value);
-    if (column.currencyField && value != null && value !== "") text = `${text} ${company[column.currencyField] || ""}`.trim();
   } else {
     text = formatValue(value);
   }
@@ -4087,7 +4124,6 @@ function refreshImportDialog() {
   const format = selectedImportFormat();
   document.getElementById("import-format-note").textContent = IMPORT_FORMAT_NOTES[format];
   document.getElementById("import-workbook-help").hidden = format !== "workbook";
-  document.getElementById("import-currency-field").hidden = format === "workbook";
   document.getElementById("import-what-field").hidden = format === "workbook";
   document.getElementById("import-choose-btn").textContent = format !== "workbook" && selectedImportWhat() === "both" ? "Choose the two files…" : "Choose file…";
 }
@@ -4103,10 +4139,6 @@ async function openImportDialog(format = null, what = null) {
     if (radio) radio.checked = true;
   }
   if (what === "contacts") showView("contactsList");
-  // D7: a file without a currency column - its revenue is read as the display currency unless another is picked here.
-  const currencySelect = document.getElementById("import-currency");
-  if (currencySelect.options.length === 0) for (const code of SUPPORTED_CURRENCIES) currencySelect.appendChild(new Option(code, code));
-  currencySelect.value = (await getRevenueNormalization()).targetCurrency;
   renderImportColumnsHelp();
   document.getElementById("import-help-status").textContent = "";
   refreshImportDialog();
@@ -4662,7 +4694,14 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
       c.aliases = [...aliasesByCompanyId.get(c.companyId)];
     }
   }
-  await runPlannedImport({ parsed: fullWorkbook, fileName: file.name, format: "workbook", legacyList: list, prevCount: prevMeta.count });
+  // D15: a workbook row with revenue but no currency is not read in a guessed one either.
+  let parsed = fullWorkbook;
+  if (fileNeedsCurrency(fullWorkbook)) {
+    const currency = await askFileCurrency(fullWorkbook, file.name, IMPORT_TITLES.workbook || "Import");
+    if (!currency) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+    parsed = applyFileCurrency(fullWorkbook, currency);
+  }
+  await runPlannedImport({ parsed, fileName: file.name, format: "workbook", legacyList: list, prevCount: prevMeta.count });
 });
 
 // The one import path every format shares (design 3.4-3.6): the check-first summary, the safety copy, the
@@ -4730,6 +4769,55 @@ async function runPlannedImport({ parsed, fileName, format, legacyList, prevCoun
 
 function capitalize(text) { return text ? text[0].toUpperCase() + text.slice(1) : text; }
 
+// Accounts first in the name, as in the plan (contacts are matched to the accounts of the same import).
+function fileNameOf(byKind) {
+  return [byKind.accounts, byKind.contacts].filter(Boolean).join(" + ");
+}
+
+// D15 case 3: "Revenue in this file is in: [choose…]" - nothing pre-selected, Continue stays disabled until a currency
+// is chosen. With the choice, the file's figures are checked against what the same accounts already hold; when they
+// look like another currency (CHF figures read as USD) the dialog says so before anything is imported.
+// -> the chosen code, or null for Cancel.
+function askFileCurrency(parsed, fileName, title) {
+  const dialog = document.getElementById("import-currency-dialog");
+  const select = document.getElementById("import-currency");
+  const warning = document.getElementById("import-currency-warning");
+  const goBtn = document.getElementById("import-currency-go-btn");
+  document.getElementById("import-currency-title").textContent = title;
+  document.getElementById("import-currency-file").textContent = fileName;
+  select.replaceChildren(new Option("choose…", ""), ...SUPPORTED_CURRENCIES.map((code) => new Option(code, code)));
+  select.value = "";
+  warning.textContent = "";
+  warning.hidden = true;
+  goBtn.disabled = true;
+  const pairs = [];
+  for (const row of parsed.companies || []) {
+    const stored = workbook.companies.find((c) => normalizeCompanyName(c.company) === normalizeCompanyName(row.company));
+    if (!stored) continue;
+    for (const column of COMPANY_COLUMNS.filter((c) => c.currencyField)) {
+      if (row[column.id] == null || row[column.currencyField]) continue;
+      const money = shownMoney(stored, column);
+      if (money) pairs.push({ file: row[column.id], stored: money.amount, storedCurrency: money.currency });
+    }
+  }
+  select.onchange = () => {
+    goBtn.disabled = !select.value;
+    const check = select.value ? currencyPlausibility(pairs, select.value, moneySettings) : null;
+    warning.textContent = check
+      ? `These figures look like ${check.likely}, not ${select.value} - compared with the revenue of ${check.pairs} accounts you already have. Check the currency before you continue.`
+      : "";
+    warning.hidden = !check;
+  };
+  return new Promise((resolve) => {
+    let chosen = null;
+    goBtn.onclick = () => { chosen = select.value || null; dialog.close(); };
+    document.getElementById("import-currency-cancel-btn").onclick = () => dialog.close();
+    dialog.onclose = () => resolve(chosen);
+    dialog.showModal();
+    select.focus();
+  });
+}
+
 // A SalesTeam CSV or a HubSpot export (design 3.1): read into workbook rows, then the same path as the workbook.
 document.getElementById("import-csv-file-input").addEventListener("change", async (event) => {
   const files = [...event.target.files];
@@ -4782,14 +4870,19 @@ document.getElementById("import-csv-file-input").addEventListener("change", asyn
     await say(`Import failed - the file could not be read (${err.message}).`);
     return;
   }
-  const withCurrency = applyFileCurrency(parsed, document.getElementById("import-currency").value);
+  // D15: a file that says nothing about its currency is never read in a guessed one - the Team Lead chooses.
+  let withCurrency = parsed;
+  if (fileNeedsCurrency(parsed)) {
+    const currency = await askFileCurrency(parsed, fileNameOf(byKind), title);
+    if (!currency) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+    withCurrency = applyFileCurrency(parsed, currency);
+  }
   const legacyList = withCurrency.companies.map((c) => ({
     company: c.company, industry: c.industry || null, researchStatus: c.researchStatus || null,
     officialName: c.zefixOfficialName || null, alternativeName: c.alternativeCompanyName || null,
     linkedinLink: c.linkedinLink || null, aliases: [],
   }));
-  // Accounts first in the name, as in the plan (contacts are matched to the accounts of the same import).
-  const fileName = [byKind.accounts, byKind.contacts].filter(Boolean).join(" + ");
+  const fileName = fileNameOf(byKind);
   await runPlannedImport({ parsed: withCurrency, fileName, format: chosen, legacyList });
 });
 
@@ -6803,8 +6896,8 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
       { label: "Address", value: effectiveCompany.zefixAddress },
       { label: "Employees (Global)", value: formatNumber(effectiveCompany.globalEmployees) },
       { label: "Employees (Local)", value: formatNumber(effectiveCompany.swissEmployees) },
-      { label: "Revenue (Global)", value: effectiveCompany.globalRevenue ? `${formatNumber(effectiveCompany.globalRevenue)} ${effectiveCompany.revenueCurrency || ""}`.trim() : null },
-      { label: "Revenue (Local)", value: effectiveCompany.swissRevenue ? `${formatNumber(effectiveCompany.swissRevenue)} ${effectiveCompany.swissRevenueCurrency || ""}`.trim() : null },
+      { label: "Revenue (Global)", value: overviewMoney(company, "globalRevenue") },
+      { label: "Revenue (Local)", value: overviewMoney(company, "swissRevenue") },
       { label: "Priority", value: company.aiPriority ? `${company.aiPriority}${company.aiPriorityScore ? ` (${Math.round(company.aiPriorityScore)}/100)` : ""}` : null },
       { label: "Evidence Coverage", value: company.evidenceCoverage != null ? `${Math.round(company.evidenceCoverage * 100)}%` : null },
       { label: "Local / Global", value: effectiveCompany.targetCountryRelationship || localizeTypeWording(effectiveCompany.companyType) },
@@ -7095,19 +7188,19 @@ document.getElementById("contact-back-link").addEventListener("click", (e) => {
 function tableCsv(columns, rows) {
   const headers = [];
   for (const column of columns) {
-    headers.push(column.label);
-    if (column.currencyField) headers.push(`${column.label} Currency`);
+    // D14: revenue in the default currency, named in the title - "Global Revenue (USD)", no "… Currency" column.
+    headers.push(column.currencyField ? `${column.label} (${moneySettings.targetCurrency})` : column.label);
   }
   const lines = rows.map((row) => {
     const cells = [];
     for (const column of columns) {
       let v = column.id === "companyType" ? localizeTypeWording(rawValue(row, column)) : rawValue(row, column);
+      if (column.currencyField && row.fullName == null && v != null && v !== "") v = shownMoney(row, column)?.amount ?? v;
       // A workbook date is an Excel day number (46276): written as a date (2026-09-10) Excel reads as one.
       if (column.date && typeof v === "number") v = new Date(Date.UTC(1899, 11, 30) + v * 86400000).toISOString().slice(0, 10);
       // Stored as 1-3; the table and the file both say what it means.
       if (column.id === "seniorityPriority" && v != null && v !== "") v = SENIORITY_PRIORITY_LABELS[v] || v;
       cells.push(v == null ? "" : v);
-      if (column.currencyField) cells.push(rawValue(row, { id: column.currencyField }) || "");
     }
     return cells;
   });
@@ -7265,8 +7358,10 @@ async function runExport(format, what) {
     actor: "user", action: format === "hubspot" ? "hubspot_exported" : "csv_exported",
     label: `Exported ${files.map((f) => f.text).join(" and ")} (${format === "hubspot" ? "HubSpot" : "CSV"})`,
   });
+  // D14: HubSpot's import maps "Annual Revenue" by that exact title, so the currency is named here instead.
+  const currencyNote = format === "hubspot" && accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : "";
   const hint = format === "hubspot"
-    ? (files.length > 1 ? "\n\nIn HubSpot, import the companies file first, then the contacts file." : "")
+    ? `${currencyNote}${files.length > 1 ? "\n\nIn HubSpot, import the companies file first, then the contacts file." : ""}`
     : "\n\nThey open in Excel.";
   await askConfirm(`Saved ${files.length === 1 ? "one file" : `${files.length} files`} to ${where}:\n\n${list}${hint}`, { title: "Export", cancelLabel: null });
 }

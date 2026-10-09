@@ -2938,6 +2938,40 @@ def test_csv_import(ctx):
     check("D7: a currency in the file is kept", e("CUR.companies[1].revenueCurrency"), "EUR")
     check("D7: no revenue, no currency added", e("'revenueCurrency' in CUR.companies[2]"), False)
     check("D7: fileNeedsCurrency", e("fileNeedsCurrency({ companies: [{ globalRevenue: 1 }] }) + '/' + fileNeedsCurrency(CUR)"), "true/false")
+    # 1.2.2.15 one currency (D14/D15): the export names the currency in the title; reading it back uses it.
+    check("D14: revenue title read", e("JSON.stringify(revenueTitleCurrency('Local Revenue (chf)'))"),
+          '{"field":"swissRevenue","currencyField":"swissRevenueCurrency","currency":"CHF"}')
+    check("D14: other bracketed titles are not revenue", e("revenueTitleCurrency('Employee Count (LinkedIn band)')"), None)
+    check("D14: a new export is still recognised", e("JSON.stringify(detectImportFile(['Company', 'Industry', 'Global Revenue (USD)', 'Readiness']))"),
+          '{"format":"salesteam","kind":"accounts"}')
+    e("""
+      var TITLED = salesteamCsvRows([
+        { 'Company': 'A AG', 'Global Revenue (USD)': '1,000,000', 'Local Revenue (USD)': '500' },
+        { 'Company': 'B AG', 'Global Revenue (USD)': '2,000,000', 'Global Revenue Currency': 'EUR' },
+        { 'Company': 'C AG', 'Global Revenue (USD)': '' },
+      ], 'accounts');
+    """)
+    check("D15 case 2: the title's currency is used", e("TITLED[0].globalRevenue + ' ' + TITLED[0].revenueCurrency + ' / ' + TITLED[0].swissRevenueCurrency"), "1000000 USD / USD")
+    check("D15 case 1: a row's own currency column wins over the title", e("TITLED[1].revenueCurrency"), "EUR")
+    check("D15: no revenue, no currency from the title", e("'revenueCurrency' in TITLED[2]"), False)
+    check("D15: a titled file needs no currency question", e("fileNeedsCurrency({ companies: TITLED })"), False)
+    check("D15: a value naming its currency needs no question", e("fileNeedsCurrency({ companies: [{ globalRevenue: 'CHF 102m' }] })"), False)
+    check("D15: a local revenue without its own currency is in the global one",
+          e("fileNeedsCurrency({ companies: [{ globalRevenue: 5, revenueCurrency: 'EUR', swissRevenue: 2 }] }) + '/' + ('swissRevenueCurrency' in applyFileCurrency({ companies: [{ swissRevenue: 2, revenueCurrency: 'EUR' }] }, 'CHF').companies[0])"),
+          "false/false")
+    e("""
+      var MONEY = { targetCurrency: 'USD', rates: { rates: { USD: 1, CHF: 1.25, EUR: 1.17 } } };
+      // stored in USD; the file has the same amounts in CHF (USD / 1.25)
+      var CHF_PAIRS = [100, 200, 400, 800].map(function (n) { return { file: n / 1.25, stored: n, storedCurrency: 'USD' }; });
+    """)
+    check("plausibility: CHF read as USD is caught", e("currencyPlausibility(CHF_PAIRS, 'USD', MONEY).likely"), "CHF")
+    check("plausibility: read as CHF it fits", e("currencyPlausibility(CHF_PAIRS, 'CHF', MONEY)"), None)
+    check("plausibility: an unchanged round trip fits", e("currencyPlausibility([1, 2, 3].map(function (n) { return { file: n, stored: n, storedCurrency: 'USD' }; }), 'USD', MONEY)"), None)
+    check("plausibility: too few accounts to tell", e("currencyPlausibility(CHF_PAIRS.slice(0, 2), 'USD', MONEY)"), None)
+    check("plausibility: a gap no currency explains is not a currency warning",
+          e("currencyPlausibility([1, 2, 3].map(function (n) { return { file: n * 3, stored: n, storedCurrency: 'USD' }; }), 'USD', MONEY)"), None)
+    check("plausibility: stored in CHF, file in CHF read as CHF fits",
+          e("currencyPlausibility([1, 2, 3].map(function (n) { return { file: n, stored: n, storedCurrency: 'CHF' }; }), 'CHF', MONEY)"), None)
     # The same plan as the workbook: an existing account gets its empty field filled, nothing replaced.
     e("""
       var CSV_PLAN = planImport({ companies: CSV_ROWS, contacts: CSV_CONTACTS },

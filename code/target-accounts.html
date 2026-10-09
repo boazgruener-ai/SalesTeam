@@ -800,6 +800,22 @@
     </div>
   </dialog>
 
+  <!-- 1.2.3 one currency (D15 case 3): asked after the file is read, only when its revenue names no currency - no
+       pre-selected answer, Continue disabled until one is chosen. -->
+  <dialog id="import-currency-dialog" class="action-dialog">
+    <h3 id="import-currency-title">Import</h3>
+    <p id="import-currency-file" class="page-subtitle"></p>
+    <p>This file has revenue figures but does not say in which currency.</p>
+    <label class="hubspot-field">Revenue in this file is in
+      <select id="import-currency"></select>
+    </label>
+    <p id="import-currency-warning" class="warning-banner" role="alert" hidden></p>
+    <div class="action-dialog-actions">
+      <button id="import-currency-go-btn" type="button" disabled>Continue</button>
+      <button id="import-currency-cancel-btn" type="button">Cancel</button>
+    </div>
+  </dialog>
+
   <!-- 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format - it replaces Import Research Workbook…
        and Import from HubSpot…. Team Lead (or no team) only. Every format goes through the same check-first summary,
        safety copy and add-and-fill import. -->
@@ -825,9 +841,6 @@
       <label><input type="radio" name="import-what" value="both" /> Both - choose the accounts file and the contacts file together</label>
     </fieldset>
     <p id="import-format-note" class="page-subtitle"></p>
-    <label id="import-currency-field" class="hubspot-field" hidden>If the file has no currency column, its revenue is in
-      <select id="import-currency"></select>
-    </label>
     <div class="action-dialog-actions">
       <button id="import-choose-btn" type="button">Choose file…</button>
       <button type="button" class="action-dialog-close-btn">Close</button>

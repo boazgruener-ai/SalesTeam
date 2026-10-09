@@ -363,6 +363,14 @@ and an import must never read a CHF file as USD.
     converted with the chosen currency) is computed; when it sits near an exchange rate instead of near 1 (e.g.
     0.9 for CHF read as USD) the summary warns: "These figures look like CHF, not USD - check the currency."
     Pure (`currencyPlausibility` in csv-import.js), with harness cases.
+  - **Built in 1.2.2.15.** Table cells, sorting, text filters and the account page show the default currency, the
+    original in the tooltip (account page: "(from … CHF)"); a local revenue without its own currency is in the global
+    one. SalesTeam CSV titles "Global Revenue (USD)" / "Local Revenue (USD)" without the "… Currency" columns; the
+    HubSpot file keeps the title "Annual Revenue" (HubSpot maps it by that exact name) and the export pop-up says
+    "Annual Revenue is in USD". The currency question is its own small pop-up right after the file is read (before
+    the check-first summary), so the plausibility warning shows as soon as a currency is picked; it is asked for the
+    research workbook too, and not for a value that names its currency ("CHF 102m"). The Import window's dropdown
+    is gone.
 - **D16 — Revenue written without its unit (millions / billions).** Found in the 1.2.2.13 HubSpot export: seven
   accounts held revenues such as Cornèr Bank 491.1 CHF, Metrohm 400 CHF, ISS Schweiz 914 CHF, Lindt & Sprüngli
   Schweiz 5.92 CHF - all from web research answers that lost "million"/"billion". The arbitration's units rule
