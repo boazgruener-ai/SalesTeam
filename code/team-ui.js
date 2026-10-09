@@ -1074,8 +1074,8 @@ export async function renderTeamSettings() {
       };
       $("team-add-member-btn").hidden = !hasRights;
       addMemberFolder = handle?.name || "";
-      const current = (st.members || []).filter((c) => !c.left);
-      for (const c of current) {
+      const listed = (st.members || []).filter((c) => !c.left);
+      for (const c of listed) {
         const row = memberRow([c.name, roleOf(c.id), groupsText(c.id), timeText(c.lastSeen), c.online ? "online" : ""]);
         row.append(assignedCell(c.id, false), actionsCell(c, false));
         table.append(row);
@@ -1084,7 +1084,7 @@ export async function renderTeamSettings() {
       // Boaz (1.2.2.8 test): each former member once - their latest leaving (one still holding accounts first) - and
       // not at all when they are back in the team; the list folded behind "Former members (n)".
       const who = (name) => personKey(name).replace(/[^a-z0-9]/g, ""); // "Member 2" = "member2"
-      const here = new Set([m.name, ...current.map((c) => c.name)].map(who));
+      const here = new Set([m.name, ...listed.map((c) => c.name)].map(who));
       const formerBy = new Map();
       for (const c of (st.members || []).filter((x) => x.left)) {
         const k = who(c.name);
