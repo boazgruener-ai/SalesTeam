@@ -98,6 +98,7 @@ import {
   getAccountReadiness, getTargetsStatus,
   takeRelationshipsMigrationNotice, relationshipsMovedText, getRelationshipMatcher, accountPriorityFor,
   setAccountRelationship, parseLinkedinCompanySlug,
+  revenueUnitsContext, withoutUnitlessRevenue,
 } from "./storage.js";
 import { RAISED_REASON, relationshipTagText } from "./relationships.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
@@ -5759,6 +5760,7 @@ async function computeAutoArbitration() {
   const settings = await getWebFindingsArbitration();
   const config = await getTargetUniverseConfig();
   const locationTier = (country) => resolveLocationPriority(country, config.locationPriorities);
+  const unitsCtx = await revenueUnitsContext();
   const contactCounts = new Map();
   for (const c of workbook.contacts) {
     if (!c.companyId) continue;
@@ -5787,7 +5789,8 @@ async function computeAutoArbitration() {
       if (findingValuesMatch(overrides[f.key], found)) tookHere++;
     }
     if (tookHere > 0) { autofilled += tookHere; autofilledAccounts++; }
-    const proposals = annotatedProposals(company, extra);
+    // D16: a revenue that lost its unit is never settled by a rule - it waits in Decisions.
+    const proposals = withoutUnitlessRevenue(annotatedProposals(company, extra), company, extra.overrides, data, unitsCtx);
     if (proposals.length === 0) continue;
     const ctx = arbitrationCtxFor(company, extra, { buckets: SIZE_PRIORITY_BUCKETS, locationTier, contactCounts });
     const { decisions, patch } = arbitrateAccount({ proposals, extra, ctx, settings, data });

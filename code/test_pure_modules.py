@@ -2666,6 +2666,67 @@ def test_team_groups(ctx):
         return JSON.stringify(a.days) === JSON.stringify(b.days) && JSON.stringify(entityView(a, 'account', 'wb:c-1').values) === JSON.stringify(entityView(b, 'account', 'wb:c-1').values); })()"""), True)
 
 
+def test_revenue_units(ctx):
+    """D16 (EXPORT_IMPORT_DESIGN.md 8b): a revenue written without its unit, judged on its own. The cases are the
+    accounts the 1.2.2.13 HubSpot export showed (employee counts as stored then)."""
+    e = ctx.eval
+    e("""
+      var RU_BANDS = [{ key: 'S', min: 0, max: 200 }, { key: 'M', min: 201, max: 500 }, { key: 'L', min: 501, max: 1000 },
+        { key: 'XL', min: 1001, max: 5000 }, { key: 'XXL', min: 5001, max: Infinity }];
+      var RU_MONEY = { targetCurrency: 'USD', rates: { rates: { USD: 1, CHF: 1.25, EUR: 1.08 } } };
+      function ru(v, c, emp, min) { return revenueUnitsCheck(v, c, emp, min, RU_MONEY); }
+    """)
+    # targeting minimum = low end of the smallest ticked band; never a fixed 200
+    check("min: M and up ticked", e("targetingMinimum({ M: {checked:true}, L: {checked:true}, XL: {checked:true} }, RU_BANDS)"), 201)
+    check("min: XL smallest", e("targetingMinimum({ XL: {checked:true}, XXL: {checked:true} }, RU_BANDS)"), 1001)
+    check("min: S ticked -> 0", e("targetingMinimum({ S: {checked:true}, M: {checked:true} }, RU_BANDS)"), 0)
+    check("min: nothing ticked -> 0", e("targetingMinimum({}, RU_BANDS)"), 0)
+    # the seven accounts: the unit is found
+    check("Cornèr 491.1 CHF, 911 -> millions", e("ru(491.1, 'CHF', 911, 201).factor"), 1000000)
+    check("Cornèr suggested", e("ru(491.1, 'CHF', 911, 201).suggested"), 491100000)
+    check("Lindt Schweiz 5.92, 14466 -> billions", e("ru(5.92, 'CHF', 14466, 201).factor"), 1000000000)
+    check("Appenzeller KB 49.4, 130 (below min) -> millions", e("ru(49.4, 'CHF', 130, 201).factor"), 1000000)
+    check("Appenzeller KB judged on the minimum", e("ru(49.4, 'CHF', 130, 201).basis"), "targeting")
+    check("Appenzeller KB out of scope (Remove offered)", e("ru(49.4, 'CHF', 130, 201).outOfScope"), True)
+    check("Datacolor 93.2 USD, 426 -> millions", e("ru(93.2, 'USD', 426, 201).factor"), 1000000)
+    check("Metrohm 400, 3200 -> millions", e("ru(400, 'CHF', 3200, 201).factor"), 1000000)
+    check("Swissmedic 115, 580 -> millions", e("ru(115, 'CHF', 580, 201).factor"), 1000000)
+    check("ISS Schweiz 914, 14000 -> millions", e("ru(914, 'CHF', 14000, 201).factor"), 1000000)
+    # HT5 AG: an empty holding, 0 employees, 282,000 CHF - out of scope, not a units error
+    check("HT5 flagged", e("ru(282000, 'CHF', 0, 201) !== null"), True)
+    check("HT5 no unit suggested", e("ru(282000, 'CHF', 0, 201).factor"), None)
+    check("HT5 credible small", e("ru(282000, 'CHF', 0, 201).credibleSmall"), True)
+    # credible values are left alone
+    check("Cornèr in full is fine", e("ru(491100000, 'CHF', 911, 201)"), None)
+    check("a small firm at its real size is fine", e("ru(30000000, 'CHF', 250, 201)"), None)
+    check("missing headcount: the minimum still judges", e("ru(491.1, 'CHF', null, 1001).factor"), 1000000)
+    check("S band ticked, no headcount: not judged", e("ru(491.1, 'CHF', null, 0)"), None)
+    check("S band ticked, real headcount still judges", e("ru(491.1, 'CHF', 911, 0).factor"), 1000000)
+    check("unparseable value: not judged", e("ru('n/a', 'CHF', 911, 201)"), None)
+    # judged in the default currency: 9,000 EUR per employee is 9,720 USD (< 10k), 9,500 CHF is 11,875 USD (fine)
+    check("per employee in the default currency (CHF ok)", e("ru(9500 * 1000, 'CHF', 1000, 201)"), None)
+    check("per employee in the default currency (EUR low)", e("ru(9000 * 1000, 'EUR', 1000, 201) !== null"), True)
+    check("between the fits: flagged without a unit", e("var r = ru(5000 * 1000, 'USD', 1000, 201); JSON.stringify([r !== null, r.factor])"), '[true,null]')
+
+    # an import never fills a revenue that lost its unit: it becomes a units finding, and its currency waits with it
+    e("""
+      var RU_ROW = { companyId: 'C-1', company: 'Corner Bank', globalEmployees: 911 };
+      var RU_PLAN = planCompanyUpdate(RU_ROW, { overrides: {} }, { company: 'Corner Bank', globalRevenue: 491.1, revenueCurrency: 'CHF' },
+        { buckets: RU_BANDS, money: RU_MONEY, unitsMinimum: 201, fileName: 'h.csv', at: 1 });
+      var RU_OK = planCompanyUpdate(RU_ROW, { overrides: {} }, { company: 'Corner Bank', globalRevenue: 491100000, revenueCurrency: 'CHF' },
+        { buckets: RU_BANDS, money: RU_MONEY, unitsMinimum: 201 });
+    """)
+    check("import: unitless revenue not written", e("'globalRevenue' in RU_PLAN.overrides"), False)
+    check("import: its currency waits with it", e("'revenueCurrency' in RU_PLAN.overrides"), False)
+    check("import: units finding", e("JSON.stringify([RU_PLAN.findings.globalRevenue.rule, RU_PLAN.findings.globalRevenue.currency])"), '["units","CHF"]')
+    check("import: a full amount is filled", e("RU_OK.overrides.globalRevenue"), 491100000)
+
+    # Decisions: one similar group per origin and unit
+    check("similar key", e("similarKey({ kind: 'revenue_units', payload: { origin: 'current', factor: 1000000, outOfScope: false } })"), "units:current:1000000:0")
+    check("no unit, no group", e("similarKey({ kind: 'revenue_units', payload: { origin: 'current', factor: null } })"), None)
+    check("kind sorted last", e("sortDecisions([{ kind: 'revenue_units', company: 'A' }, { kind: 'finding', company: 'B' }])[0].kind"), "finding")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
@@ -2715,6 +2776,7 @@ def main():
     test_team_invites(ctx)
     test_import_merge(ctx)
     test_csv_import(ctx)
+    test_revenue_units(ctx)
 
     print()
     for f in _failures:

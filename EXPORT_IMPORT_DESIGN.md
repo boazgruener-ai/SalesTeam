@@ -287,6 +287,30 @@ like the chosen kind says what it looks like ("This looks like a HubSpot contact
   in report exports and Data Loader files.
 - Live check needed: Salesforce's Industry is a picklist; free-text industries may be rejected by orgs with
   a restricted picklist. If so, the export leaves Industry out and puts it in Description (decided at test).
+- **Salesforce's own sample files (Boaz, 2026-10-09)** fix the column titles. The export writes exactly these,
+  in this order, so the Data Import Wizard maps every column by itself; columns SalesTeam has no value for stay
+  empty. *Agreed 2026-10-09 (Boaz: all four - Type, revenue currency, Lead Source, Consent Status):*
+  - **Accounts:** Account Name, Annual Revenue, Billing Street, Billing City, Billing State/Province, Billing
+    Zip/Postal Code, Billing Country, Description, Employees, Fax, Industry, Phone, Shipping Street, Shipping City,
+    Shipping State/Province, Shipping Zip/Postal Code, Shipping Country, Type, Website.
+    - **Type is the relationship, not Public/Private** (the samples hold Customer / Reseller - Salesforce's
+      Account Type list): customer -> Customer, partner -> Partner, everyone else -> Prospect. Public/private goes
+      into Description with the priority, LinkedIn page and SalesTeam id.
+    - Billing address from the registry address where there is one, else the HQ city and country. Shipping, Phone
+      and Fax stay empty.
+    - **Annual Revenue is a plain number with no currency in its title** (the wizard would not map
+      "Annual Revenue (USD)" by itself), so the export pop-up names the currency (D14), and an import of such a
+      file asks for it (D15 case 3).
+  - **Contacts:** First Name, Last Name, Email, Phone, Title, Account Name, Mailing Street, Mailing City, Mailing
+    State/Province, Mailing Zip/Postal Code, Mailing Country, Lead Source, Consent Status, plus **Description**
+    (the LinkedIn profile; the wizard maps it by name).
+    - Account Name exactly as in the accounts file, so the wizard links each contact to its account.
+    - **Lead Source "Other"**, not "Social": the standard list has no LinkedIn value, and "Other" exists in every
+      org.
+    - **Consent Status always empty**: SalesTeam never knows whether a person agreed to marketing, and must not
+      claim it.
+  - Import reads the same titles (and the API names above), so a file exported from Salesforce in this shape comes
+    back in as it went out.
 
 ---
 
@@ -356,6 +380,15 @@ and an import must never read a CHF file as USD.
     like it is in millions → 491.1 million CHF?" - **Correct it** / **Keep**. Nothing is changed without an answer.
   - An account below the targeting minimum with a credible tiny revenue (HT5 AG: an empty holding, 0 employees) is
     out of scope rather than a units error - the card offers **Remove account** as well.
+  - **Built in 1.2.2.14.** Pure `revenueUnitsCheck` and `targetingMinimum` in value-normalize.js (local revenue is
+    judged only against a real local headcount). Decisions kind "Revenue without its unit", one card per value, from
+    three places: a stored value (**Correct it** / **Keep** - Keep remembers the value), a web finding for an empty
+    field and an import (**Correct it** / **Don't use it**); **Remove account** only when the real headcount is below
+    the targeting minimum, and no unit is suggested when the value is credible for that headcount (HT5 AG).
+    "Also for the others" groups cards with the same origin and unit. Web fills (pipeline, bulk research, automatic
+    resolve) and imports hold such a value and its currency back. A hand edit is not blocked: a value typed without
+    its unit shows up as a card right after Save. Checked against the 9 Oct export: exactly the 7 accounts + HT5 AG
+    of 570 are flagged.
 
 ## 9. Research workbook specifics
 

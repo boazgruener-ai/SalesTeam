@@ -36,11 +36,29 @@ const KIND_PLURAL = {
   lacking_evidence: ["account lacking evidence", "accounts lacking evidence"],
   finding: ["web finding", "web findings"],
   import_finding: ["import difference", "import differences"],
+  revenue_units: ["revenue without its unit", "revenues without their unit"],
   join_proposal: ["join proposal", "join proposals"],
 };
 
+// D16: a revenue without its unit. "Correct it" only with a unit that fits; "Keep" for a stored value, "Don't use it"
+// for a web finding or an import; "Remove account" only for an account below the targeting minimum.
+function unitsChoices(p) {
+  const out = [];
+  if (p.suggested) out.push(["correct", "Correct it"]);
+  out.push(["keep", p.origin === "current" ? "Keep" : "Don't use it"]);
+  if (p.outOfScope) out.push(["remove", "Remove account"]);
+  return out;
+}
+
 // A join proposal's two answers depend on the account (who has it now) - the item carries them (team-proposals.js).
-const choicesOf = (item) => item.choices || CHOICES[item.kind];
+const choicesOf = (item) => item.choices || (item.kind === "revenue_units" ? unitsChoices(item.payload || {}) : CHOICES[item.kind]);
+
+const UNIT_WORDS = { 1000: "thousand", 1000000: "million", 1000000000: "billion" };
+function money(n, currency) {
+  if (n === null || n === undefined) return "empty";
+  const v = Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 100) / 100;
+  return `${v.toLocaleString("en-US")}${currency ? ` ${currency}` : ""}`;
+}
 
 let items = [];
 let skipped = [];      // ids skipped while this page is open, in the order they were skipped
@@ -177,6 +195,29 @@ function bodyFor(item) {
       </table>
       <p class="note">The account's Review findings dialog shows the research and its sources in full.</p>`;
   }
+  if (item.kind === "revenue_units") {
+    const where = { current: "This account's", web: "A web finding's", import: "An import's" }[p.origin] || "This";
+    const word = UNIT_WORDS[p.factor];
+    const basis = p.basis === "employees"
+      ? `${esc(show(p.employeesUsed))} employees`
+      : `${esc(show(p.employeesUsed))} employees - the targeting minimum (the smallest size band ticked in Setup), used because the account shows fewer or none`;
+    const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "";
+    return `
+      <p>${where} <strong>${esc(p.label)}</strong> is <strong>${esc(money(p.value, p.currency))}</strong>${word
+        ? ` - it looks written in ${esc(word)}s: <strong>${esc(show(p.value))} ${esc(word)}${p.currency ? ` ${esc(p.currency)}` : ""}</strong>?`
+        : p.credibleSmall ? " - believable for a company this small, but it is below your targeting." : " - too small for a company in scope, and no unit makes it fit."}</p>
+      <table class="compare">
+        ${p.origin === "import" ? `<tr><th>Current</th><td>${esc(show(p.current))}</td></tr>` : ""}
+        <tr><th>${p.origin === "web" ? "Web finding" : p.origin === "import" ? "Import" : "Current"}</th><td>${esc(money(p.value, p.currency))}${p.file ? ` <span class="note">(${esc(p.file)}${when ? `, ${esc(when)}` : ""})</span>` : ""}</td></tr>
+        ${p.suggested ? `<tr><th>Corrected</th><td>${esc(money(p.suggested, p.currency))}</td></tr>` : ""}
+      </table>
+      <p class="note">Measured against ${basis}, that is ${esc(money(p.perEmployee, ""))} per employee a year (in the default currency);
+      a company in scope earns at least 10,000. Web answers sometimes lose "million" or "billion".
+      ${p.suggested ? "<strong>Correct it</strong> stores the corrected amount like an edit of your own. " : ""}${p.origin === "current"
+        ? "<strong>Keep</strong> leaves it as it is and does not ask again."
+        : "<strong>Don't use it</strong> leaves the field as it is."}${p.outOfScope
+        ? " <strong>Remove account</strong> hides it everywhere (it has fewer employees than your targeting); nothing is permanently erased." : ""}</p>`;
+  }
   if (item.kind === "import_finding") {
     const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "";
     return `
@@ -196,6 +237,7 @@ function similarLabel(item, n) {
   if (item.kind === "join_proposal") return `Also for ${esc(p.byName)}'s other ${n} join proposal${n === 1 ? "" : "s"}`;
   if (item.kind === "finding") return `Also for the other ${n} ${esc(p.label)} finding${n === 1 ? "" : "s"}`;
   if (item.kind === "import_finding") return `Also for the other ${n} ${esc(p.label)} import difference${n === 1 ? "" : "s"}`;
+  if (item.kind === "revenue_units") return `Also for the other ${n} revenue${n === 1 ? "" : "s"} that look written in ${esc(UNIT_WORDS[p.factor] || "")}s`;
   if (item.kind === "lacking_evidence") {
     const cause = p.reason === "empty_page" ? "with an empty LinkedIn page" : "with no LinkedIn company found";
     return `Also for the other ${n} account${n === 1 ? "" : "s"} ${cause}`;
@@ -224,12 +266,16 @@ function render() {
   $("decision-similar-checkbox").checked = false;
   $("decision-similar-text").innerHTML = others.length ? similarLabel(item, others.length) : "";
 
-  const [[aVal, aLabel], [bVal, bLabel]] = choicesOf(item);
-  $("decision-choice-a").textContent = aLabel;
-  $("decision-choice-a").dataset.choice = aVal;
-  $("decision-choice-b").textContent = bLabel;
-  $("decision-choice-b").dataset.choice = bVal;
-  $("decision-choice-b").classList.toggle("danger", item.kind === "lacking_evidence");
+  // Two answers for most kinds, one to three for a revenue without its unit (D16).
+  const choices = choicesOf(item);
+  ["a", "b", "c"].forEach((slot, i) => {
+    const btn = $(`decision-choice-${slot}`);
+    btn.hidden = !choices[i];
+    if (!choices[i]) return;
+    btn.textContent = choices[i][1];
+    btn.dataset.choice = choices[i][0];
+  });
+  $("decision-choice-b").classList.toggle("danger", item.kind === "lacking_evidence" || choices[1]?.[0] === "remove");
   $("decision-skip").hidden = list.length < 2;
   $("decision-status").textContent = "";
 }
@@ -248,7 +294,7 @@ async function load() {
 
 function setBusy(on) {
   busy = on;
-  for (const id of ["decision-choice-a", "decision-choice-b", "decision-skip"]) $(id).disabled = on;
+  for (const id of ["decision-choice-a", "decision-choice-b", "decision-choice-c", "decision-skip"]) $(id).disabled = on;
 }
 
 async function decide(choice) {
@@ -295,6 +341,7 @@ async function decide(choice) {
 
 $("decision-choice-a").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
 $("decision-choice-b").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
+$("decision-choice-c").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
 // 1.2.2.13 (Boaz): a way out without answering anything. Decisions is shown inside the page whose menu opened it;
 // that page closes it (the same message Change Settings' "Back to menu" sends). Opened on its own, it goes back.
 $("decision-cancel").addEventListener("click", () => {

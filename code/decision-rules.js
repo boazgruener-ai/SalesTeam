@@ -9,7 +9,7 @@
 import { companyLinkSlug } from "./readiness.js";
 import { parseSizeBand, jobGaveUp } from "./pipeline-plan.js";
 
-export const DECISION_KINDS = ["page_changed", "id_taken", "name_match", "duplicate", "lacking_evidence", "finding", "import_finding"];
+export const DECISION_KINDS = ["page_changed", "id_taken", "name_match", "duplicate", "lacking_evidence", "finding", "import_finding", "revenue_units"];
 
 export const DECISION_KIND_LABELS = {
   page_changed: "LinkedIn page changed",
@@ -19,6 +19,7 @@ export const DECISION_KIND_LABELS = {
   lacking_evidence: "Lacking evidence",
   finding: "Web finding",
   import_finding: "Import difference",
+  revenue_units: "Revenue without its unit",
   join_proposal: "Join proposal",
 };
 
@@ -240,6 +241,8 @@ export function similarKey(item) {
   if (item.kind === "finding") return `finding:${item.payload && item.payload.field}`;
   if (item.kind === "import_finding") return `import:${item.payload && item.payload.field}`;
   if (item.kind === "lacking_evidence") return `lacking:${item.payload && item.payload.reason}`;
+  // D16: the same unit from the same place - "Correct it" for every revenue written in millions at once.
+  if (item.kind === "revenue_units") { const p = item.payload || {}; return p.factor ? `units:${p.origin}:${p.factor}:${p.outOfScope ? 1 : 0}` : null; }
   return null;
 }
 

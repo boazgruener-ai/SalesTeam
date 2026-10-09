@@ -4,6 +4,7 @@
 import {
   getTargetAccountsWorkbook, getTargetAccountExtras, saveTargetAccountExtra, addWebResearchInitiatives, normalizeCompanyName,
   getAnthropicApiKey, getCompanyContext, getIdealCustomerProfile, getOutputLanguage, getTargetUniverseConfig, appendActivityLog,
+  revenueUnitsContext, withoutUnitlessRevenue,
 } from "./storage.js";
 import { researchAccountOnWeb, sanitizeApiKey, apiBlockedReason } from "./agent-shared.js";
 import { computeFindingProposals } from "./web-research-apply.js";
@@ -122,7 +123,9 @@ async function run(items, { autofill, state, save, controllers, isStopping, stop
             state.initiatives += await addWebResearchInitiatives(company.companyId, company.company, result.data?.initiatives);
             const extras = await getTargetAccountExtras();
             const proposals = computeFindingProposals(company, extras[item.key]?.overrides, result.data);
-            const fresh = proposals.filter((p) => p.state === "new");
+            // D16: a revenue that lost its unit is not filled in; Decisions asks about it.
+            const fresh = withoutUnitlessRevenue(proposals, company, extras[item.key]?.overrides, result.data, await revenueUnitsContext())
+              .filter((p) => p.state === "new");
             if (autofill && fresh.length > 0) {
               const overrides = { ...(extras[item.key]?.overrides || {}) };
               for (const p of fresh) overrides[p.key] = p.found;

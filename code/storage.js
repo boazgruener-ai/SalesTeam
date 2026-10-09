@@ -1,7 +1,7 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
 import { leadRightsOf, mayImportFor } from "./team-groups.js";
-import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
+import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum } from "./value-normalize.js";
 import { joinProposalItems, applyJoinProposal } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, sizeBucketKey } from "./web-findings-arbitration.js";
@@ -1896,6 +1896,7 @@ async function planWorkbookImport(parsed, { fileName = null, at = Date.now() } =
     settings, money: revenueMoneySettings(money), buckets: SIZE_PRIORITY_BUCKETS,
     locationTier: (country) => resolveLocationPriority(country, config.locationPriorities),
     tolerancePct: settings.importTolerancePct ?? DEFAULT_IMPORT_TOLERANCE_PCT, contactCounts, fileName, at,
+    unitsMinimum: targetingMinimum(config.sizeBuckets, SIZE_PRIORITY_BUCKETS),
   });
   return { wb, extras, contactExtras, plan };
 }
@@ -5377,6 +5378,34 @@ function localDayString(ms) {
 
 // ---- Web research in the pipeline (build step 5, DATA_PIPELINE_DESIGN.md section 6, W1-W8) ----
 
+// D16 (EXPORT_IMPORT_DESIGN.md 8b): a revenue written without its unit. ctx = { minimum, money } from
+// revenueUnitsContext(); `effective` = the row with its overrides. The global revenue is judged against the global
+// headcount and the targeting minimum, the local one only against a real local headcount. -> the check, or null.
+const REVENUE_UNIT_FIELDS = { globalRevenue: "revenueCurrency", swissRevenue: "swissRevenueCurrency" };
+export async function revenueUnitsContext() {
+  const [config, money] = await Promise.all([getTargetUniverseConfig(), getRevenueNormalization()]);
+  return { minimum: targetingMinimum(config.sizeBuckets, SIZE_PRIORITY_BUCKETS), money: revenueMoneySettings(money) };
+}
+function revenueUnitsIssue(effective, field, value, currency, ctx) {
+  if (!(field in REVENUE_UNIT_FIELDS)) return null;
+  const global = field === "globalRevenue";
+  const employees = parseLooseNumber(global ? effective.globalEmployees : effective.swissEmployees);
+  return revenueUnitsCheck(value, currency, employees, global ? ctx.minimum : 0, ctx.money);
+}
+// A web finding's currency for an amount (the research reports one currency for both, design 8b).
+function foundCurrencyFor(field, data) {
+  const v = (k) => (data ? findingValue(data[k]) : null);
+  return (field === "swissRevenue" ? v("swissRevenueCurrency") : null) || v("revenueCurrency") || null;
+}
+// Web proposals, without the revenue amounts that lost their unit (and the currency riding with such an amount):
+// those are never written by a rule, they wait in Decisions.
+export function withoutUnitlessRevenue(proposals, company, overrides, data, ctx) {
+  const effective = { ...(company || {}), ...(overrides || {}) };
+  const held = new Set(proposals.filter((p) => revenueUnitsIssue(effective, p.key, p.found, foundCurrencyFor(p.key, data), ctx)).map((p) => p.key));
+  if (held.size === 0) return proposals;
+  return proposals.filter((p) => !held.has(p.key) && !(p.key === "revenueCurrency" && held.has("globalRevenue")));
+}
+
 // W5: resolves the open web findings of every researched account (or only `onlyKeys`) with the same
 // rules as Target Accounts > Resolve findings automatically, and writes the result in one go. What the
 // rules cannot settle stays open and so appears in Decisions (V6). Never touches that button's Undo:
@@ -5395,6 +5424,7 @@ export async function autoResolveWebFindings({ onlyKeys = null } = {}) {
     : savedSettings;
   const only = onlyKeys ? new Set(onlyKeys) : null;
   const moneySettings = revenueMoneySettings(money);
+  const unitsCtx = { minimum: targetingMinimum(config.sizeBuckets, SIZE_PRIORITY_BUCKETS), money: moneySettings };
   const locationTier = (country) => resolveLocationPriority(country, config.locationPriorities);
   const contactCounts = new Map();
   for (const c of workbook.contacts || []) if (c.companyId) contactCounts.set(c.companyId, (contactCounts.get(c.companyId) || 0) + 1);
@@ -5410,7 +5440,7 @@ export async function autoResolveWebFindings({ onlyKeys = null } = {}) {
     const extra = extras[key];
     if (!extra || !extra.webResearch || extra.deletedAt) continue;
     const data = extra.webResearch.data;
-    const proposals = computeFindingProposals(company, extra.overrides, data, moneySettings)
+    const proposals = withoutUnitlessRevenue(computeFindingProposals(company, extra.overrides, data, moneySettings), company, extra.overrides, data, unitsCtx)
       .map((p) => ({ ...p, dismissed: isDismissedWebFinding(extra.webFindingsDismissed, p) }));
     if (!proposals.some((p) => !p.dismissed)) continue;
     const ctx = arbitrationContext(company, extra, { buckets: SIZE_PRIORITY_BUCKETS, locationTier, contactCount: contactCounts.get(company.companyId) || 0 });
@@ -5473,7 +5503,8 @@ export async function applyPipelineWebResearch(key, result, { topics = null } = 
 async function fillEmptyAndResolve(key, company, data) {
   const extras = await getTargetAccountExtras();
   const money = await getRevenueNormalization();
-  const fresh = computeFindingProposals(company, extras[key]?.overrides, data, revenueMoneySettings(money)).filter((p) => p.state === "new");
+  const fresh = withoutUnitlessRevenue(computeFindingProposals(company, extras[key]?.overrides, data, revenueMoneySettings(money)),
+    company, extras[key]?.overrides, data, await revenueUnitsContext()).filter((p) => p.state === "new");
   if (fresh.length > 0) {
     const overrides = { ...(extras[key]?.overrides || {}) };
     for (const p of fresh) overrides[p.key] = p.found;
@@ -5913,9 +5944,9 @@ function revenueMoneySettings(money) {
 
 // Builds the queue. `views` may be passed by a caller that already has them. Returns { items, count }.
 async function buildDecisionQueue(views) {
-  const [allViews, workbook, extras, kept, money, diff, discoveredContacts] = await Promise.all([
+  const [allViews, workbook, extras, kept, money, diff, discoveredContacts, config] = await Promise.all([
     views || getAccountViews({ persistDerived: false }), getTargetAccountsWorkbook(), getTargetAccountExtras(),
-    getKeptSeparatePairs(), getRevenueNormalization(), computeDiscoveredMergeDiff(), getDiscoveredContacts(),
+    getKeptSeparatePairs(), getRevenueNormalization(), computeDiscoveredMergeDiff(), getDiscoveredContacts(), getTargetUniverseConfig(),
   ]);
   const live = allViews.filter((v) => !v.deleted && !v.excluded);
   const byKey = new Map(live.map((v) => [v.key, v]));
@@ -5987,13 +6018,26 @@ async function buildDecisionQueue(views) {
   // Web findings the automatic resolve left for the user (V6). The currency is never asked on its own:
   // it goes with the revenue amount.
   const moneySettings = revenueMoneySettings(money);
+  const unitsCtx = { minimum: targetingMinimum(config.sizeBuckets, SIZE_PRIORITY_BUCKETS), money: moneySettings };
   const rowByKey = new Map((workbook.companies || []).filter((r) => r.company).map((r) => [normalizeCompanyName(r.company), r]));
   for (const v of live) {
     const extra = extras[v.key];
     const row = rowByKey.get(v.key);
     if (!extra || !extra.webResearch || !row) continue;
-    for (const p of computeFindingProposals(row, extra.overrides, extra.webResearch.data, moneySettings)) {
+    const all = computeFindingProposals(row, extra.overrides, extra.webResearch.data, moneySettings);
+    const usable = new Set(withoutUnitlessRevenue(all, row, extra.overrides, extra.webResearch.data, unitsCtx));
+    for (const p of all) {
       if (p.key === "revenueCurrency" || isDismissedWebFinding(extra.webFindingsDismissed, p)) continue;
+      // D16: a found revenue that lost its unit. Into an empty field it is a units question; against a value the
+      // account already has it is simply not taken (the stored one is judged on its own below).
+      if (!usable.has(p)) {
+        if (p.state !== "new") continue;
+        const currency = foundCurrencyFor(p.key, extra.webResearch.data);
+        const check = revenueUnitsIssue({ ...row, ...(extra.overrides || {}) }, p.key, p.found, currency, unitsCtx);
+        items.push({ ...base(v), id: `units:${v.key}:${p.key}:web:${findingValueKey(p.found)}`, kind: "revenue_units",
+          payload: unitsPayload(p.key, p.found, currency, check, "web", unitsCtx.minimum) });
+        continue;
+      }
       items.push({ ...base(v), id: `finding:${v.key}:${p.key}:${findingValueKey(p.found)}`, kind: "finding",
         payload: { field: p.key, label: p.label, current: p.current, found: p.found, state: p.state,
           sources: (extra.webResearch.sources || []).length } });
@@ -6011,6 +6055,12 @@ async function buildDecisionQueue(views) {
       const effective = { ...row, ...(extra.overrides || {}) };
       for (const [field, f] of Object.entries(extra.importFindings)) {
         if (!f || importValueKey(effective[field]) === importValueKey(f.value)) continue;
+        if (f.rule === "units") {
+          const check = revenueUnitsIssue(effective, field, f.value, f.currency || null, unitsCtx);
+          items.push({ ...base(v), id: `units:${v.key}:${field}:import:${findingValueKey(f.value)}`, kind: "revenue_units",
+            payload: { ...unitsPayload(field, f.value, f.currency || null, check, "import", unitsCtx.minimum), current: effective[field] ?? null, file: f.file || null, at: f.at || null } });
+          continue;
+        }
         items.push({ ...base(v), id: `import:${v.key}:${field}:${findingValueKey(f.value)}`, kind: "import_finding",
           payload: { field, label: IMPORT_FIELD_LABELS[field] || field, current: effective[field] ?? null, imported: f.value, currency: f.currency || null,
             file: f.file || null, at: f.at || null, rule: f.rule ?? null, why: f.why || "" } });
@@ -6018,8 +6068,38 @@ async function buildDecisionQueue(views) {
     }
   }
 
+  // D16: a stored revenue written without its unit (491.1 CHF for a bank of 900 people). Nothing is changed
+  // without an answer; "Keep" remembers the value, so the same one is not asked again.
+  for (const v of live) {
+    const row = rowByKey.get(v.key);
+    if (!row) continue;
+    const extra = extras[v.key] || {};
+    const effective = { ...row, ...(extra.overrides || {}) };
+    for (const [field, curKey] of Object.entries(REVENUE_UNIT_FIELDS)) {
+      const value = effective[field];
+      if (value === null || value === undefined || value === "") continue;
+      if (extra.revenueUnitsKept && importValueKey(extra.revenueUnitsKept[field]) === importValueKey(value)) continue;
+      const currency = effective[curKey] || effective.revenueCurrency || null;
+      const check = revenueUnitsIssue(effective, field, value, currency, unitsCtx);
+      if (!check) continue;
+      items.push({ ...base(v), id: `units:${v.key}:${field}:current:${findingValueKey(value)}`, kind: "revenue_units",
+        payload: unitsPayload(field, value, currency, check, "current", unitsCtx.minimum) });
+    }
+  }
+
   const sorted = sortDecisions(items).map((i) => ({ ...i, similar: similarKey(i) }));
   return { items: sorted, count: sorted.length };
+}
+
+// One revenue_units card's payload. origin: "current" (stored), "web" (a web finding for an empty field) or "import".
+function unitsPayload(field, value, currency, check, origin, minimum) {
+  const c = check || {};
+  return {
+    field, label: field === "swissRevenue" ? "Revenue (local)" : "Revenue (global)", value: parseLooseNumber(value), currency: currency || null,
+    origin, factor: c.factor || null, suggested: c.suggested ?? null, perEmployee: c.perEmployee ?? null,
+    employeesUsed: c.employeesUsed ?? null, basis: c.basis || null, outOfScope: Boolean(c.outOfScope), credibleSmall: Boolean(c.credibleSmall),
+    minimum,
+  };
 }
 
 // The Decisions dot and the Readiness column both need the queue as a page opens, and each build reads the
@@ -6147,6 +6227,36 @@ export async function applyDecision(item, choice) {
     } else {
       await saveTargetAccountExtra(item.accountKey, { importFindings: findings, importFindingsDismissed: { ...(extra.importFindingsDismissed || {}), [p.field]: p.imported } });
       label = `"${item.company}": kept the current ${p.label} (${p.current ?? "empty"}), not the imported value (${p.imported})`;
+    }
+  } else if (item.kind === "revenue_units") {
+    // D16: "correct" writes the amount with its unit (and, for a web finding or an import, its currency) like a hand
+    // edit; "keep" leaves a stored value as it is and remembers it, or turns a web / import value down;
+    // "remove" hides an account that is out of scope (HT5 AG: an empty holding).
+    const extras = await getTargetAccountExtras();
+    const extra = extras[item.accountKey] || emptyExtra();
+    const curKey = REVENUE_UNIT_FIELDS[p.field];
+    const amount = (n) => `${Number(n).toLocaleString("en-US")}${p.currency ? ` ${p.currency}` : ""}`;
+    const clearImport = () => { const f = { ...(extra.importFindings || {}) }; delete f[p.field]; return f; };
+    if (choice === "remove") {
+      await saveTargetAccountExtra(item.accountKey, { deletedAt: Date.now() });
+      label = `Removed "${item.company}" (revenue ${amount(p.value)}, below the targeting minimum)`;
+    } else if (choice === "correct") {
+      if (!p.suggested) throw new Error("No unit to correct to");
+      const overrides = { ...(extra.overrides || {}), [p.field]: p.suggested };
+      if (p.origin !== "current" && p.currency) overrides[curKey] = p.currency;
+      const patch = { overrides };
+      if (p.origin === "import") patch.importFindings = clearImport();
+      await saveTargetAccountExtra(item.accountKey, patch, { src: "user", base: { overrides: extra.overrides } });
+      label = `"${item.company}": ${p.label} ${amount(p.value)} corrected to ${amount(p.suggested)}`;
+    } else if (p.origin === "current") {
+      await saveTargetAccountExtra(item.accountKey, { revenueUnitsKept: { ...(extra.revenueUnitsKept || {}), [p.field]: p.value } });
+      label = `"${item.company}": kept ${p.label} ${amount(p.value)} as it is`;
+    } else if (p.origin === "web") {
+      await saveTargetAccountExtra(item.accountKey, { webFindingsDismissed: { ...(extra.webFindingsDismissed || {}), [p.field]: p.value } });
+      label = `"${item.company}": did not take the web finding ${p.label} ${amount(p.value)}`;
+    } else {
+      await saveTargetAccountExtra(item.accountKey, { importFindings: clearImport(), importFindingsDismissed: { ...(extra.importFindingsDismissed || {}), [p.field]: p.value } });
+      label = `"${item.company}": did not take the imported ${p.label} ${amount(p.value)}`;
     }
   } else if (item.kind === "id_taken") {
     if (choice === "same") {

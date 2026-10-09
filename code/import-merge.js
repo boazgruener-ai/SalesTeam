@@ -13,7 +13,7 @@
 // planImport and writes what it returns.
 
 import { normalizeCompanyName, websiteDomain, linkedinCompanySlug } from "./company-identity.js";
-import { parseLooseNumber } from "./value-normalize.js";
+import { parseLooseNumber, revenueUnitsCheck } from "./value-normalize.js";
 import { computeFindingProposals, isBlankFinding } from "./web-research-apply.js";
 import { arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 
@@ -145,6 +145,24 @@ export function strongerSourceOf(extra, field) {
   return STRONGER_SOURCE_LABELS[p.src] || p.src;
 }
 
+function currencyOfFound(key, data) {
+  const c = key === "swissRevenue" ? (data.swissRevenueCurrency || data.revenueCurrency) : key === "globalRevenue" ? data.revenueCurrency : null;
+  return isBlankFinding(c) ? null : c;
+}
+
+// D16: would this applied revenue be one written without its unit? opts.unitsMinimum = the targeting minimum
+// (targetingMinimum in value-normalize.js); the global revenue is judged against the global headcount (the file's
+// if it fills one too) and the minimum, the local one only against a real local headcount.
+function unitsSuspect(p, effective, filled, data, opts) {
+  if (p.key !== "globalRevenue" && p.key !== "swissRevenue") return false;
+  const global = p.key === "globalRevenue";
+  const employees = global
+    ? (filled.globalEmployees ?? effective.globalEmployees ?? (typeof effective.employeeCount === "number" ? effective.employeeCount : null))
+    : (filled.swissEmployees ?? effective.swissEmployees);
+  return Boolean(revenueUnitsCheck(p.found, currencyOfFound(p.key, data), isBlankFinding(employees) ? null : employees,
+    global ? opts.unitsMinimum || 0 : 0, opts.money || null));
+}
+
 // -> { overrides, evidence, findings, fills, taken, kept, decisions } for one matched account.
 export function planCompanyUpdate(row, extra, fileRow, opts = {}) {
   const tolerancePct = Number.isFinite(Number(opts.tolerancePct)) ? Number(opts.tolerancePct) : DEFAULT_IMPORT_TOLERANCE_PCT;
@@ -191,6 +209,15 @@ export function planCompanyUpdate(row, extra, fileRow, opts = {}) {
       const stronger = p.state === "different" ? strongerSourceOf(extra, p.key === "revenueCurrency" ? "globalRevenue" : p.key) : null;
       if (d.action === "apply" && stronger) {
         note(out.kept, p, "source", `the current value comes from ${stronger}, which an import does not overrule`);
+      } else if (d.action === "apply" && unitsSuspect(p, effective, out.overrides, data, opts)) {
+        // D16: a revenue that lost its unit (491.1 CHF for a bank of 900) is not written; Decisions asks.
+        note(out.decisions, p, "units", "the revenue looks written without its unit (millions / billions)");
+        out.findings[p.key] = {
+          value: p.found, current: p.current === undefined ? null : p.current, rule: "units",
+          why: "the revenue looks written without its unit (millions / billions)",
+          ...(currencyOfFound(p.key, data) ? { currency: currencyOfFound(p.key, data) } : {}),
+          file: opts.fileName || null, at: opts.at || null,
+        };
       } else if (d.action === "apply") {
         out.overrides[p.key] = p.found;
         const ev = EVIDENCE_FIELD[p.key] ? fileRow[EVIDENCE_FIELD[p.key]] : null;
@@ -200,14 +227,28 @@ export function planCompanyUpdate(row, extra, fileRow, opts = {}) {
         note(out.kept, p, d.rule, d.why);
       } else {
         if (p.key === "revenueCurrency") continue; // never its own question: it rides with the amount below
-        note(out.decisions, p, d.rule, d.why);
+        // D16: a revenue the rules question because it lost its unit is asked as such ("Correct it").
+        const units = unitsSuspect(p, effective, out.overrides, data, opts);
+        const rule = units ? "units" : d.rule;
+        const why = units ? "the revenue looks written without its unit (millions / billions)" : d.why;
+        note(out.decisions, p, rule, why);
         out.findings[p.key] = {
-          value: p.found, current: p.current === undefined ? null : p.current, rule: d.rule, why: d.why,
+          value: p.found, current: p.current === undefined ? null : p.current, rule, why,
           ...(p.key === "globalRevenue" && !isBlankFinding(data.revenueCurrency) ? { currency: data.revenueCurrency } : {}),
           ...(p.key === "swissRevenue" && !isBlankFinding(data.swissRevenueCurrency || data.revenueCurrency) ? { currency: data.swissRevenueCurrency || data.revenueCurrency } : {}),
           file: opts.fileName || null, at: opts.at || null,
         };
       }
+    }
+  }
+
+  // A currency only travels with its amount: when the amount went to Decisions (D16), so does the currency.
+  for (const [amount, cur] of Object.entries(MONEY_CURRENCY)) {
+    if (out.findings[amount] && out.findings[amount].rule === "units" && cur in out.overrides) {
+      delete out.overrides[cur];
+      delete out.evidence[cur];
+      out.fills = out.fills.filter((f) => f.field !== cur);
+      out.taken = out.taken.filter((f) => f.field !== cur);
     }
   }
 
