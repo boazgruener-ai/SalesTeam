@@ -2351,7 +2351,9 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
     prioritizeStatusEl.textContent = "Nothing to do - every \"New\" lead already has a priority.";
     return;
   }
-  if (!(await askConfirm(`Score ${toScore.length} unscored "New" lead${toScore.length === 1 ? "" : "s"}?\n\nThis sets their priority. Leads that match a Target Account are set directly; the rest are scored by the Sales Mentor, which uses your Anthropic API key (a small cost). No LinkedIn activity is used.`))) return;
+  // Boaz (1.2.2.8 test): each Advanced tool is its own pop-up - "Advanced tools → <tool>", what it does, Run.
+  if (!(await askConfirm(`Sets the priority of ${toScore.length} unscored "New" lead${toScore.length === 1 ? "" : "s"}. Leads that match a Target Account are set directly; the rest are scored by the Sales Mentor on your Anthropic API key (a small cost).`,
+    { title: "Advanced tools → Prioritize Unscored Leads", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   if (!(await confirmIfCostly("leadScoring", toScore.length, "Scoring these leads", askConfirm))) return;
   prioritizeUnscoredBtn.disabled = true;
   prioritizeStatusEl.textContent = `Prioritizing ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
@@ -2431,9 +2433,8 @@ rescoreAllBtn.addEventListener("click", async () => {
     rescoreAllStatusEl.textContent = "Nothing to do - no \"New\" leads are eligible (manually-set priorities are left alone).";
     return;
   }
-  if (!(await askConfirm(`Re-score ${toScore.length} "New" lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor? This overwrites their current AI-assigned priority (manually-set priorities are skipped).`))) {
-    return;
-  }
+  if (!(await askConfirm(`Re-scores ${toScore.length} "New" lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor and replaces their AI priority. Priorities you set by hand are kept. Uses your Anthropic API key (a small cost).`,
+    { title: "Advanced tools → Re-score All Priorities", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   if (!(await confirmIfCostly("leadScoring", toScore.length, "Re-scoring these leads", askConfirm))) return;
   rescoreAllBtn.disabled = true;
   const oldPriorities = new Map(toScore.map((l) => [l.key, l.priority || null]));
@@ -2490,7 +2491,8 @@ extractCompaniesBtn.addEventListener("click", async () => {
     extractCompaniesStatusEl.textContent = "Nothing to do - every lead already has a company.";
     return;
   }
-  if (!(await askConfirm(`Find the company for ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"}?\n\nThe AI reads each lead's headline and fills in an empty Company field. Existing companies are not changed. This uses your Anthropic API key (a small cost); no LinkedIn activity is used.`))) return;
+  if (!(await askConfirm(`Fills in the empty Company field of ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"} from their LinkedIn headline. Companies already set are not changed. Uses your Anthropic API key (a small cost).`,
+    { title: "Advanced tools → Extract Companies", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   if (!(await confirmIfCostly("companyExtraction", toExtract.length, "Finding these companies", askConfirm))) return;
   extractCompaniesBtn.disabled = true;
   extractCompaniesStatusEl.textContent = `Extracting companies for ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"}…`;
@@ -2534,7 +2536,8 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
     extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is missing a company or location with a profile URL to visit.";
     return;
   }
-  if (!(await askConfirm(profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length)))) return;
+  if (!(await askConfirm(profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length),
+    { title: "Advanced tools → Extract Companies & Locations from Profiles", okLabel: "Run", cancelLabel: "Cancel" }))) return;
 
   extractCompaniesProfilesBtn.disabled = true;
   try {
@@ -2586,7 +2589,8 @@ applyLocationFilterBtn.addEventListener("click", async () => {
     applyLocationFilterStatusEl.textContent = "Nothing to do - there are no leads yet.";
     return;
   }
-  if (!(await askConfirm(`Check all ${total} lead${total === 1 ? "" : "s"} against your Location Filter now?\n\nLeads outside your target locations are marked Irrelevant (hidden and not counted); leads that now match are restored to New. Nothing is deleted. No LinkedIn activity is used.`))) return;
+  if (!(await askConfirm(`Checks all ${total} lead${total === 1 ? "" : "s"} against your Location Filter. Leads outside your target locations are marked Irrelevant; leads that match again go back to New. Nothing is deleted.`,
+    { title: "Advanced tools → Apply Location Filter", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   applyLocationFilterBtn.disabled = true;
   applyLocationFilterStatusEl.textContent = `Checking ${total} lead${total === 1 ? "" : "s"} against the Location Filter…`;
   try {

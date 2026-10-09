@@ -20,6 +20,8 @@ function ensureStyle() {
     #salesteam-confirm-dialog { border: none; border-radius: 10px; padding: 20px 24px; width: 480px; max-width: 90vw;
       box-shadow: 0 8px 30px rgba(0,0,0,.25); font-family: inherit; }
     #salesteam-confirm-dialog::backdrop { background: rgba(0,0,0,.5); }
+    #salesteam-confirm-dialog .sc-title { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: #1f2933; }
+    #salesteam-confirm-dialog .sc-title[hidden] { display: none; }
     #salesteam-confirm-dialog .sc-message { white-space: pre-wrap; font-size: 13px; line-height: 1.5; margin: 0 0 16px; color: #1f2933; }
     #salesteam-confirm-dialog .sc-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
     #salesteam-confirm-dialog button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
@@ -47,18 +49,21 @@ function ensureDialog() {
   ensureStyle();
   dialogEl = document.createElement("dialog");
   dialogEl.id = "salesteam-confirm-dialog";
-  dialogEl.innerHTML = '<p class="sc-message"></p><div class="sc-actions"><button type="button" class="sc-cancel"></button><button type="button" class="sc-ok"></button></div>';
+  dialogEl.innerHTML = '<h3 class="sc-title" hidden></h3><p class="sc-message"></p><div class="sc-actions"><button type="button" class="sc-cancel"></button><button type="button" class="sc-ok"></button></div>';
   document.body.appendChild(dialogEl);
   return dialogEl;
 }
 
-export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false } = {}) {
+// `title`: an optional heading - "Advanced tools → Re-score All Priorities" (1.2.2.8, Boaz: each tool its own pop-up).
+export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false, title = "" } = {}) {
   return new Promise((resolve) => {
     const dialog = ensureDialog();
     // 1.2.2.7 (Annick's Join button stayed disabled): a second askConfirm used to take over the dialog before the first
     // had its answer - the first caller then waited for ever. It now gets "Cancel" first.
     if (pendingFinish) pendingFinish(false);
     if (dialog.open) dialog.close();
+    dialog.querySelector(".sc-title").textContent = title;
+    dialog.querySelector(".sc-title").hidden = !title;
     dialog.querySelector(".sc-message").textContent = message;
     const okBtn = dialog.querySelector(".sc-ok");
     const cancelBtn = dialog.querySelector(".sc-cancel");
