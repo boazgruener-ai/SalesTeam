@@ -15,7 +15,7 @@ import {
   readTeamJson, listTeamFolderTop, getOneDriveFolder, oneDriveFolderFromClick, oneDriveFolderIfAllowed, findTeams,
   saveTeamFolderVia, teamFolderVia,
 } from "./team-folder.js";
-import { openInvites, inviteMatches, inviteState } from "./team-invites.js";
+import { openInvites, inviteMatches, inviteState, personKey } from "./team-invites.js";
 
 const MEMBERSHIP_KEY = "teamMembership"; // team-sync.js TEAM_MEMBERSHIP_KEY
 const PIPELINE_STATE_KEY = "pipelineState"; // pipeline-runner.js
@@ -974,6 +974,7 @@ function onSoloInvitedJoin() {
 }
 
 let rendering = false;
+let formerOpen = false; // Former members folded open - kept across the 5 s redraws
 
 export async function renderTeamSettings() {
   const section = $("team-section");
@@ -1073,23 +1074,41 @@ export async function renderTeamSettings() {
       };
       $("team-add-member-btn").hidden = !hasRights;
       addMemberFolder = handle?.name || "";
-      let formerShown = false;
-      const sortedMembers = [...(st.members || [])].sort((x, y) => Boolean(x.left) - Boolean(y.left));
-      for (const c of sortedMembers) {
-        if (c.left) showInvited();
-        if (c.left && !formerShown) {
-          formerShown = true;
-          const head = memberRow(["Former members", "", "", "", "", "", ""]);
-          head.classList.add("team-members-head");
-          table.append(head);
-        }
-        const row = memberRow([c.name, c.left ? "" : roleOf(c.id), c.left ? "" : groupsText(c.id),
-          c.left ? `${c.removed ? "removed" : "left"} ${timeText(c.left)}` : timeText(c.lastSeen), c.online ? "online" : ""]);
-        if (c.left) row.style.color = "#8a8f98";
-        row.append(assignedCell(c.id, Boolean(c.left)), actionsCell(c, false));
+      const current = (st.members || []).filter((c) => !c.left);
+      for (const c of current) {
+        const row = memberRow([c.name, roleOf(c.id), groupsText(c.id), timeText(c.lastSeen), c.online ? "online" : ""]);
+        row.append(assignedCell(c.id, false), actionsCell(c, false));
         table.append(row);
       }
       showInvited();
+      // Boaz (1.2.2.8 test): each former member once - their latest leaving (one still holding accounts first) - and
+      // not at all when they are back in the team; the list folded behind "Former members (n)".
+      const who = (name) => personKey(name).replace(/[^a-z0-9]/g, ""); // "Member 2" = "member2"
+      const here = new Set([m.name, ...current.map((c) => c.name)].map(who));
+      const formerBy = new Map();
+      for (const c of (st.members || []).filter((x) => x.left)) {
+        const k = who(c.name);
+        if (here.has(k)) continue;
+        const was = formerBy.get(k);
+        const holds = (x) => Boolean(counts[x.id]);
+        if (!was || (holds(c) !== holds(was) ? holds(c) : (c.left || 0) > (was.left || 0))) formerBy.set(k, c);
+      }
+      const former = [...formerBy.values()].sort((x, y) => (y.left || 0) - (x.left || 0));
+      if (former.length) {
+        const head = memberRow([`${formerOpen ? "▾" : "▸"} Former members (${former.length})`, "", "", "", "", "", ""]);
+        head.classList.add("team-members-head", "team-former-toggle");
+        head.style.cursor = "pointer";
+        head.addEventListener("click", () => { formerOpen = !formerOpen; renderTeamSettings(); });
+        table.append(head);
+        if (formerOpen) {
+          for (const c of former) {
+            const row = memberRow([c.name, "", "", `${c.removed ? "removed" : "left"} ${timeText(c.left)}`, ""]);
+            row.style.color = "#8a8f98";
+            row.append(assignedCell(c.id, true), actionsCell(c, false));
+            table.append(row);
+          }
+        }
+      }
       if (!(st.members || []).length && !invited.length) table.append(memberRow(["No colleague has joined yet - invite them with Add member….", "", "", "", "", "", ""]));
       // The group counts read every account: only while the card is on screen (the 5 s redraw then keeps them fresh).
       if (!section.hidden) renderTeamGroups(gctx).catch((err) => setText("team-member-status", `Groups: ${err.message}`, true));
