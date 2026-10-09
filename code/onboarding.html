@@ -507,6 +507,13 @@
         Only used when the two counts fall in different size bands. Higher means fewer questions and more decided for you.
       </p>
 
+      <label for="import-tolerance">Imports: keep the current value without asking when the imported one differs by less than (%)</label>
+      <input type="number" id="import-tolerance" min="0" max="100" step="1" style="width: 110px" />
+      <p class="field-hint">
+        For every number an import brings (employees, revenue). Larger differences go through the same rules as web
+        findings; only those that could change a priority come to Decisions, and in a team only to the Team Lead.
+      </p>
+
       <label for="web-findings-preference">When a rule decides for you, prefer</label>
       <select id="web-findings-preference">
         <option value="existing">Current data</option>

@@ -18,12 +18,13 @@ import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
 import { askConfirm, askChoice, mirrorStatusToPopup, showNotice } from "./confirm-dialog.js";
 import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
+import { importSummaryText } from "./import-merge.js";
 import {
   getTargetAccountsWorkbook,
   getTargetAccountsMeta,
   getTargetAccounts,
   importTargetAccounts,
-  importTargetAccountsWorkbook,
+  mergeImportIntoWorkbook,
   exportTargetAccountsBackup,
   importTargetAccountsBackup,
   getTargetAccountsMissingLinkedinId,
@@ -4591,62 +4592,44 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
   }
 
   const prevMeta = await getTargetAccountsMeta();
-  const { count } = await importTargetAccounts(list, file.name);
-  // Exclusion backfill (added 2026-09-17, the user's own proposal) - runs
-  // right after the workbook itself is stored, so backfillCompanyExclusionsFromWorkbook
-  // reads the same Excluded/Exclusion_List data this import just brought
-  // in. Additive only (see its own comment in storage.js) - never touches
-  // an existing entry, so it's safe to run on every import, not just the
-  // first one.
-  let backfill = null;
-  if (fullWorkbook) {
-    // Same aliases attached to `list` above, carried onto the richer
-    // Explorer workbook rows too (storage.js's computeDiscoveredMergeDiff
-    // matches a newly-discovered company by name against these same rows -
-    // without this, a discovered card whose displayed name only matches a
-    // known ALIAS, not the row's own primary company name, would wrongly
-    // be treated as a brand-new company instead of the existing account).
-    for (const c of fullWorkbook.companies || []) {
-      if (c.companyId && aliasesByCompanyId.has(c.companyId)) {
-        c.aliases = [...aliasesByCompanyId.get(c.companyId)];
-      }
-    }
-    await importTargetAccountsWorkbook(fullWorkbook);
-    backfill = await backfillCompanyExclusionsFromWorkbook(fullWorkbook);
+  if (!fullWorkbook) {
+    // An old .json list backup (restore only): that one still puts the list back as it was.
+    const { count } = await importTargetAccounts(list, file.name);
+    await loadWorkbook();
+    targetAccountsPageIoStatusEl.textContent = `${count} companies restored from file ${file.name} at ${formatImportStamp(Date.now())}`;
+    appendActivityLog({ actor: "user", action: "target_accounts_imported", label: `Restored Target Accounts list (${count} companies)`, prevValue: prevMeta.count, newValue: count });
+    return;
   }
+  // 1.2.3 (EXPORT_IMPORT_REQUIREMENTS.md R2): the workbook import only adds and fills - nothing stored is replaced
+  // or removed. Same aliases attached to `list` above, carried onto the workbook rows so an account the file names
+  // by an alias is matched, not added twice.
+  for (const c of fullWorkbook.companies || []) {
+    if (c.companyId && aliasesByCompanyId.has(c.companyId)) {
+      c.aliases = [...aliasesByCompanyId.get(c.companyId)];
+    }
+  }
+  const { counts, plan } = await mergeImportIntoWorkbook(fullWorkbook, { fileName: file.name });
+  await importTargetAccounts(list, file.name, { merge: true });
+  // Exclusions only for the companies this import added (Q4); customer / partner rows become relationships as before.
+  const backfill = await backfillCompanyExclusionsFromWorkbook(fullWorkbook, {
+    hideOnlyNames: new Set(plan.newCompanyNames.map((n) => normalizeCompanyName(n))),
+  }).catch(() => null);
   await loadWorkbook();
   const backfillNote = backfill && backfill.addedCount > 0
-    ? ` - ${backfill.addedCount} excluded compan${backfill.addedCount === 1 ? "y" : "ies"} added to your own exclusion lists (Setup wizard)`
+    ? ` - ${backfill.addedCount} new compan${backfill.addedCount === 1 ? "y" : "ies"} put on your exclusion lists, as the file marks them`
     : "";
-  // 29th round of direct feedback (2026-09-19): "shouldn't it also mention
-  // [the new contacts]? XXX contacts read or something like that?" -
-  // "plus full Explorer data (Contacts, Initiatives, etc.)" named the
-  // sheets but never said how much was actually in them. Real counts,
-  // omitting a sheet entirely when this workbook doesn't have one (e.g. an
-  // older export with no Initiatives sheet) rather than showing "0" for
-  // something that was never expected to be there.
-  const explorerCounts = fullWorkbook
-    ? [
-        [fullWorkbook.contacts?.length, "contact"],
-        [fullWorkbook.aiInitiatives?.length, "initiative"],
-        [fullWorkbook.aiInvestment?.length, "investment record"],
-        [fullWorkbook.sources?.length, "source"],
-      ]
-        .filter(([n]) => n > 0)
-        .map(([n, label]) => `${n} ${label}${n === 1 ? "" : "s"}`)
-        .join(", ")
-    : "";
-  const explorerNote = explorerCounts ? ` plus ${explorerCounts}` : "";
   // fill the Priority columns right away (see autoPrioritizeNewCompanies) - a failure here never fails the import
   const autoPriority = await autoPrioritizeNewCompanies().catch(() => ({ applied: 0, summary: "" }));
   const priorityNote = autoPriority.applied > 0 ? ` - priorities calculated for ${autoPriority.applied} (${autoPriority.summary})` : "";
-  targetAccountsPageIoStatusEl.textContent = `${count} companies${explorerNote} imported from file ${file.name} at ${formatImportStamp(Date.now())}${backfillNote}${priorityNote}`;
+  const summary = importSummaryText(counts);
+  targetAccountsPageIoStatusEl.textContent = `${file.name} imported at ${formatImportStamp(Date.now())}: ${summary}${backfillNote}${priorityNote}.` +
+    (counts.decisions > 0 ? ` ${counts.decisions === 1 ? "One difference is" : `${counts.decisions} differences are`} waiting in Decisions.` : "");
   appendActivityLog({
     actor: "user",
     action: "target_accounts_imported",
-    label: `Imported Target Accounts list (${count} companies${explorerNote})${backfillNote}`,
+    label: `Imported research workbook ${file.name}: ${summary}${backfillNote}`,
     prevValue: prevMeta.count,
-    newValue: count,
+    newValue: counts,
   });
 });
 

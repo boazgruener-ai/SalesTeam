@@ -31,7 +31,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
+PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2688,6 +2688,7 @@ def main():
     test_team_groups(ctx)
     test_relationships(ctx)
     test_team_invites(ctx)
+    test_import_merge(ctx)
 
     print()
     for f in _failures:
@@ -2716,6 +2717,85 @@ def test_team_invites(ctx):
     check("invites: my own acceptance is no refusal", e("inviteRefusal({ acceptedBy: 'm-1' }, { memberId: 'm-1' })"), None)
     check("invites: open, oldest first", e("openInvites({ a: { name: 'B', at: 2 }, b: { name: 'A', at: 1 }, c: { name: 'C', at: 0, status: 'cancelled' } }).map(function (i) { return i.name; }).join()"), "A,B")
     check("team folder name: Windows-safe", e("teamFolderName('Sales: CH/DE?  ') + '|' + teamFolderName('...')"), "SalesTeam - Sales CH DE|SalesTeam - Team")
+
+
+def test_import_merge(ctx):
+    """1.2.3 Export & Import step 0 (EXPORT_IMPORT_DESIGN.md 3.2-3.3): an import only adds and fills."""
+    e = ctx.eval
+    e("""
+      var IM_OPTS = { buckets: ctxFor().buckets, locationTier: ctxFor().locationTier, tolerancePct: 10, fileName: 'f.xlsx', at: 1 };
+      var IM_CURRENT = {
+        companies: [
+          { companyId: 'C-001', company: 'Acme AG', globalEmployees: 1200, globalHqCountry: 'Switzerland', linkedinLink: 'https://www.linkedin.com/company/acme/' },
+          { companyId: 'W-web.ch', company: 'Webfound GmbH', source: 'Web', website: 'https://web.ch' },
+          { companyId: 'C-002', company: 'Gone SA', globalEmployees: 50 },
+          { companyId: 'C-003', company: 'Banded AG', globalEmployees: 400, globalHqCountry: 'Switzerland' },
+        ],
+        contacts: [{ contactId: 'P-1', companyId: 'C-001', company: 'Acme AG', fullName: 'Anna Muster', jobTitle: 'CIO', lastVerified2: 'https://www.linkedin.com/in/anna-m/' }],
+        aiInitiatives: [{ initiativeId: 'I-1', companyId: 'C-001', initiativeName: 'Chatbot' }],
+        extras: { 'gone': { deletedAt: 5, overrides: {} }, 'acme': { overrides: { website: 'acme.ch' } } },
+        contactExtras: {},
+      };
+      var IM_FILE = {
+        companies: [
+          { companyId: 'C-001', company: 'ACME AG.', globalEmployees: 1250, globalHqCity: 'Zug', website: 'https://other.example' },
+          { companyId: 'C-002', company: 'Newco AG', globalEmployees: 300 },
+          { companyId: 'C-009', company: 'Gone SA', globalEmployees: 60 },
+          { companyId: 'C-010', company: 'Banded AG', globalEmployees: 900 },
+          { companyId: 'C-011', company: 'Other name', website: 'https://www.web.ch/en' },
+        ],
+        contacts: [
+          { contactId: 'P-1', companyId: 'C-001', fullName: 'Anna Muster', jobTitle: 'CTO', city: 'Zug' },
+          { contactId: 'P-2', companyId: 'C-002', fullName: 'Ben Neu' },
+          { contactId: 'P-3', company: 'Nowhere Ltd', fullName: 'Cleo X' },
+        ],
+        aiInitiatives: [{ initiativeId: 'I-1', companyId: 'C-001', initiativeName: 'chatbot' }, { initiativeId: 'I-2', companyId: 'C-002', initiativeName: 'RAG' }],
+      };
+      var IM = planImport(IM_FILE, IM_CURRENT, IM_OPTS);
+    """)
+    check("import: new accounts = Newco + the contact's company", e("IM.newCompanies.map(function (c) { return c.company; }).join()"), "Newco AG,Nowhere Ltd")
+    check("import: a taken id is remapped (team rows keyed by id)", e("IM.newCompanies[0].companyId"), "C-002-i1")
+    check("import: the new contact follows the remapped id", e("IM.newContacts.filter(function (c) { return c.fullName === 'Ben Neu'; })[0].companyId"), "C-002-i1")
+    check("import: an account removed in SalesTeam is not brought back", e("IM.skipped.some(function (s) { return /removed/.test(s.reason); })"), True)
+    check("import: matched by name despite case and dot", e("'acme' in IM.companyPatches"), True)
+    check("import: empty HQ city filled", e("IM.companyPatches['acme'].overrides.globalHqCity"), "Zug")
+    check("import: 1200 vs 1250 is not a question", e("IM.decisions.some(function (d) { return d.key === 'acme'; })"), False)
+    check("import: a user-typed website is never overwritten", e("'website' in IM.companyPatches['acme'].overrides"), False)
+    check("import: band change over 10% goes to Decisions (rule 6)", e("IM.companyPatches['banded'].findings.globalEmployees.rule"), 6)
+    check("import: ...with the file's value", e("IM.companyPatches['banded'].findings.globalEmployees.value"), 900)
+    check("import: ...and the current one is not overwritten", e("'globalEmployees' in IM.companyPatches['banded'].overrides"), False)
+    check("import: web-found account matched by website, not duplicated", e("IM.newCompanies.some(function (c) { return c.company === 'Other name'; })"), False)
+    check("import: existing contact matched by name, title kept", e("'jobTitle' in IM.contactPatches['acme::anna muster'].overrides"), False)
+    check("import: existing contact's empty city filled", e("IM.contactPatches['acme::anna muster'].overrides.city"), "Zug")
+    check("import: the different title is counted as kept", e("IM.kept.some(function (k) { return k.field === 'jobTitle'; })"), True)
+    check("import: an initiative the account already lists is not added again", e("IM.newInitiatives.map(function (i) { return i.initiativeName + '@' + i.companyId; }).join()"), "RAG@C-002-i1")
+    e("""
+      var IM2 = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 900 }] },
+        Object.assign({}, IM_CURRENT, { extras: { 'banded': { overrides: {}, importFindingsDismissed: { globalEmployees: 900 } } } }), IM_OPTS);
+      var IM3 = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 900 }] },
+        Object.assign({}, IM_CURRENT, { extras: { 'banded': { overrides: {}, importFindings: { globalEmployees: { value: 900 } } } } }), IM_OPTS);
+      var IM4 = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 2000 }] },
+        Object.assign({}, IM_CURRENT, { extras: { 'banded': { overrides: {}, importFindingsDismissed: { globalEmployees: 900 } } } }), IM_OPTS);
+    """)
+    check("import: 'Keep current' answered -> not asked again", e("IM2.counts.decisions"), 0)
+    check("import: already waiting -> not added twice", e("IM3.counts.decisions"), 0)
+    check("import: a different value is asked again", e("IM4.counts.decisions"), 1)
+    e("""
+      var SAME = planImport({ companies: [{ companyId: 'C-001', company: 'Acme AG', globalEmployees: 1200, globalHqCountry: 'Switzerland' }],
+        contacts: [{ companyId: 'C-001', fullName: 'Anna Muster', jobTitle: 'CIO' }] }, IM_CURRENT, IM_OPTS);
+    """)
+    check("import: the same data again changes nothing", e("importSummaryText(SAME.counts)"), "nothing new - everything in the file is already in SalesTeam")
+    e("""
+      var T = { companies: [{ company: 'Edge AG', globalEmployees: 1140 }] };
+      var TC = { companies: [{ companyId: 'E', company: 'Edge AG', globalEmployees: 1000, globalHqCountry: 'Switzerland' }], extras: {} };
+      var T10 = planImport(T, TC, IM_OPTS);
+      var T15 = planImport(T, TC, Object.assign({}, IM_OPTS, { tolerancePct: 15 }));
+    """)
+    check("import: 1000 vs 1140 (band change, 13%) asked at 10%", e("T10.counts.decisions"), 1)
+    check("import: ...kept without a question at 15%", e("T15.counts.decisions + '/' + T15.kept[0].rule"), "0/tolerance")
+    e("var BAD = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 0, globalRevenue: 5000000 }] }, IM_CURRENT, IM_OPTS);")
+    check("import: 0 employees from the file is never written", e("'globalEmployees' in ((BAD.companyPatches['banded'] || {}).overrides || {})"), False)
+    check("import: summary text", e("importSummaryText({ newCompanies: 1, filled: 2, decisions: 1 })"), "1 new account, 2 empty fields filled, 1 difference for Decisions")
 
 
 if __name__ == "__main__":

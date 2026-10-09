@@ -9,7 +9,7 @@
 import { companyLinkSlug } from "./readiness.js";
 import { parseSizeBand, jobGaveUp } from "./pipeline-plan.js";
 
-export const DECISION_KINDS = ["page_changed", "id_taken", "name_match", "duplicate", "lacking_evidence", "finding"];
+export const DECISION_KINDS = ["page_changed", "id_taken", "name_match", "duplicate", "lacking_evidence", "finding", "import_finding"];
 
 export const DECISION_KIND_LABELS = {
   page_changed: "LinkedIn page changed",
@@ -18,6 +18,7 @@ export const DECISION_KIND_LABELS = {
   duplicate: "Possible duplicate",
   lacking_evidence: "Lacking evidence",
   finding: "Web finding",
+  import_finding: "Import difference",
   join_proposal: "Join proposal",
 };
 
@@ -237,6 +238,7 @@ export function duplicateGroups(rows, keptSeparate) {
 export function similarKey(item) {
   if (!item) return null;
   if (item.kind === "finding") return `finding:${item.payload && item.payload.field}`;
+  if (item.kind === "import_finding") return `import:${item.payload && item.payload.field}`;
   if (item.kind === "lacking_evidence") return `lacking:${item.payload && item.payload.reason}`;
   return null;
 }

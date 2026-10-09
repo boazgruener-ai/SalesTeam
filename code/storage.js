@@ -8,8 +8,9 @@ import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, siz
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
 import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages, initiativeCounts, targetsStatus } from "./pipeline-plan.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
-import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl } from "./web-research-apply.js";
+import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl, WEB_FINDING_FIELDS } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
+import { planImport, importValueKey, DEFAULT_IMPORT_TOLERANCE_PCT } from "./import-merge.js";
 import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, matchesExclusion, matchesRelationship, websiteDomain, webCompanyId } from "./company-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 import { relationshipOf } from "./company-identity.js";
@@ -896,7 +897,10 @@ const EXCLUSION_REASON_TO_CATEGORY = {
 // company-discovery-extraction.js), this only affects whether it also
 // lands in a specific named category (for the Negative Topics builtin
 // lists, and so the user can see/edit it in the wizard going forward).
-export async function backfillCompanyExclusionsFromWorkbook(workbook) {
+// hideOnlyNames (1.2.3, Q4): when given, a company is put on an EXCLUSION list only when its normalised name is in
+// it - the companies the import added. An existing account is never hidden by an import; customer and partner rows
+// still become relationships for every company, since a relationship hides nothing.
+export async function backfillCompanyExclusionsFromWorkbook(workbook, { hideOnlyNames = null } = {}) {
   const reasonByCompanyId = new Map(
     (workbook.exclusionList || [])
       .filter((row) => row.companyId)
@@ -931,6 +935,7 @@ export async function backfillCompanyExclusionsFromWorkbook(workbook) {
       }
       continue;
     }
+    if (hideOnlyNames && !hideOnlyNames.has(normalizeCompanyName(company.company))) continue;
     if (!slug) { skippedNoLink++; continue; }
     if (existingSlugs.has(slug)) continue;
     const reason = reasonByCompanyId.get(company.companyId);
@@ -1331,8 +1336,13 @@ export function withAccountWriteLock(fn) {
 // Target Accounts - import, metadata, scan scope, score threshold
 // --------------------------------------------------------------------------
 
-export async function importTargetAccounts(list, fileName = null) { return withAccountWriteLock(() => importTargetAccountsUnlocked(...arguments)); }
-async function importTargetAccountsUnlocked(list, fileName = null) {
+export async function importTargetAccounts(list, fileName = null, opts = {}) { return withAccountWriteLock(() => importTargetAccountsUnlocked(...arguments)); }
+async function importTargetAccountsUnlocked(list, fileName = null, { merge = false } = {}) {
+  // 1.2.3 (EXPORT_IMPORT_DESIGN.md 9): a research workbook import MERGES - entries are added for new companies,
+  // an existing entry only gets its empty fields filled and new aliases; nothing is rebuilt or dropped. In a team
+  // this map syncs per entry, so the old rebuild deleted entries for everyone. The wholesale rebuild below is
+  // kept only for restoring an old .json list backup.
+  if (merge) return mergeTargetAccountsMapUnlocked(list, fileName);
   // Carries a company's resolved LinkedIn ID (6.16) forward across a
   // wholesale re-import - reported directly as a real risk: this map is
   // rebuilt from scratch every import (by design, since the research
@@ -1408,6 +1418,52 @@ async function importTargetAccountsUnlocked(list, fileName = null) {
     for (const alias of entry.aliases || []) {
       const aliasKey = normalizeCompanyName(alias);
       if (!aliasKey || primaryKeys.has(aliasKey)) continue;
+      map[aliasKey] = map[key];
+    }
+  }
+  const importedAt = Date.now();
+  await chrome.storage.local.set({
+    [TARGET_ACCOUNTS_KEY]: map,
+    [TARGET_ACCOUNTS_IMPORTED_AT_KEY]: importedAt,
+    [TARGET_ACCOUNTS_IMPORTED_FILENAME_KEY]: fileName || null,
+  });
+  return { count: companyCount, importedAt };
+}
+
+// The merge used by every research workbook import from 1.2.3 (see importTargetAccountsUnlocked).
+const TARGET_ACCOUNTS_MAP_FILL_FIELDS = ["industry", "priorityLabel", "researchStatus", "topInitiatives", "officialName", "alternativeName", "linkedinLink"];
+async function mergeTargetAccountsMapUnlocked(list, fileName) {
+  const map = { ...(await getTargetAccounts()) };
+  const existingKeys = new Set(Object.keys(map));
+  const blank = (v) => v === null || v === undefined || (typeof v === "string" && !v.trim());
+  let companyCount = 0;
+  for (const entry of list || []) {
+    const key = normalizeCompanyName(entry.company);
+    if (!key) continue;
+    companyCount++;
+    const prev = map[key];
+    if (prev) {
+      const next = { ...prev };
+      for (const f of TARGET_ACCOUNTS_MAP_FILL_FIELDS) if (blank(next[f]) && !blank(entry[f])) next[f] = entry[f];
+      if (typeof next.score !== "number" && typeof entry.score === "number") next.score = entry.score;
+      next.aliases = [...new Set([...(prev.aliases || []), ...(entry.aliases || [])])];
+      map[key] = next;
+    } else {
+      map[key] = {
+        company: entry.company, industry: entry.industry || null, score: typeof entry.score === "number" ? entry.score : null,
+        priorityLabel: entry.priorityLabel || null, researchStatus: entry.researchStatus || null, topInitiatives: entry.topInitiatives || null,
+        officialName: entry.officialName || null, alternativeName: entry.alternativeName || null, linkedinLink: entry.linkedinLink || null,
+        aliases: entry.aliases || [],
+      };
+    }
+  }
+  // An alias becomes an extra lookup key only where the key is free - it never takes over an existing entry.
+  for (const entry of list || []) {
+    const key = normalizeCompanyName(entry.company);
+    if (!key || !map[key]) continue;
+    for (const alias of entry.aliases || []) {
+      const aliasKey = normalizeCompanyName(alias);
+      if (!aliasKey || existingKeys.has(aliasKey) || map[aliasKey]) continue;
       map[aliasKey] = map[key];
     }
   }
@@ -1804,49 +1860,82 @@ function normalizeContactRows(contacts) {
 // Target Accounts workbook - merge, contact discovery, size, backup
 // --------------------------------------------------------------------------
 
-// A fresh Import Target Accounts is a wholesale replace of the ChatGPT-
-// researched sheets - but Phase 7's merged Discovery rows (source:
-// "Discovered", below) are a completely independent dataset that happens to
-// live in the same workbook, not part of what's being re-imported. Carried
-// forward across the replace so routinely refreshing the research workbook
-// doesn't silently discard real, LinkedIn-sourced Discovery data. Safe from
-// an ID collision by construction - discovered rows use the
-// "D-"-prefixed companyId/contactId scheme (mergeDiscoveredIntoWorkbook
-// below), which can never collide with a real workbook's own Company_ID/
-// Contact_ID. Known, accepted limitation NOT solved here: unlike
-// mergeDiscoveredIntoWorkbook's own identity-aware merge (by
-// normalizeCompanyName, not companyId), this preserve step does not check
-// whether the freshly-imported sheet happens to already include a company
-// that was previously only known via Discovery - if so, both rows survive
-// as separate entries until a future manual cleanup, rather than being
-// silently collapsed into one. A rare case (the fresh ChatGPT research
-// would have to specifically cover a company Discovery already found on
-// its own), not treated as a bug.
-export async function importTargetAccountsWorkbook(sheets) { return withAccountWriteLock(() => importTargetAccountsWorkbookUnlocked(...arguments)); }
-async function importTargetAccountsWorkbookUnlocked(sheets) {
+// 1.2.3 (EXPORT_IMPORT_REQUIREMENTS.md R2-R4, design 3.3-3.5): an import only ADDS and FILLS. Until 1.2.2 a research
+// workbook import replaced every workbook row and kept only Discovered/HubSpot rows - so accounts and contacts the
+// web research had found (source "Web") were deleted, accounts missing from the new file vanished, and the file's
+// values overwrote newer ones. Now import-merge.js plans every row: new companies, contacts and initiatives are
+// appended (an id another row already holds is replaced, so per-row team sync cannot overwrite that row), an empty
+// field is filled as an override (provenance "workbook" with the file's evidence), a difference is settled by the
+// web-findings rules with the import tolerance, and what needs a person is stored as importFindings for Decisions
+// (Team Lead only in a team). Nothing stored is removed, and an account removed in SalesTeam is not brought back.
+// Returns { counts, plan, importedAt }.
+export async function mergeImportIntoWorkbook(parsed, opts = {}) { return withAccountWriteLock(() => mergeImportIntoWorkbookUnlocked(parsed, opts)); }
+async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {}) {
   const importedAt = Date.now();
-  const existing = await getTargetAccountsWorkbook();
-  // Rows that did not come from the research workbook (LinkedIn Discovery, HubSpot import) survive a workbook re-import.
-  const preservedCompanies = (existing.companies || []).filter((c) => c.source === "Discovered" || c.source === "HubSpot");
-  const preservedContacts = (existing.contacts || []).filter((c) => c.source === "Discovered" || c.source === "HubSpot");
-  // Initiatives added by the web research survive too, re-attached by company name to the new workbook's company ids.
-  const idByName = new Map((sheets.companies || []).map((c) => [normalizeCompanyName(c.company), c.companyId]));
-  for (const c of preservedCompanies) idByName.set(normalizeCompanyName(c.company), c.companyId);
-  const preservedInitiatives = (existing.aiInitiatives || [])
-    .filter((i) => i.source === "Web research")
-    .map((i) => ({ ...i, companyId: idByName.get(normalizeCompanyName(i.company)) || null }))
-    .filter((i) => i.companyId);
-  const normalized = {
-    ...sheets,
-    aiInitiatives: [...(sheets.aiInitiatives || []), ...preservedInitiatives],
-    companies: [...(sheets.companies || []), ...preservedCompanies],
-    contacts: [...normalizeContactRows(sheets.contacts || []), ...preservedContacts],
-  };
+  const [raw, extras, contactExtras, config, settings, money] = await Promise.all([
+    chrome.storage.local.get(TARGET_ACCOUNTS_WORKBOOK_KEY).then((d) => d[TARGET_ACCOUNTS_WORKBOOK_KEY] || {}),
+    getTargetAccountExtras(), getTargetContactExtras(), getTargetUniverseConfig(), getWebFindingsArbitration(), getRevenueNormalization(),
+  ]);
+  const wb = { companies: [], contacts: [], aiInitiatives: [], aiInvestment: [], sources: [], ...raw };
+  const contactCounts = new Map();
+  for (const c of wb.contacts || []) if (c.companyId) contactCounts.set(c.companyId, (contactCounts.get(c.companyId) || 0) + 1);
+  const file = { ...parsed, contacts: normalizeContactRows(parsed.contacts || []) };
+  const plan = planImport(file, { ...wb, extras, contactExtras }, {
+    settings, money: revenueMoneySettings(money), buckets: SIZE_PRIORITY_BUCKETS,
+    locationTier: (country) => resolveLocationPriority(country, config.locationPriorities),
+    tolerancePct: settings.importTolerancePct ?? DEFAULT_IMPORT_TOLERANCE_PCT, contactCounts, fileName, at: importedAt,
+  });
+
+  // New rows appended; aliases the file adds to an existing account are added to its row (additive only).
+  const aliasesByKey = new Map(Object.entries(plan.companyPatches).filter(([, p]) => p.aliases && p.aliases.length).map(([k, p]) => [k, p.aliases]));
+  const companies = (wb.companies || []).map((c) => {
+    const add = c && c.company ? aliasesByKey.get(normalizeCompanyName(c.company)) : null;
+    return add ? { ...c, aliases: [...new Set([...(c.aliases || []), ...add])] } : c;
+  });
+  // The file's Exclusion_List rows come along only for companies the import adds (Q4), under their stored id.
+  const newExclusionRows = (parsed.exclusionList || []).filter((r) => r && r.companyId && plan.newCompanyIds[String(r.companyId)])
+    .map((r) => ({ ...r, companyId: plan.newCompanyIds[String(r.companyId)] }));
   await chrome.storage.local.set({
-    [TARGET_ACCOUNTS_WORKBOOK_KEY]: normalized,
+    [TARGET_ACCOUNTS_WORKBOOK_KEY]: {
+      ...wb,
+      companies: [...companies, ...plan.newCompanies],
+      contacts: [...(wb.contacts || []), ...plan.newContacts],
+      aiInitiatives: [...(wb.aiInitiatives || []), ...plan.newInitiatives],
+      aiInvestment: [...(wb.aiInvestment || []), ...plan.newInvestment],
+      sources: [...(wb.sources || []), ...plan.newSources],
+      ...(newExclusionRows.length ? { exclusionList: [...(wb.exclusionList || []), ...newExclusionRows] } : {}),
+    },
     [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: importedAt,
   });
-  return { count: (sheets.companies || []).length, importedAt };
+
+  // Fills, values the rules took from the file, and differences waiting for Decisions - on the account's extras.
+  const run = { id: `imp-${importedAt}`, file: fileName, at: importedAt };
+  for (const [key, p] of Object.entries(plan.companyPatches)) {
+    if (!Object.keys(p.overrides).length && !Object.keys(p.findings).length) continue;
+    const before = extras[key] || emptyExtra();
+    const next = { ...emptyExtra(), ...before, importRun: run };
+    if (Object.keys(p.overrides).length) {
+      next.overrides = { ...(before.overrides || {}), ...p.overrides };
+      next.provenance = stampOverrideProvenance(before.overrides, next.overrides, next, "import", { evidence: p.evidence, at: importedAt });
+    }
+    if (Object.keys(p.findings).length) next.importFindings = { ...(before.importFindings || {}), ...p.findings };
+    extras[key] = next;
+  }
+  for (const [key, p] of Object.entries(plan.contactPatches)) {
+    const before = contactExtras[key] || {};
+    contactExtras[key] = { ...before, overrides: { ...(before.overrides || {}), ...p.overrides } };
+  }
+  await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: extras, [TARGET_CONTACT_EXTRAS_KEY]: contactExtras });
+
+  // The values that replaced a current one (rules 9 and 10) are logged one by one; the rest is in the summary.
+  if (plan.taken.length) {
+    appendActivityLogBatch(plan.taken.map((t) => ({
+      actor: "user", action: "import_value_taken",
+      label: `${t.company} - ${t.label}: took the imported value ${t.imported} over ${t.current} (rule ${t.rule}: ${t.why})`,
+      prevValue: t.current, newValue: t.imported, relatedCompanyKey: t.key,
+    }))).catch(() => {});
+  }
+  return { counts: plan.counts, plan, importedAt };
 }
 
 // source (added 2026-09-16, PRD 6.20 Phase 7): distinguishes a ChatGPT-
@@ -2470,18 +2559,6 @@ async function importTargetAccountsBackupUnlocked(data, sections = null) {
       ? new Set(Object.values(data.targetAccounts || {}).map((v) => normalizeCompanyName(v.company))).size
       : null,
     workbookCount: has("accounts") ? (data.targetAccountsWorkbook?.companies || []).length : null,
-  };
-}
-
-// The single-file automatic backup (backup-restore.js, once per 24h): the settings backup and the
-// Target Accounts backup together, so one dated file holds everything a restore needs.
-export async function buildAutoBackup() {
-  return {
-    kind: "salesteam-auto-backup",
-    version: 1,
-    createdAt: new Date().toISOString(),
-    settings: await exportSettings(false),
-    targetAccounts: await exportTargetAccountsBackup(),
   };
 }
 
@@ -5072,14 +5149,17 @@ const PROVENANCE_FIELDS = ["globalHqCountry", "globalEmployees", "swissEmployees
 // its own, which becomes the provenance's link (onboarding design 5.3; a research stored before 1.2.1
 // keeps the old rule, cited when it had any source). Anything else is a manual edit, which D2 counts as
 // verified from the moment it was typed.
-function stampOverrideProvenance(prevOverrides, nextOverrides, extra, src) {
+function stampOverrideProvenance(prevOverrides, nextOverrides, extra, src, { evidence = {}, at = null } = {}) {
   const provenance = { ...(extra.provenance || {}) };
   const now = Date.now();
   for (const field of PROVENANCE_FIELDS) {
     const value = nextOverrides?.[field];
     if (value === undefined || value === null || value === "") continue;
     if (provenanceValueKey(value) === provenanceValueKey(prevOverrides?.[field])) continue;
-    if (src === "web") {
+    if (src === "import") {
+      // 1.2.3: a value an import filled in counts as workbook data, judged by the evidence the file gives for it.
+      provenance[field] = { src: "workbook", at: at || now, evidence: evidence[field] || null, v: value };
+    } else if (src === "web") {
       const research = extra.webResearch || {};
       const c = webCitationFor(research.data, research.sources, field, value);
       provenance[field] = { src: "web", at: research.at || now, cited: Boolean(c && c.cited), ...(c && c.link ? { link: c.link } : {}), v: value };
@@ -5791,6 +5871,8 @@ export async function autoMergeDiscoveryResults() {
   return { ...r, duplicatesMerged: merged };
 }
 
+const IMPORT_FIELD_LABELS = Object.fromEntries(WEB_FINDING_FIELDS.map((f) => [f.key, f.label]));
+
 function findingValueKey(v) {
   return typeof v === "number" ? String(v) : String(v ?? "").trim().toLowerCase();
 }
@@ -5898,6 +5980,24 @@ async function buildDecisionQueue(views) {
       items.push({ ...base(v), id: `finding:${v.key}:${p.key}:${findingValueKey(p.found)}`, kind: "finding",
         payload: { field: p.key, label: p.label, current: p.current, found: p.found, state: p.state,
           sources: (extra.webResearch.sources || []).length } });
+    }
+  }
+
+  // Import differences (1.2.3 R4): only for the Team Lead and deputy in a team, for the user without one. A finding
+  // whose value the account already has (someone edited it meanwhile) is no question any more.
+  const team = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  if (!team.teamMembership || leadRightsOf(team.teamMembership, team.teamAccountStates)) {
+    for (const v of live) {
+      const extra = extras[v.key];
+      const row = rowByKey.get(v.key);
+      if (!extra || !extra.importFindings || !row) continue;
+      const effective = { ...row, ...(extra.overrides || {}) };
+      for (const [field, f] of Object.entries(extra.importFindings)) {
+        if (!f || importValueKey(effective[field]) === importValueKey(f.value)) continue;
+        items.push({ ...base(v), id: `import:${v.key}:${field}:${findingValueKey(f.value)}`, kind: "import_finding",
+          payload: { field, label: IMPORT_FIELD_LABELS[field] || field, current: effective[field] ?? null, imported: f.value, currency: f.currency || null,
+            file: f.file || null, at: f.at || null, rule: f.rule ?? null, why: f.why || "" } });
+      }
     }
   }
 
@@ -6014,6 +6114,22 @@ export async function applyDecision(item, choice) {
       dismissed[p.field] = p.found;
       await saveTargetAccountExtra(item.accountKey, { webFindingsDismissed: dismissed });
       label = `"${item.company}": kept the current ${p.label} (${p.current ?? "empty"}), not the web finding (${p.found})`;
+    }
+  } else if (item.kind === "import_finding") {
+    // 1.2.3 R4.3/R4.4: "Use import" writes the value like a hand edit (the currency with its amount); "Keep current"
+    // remembers the value so the same file value is not asked again. Either way the question is gone.
+    const extras = await getTargetAccountExtras();
+    const extra = extras[item.accountKey] || emptyExtra();
+    const findings = { ...(extra.importFindings || {}) };
+    delete findings[p.field];
+    if (choice === "import") {
+      const overrides = { ...(extra.overrides || {}), [p.field]: p.imported };
+      if (p.currency) overrides[p.field === "swissRevenue" ? "swissRevenueCurrency" : "revenueCurrency"] = p.currency;
+      await saveTargetAccountExtra(item.accountKey, { overrides, importFindings: findings }, { src: "user", base: { overrides: extra.overrides } });
+      label = `"${item.company}": ${p.label} set to the imported value (${p.imported})`;
+    } else {
+      await saveTargetAccountExtra(item.accountKey, { importFindings: findings, importFindingsDismissed: { ...(extra.importFindingsDismissed || {}), [p.field]: p.imported } });
+      label = `"${item.company}": kept the current ${p.label} (${p.current ?? "empty"}), not the imported value (${p.imported})`;
     }
   } else if (item.kind === "id_taken") {
     if (choice === "same") {

@@ -191,7 +191,7 @@
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <a href="#" id="tab-accounts" class="nav-item active">Target Accounts</a>
-        <button id="import-target-accounts-page-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
+        <button id="import-target-accounts-page-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Adds the companies, contacts and initiatives you do not have yet and fills in what is missing - nothing is replaced or removed.">Import Research Workbook…</button>
         <button id="restore-target-accounts-page-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
         <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
@@ -818,8 +818,10 @@
     <h3>Import Research Workbook</h3>
     <p class="page-subtitle">
       Load the Excel workbook (.xlsx) that the SalesTeam research prompt produces - in ChatGPT or any other AI
-      assistant - or one you filled in yourself from the template. <strong>Importing replaces</strong> the accounts,
-      contacts and initiatives currently loaded. (To bring back a SalesTeam backup, use "Restore Accounts &amp; Contacts
+      assistant - or one you filled in yourself from the template. An import <strong>only adds and fills in</strong>:
+      companies, contacts and initiatives you do not have yet are added, empty fields are filled, and nothing you have
+      is replaced or removed. Where the file and an account disagree by more than 10%, the same rules as for web
+      findings decide; what could change a priority comes to Decisions. (To bring back a SalesTeam backup, use "Restore Accounts &amp; Contacts
       from Backup…" instead.)
     </p>
     <div class="action-dialog-actions">

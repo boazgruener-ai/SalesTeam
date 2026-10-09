@@ -25,6 +25,7 @@ const CHOICES = {
   duplicate: [["merge", "Merge"], ["separate", "Keep both"]],
   lacking_evidence: [["keep", "Keep"], ["remove", "Remove"]],
   finding: [["web", "Use web finding"], ["current", "Keep current"]],
+  import_finding: [["import", "Use import"], ["current", "Keep current"]],
 };
 
 const KIND_PLURAL = {
@@ -34,6 +35,7 @@ const KIND_PLURAL = {
   duplicate: ["possible duplicate", "possible duplicates"],
   lacking_evidence: ["account lacking evidence", "accounts lacking evidence"],
   finding: ["web finding", "web findings"],
+  import_finding: ["import difference", "import differences"],
   join_proposal: ["join proposal", "join proposals"],
 };
 
@@ -175,6 +177,17 @@ function bodyFor(item) {
       </table>
       <p class="note">The account's Review findings dialog shows the research and its sources in full.</p>`;
   }
+  if (item.kind === "import_finding") {
+    const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "";
+    return `
+      <p>An import has a different <strong>${esc(p.label)}</strong>, more than the import tolerance apart, and the
+      automatic rules could not settle it because it could change a priority.</p>
+      <table class="compare">
+        <tr><th>Current</th><td>${esc(show(p.current))}</td></tr>
+        <tr><th>Import</th><td>${esc(show(p.imported))}${p.currency ? ` ${esc(p.currency)}` : ""}${p.file ? ` <span class="note">(${esc(p.file)}${when ? `, ${esc(when)}` : ""})</span>` : ""}</td></tr>
+      </table>
+      ${p.why ? `<p class="note">${esc(p.why.charAt(0).toUpperCase() + p.why.slice(1))}.</p>` : ""}`;
+  }
   return "";
 }
 
@@ -182,6 +195,7 @@ function similarLabel(item, n) {
   const p = item.payload || {};
   if (item.kind === "join_proposal") return `Also for ${esc(p.byName)}'s other ${n} join proposal${n === 1 ? "" : "s"}`;
   if (item.kind === "finding") return `Also for the other ${n} ${esc(p.label)} finding${n === 1 ? "" : "s"}`;
+  if (item.kind === "import_finding") return `Also for the other ${n} ${esc(p.label)} import difference${n === 1 ? "" : "s"}`;
   if (item.kind === "lacking_evidence") {
     const cause = p.reason === "empty_page" ? "with an empty LinkedIn page" : "with no LinkedIn company found";
     return `Also for the other ${n} account${n === 1 ? "" : "s"} ${cause}`;

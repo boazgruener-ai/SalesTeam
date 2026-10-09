@@ -14,6 +14,7 @@ export const ADVANCED_CARD_STEPS = ["findings", "revenue"];
 
 const NUMBER_FIELDS = [
   { id: "web-findings-tolerance", path: ["tolerancePct"], min: 0, max: 100 },
+  { id: "import-tolerance", path: ["importTolerancePct"], min: 0, max: 100 },
   { id: "web-findings-max-employees", path: ["illogical", "maxEmployees"], min: 1 },
   { id: "web-findings-rev-floor", path: ["illogical", "revenueUnitsFloor"], min: 0 },
   { id: "web-findings-rev-ceil", path: ["illogical", "revenueUnitsCeil"], min: 0 },
