@@ -383,7 +383,7 @@
           <button type="button" id="team-solo-invited-btn" class="team-primary-btn">Join</button>
         </div>
         <div id="team-solo-join">
-          <p>Your Team Lead invites you.</p>
+          <p>To work in a team, your Team Lead invites you.</p>
           <div class="settings-buttons-row">
             <button type="button" id="team-show-join-btn" class="team-primary-btn">Join a team…</button>
           </div>
@@ -399,18 +399,20 @@
              said in the dialog that follows it. -->
         <p class="field-hint">You become the Team Lead. Your accounts, contacts, leads (posts), Setup and rules become the
           team's starting data.</p>
-        <label>Your OneDrive folder</label>
+        <!-- Boaz (1.2.2.8 test): Chrome refuses OneDrive itself ("contains system files") - the team gets its own new
+             folder inside OneDrive, made right in Chrome's window. -->
+        <label>Team folder</label>
         <div class="team-onedrive-row">
-          <span id="team-create-onedrive">Not chosen yet</span>
-          <button type="button" id="team-create-onedrive-btn">Choose your OneDrive folder…</button>
+          <span id="team-create-onedrive">Not chosen yet.</span>
+          <button type="button" id="team-create-onedrive-btn">Choose the team folder…</button>
         </div>
-        <p class="field-hint" id="team-create-onedrive-hint">In the window that opens, click <b>OneDrive</b> on the left
-          ("OneDrive - <i>your company</i>" with a work account), then <b>Select Folder</b> and <b>Allow on every visit</b>.</p>
+        <p class="field-hint" id="team-create-onedrive-hint">The team needs a new folder inside OneDrive. In the window that
+          opens: click <b>OneDrive</b> on the left, then <b>New folder</b>, type the team's name and press Enter. Then click
+          <b>Select Folder</b>, and <b>Allow on every visit</b> if Chrome asks.</p>
         <label for="team-create-name">Your name</label>
         <input type="text" id="team-create-name" placeholder="e.g. Jane Doe" />
         <label for="team-create-team">Team name</label>
         <input type="text" id="team-create-team" placeholder="e.g. Sales Switzerland" />
-        <p class="field-hint" id="team-create-target"></p>
         <label>Colleagues to invite</label>
         <div id="team-create-invitees"></div>
         <div class="settings-buttons-row">
@@ -424,11 +426,12 @@
         <!-- Boaz (1.2.2.8 test): the screen is for joining - heading, the invitation, what joining does, Join. The ways
              round a team that is not found show only when none is, behind one link under the team selection. -->
         <h4 id="team-join-title">Join a team</h4>
-        <p id="team-join-intro">Click <b>Find my team…</b>, choose your team and your invitation, and click <b>Join Team</b>.
-          The first time, Chrome asks for your <b>OneDrive folder</b>: click <b>OneDrive</b> on the left
-          ("OneDrive - <i>your company</i>" with a work account), then <b>Select Folder</b> and <b>Allow on every visit</b>.</p>
+        <p id="team-join-intro">Your Team Lead shares the team's folder with you by e-mail: click <b>Open</b> in it, then
+          <b>Add shortcut to My files</b>. Then click <b>Choose your team's folder…</b> below - in the window that opens,
+          click <b>OneDrive</b> on the left, then your team's folder, <b>Select Folder</b>, and <b>Allow on every visit</b> if
+          Chrome asks.</p>
         <div class="settings-buttons-row" id="team-find-row">
-          <button type="button" id="team-find-btn" class="team-primary-btn">Find my team…</button>
+          <button type="button" id="team-find-btn" class="team-primary-btn">Choose your team's folder…</button>
           <button type="button" class="team-cancel-btn">Not now</button>
         </div>
         <div id="team-join-choose" hidden>

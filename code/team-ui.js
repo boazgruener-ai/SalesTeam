@@ -13,9 +13,9 @@ import { renderTeamGroups, editMemberGroups, kebabButton } from "./team-groups-u
 import {
   getTeamFolder, pickTeamFolder, saveTeamFolder, clearTeamFolder, teamFolderPermission, requestTeamFolderPermission,
   readTeamJson, listTeamFolderTop, getOneDriveFolder, oneDriveFolderFromClick, oneDriveFolderIfAllowed, findTeams,
-  makeTeamFolder, removeEmptyTeamFolder, saveTeamFolderVia, teamFolderVia,
+  saveTeamFolderVia, teamFolderVia,
 } from "./team-folder.js";
-import { openInvites, inviteMatches, inviteState, teamFolderName } from "./team-invites.js";
+import { openInvites, inviteMatches, inviteState } from "./team-invites.js";
 
 const MEMBERSHIP_KEY = "teamMembership"; // team-sync.js TEAM_MEMBERSHIP_KEY
 const PIPELINE_STATE_KEY = "pipelineState"; // pipeline-runner.js
@@ -190,7 +190,7 @@ async function paintTeamInvitation() {
   const oneDrive = await oneDriveFolderIfAllowed();
   if (!oneDrive) {
     setStatusMessage(INVITE_BAR_ID, { priority: true,
-      text: "You are not in a team. To look for a team invitation in your OneDrive folder, Chrome needs your permission again.",
+      text: "You are not in a team. To look for your team invitation, Chrome needs your permission again for the team's folder.",
       action: { label: "Allow…", onClick: async () => { await requestTeamFolderPermission(saved); inviteLookedAt = 0; paintTeamInvitation().catch(() => {}); } },
     });
     return;
@@ -270,7 +270,7 @@ function pipelineRunning(state) {
 async function checkPickedFolder(which, handle) {
   if (which === "create") {
     const top = (await listTeamFolderTop(handle)).filter((n) => !ignorable(n));
-    if (top.length) return { ok: false, text: `The folder "${handle.name}" is not empty (${top.slice(0, 4).join(", ")}${top.length > 4 ? " …" : ""}). Pick a new, empty folder.` };
+    if (top.length) return { ok: false, text: `The folder "${handle.name}" already has files in it. Choose the team folder again and click New folder to make an empty one.` };
     return { ok: true, text: `Folder: "${handle.name}" (empty - good).` };
   }
   const team = await readTeamJson(handle, [], "team.json");
@@ -325,43 +325,33 @@ function inviteeEditor(rows = 1) {
 
 let createInvitees = null;
 
-// Boaz 2026-10-08: the OneDrive folder is chosen first, as its own step - the team folder is then created in it.
-// Shown with where the team folder will be ("OneDrive - TimeToAct\SalesTeam - Sales CH").
-async function paintCreateOneDrive() {
-  const handle = await getOneDriveFolder();
-  const permission = handle ? await teamFolderPermission(handle) : "none";
-  // 1.2.2.8 test: a member who joined by picking the team folder has THAT saved as "OneDrive" - a new team would have
-  // gone inside the old team's folder. A folder holding a team is never the OneDrive folder.
-  const isTeam = Boolean(handle) && permission === "granted" && (await readTeamJson(handle, [], "team.json")).status === "ok";
-  // Boaz: no folder concepts - such a folder simply counts as not chosen.
-  const usable = Boolean(handle) && !isTeam;
-  const label = $("team-create-onedrive");
-  label.classList.remove("team-error");
-  label.textContent = !usable ? "Not chosen yet."
-    : permission === "granted" ? `"${handle.name}" - allowed.`
-      : `"${handle.name}" - Chrome asks once more when you click Create the team….`;
-  $("team-create-onedrive-btn").textContent = usable ? "Choose another folder…" : "Choose your OneDrive folder…";
-  $("team-create-onedrive-hint").hidden = usable;
-  $("team-create-btn").disabled = flowBusy || !usable;
-  const teamName = $("team-create-team").value.trim();
-  setText("team-create-target", handle && !isTeam && teamName ? `The team folder will be "${handle.name}\\${teamFolderName(teamName)}".` : "");
+// Boaz (1.2.2.8 test): Chrome will not open the OneDrive folder itself when Windows keeps Desktop/Documents in it
+// ("contains system files") - so the team folder itself is chosen: a new folder made inside OneDrive with New folder in
+// Chrome's window. Its name fills in the team name.
+let createFolder = null;
+
+function paintCreateFolder() {
+  $("team-create-onedrive").textContent = createFolder ? `"${createFolder.name}"` : "Not chosen yet.";
+  $("team-create-onedrive-btn").textContent = createFolder ? "Choose another folder…" : "Choose the team folder…";
+  $("team-create-onedrive-hint").hidden = Boolean(createFolder);
+  $("team-create-btn").disabled = flowBusy || !createFolder;
 }
 
-async function onChooseOneDrive() {
+async function onChooseCreateFolder() {
   const status = "team-create-status";
   let handle = null;
   try {
-    handle = await oneDriveFolderFromClick({ repick: true });
+    handle = await pickTeamFolder({ save: false });
   } catch (err) {
     setText(status, `Could not open the folder: ${err.message}`, true);
     return;
   }
-  if (!handle) { await paintCreateOneDrive(); return; }
-  const team = await readTeamJson(handle, [], "team.json");
-  setText(status, team.status === "ok"
-    ? "Please choose OneDrive itself: click OneDrive on the left, then Select Folder - without opening a folder inside it."
-    : "", team.status === "ok");
-  await paintCreateOneDrive();
+  if (!handle) return;
+  const check = await checkPickedFolder("create", handle);
+  setText(status, check.ok ? "" : check.text, !check.ok);
+  createFolder = check.ok ? handle : null;
+  if (createFolder && !$("team-create-team").value.trim()) $("team-create-team").value = createFolder.name;
+  paintCreateFolder();
 }
 
 // D19: only a Team Lead creates a team - said once more before the Create form opens.
@@ -371,17 +361,16 @@ async function onShowCreate() {
   if (!go) return;
   showFlow("create");
   prefillName("team-create-name");
-  paintCreateOneDrive().catch(() => {});
+  createFolder = null;
+  paintCreateFolder();
   if (!createInvitees) {
     createInvitees = inviteeEditor(2);
     $("team-create-invitees").replaceChildren(createInvitees.el);
   }
 }
 
-// 1.2.3 step 1b (D18, Boaz 2026-10-08): create by name - SalesTeam makes "SalesTeam - <team name>" in the OneDrive
-// folder itself, and writes the invitations typed in with it. `ownFolder`: a folder chosen by hand (no button since
-// Boaz asked for one folder button only, 1.2.2.8 test - kept for a later fallback).
-async function onCreate(ownFolder = false) {
+// 1.2.3 step 1b: create in the team folder chosen above, with the invitations typed in.
+async function onCreate() {
   const status = "team-create-status";
   const name = $("team-create-name").value.trim();
   const teamName = $("team-create-team").value.trim();
@@ -389,36 +378,15 @@ async function onCreate(ownFolder = false) {
   const invites = createInvitees ? createInvitees.read() : [];
   const nameless = invites.filter((x) => !x.name);
   if (nameless.length) { setText(status, `Enter a name for ${nameless.map((x) => x.email).join(", ")} - or remove the row.`, true); return; }
-  if (flowBusy) return;
-  // The folder picker (or Chrome's permission question) needs the click itself, so it comes first.
-  let handle = null;
-  let oneDrive = null;
-  let made = null;
-  try {
-    if (ownFolder) {
-      handle = await pickTeamFolder({ save: false });
-      if (!handle) return;
-      const first = await checkPickedFolder("create", handle);
-      if (!first.ok) { setText(status, first.text, true); return; }
-    } else {
-      if (!(await getOneDriveFolder())) { setText(status, "Choose your OneDrive folder first (Choose your OneDrive folder… above).", true); return; }
-      oneDrive = await oneDriveFolderFromClick();
-      if (!oneDrive) { setText(status, "Chrome did not allow SalesTeam to use your OneDrive folder. Click Create the team… again and choose Allow.", true); return; }
-      if ((await readTeamJson(oneDrive, [], "team.json")).status === "ok") {
-        setText(status, "Please choose OneDrive itself: click Choose your OneDrive folder…, then OneDrive on the left and Select Folder.", true);
-        await paintCreateOneDrive();
-        return;
-      }
-      const folderName = teamFolderName(teamName);
-      made = { name: folderName, ...(await makeTeamFolder(oneDrive, folderName)) };
-      handle = made.handle;
-    }
-  } catch (err) {
-    setText(status, `Not created: ${err.message}`, true);
+  if (flowBusy || !createFolder) return;
+  const handle = createFolder;
+  // Chrome's permission question needs the click itself, so it comes first.
+  if ((await teamFolderPermission(handle)) !== "granted" && (await requestTeamFolderPermission(handle)) !== "granted") {
+    setText(status, "Chrome did not allow SalesTeam to use the folder. Click Create the team… again and choose Allow.", true);
     return;
   }
   picked.create = handle;
-  setText(status, `Team folder: "${handle.name}"${oneDrive ? ` in "${oneDrive.name}"` : ""}.\nCreating the team - saving a full backup of your data first…`);
+  setText(status, `Team folder: "${handle.name}".\nCreating the team - saving a full backup of your data first…`);
   flowBusy = true;
   $("team-create-btn").disabled = true;
   let done = false;
@@ -427,7 +395,7 @@ async function onCreate(ownFolder = false) {
     const b = await backupFirst(status);
     const recheck = await checkPickedFolder("create", picked.create);
     if (!recheck.ok) throw new Error(recheck.text);
-    await saveTeamFolderVia(picked.create, oneDrive ? "onedrive" : null);
+    await saveTeamFolderVia(picked.create, null);
     setText(status, `${b}\nCreating the team - copying your data into the folder…`);
     const r = await send({ type: "TEAM_CREATE", name, teamName, invites });
     if (!r.ok) throw new Error(r.error || "the team could not be created");
@@ -440,7 +408,7 @@ async function onCreate(ownFolder = false) {
     const c = r.counts || {};
     const invitedNames = invites.map((x) => x.name);
     await askConfirm(
-      `The team "${teamName}" is set up, with you as Team Lead. Its folder is "${handle.name}"${oneDrive ? ` in "${oneDrive.name}"` : ""}.\n\n` +
+      `The team "${teamName}" is set up, with you as Team Lead. Its folder is "${handle.name}".\n\n` +
       `Its starting data: ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts), plus your Setup and rules.\n\n` +
       (invitedNames.length ? `Invited: ${invitedNames.join(", ")}. ` : "Nobody is invited yet - use Add member… below the members. ") +
       `Next, in File Explorer > OneDrive: right-click "${handle.name}" > Always keep on this device; then right-click it > Share, ` +
@@ -450,11 +418,10 @@ async function onCreate(ownFolder = false) {
   } catch (err) {
     setText(status, `Not created: ${err.message}`, true);
   } finally {
-    // The folder SalesTeam made for a team that was not created goes again (only while it is still empty).
-    if (!done && made?.created && oneDrive) await removeEmptyTeamFolder(oneDrive, made.name);
     flowBusy = false;
     picked.create = null;
-    await paintCreateOneDrive().catch(() => { $("team-create-btn").disabled = false; });
+    if (done) createFolder = null;
+    paintCreateFolder();
   }
 }
 
@@ -596,7 +563,7 @@ function showTeams(teams, via, foundNames = []) {
       : names.length
         ? `You have no invitation to the teams ${names.slice(0, -1).join(", ")} or ${names.at(-1)} yet. Ask your Team Lead to invite you.`
         // Boaz (1.2.2.8 test, KISS): one step for the member - the only one OneDrive cannot do for them.
-        : "You have no invitation yet. Ask your Team Lead to invite you. When their e-mail arrives, click Open, then Add shortcut to My files.", true);
+        : "There is no SalesTeam team in this folder. Choose the folder your Team Lead shared with you.", true);
     $("team-join-invites").replaceChildren();
   }
   // Boaz (1.2.2.8 test): one way on - with the team listed, Find my team… and its explanation step back (Look again
@@ -608,8 +575,9 @@ function showTeams(teams, via, foundNames = []) {
   $("team-find-row").hidden = teams.length > 0;
   // Boaz (1.2.2.8 test): no "Look again" - after the first search (Chrome's permission needs that click) SalesTeam
   // keeps looking by itself while nothing joinable is found.
-  $("team-find-btn").hidden = true;
-  const waiting = !teams.some((t) => t.mine.length);
+  // A wrong folder: Choose your team's folder… stays, to choose again.
+  $("team-find-btn").hidden = foundNames.length > 0 || teams.length > 0;
+  const waiting = !teams.some((t) => t.mine.length) && foundNames.length > 0;
   if (waiting) $("team-join-status").textContent += " SalesTeam then shows Join Team here by itself.";
   scheduleAutoLook(waiting && via === "onedrive");
   $("team-join-intro").hidden = true; // it explains Find my team…, which has been clicked
@@ -636,7 +604,9 @@ async function autoLook() {
 }
 
 // Find my team…: the OneDrive folder (asked for once), then every team in it with an invitation open.
-async function onFindTeams({ repick = false } = {}) {
+// Boaz (1.2.2.8 test): the team's folder itself is chosen (Chrome refuses OneDrive itself on many PCs); it is kept, so
+// SalesTeam can look again by itself until the invitation is there.
+async function onFindTeams({ repick = true } = {}) {
   if (flowBusy) return;
   const status = "team-join-status";
   let oneDrive = null;
@@ -647,7 +617,7 @@ async function onFindTeams({ repick = false } = {}) {
     return;
   }
   if (!oneDrive) {
-    setText(status, "SalesTeam needs your OneDrive folder to find the team. Click Find my team… again and allow it.", true);
+    setText(status, "SalesTeam needs your team's folder. Click Choose your team's folder… again and allow it.", true);
     return;
   }
   setText(status, `Looking for teams in "${oneDrive.name}"…`);
@@ -1156,9 +1126,8 @@ export function initTeamSettings() {
     paintTeamInvitation().catch(() => {});
     renderTeamSettings();
   }));
-  $("team-create-btn").addEventListener("click", () => onCreate(false));
-  $("team-create-onedrive-btn").addEventListener("click", onChooseOneDrive);
-  $("team-create-team").addEventListener("input", () => paintCreateOneDrive().catch(() => {}));
+  $("team-create-btn").addEventListener("click", () => onCreate());
+  $("team-create-onedrive-btn").addEventListener("click", onChooseCreateFolder);
   $("team-find-btn").addEventListener("click", () => onFindTeams());
   $("team-join-team").addEventListener("change", (e) => showInvitesOf(Number(e.target.value)));
   $("team-join-btn").addEventListener("click", onJoin);
