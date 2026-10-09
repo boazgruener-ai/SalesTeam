@@ -328,15 +328,19 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 async function paintCreateOneDrive() {
   const handle = await getOneDriveFolder();
   const permission = handle ? await teamFolderPermission(handle) : "none";
+  // 1.2.2.8 test: a member who joined by picking the team folder has THAT saved as "OneDrive" - a new team would have
+  // gone inside the old team's folder. A folder holding a team is never the OneDrive folder.
+  const isTeam = Boolean(handle) && permission === "granted" && (await readTeamJson(handle, [], "team.json")).status === "ok";
   const label = $("team-create-onedrive");
-  label.classList.toggle("team-error", !handle);
+  label.classList.toggle("team-error", !handle || isTeam);
   label.textContent = !handle ? "Not chosen yet - choose it first."
-    : permission === "granted" ? `"${handle.name}" - allowed.`
-      : `"${handle.name}" - Chrome asks once more when you click Create the team….`;
-  $("team-create-onedrive-btn").textContent = handle ? "Choose another folder…" : "Choose your OneDrive folder…";
-  $("team-create-btn").disabled = flowBusy || !handle;
+    : isTeam ? `"${handle.name}" is a team's folder, not your OneDrive folder - choose OneDrive itself.`
+      : permission === "granted" ? `"${handle.name}" - allowed.`
+        : `"${handle.name}" - Chrome asks once more when you click Create the team….`;
+  $("team-create-onedrive-btn").textContent = handle && !isTeam ? "Choose another folder…" : "Choose your OneDrive folder…";
+  $("team-create-btn").disabled = flowBusy || !handle || isTeam;
   const teamName = $("team-create-team").value.trim();
-  setText("team-create-target", handle && teamName ? `The team folder will be "${handle.name}\\${teamFolderName(teamName)}".` : "");
+  setText("team-create-target", handle && !isTeam && teamName ? `The team folder will be "${handle.name}\\${teamFolderName(teamName)}".` : "");
 }
 
 async function onChooseOneDrive() {
@@ -395,6 +399,11 @@ async function onCreate(ownFolder = false) {
       if (!(await getOneDriveFolder())) { setText(status, "Choose your OneDrive folder first (Choose your OneDrive folder… above).", true); return; }
       oneDrive = await oneDriveFolderFromClick();
       if (!oneDrive) { setText(status, "Chrome did not allow SalesTeam to use your OneDrive folder. Click Create the team… again and choose Allow.", true); return; }
+      if ((await readTeamJson(oneDrive, [], "team.json")).status === "ok") {
+        setText(status, `"${oneDrive.name}" is a team's folder, not your OneDrive folder. Click Choose your OneDrive folder… and choose OneDrive itself.`, true);
+        await paintCreateOneDrive();
+        return;
+      }
       const folderName = teamFolderName(teamName);
       made = { name: folderName, ...(await makeTeamFolder(oneDrive, folderName)) };
       handle = made.handle;
