@@ -49,14 +49,38 @@ export function logValue(v) {
 // `normalize` is storage.js normalizeCompanyName. `priors` (optional): Map record -> team-merge.js priorOf(state, record)
 // taken BEFORE the record was applied - the previous values (live test 1.2.1.11: the Previous / New Value columns
 // were empty). before/after: { field: shown value }, the first previous and the last new value of each field.
+//
+// 1.2.3 Export & Import (design 3.6, D6): an import touches hundreds of accounts. Every account it touched carries
+// importRun {id, file, summary} on its extras record, so all of that member's records about those accounts in the
+// batch fold into ONE line: "imported research.xlsx: 12 new accounts, 41 empty fields filled".
 export function teamLogEntries(records, state, normalize, priors = null) {
   const groups = new Map();
+  const runs = new Map(); // `${member}|${account key}` -> importRun
+  for (const r of records || []) {
+    const run = r && r.op === "set" && r.f && r.f.importRun;
+    if (!run || typeof run !== "object" || !run.id) continue;
+    const s = subjectOf(state, r, normalize);
+    if (s.key) runs.set(`${stampMember(r.t)}|${s.key}`, run);
+  }
   for (const r of records || []) {
     if (!r || SKIPPED_OPS.has(r.op)) continue;
     const m = stampMember(r.t);
     const at = stampWall(r.t);
     if (!m || !at) continue;
     const s = subjectOf(state, r, normalize);
+    const run = r.op === "set" && s.key ? runs.get(`${m}|${s.key}`) : null;
+    if (run) {
+      const g = `${m}|import|${run.id}`;
+      let entry = groups.get(g);
+      if (!entry) {
+        entry = { at, m, op: "import", kind: "import", key: null, ref: run.file || null, run: run.id, label: run.summary || null, fields: [], rows: 0, before: {}, after: {}, accounts: [] };
+        groups.set(g, entry);
+      }
+      entry.at = Math.max(entry.at, at);
+      entry.rows += 1;
+      if (!entry.accounts.includes(s.key)) entry.accounts.push(s.key);
+      continue;
+    }
     const op = r.op === "touch" ? "touch" : r.op;
     const g = `${m}|${op}|${s.kind}|${s.key ?? ""}|${s.ref ?? ""}|${op === "assign" || op === "unassign" ? r.member || "" : ""}`;
     let entry = groups.get(g);
@@ -92,7 +116,17 @@ export function appendTeamLog(log, entries, now) {
   // 1.2.2.8: a record read a second time (the folder re-read after this PC's team state was lost) is logged once.
   const seen = new Set();
   const sig = (e) => JSON.stringify([e.at, e.m, e.op, e.kind, e.key, e.ref, e.fields, e.to]);
-  return [...(Array.isArray(log) ? log : []), ...entries]
+  // 1.2.3: one import that reached this PC over several rounds stays one line (its accounts added up).
+  const kept = (Array.isArray(log) ? log : []).map((e) => (e && e.kind === "import" ? { ...e, accounts: [...(e.accounts || [])] } : e));
+  const fresh = [];
+  for (const e of entries) {
+    const same = e && e.kind === "import" && e.run ? kept.find((k) => k && k.kind === "import" && k.run === e.run && k.m === e.m) : null;
+    if (!same) { fresh.push(e); continue; }
+    same.at = Math.max(same.at, e.at);
+    same.rows = (same.rows || 0) + (e.rows || 0);
+    for (const a of e.accounts || []) if (!same.accounts.includes(a)) same.accounts.push(a);
+  }
+  return [...kept, ...fresh]
     .filter((e) => e && e.at >= cutoff && !seen.has(sig(e)) && seen.add(sig(e)))
     .sort((a, b) => a.at - b.at)
     .slice(-TEAM_LOG_KEPT);
@@ -131,6 +165,10 @@ export function teamLogText(entry, name, who) {
   if (entry.kind === "setting" && entry.ref === "teamJoinProposals") {
     const n = entry.rows > 1 ? `${entry.rows} join proposals` : "a join proposal";
     return entry.op === "delete" ? `settled ${n}` : `made ${n} (accounts they had worked on before joining)`;
+  }
+  if (entry.kind === "import") {
+    const n = (entry.accounts || []).length;
+    return `imported ${entry.ref || "a file"}: ${entry.label || `${n} account${n === 1 ? "" : "s"}`}`;
   }
   if (entry.kind === "team") {
     if (entry.ref === "lead") return `made ${who(entry.to)} Team Lead`;

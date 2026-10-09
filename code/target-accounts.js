@@ -19,12 +19,16 @@ import { askConfirm, askChoice, mirrorStatusToPopup, showNotice } from "./confir
 import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
 import { importSummaryText } from "./import-merge.js";
+import { hideImportForMembers } from "./import-gate.js";
 import {
   getTargetAccountsWorkbook,
   getTargetAccountsMeta,
   getTargetAccounts,
   importTargetAccounts,
   mergeImportIntoWorkbook,
+  previewWorkbookImport,
+  mayImport,
+  IMPORT_REFUSED,
   exportTargetAccountsBackup,
   importTargetAccountsBackup,
   getTargetAccountsMissingLinkedinId,
@@ -99,7 +103,7 @@ import {
 import { RAISED_REASON, relationshipTagText } from "./relationships.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
 import { coverageLines } from "./pipeline-plan.js";
-import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBeforeRestore } from "./backup-restore.js";
+import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBefore } from "./backup-restore.js";
 import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
@@ -4474,6 +4478,8 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
   const file = importTargetAccountsPageFileInput.files[0];
   importTargetAccountsPageFileInput.value = "";
   if (!file) return;
+  // 1.2.3 (design 6): in a team only the Team Lead imports and restores - an old tab or a stale menu stops here.
+  if (!(await mayImport())) { targetAccountsPageIoStatusEl.textContent = IMPORT_REFUSED; return; }
   const lowerName = file.name.toLowerCase();
   const isBackupFile = lowerName.endsWith(".zip") || lowerName.endsWith(".json");
   if (importPickerMode === "research" && isBackupFile) {
@@ -4511,7 +4517,7 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
       const sections = await chooseRestoreSections("full", limited);
       if (!sections) { targetAccountsPageIoStatusEl.textContent = "Restore cancelled."; return; }
       targetAccountsPageIoStatusEl.textContent = "Saving a safety copy of your current data first…";
-      if (!(await safetyCopyBeforeRestore())) { targetAccountsPageIoStatusEl.textContent = "Restore cancelled."; return; }
+      if (!(await safetyCopyBefore("before-restore"))) { targetAccountsPageIoStatusEl.textContent = "Restore cancelled."; return; }
       const prevMeta = await getTargetAccountsMeta();
       await restoreFullBackup(parsed, sections);
       await loadWorkbook();
@@ -4608,7 +4614,31 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
       c.aliases = [...aliasesByCompanyId.get(c.companyId)];
     }
   }
-  const { counts, plan } = await mergeImportIntoWorkbook(fullWorkbook, { fileName: file.name });
+  // 1.2.3 step 1 (design 3.4, D5): check first - what the import will do, in plain words, before anything is written.
+  const preview = await previewWorkbookImport(fullWorkbook, { fileName: file.name });
+  const checkLines = [
+    ...preview.newCompanyNames.slice(0, 200).map((n) => `New account: ${n}`),
+    ...(preview.newCompanyNames.length > 200 ? [`… and ${preview.newCompanyNames.length - 200} more new accounts`] : []),
+    ...preview.decisions.map((d) => `For Decisions: ${d.company} - ${d.label}: current ${d.current}, in the file ${d.imported}`),
+  ];
+  const go = await askConfirm(
+    `${file.name}\n\n${importSummaryText(preview.counts) || "Nothing new - everything in this file is already there."}.\n\n` +
+    "Nothing you have is replaced or removed. A safety copy of your current data is saved first.",
+    { title: "Import Research Workbook", okLabel: "Import", details: checkLines.length ? { summary: "Details", lines: checkLines } : null },
+  );
+  if (!go) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+  targetAccountsPageIoStatusEl.textContent = "Saving a safety copy of your current data first…";
+  if (!(await safetyCopyBefore("before-import"))) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+  targetAccountsPageIoStatusEl.textContent = `Importing ${file.name}…`;
+  let counts;
+  let plan;
+  try {
+    ({ counts, plan } = await mergeImportIntoWorkbook(fullWorkbook, { fileName: file.name }));
+  } catch (err) {
+    targetAccountsPageIoStatusEl.textContent = `Import failed - ${err.message}`;
+    await askConfirm(`Import failed - ${err.message}`, { title: "Import Research Workbook", cancelLabel: null });
+    return;
+  }
   await importTargetAccounts(list, file.name, { merge: true });
   // Exclusions only for the companies this import added (Q4); customer / partner rows become relationships as before.
   const backfill = await backfillCompanyExclusionsFromWorkbook(fullWorkbook, {
@@ -4621,16 +4651,22 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
   // fill the Priority columns right away (see autoPrioritizeNewCompanies) - a failure here never fails the import
   const autoPriority = await autoPrioritizeNewCompanies().catch(() => ({ applied: 0, summary: "" }));
   const priorityNote = autoPriority.applied > 0 ? ` - priorities calculated for ${autoPriority.applied} (${autoPriority.summary})` : "";
-  const summary = importSummaryText(counts);
-  targetAccountsPageIoStatusEl.textContent = `${file.name} imported at ${formatImportStamp(Date.now())}: ${summary}${backfillNote}${priorityNote}.` +
-    (counts.decisions > 0 ? ` ${counts.decisions === 1 ? "One difference is" : `${counts.decisions} differences are`} waiting in Decisions.` : "");
+  const summary = importSummaryText(counts) || "nothing new";
+  const decisionsNote = counts.decisions > 0
+    ? ` ${counts.decisions === 1 ? "One difference is" : `${counts.decisions} differences are`} waiting in Decisions.` : "";
+  targetAccountsPageIoStatusEl.textContent = `${file.name} imported at ${formatImportStamp(Date.now())}: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`;
   appendActivityLog({
     actor: "user",
-    action: "target_accounts_imported",
+    action: "import_done",
+    format: "workbook",
+    file: file.name,
+    counts,
     label: `Imported research workbook ${file.name}: ${summary}${backfillNote}`,
     prevValue: prevMeta.count,
     newValue: counts,
   });
+  // R6.3: one pop-up, one OK - the same counts as the check.
+  await askConfirm(`${file.name} imported: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`, { title: "Import Research Workbook", cancelLabel: null });
 });
 
 // ---- Account/Contact views (PRD 6.19) ----
@@ -7061,6 +7097,7 @@ document.getElementById("hubspot-import-file-input").addEventListener("change", 
   if (!file) return;
   const statusEl = document.getElementById("hubspot-import-status");
   statusEl.hidden = false;
+  if (!(await mayImport())) { statusEl.textContent = IMPORT_REFUSED; return; }
   try {
     const { headers, records } = parseCsv(await file.text());
     const kind = detectHubspotFile(headers);
@@ -7505,8 +7542,11 @@ const ACTION_DIALOG_IDS = {
   "web-lane": "web-lane-dialog",
   "web-discovery": "web-discovery-dialog",
 };
-function openActionFromHash() {
+const IMPORT_ACTIONS = new Set(["import-accounts", "restore-accounts", "import-hubspot"]);
+async function openActionFromHash() {
   const action = new URLSearchParams(location.hash.slice(1)).get("action");
+  // 1.2.3 (design 6): in a team only the Team Lead imports and restores - a member's link does nothing.
+  if (IMPORT_ACTIONS.has(action) && !(await mayImport())) return;
   // The CSV exports have no dialog of their own (another page's menu opens them here).
   if (action === "export-accounts-csv") { exportTableCsv("accounts"); return; }
   if (action === "export-contacts-csv") { showView("contactsList"); exportTableCsv("contacts"); return; }
@@ -7552,6 +7592,8 @@ async function init() {
   loadContactHiddenColumns();
   loadContactFilterSortState();
   await teamAccounts.ready();
+  hideImportForMembers(["import-target-accounts-page-btn", "restore-target-accounts-page-btn", "hubspot-import-page-btn",
+    "open-settings-restore-btn", "empty-import-btn"]);
   // Assignments and claims arrive from the team in the background: repaint the lists' badges and filter.
   // A list hidden behind an account page is marked stale and redrawn when it is shown again (route) - otherwise
   // "Back to Target Accounts" showed the badge from before (Nestlé still "Mine" after reassigning it, 1.2.1.9 test).

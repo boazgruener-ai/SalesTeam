@@ -248,6 +248,12 @@ export function leadRightsOf(membership, summary) {
   return membership.role === "admin";
 }
 
+// 1.2.3 Export & Import (design 6, R5): importing and restoring change the whole team's data, so in a team only the
+// Team Lead (and deputy) may do them. Without a team: always.
+export function mayImportFor(membership, summary) {
+  return !membership || leadRightsOf(membership, summary);
+}
+
 export function isTeamLeadOf(membership, summary) {
   if (!membership) return false;
   if (summary && summary.leadKnown) return membership.memberId === summary.lead;

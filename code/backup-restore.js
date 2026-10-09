@@ -9,7 +9,7 @@
 //    before the full backup existed is stranded.
 import {
   availableSettingsSections, availableTargetAccountsSections, appendActivityLog,
-  importSettings, importTargetAccountsBackup, importLeads,
+  importSettings, importTargetAccountsBackup, importLeads, mayImport, IMPORT_REFUSED,
 } from "./storage.js";
 import { buildFullBackupZip, parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import {
@@ -215,7 +215,7 @@ const LAST_BACKUP_INFO_KEY = "lastBackupInfo";
 const BACKUP_PREFS_KEY = "autoBackupPrefs";
 // folderPathNote: the folder's full path as the user typed it - Chrome only reveals a folder's name to an extension.
 const DEFAULT_BACKUP_PREFS = { enabled: true, time: "02:00", retention: "all", folderPathNote: "" };
-const SUBFOLDER = { manual: "Manual", "before-restore": "Before-restore" };
+const SUBFOLDER = { manual: "Manual", "before-restore": "Before-restore", "before-import": "Before-import" };
 
 export async function getBackupPrefs() {
   const data = await chrome.storage.local.get(BACKUP_PREFS_KEY);
@@ -362,7 +362,14 @@ export function isBackupDue(lastAt, timeStr, now = new Date()) {
 }
 
 async function performBackup(kind, { gesture = false, includeApiKey = false } = {}) {
-  const fileName = `salesteam-${kind === "before-restore" ? "before-restore" : "backup"}-${kind === "daily" ? localDateStamp() : localDateTimeStamp()}${versionTag()}.zip`;
+  const fileName = `salesteam-${kind.startsWith("before-") ? kind : "backup"}-${kind === "daily" ? localDateStamp() : localDateTimeStamp()}${versionTag()}.zip`;
+  // 1.2.2.12 live test: Chrome grants a folder permission only within a few seconds of the user's click. Building the
+  // zip takes longer than that, so asking afterwards was silently refused and the safety copy went to Downloads.
+  // Ask first, while the click still counts.
+  if (gesture) {
+    const handle = await getStoredFolder();
+    if (handle && (await folderPermission(handle)) === "prompt") await requestFolderPermission(handle).catch(() => {});
+  }
   const blob = await buildFullBackupZip({ includeApiKey });
   const result = await saveBackupFile(blob, fileName, kind, { gesture });
   if (result.ok) await recordBackup({ name: fileName, where: result.where, kind, size: blob.size });
@@ -418,28 +425,32 @@ export async function backupNow({ includeApiKey = false } = {}) {
   return result;
 }
 
-export async function safetyCopyBeforeRestore() {
+// reason: "before-restore" or "before-import" (1.2.3) - the file name and the subfolder say which.
+export async function safetyCopyBefore(reason = "before-restore") {
   if (await isFreshInstall()) return true; // nothing to lose
   try {
-    await performBackup("before-restore", { gesture: true });
+    await performBackup(reason, { gesture: true });
     return true;
   } catch (err) {
-    return confirm(`Couldn't save a safety copy of your current data first (${err.message}). Restore anyway?`);
+    return confirm(`Couldn't save a safety copy of your current data first (${err.message}). ${reason === "before-import" ? "Import" : "Restore"} anyway?`);
   }
 }
 
 // One entry point for every kind of backup file: the full zip, or one of the older JSON backups.
 // Returns a one-line description of what happened, or null if the user cancelled.
 export async function restoreFromFile(file) {
+  // 1.2.3 (design 6): in a team only the Team Lead restores - checked again here for an old tab or a stale page.
+  if (!(await mayImport())) throw new Error(IMPORT_REFUSED);
   // 1.2.2: in a team, whatever a restore puts back is shared with every colleague as a change of this member's.
   const team = (await chrome.storage.local.get("teamMembership")).teamMembership;
   if (team && !confirm(`You are in the team "${team.teamName}". Restoring changes the team's data too: the accounts, contacts, ` +
-    "leads and settings you restore are sent to every colleague and replace what they have now.\n\nRestore anyway?")) return null;
+    "leads and settings you restore are sent to every colleague and replace what they have now. As Team Lead you decide " +
+    "this for the whole team, so make sure the backup is the one the team should have.\n\nRestore anyway?")) return null;
   if (file.name.toLowerCase().endsWith(".zip")) {
     const parsed = await parseFullBackup(await file.arrayBuffer());
     const sections = await chooseRestoreSections("full", parsed.manifest);
     if (!sections) return null;
-    if (!(await safetyCopyBeforeRestore())) return null;
+    if (!(await safetyCopyBefore("before-restore"))) return null;
     await restoreFullBackup(parsed, sections);
     if (sections.has("leadsMerge") && parsed.data.leads) await importLeads(parsed.data.leads);
     appendActivityLog({ actor: "user", action: "full_backup_restored", label: `Restored backup ${file.name} (${[...sections].join(", ")})` });
@@ -466,7 +477,7 @@ export async function restoreFromFile(file) {
   if (parts.includes("settings")) {
     const sections = await chooseRestoreSections("settings", settings);
     if (sections) {
-      if (!(await safetyCopyBeforeRestore())) return null;
+      if (!(await safetyCopyBefore("before-restore"))) return null;
       await importSettings(settings, sections);
       done.push(`settings (${[...sections].join(", ")})`);
     }
@@ -474,7 +485,7 @@ export async function restoreFromFile(file) {
   if (parts.includes("targetAccounts")) {
     const sections = await chooseRestoreSections("targetAccounts", accounts);
     if (sections) {
-      if (!done.length && !(await safetyCopyBeforeRestore())) return null;
+      if (!done.length && !(await safetyCopyBefore("before-restore"))) return null;
       await importTargetAccountsBackup(accounts, sections);
       done.push(`Target Accounts (${[...sections].join(", ")})`);
     }
@@ -502,7 +513,7 @@ async function findBackupsInFolder(handle) {
       if (entry.kind === "file") {
         const m = BACKUP_FILE_NAME.exec(name);
         if (m) found.push({ name, path: [...parts, name].join("/"), sortKey: `${m[1]}${m[2]}${m[3]}${m[4] || "0000"}`, entry });
-      } else if (entry.kind === "directory" && depth < 3 && name !== "Before-restore") {
+      } else if (entry.kind === "directory" && depth < 3 && name !== "Before-restore" && name !== "Before-import") {
         await walk(entry, depth + 1, [...parts, name]);
       }
     }

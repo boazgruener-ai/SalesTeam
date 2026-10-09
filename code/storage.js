@@ -1,6 +1,6 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
-import { leadRightsOf } from "./team-groups.js";
+import { leadRightsOf, mayImportFor } from "./team-groups.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
 import { joinProposalItems, applyJoinProposal } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
@@ -10,7 +10,7 @@ import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages,
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl, WEB_FINDING_FIELDS } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
-import { planImport, importValueKey, DEFAULT_IMPORT_TOLERANCE_PCT } from "./import-merge.js";
+import { planImport, importValueKey, importSummaryText, DEFAULT_IMPORT_TOLERANCE_PCT } from "./import-merge.js";
 import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, matchesExclusion, matchesRelationship, websiteDomain, webCompanyId } from "./company-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 import { relationshipOf } from "./company-identity.js";
@@ -1868,10 +1868,22 @@ function normalizeContactRows(contacts) {
 // field is filled as an override (provenance "workbook" with the file's evidence), a difference is settled by the
 // web-findings rules with the import tolerance, and what needs a person is stored as importFindings for Decisions
 // (Team Lead only in a team). Nothing stored is removed, and an account removed in SalesTeam is not brought back.
-// Returns { counts, plan, importedAt }.
-export async function mergeImportIntoWorkbook(parsed, opts = {}) { return withAccountWriteLock(() => mergeImportIntoWorkbookUnlocked(parsed, opts)); }
-async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {}) {
-  const importedAt = Date.now();
+// Returns { counts, plan, importedAt, run }.
+//
+// 1.2.3 step 1 (design 3.4-3.6, 6): previewWorkbookImport plans without writing, for the check-first summary; the
+// writer plans again inside the lock (a team sync may have landed while the summary was open), refuses a member,
+// and writes in batches of IMPORT_BATCH accounts - each batch persisted before the next, so a reload mid-import
+// keeps what was written. Every account it touches carries importRun, which folds the import into one team-log line.
+export const IMPORT_REFUSED = "Only the Team Lead can import or restore in a team.";
+const IMPORT_BATCH = 100;
+
+// Import, Restore and HubSpot import: no team -> yes; in a team -> the Team Lead and deputy only (design 6).
+export async function mayImport() {
+  const got = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  return mayImportFor(got.teamMembership, got.teamAccountStates);
+}
+
+async function planWorkbookImport(parsed, { fileName = null, at = Date.now() } = {}) {
   const [raw, extras, contactExtras, config, settings, money] = await Promise.all([
     chrome.storage.local.get(TARGET_ACCOUNTS_WORKBOOK_KEY).then((d) => d[TARGET_ACCOUNTS_WORKBOOK_KEY] || {}),
     getTargetAccountExtras(), getTargetContactExtras(), getTargetUniverseConfig(), getWebFindingsArbitration(), getRevenueNormalization(),
@@ -1883,10 +1895,29 @@ async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {})
   const plan = planImport(file, { ...wb, extras, contactExtras }, {
     settings, money: revenueMoneySettings(money), buckets: SIZE_PRIORITY_BUCKETS,
     locationTier: (country) => resolveLocationPriority(country, config.locationPriorities),
-    tolerancePct: settings.importTolerancePct ?? DEFAULT_IMPORT_TOLERANCE_PCT, contactCounts, fileName, at: importedAt,
+    tolerancePct: settings.importTolerancePct ?? DEFAULT_IMPORT_TOLERANCE_PCT, contactCounts, fileName, at,
   });
+  return { wb, extras, contactExtras, plan };
+}
 
-  // New rows appended; aliases the file adds to an existing account are added to its row (additive only).
+// The check-first summary (design 3.4): what the import would do, with nothing written.
+export async function previewWorkbookImport(parsed, { fileName = null } = {}) {
+  const { plan } = await planWorkbookImport(parsed, { fileName });
+  return { counts: plan.counts, newCompanyNames: plan.newCompanyNames, decisions: plan.decisions };
+}
+
+export async function mergeImportIntoWorkbook(parsed, opts = {}) { return withAccountWriteLock(() => mergeImportIntoWorkbookUnlocked(parsed, opts)); }
+async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {}) {
+  if (!(await mayImport())) throw new Error(IMPORT_REFUSED);
+  const importedAt = Date.now();
+  const { wb, extras, contactExtras, plan } = await planWorkbookImport(parsed, { fileName, at: importedAt });
+  const membership = (await chrome.storage.local.get("teamMembership")).teamMembership || null;
+  const run = {
+    id: `imp-${importedAt}`, file: fileName, at: importedAt,
+    by: membership ? membership.name || membership.memberId || null : null, summary: importSummaryText(plan.counts),
+  };
+
+  // Aliases the file adds to an existing account are added to its row (additive only).
   const aliasesByKey = new Map(Object.entries(plan.companyPatches).filter(([, p]) => p.aliases && p.aliases.length).map(([k, p]) => [k, p.aliases]));
   const companies = (wb.companies || []).map((c) => {
     const add = c && c.company ? aliasesByKey.get(normalizeCompanyName(c.company)) : null;
@@ -1895,37 +1926,64 @@ async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {})
   // The file's Exclusion_List rows come along only for companies the import adds (Q4), under their stored id.
   const newExclusionRows = (parsed.exclusionList || []).filter((r) => r && r.companyId && plan.newCompanyIds[String(r.companyId)])
     .map((r) => ({ ...r, companyId: plan.newCompanyIds[String(r.companyId)] }));
-  await chrome.storage.local.set({
-    [TARGET_ACCOUNTS_WORKBOOK_KEY]: {
-      ...wb,
-      companies: [...companies, ...plan.newCompanies],
-      contacts: [...(wb.contacts || []), ...plan.newContacts],
-      aiInitiatives: [...(wb.aiInitiatives || []), ...plan.newInitiatives],
-      aiInvestment: [...(wb.aiInvestment || []), ...plan.newInvestment],
-      sources: [...(wb.sources || []), ...plan.newSources],
-      ...(newExclusionRows.length ? { exclusionList: [...(wb.exclusionList || []), ...newExclusionRows] } : {}),
-    },
-    [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: importedAt,
-  });
 
-  // Fills, values the rules took from the file, and differences waiting for Decisions - on the account's extras.
-  const run = { id: `imp-${importedAt}`, file: fileName, at: importedAt };
-  for (const [key, p] of Object.entries(plan.companyPatches)) {
-    if (!Object.keys(p.overrides).length && !Object.keys(p.findings).length) continue;
+  // One account's extras after the import: fills and values the rules took as overrides, differences waiting for
+  // Decisions as importFindings, and importRun on every account the import touched (new ones too).
+  const patchExtra = (key) => {
+    const p = plan.companyPatches[key] || {};
     const before = extras[key] || emptyExtra();
     const next = { ...emptyExtra(), ...before, importRun: run };
-    if (Object.keys(p.overrides).length) {
+    if (Object.keys(p.overrides || {}).length) {
       next.overrides = { ...(before.overrides || {}), ...p.overrides };
       next.provenance = stampOverrideProvenance(before.overrides, next.overrides, next, "import", { evidence: p.evidence, at: importedAt });
     }
-    if (Object.keys(p.findings).length) next.importFindings = { ...(before.importFindings || {}), ...p.findings };
+    if (Object.keys(p.findings || {}).length) next.importFindings = { ...(before.importFindings || {}), ...p.findings };
     extras[key] = next;
+  };
+  const planned = { contacts: plan.newContacts, aiInitiatives: plan.newInitiatives, aiInvestment: plan.newInvestment, sources: plan.newSources };
+  const written = {
+    companies, contacts: [...(wb.contacts || [])], aiInitiatives: [...(wb.aiInitiatives || [])],
+    aiInvestment: [...(wb.aiInvestment || [])], sources: [...(wb.sources || [])],
+  };
+  const persist = (last) => chrome.storage.local.set({
+    [TARGET_ACCOUNTS_WORKBOOK_KEY]: {
+      ...wb, ...written,
+      ...(last && newExclusionRows.length ? { exclusionList: [...(wb.exclusionList || []), ...newExclusionRows] } : {}),
+    },
+    [TARGET_ACCOUNT_EXTRAS_KEY]: extras,
+    ...(last ? { [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: importedAt } : {}),
+  });
+
+  // First the new accounts, each batch with its own contacts / initiatives / investment / sources.
+  const doneIds = new Set();
+  const doneKeys = new Set();
+  for (let i = 0; i < plan.newCompanies.length; i += IMPORT_BATCH) {
+    const rows = plan.newCompanies.slice(i, i + IMPORT_BATCH);
+    const ids = new Set(rows.map((r) => String(r.companyId)));
+    written.companies = [...written.companies, ...rows];
+    for (const sheet of Object.keys(planned)) written[sheet] = [...written[sheet], ...(planned[sheet] || []).filter((r) => r && ids.has(String(r.companyId)))];
+    for (const r of rows) {
+      const key = normalizeCompanyName(r.company);
+      if (key) { patchExtra(key); doneKeys.add(key); }
+    }
+    for (const id of ids) doneIds.add(id);
+    await persist(false);
   }
+  // Then what the file adds to accounts already there (new contacts, initiatives) and the changes on them.
+  for (const sheet of Object.keys(planned)) written[sheet] = [...written[sheet], ...(planned[sheet] || []).filter((r) => r && !doneIds.has(String(r.companyId)))];
+  const rest = Object.entries(plan.companyPatches)
+    .filter(([k, p]) => !doneKeys.has(k) && (Object.keys(p.overrides || {}).length || Object.keys(p.findings || {}).length))
+    .map(([k]) => k);
+  for (let i = 0; i === 0 || i < rest.length; i += IMPORT_BATCH) {
+    for (const key of rest.slice(i, i + IMPORT_BATCH)) patchExtra(key);
+    await persist(i + IMPORT_BATCH >= rest.length);
+  }
+
   for (const [key, p] of Object.entries(plan.contactPatches)) {
     const before = contactExtras[key] || {};
     contactExtras[key] = { ...before, overrides: { ...(before.overrides || {}), ...p.overrides } };
   }
-  await chrome.storage.local.set({ [TARGET_ACCOUNT_EXTRAS_KEY]: extras, [TARGET_CONTACT_EXTRAS_KEY]: contactExtras });
+  if (Object.keys(plan.contactPatches).length) await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: contactExtras });
 
   // The values that replaced a current one (rules 9 and 10) are logged one by one; the rest is in the summary.
   if (plan.taken.length) {
@@ -1935,7 +1993,7 @@ async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {})
       prevValue: t.current, newValue: t.imported, relatedCompanyKey: t.key,
     }))).catch(() => {});
   }
-  return { counts: plan.counts, plan, importedAt };
+  return { counts: plan.counts, plan, importedAt, run };
 }
 
 // source (added 2026-09-16, PRD 6.20 Phase 7): distinguishes a ChatGPT-

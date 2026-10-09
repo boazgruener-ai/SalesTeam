@@ -1001,7 +1001,10 @@ export async function renderTeamSettings() {
     try { st = await send({ type: "TEAM_SYNC_STATUS" }); } catch (err) { setText("team-member-sync", err.message, true); }
     // 1.2.3 (design 3.2): the role comes from the team folder (st.lead), the stored role only until it is read.
     const leads = st?.lead?.known ? st.lead : { lead: m.role === "admin" ? m.memberId : null, deputy: null };
-    const roleOf = (id) => (id === leads.lead ? "Team Lead" : id === leads.deputy ? "Deputy Team Lead" : "Member");
+    // 1.2.2.12 live test: right after joining, before the folder's role records were read, every colleague showed as
+    // "Member" - a team without a Team Lead. Until the roles are known a colleague's role is "…" (redrawn every 5 s).
+    const rolesKnown = Boolean(st?.lead?.known);
+    const roleOf = (id) => (id === leads.lead ? "Team Lead" : id === leads.deputy ? "Deputy Team Lead" : rolesKnown || id === m.memberId ? "Member" : "…");
     const role = roleOf(m.memberId);
     // Boaz 2026-10-08: the Team Lead does not leave the team they lead - they close it (D16), or hand over first.
     $("team-leave-btn").hidden = m.memberId === leads.lead;

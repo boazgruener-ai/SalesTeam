@@ -230,7 +230,12 @@ def deep_sorted(v):
     if isinstance(v, dict):
         return {k: deep_sorted(v[k]) for k in sorted(v)}
     if isinstance(v, list):
-        return [deep_sorted(x) for x in v]
+        rows = [deep_sorted(x) for x in v]
+        # Workbook rows (dicts with an id) are compared as a set: a member who joins later gets the rows laid out
+        # in the team's order, not in the order they were added on one PC - the table sorts them anyway.
+        if rows and all(isinstance(x, dict) and any(k in x for k in ("companyId", "contactId", "initiativeId")) for x in rows):
+            rows.sort(key=lambda x: json.dumps(x, sort_keys=True))
+        return rows
     return v
 
 
@@ -383,6 +388,30 @@ def main():
     check("status: a good round is remembered, no error", (st["lastOkAt"] > 0, st["errorSince"], st["lastError"]), (True, 0, None))
     check("join: Ben's setup counts as done (it came with the team)", bool(ben.local("onboardingCompletedAt")), True)
     check("status: Anna sees Ben as a member, not an admin", [m["admin"] for m in anna.status()["members"]], [False])
+
+    # 1.2.3 Export & Import step 1: the Team Lead's import (rows appended, importRun on every touched account) reaches
+    # Ben without deleting the account his web research found, and his team log shows it as ONE line.
+    wb = ben.local("targetAccountsWorkbook")
+    wb["companies"].append({"companyId": "W-1", "company": "Webfound AG", "source": "Web"})
+    ben.set_local({"targetAccountsWorkbook": wb})
+    r, folder = ben.sync(folder)
+    r, folder = anna.sync(folder)
+    run = {"id": "imp-9", "file": "research.xlsx", "at": 1, "by": "Anna", "summary": "1 new account, 1 empty field filled"}
+    wb = anna.local("targetAccountsWorkbook")
+    wb["companies"].append({"companyId": "C-9", "company": "Gamma AG", "source": "Workbook"})
+    wb["contacts"].append({"contactId": "P-9", "companyId": "C-9", "fullName": "Gil"})
+    ex = anna.local("targetAccountExtras") or {}
+    ex["gamma ag"] = {"importRun": run}
+    ex["acme ag"] = {**ex.get("acme ag", {}), "overrides": {"industry": "Banking"}, "importRun": run}
+    anna.set_local({"targetAccountsWorkbook": wb, "targetAccountExtras": ex})
+    r, folder = anna.sync(folder)
+    r, folder = ben.sync(folder)
+    names = sorted(c["company"] for c in ben.local("targetAccountsWorkbook")["companies"])
+    check("import: Ben gets the new account and keeps his web-found one", ("Gamma AG" in names, "Webfound AG" in names), (True, True))
+    check("import: Anna keeps Ben's web-found account too", "Webfound AG" in [c["company"] for c in anna.local("targetAccountsWorkbook")["companies"]], True)
+    lines = [x for x in ben.local("teamLog") or [] if x.get("kind") == "import"]
+    check("import: Ben's team log has one line for the import", [(x.get("ref"), sorted(x.get("accounts") or [])) for x in lines],
+          [("research.xlsx", ["acme ag", "gamma ag"])])
 
     # 9. Eight days later Anna compacts; a new member still gets the full picture.
     anna.e("NOW += 8 * 24 * 3600 * 1000; DB.meta.lastCompactDay = null; if (mem) mem.meta.lastCompactDay = null;")

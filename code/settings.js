@@ -47,6 +47,7 @@ import {
   getSetupResearch,
   saveSetupResearch,
 } from "./storage.js";
+import { hideImportForMembers, IMPORT_MENU_IDS } from "./import-gate.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sanitizeApiKey, SELLER_RESEARCH_ESTIMATE_USD } from "./agent-shared.js";
 import {
@@ -290,6 +291,8 @@ document.getElementById("nav-hubspot-export-btn").addEventListener("click", () =
 document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+// 1.2.3 (Export & Import design 6): Import and Restore are the Team Lead's in a team - not shown to members.
+hideImportForMembers([...IMPORT_MENU_IDS, "nav-restore-section", "restore-section"]);
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
 document.getElementById("nav-web-discovery-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-discovery", "Target Accounts Dashboard"));

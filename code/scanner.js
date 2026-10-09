@@ -70,6 +70,7 @@ import {
   getScanTargetCompanyIds,
   getAccountReadiness,
 } from "./storage.js";
+import { hideImportForMembers } from "./import-gate.js";
 import { MIN_READY_TO_SCAN } from "./readiness.js";
 import { readyEtaMinutes, measuredMinutesPerReady, READY_GOAL_KEY, localDay } from "./pipeline-plan.js";
 import { getPipelineAutomation } from "./pipeline-automation.js";
@@ -812,6 +813,8 @@ document.getElementById("nav-hubspot-export-btn").addEventListener("click", () =
 document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
 document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+// 1.2.3 (Export & Import design 6): Import and Restore are the Team Lead's in a team - not shown to members.
+hideImportForMembers();
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
 document.getElementById("nav-web-discovery-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-discovery", "Target Accounts Dashboard"));

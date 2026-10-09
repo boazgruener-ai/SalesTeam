@@ -2418,6 +2418,31 @@ def test_team_log_and_join(ctx):
     check("team log: kept to the newest TEAM_LOG_KEPT, old ones out",
           e("appendTeamLog([{at: 1}, {at: T6}], [{at: T6 + 9}], T6 + 10).map(function (x) { return x.at; }).join(',')"), "%d,%d" % (1759480000000, 1759480000009))
 
+    # 1.2.3 Export & Import step 1 (design 3.6, D6): one import = one team-log line, however many accounts it touched.
+    e("""
+      applyChanges(LS, [{t: formatStamp(T6 + 20, 0, 'anna'), e: 'account', id: 'wb:c-2', op: 'set', f: {companyId: 'c-2', company: 'Beta SA'}}]);
+      var RUN = {id: 'imp-1', file: 'research.xlsx', at: T6, by: 'Anna', summary: '1 new account, 2 empty fields filled'};
+      var ILOG = teamLogEntries([
+        {t: formatStamp(T6 + 21, 0, 'anna'), e: 'account', id: 'wb:c-2', op: 'set', f: {companyId: 'c-2', company: 'Beta SA'}},
+        {t: formatStamp(T6 + 22, 0, 'anna'), e: 'account', id: 'x:beta sa', op: 'set', f: {importRun: RUN}},
+        {t: formatStamp(T6 + 23, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {overrides: {industry: 'Banking'}, importRun: RUN}},
+        {t: formatStamp(T6 + 24, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {aliases: ['Acme']}},
+        {t: formatStamp(T6 + 25, 0, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: {status: 'Won'}},
+      ], LS, n6);
+      var ILINE = ILOG.filter(function (x) { return x.kind === 'import'; });
+    """)
+    check("import log: one line for the whole import, the other member's change apart",
+          e("JSON.stringify([ILOG.length, ILINE.length, ILINE[0].accounts.slice().sort()])"), '[2,1,["acme ag","beta sa"]]')
+    check("import log: in words", e("txt(ILINE[0])"), "imported research.xlsx: 1 new account, 2 empty fields filled")
+    check("import log: the same import arriving in a later round stays one line",
+          e("(function () { var later = JSON.parse(JSON.stringify(ILINE[0])); later.at += 50; later.accounts = ['gamma']; "
+            "var out = appendTeamLog(appendTeamLog([], ILINE, T6 + 30), [later], T6 + 90); "
+            "return JSON.stringify([out.length, out[0].accounts.length]); })()"), "[1,3]")
+    check("may import: no team / Team Lead / deputy / member",
+          e("JSON.stringify([mayImportFor(null, null), mayImportFor({memberId: 'a'}, {leadKnown: true, lead: 'a'}), "
+            "mayImportFor({memberId: 'd'}, {leadKnown: true, lead: 'a', deputy: 'd'}), mayImportFor({memberId: 'm'}, {leadKnown: true, lead: 'a'})])"),
+          "[true,true,true,false]")
+
     e("""
       var LOCAL = {
         targetAccounts: {'acme ag': {company: 'Acme AG'}, 'beta sa': {company: 'Beta SA', linkedinCompanyId: '77'}, 'gamma': {company: 'Gamma'}, 'gone': {company: 'Gone'}},

@@ -23,6 +23,10 @@ function ensureStyle() {
     #salesteam-confirm-dialog .sc-title { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: #1f2933; }
     #salesteam-confirm-dialog .sc-title[hidden] { display: none; }
     #salesteam-confirm-dialog .sc-message { white-space: pre-wrap; font-size: 13px; line-height: 1.5; margin: 0 0 16px; color: #1f2933; }
+    #salesteam-confirm-dialog .sc-details { margin: -6px 0 16px; font-size: 13px; color: #1f2933; }
+    #salesteam-confirm-dialog .sc-details[hidden] { display: none; }
+    #salesteam-confirm-dialog .sc-details summary { cursor: pointer; font-weight: 600; }
+    #salesteam-confirm-dialog .sc-details ul { margin: 6px 0 0; padding-left: 18px; max-height: 220px; overflow-y: auto; }
     #salesteam-confirm-dialog .sc-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
     #salesteam-confirm-dialog button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
     #salesteam-confirm-dialog .sc-ok { background: #0a66c2; color: #fff; }
@@ -50,14 +54,16 @@ function ensureDialog() {
   ensureStyle();
   dialogEl = document.createElement("dialog");
   dialogEl.id = "salesteam-confirm-dialog";
-  dialogEl.innerHTML = '<h3 class="sc-title" hidden></h3><p class="sc-message"></p><div class="sc-actions"><button type="button" class="sc-cancel"></button><button type="button" class="sc-ok"></button></div>';
+  dialogEl.innerHTML = '<h3 class="sc-title" hidden></h3><p class="sc-message"></p><details class="sc-details" hidden><summary></summary><ul></ul></details><div class="sc-actions"><button type="button" class="sc-cancel"></button><button type="button" class="sc-ok"></button></div>';
   document.body.appendChild(dialogEl);
   return dialogEl;
 }
 
 // `cancelLabel: null`: a message with one OK only (1.2.2.8, Boaz: "OK" next to "Close" said the same thing twice).
 // `title`: an optional heading - "Advanced tools → Re-score All Priorities" (1.2.2.8, Boaz: each tool its own pop-up).
-export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false, title = "" } = {}) {
+// `details`: an optional fold-out list under the message - { summary: "Details", lines: ["...", ...] } (1.2.3: the
+// import's check-first summary lists the new accounts and the differences for Decisions).
+export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false, title = "", details = null } = {}) {
   return new Promise((resolve) => {
     const dialog = ensureDialog();
     // 1.2.2.7 (Annick's Join button stayed disabled): a second askConfirm used to take over the dialog before the first
@@ -67,6 +73,15 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
     dialog.querySelector(".sc-title").textContent = title;
     dialog.querySelector(".sc-title").hidden = !title;
     dialog.querySelector(".sc-message").textContent = message;
+    const detailsEl = dialog.querySelector(".sc-details");
+    detailsEl.hidden = !(details && details.lines && details.lines.length);
+    detailsEl.open = false;
+    detailsEl.querySelector("summary").textContent = (details && details.summary) || "Details";
+    detailsEl.querySelector("ul").replaceChildren(...((details && details.lines) || []).map((line) => {
+      const li = document.createElement("li");
+      li.textContent = line;
+      return li;
+    }));
     const okBtn = dialog.querySelector(".sc-ok");
     const cancelBtn = dialog.querySelector(".sc-cancel");
     okBtn.textContent = okLabel;
