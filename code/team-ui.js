@@ -592,12 +592,11 @@ function showTeams(teams, via, foundNames = []) {
     // Boaz (1.2.2.8 test): name the team, so the member knows what to ask for; nothing meant for the Team Lead.
     const names = foundNames.map((n) => `"${n}"`);
     setText("team-join-status", names.length === 1
-      ? `Found the team ${names[0]}, but there is no invitation for you in it yet. Ask your Team Lead to invite you to ${names[0]}, then click Look again.`
+      ? `Found the team ${names[0]}, but there is no invitation for you in it yet. Ask your Team Lead to invite you to ${names[0]}.`
       : names.length
-        ? `Found the teams ${names.slice(0, -1).join(", ")} and ${names.at(-1)}, but none has an invitation for you yet. Ask your Team Lead to invite you, then click Look again.`
+        ? `Found the teams ${names.slice(0, -1).join(", ")} and ${names.at(-1)}, but none has an invitation for you yet. Ask your Team Lead to invite you.`
         : "No team found in your OneDrive yet. It appears once your Team Lead has shared its folder with you and you have added it (see below).", true);
     $("team-join-invites").replaceChildren();
-    $("team-find-btn").textContent = "Look again";
   }
   // Boaz (1.2.2.8 test): one way on - with the team listed, Find my team… and its explanation step back (Look again
   // stays, at the bottom). One team: its name is the heading, no list to choose from.
@@ -606,14 +605,38 @@ function showTeams(teams, via, foundNames = []) {
   $("team-join-team-label").hidden = one;
   $("team-join-title").textContent = one ? `Join the team "${teams[0].team.name}"` : "Join a team";
   $("team-find-row").hidden = teams.length > 0;
-  $("team-join-intro").hidden = teams.length > 0;
+  // Boaz (1.2.2.8 test): no "Look again" - after the first search (Chrome's permission needs that click) SalesTeam
+  // keeps looking by itself while nothing joinable is found.
+  $("team-find-btn").hidden = true;
+  const waiting = !teams.some((t) => t.mine.length);
+  if (waiting) $("team-join-status").textContent += " SalesTeam looks again by itself every 30 seconds.";
+  scheduleAutoLook(waiting && via === "onedrive");
+  $("team-join-intro").hidden = true; // it explains Find my team…, which has been clicked
   $("team-join-row").hidden = !teams.length;
   // The ways round a team not found (help, Look again, another folder) only when no invitation in this name is listed.
   // A team found without an invitation: the folder is there, so the help on getting it there says nothing.
   $("team-join-more").hidden = teams.some((t) => t.mine.length) || (!teams.length && foundNames.length > 0);
 }
 
-// Find my team… / Look again: the OneDrive folder (asked for once), then every team in it with an invitation open.
+let autoLookTimer = null;
+function scheduleAutoLook(on) {
+  clearTimeout(autoLookTimer);
+  autoLookTimer = on ? setTimeout(autoLook, 30000) : null;
+}
+async function autoLook() {
+  if ($("team-join").hidden || flowBusy) return;
+  const oneDrive = await oneDriveFolderIfAllowed();
+  if (!oneDrive) return;
+  try {
+    const found = await findTeams(oneDrive);
+    const teams = await withInvitations(found);
+    invitedCache = { at: Date.now(), teams };
+    if ($("team-join").hidden) return;
+    showTeams(teams, "onedrive", found.map((t) => t.team.name));
+  } catch { scheduleAutoLook(true); }
+}
+
+// Find my team…: the OneDrive folder (asked for once), then every team in it with an invitation open.
 async function onFindTeams({ repick = false } = {}) {
   if (flowBusy) return;
   const status = "team-join-status";
@@ -638,29 +661,6 @@ async function onFindTeams({ repick = false } = {}) {
   } catch (err) {
     setText(status, `Could not look in "${oneDrive.name}": ${err.message}`, true);
   }
-}
-
-// Fallback (10a.3): a team folder that is not directly in OneDrive, chosen by hand.
-async function onPickJoinFolder() {
-  if (flowBusy) return;
-  const status = "team-join-status";
-  let handle = null;
-  try {
-    handle = await pickTeamFolder({ save: false });
-  } catch (err) {
-    setText(status, `Could not open the folder: ${err.message}`, true);
-    return;
-  }
-  if (!handle) return;
-  const first = await checkPickedFolder("join", handle);
-  if (!first.ok) { setText(status, first.text, true); return; }
-  const found = await findTeams(handle);
-  const teams = await withInvitations(found);
-  if (!teams.length) {
-    setText(status, `There is no invitation for you in the team "${found[0]?.team.name || handle.name}" yet. Ask your Team Lead to invite you.`, true);
-    return;
-  }
-  showTeams(teams, null);
 }
 
 // Boaz 2026-10-08: one button - the backup and the join follow by themselves, with messages.
@@ -1141,6 +1141,7 @@ export function initTeamSettings() {
   $("team-show-join-btn").addEventListener("click", () => {
     $("team-join-choose").hidden = true;
     $("team-find-row").hidden = false;
+    $("team-find-btn").hidden = false;
     $("team-join-intro").hidden = false;
     $("team-join-row").hidden = true;
     $("team-join-more").hidden = true;
@@ -1162,8 +1163,6 @@ export function initTeamSettings() {
   $("team-create-onedrive-btn").addEventListener("click", onChooseOneDrive);
   $("team-create-team").addEventListener("input", () => paintCreateOneDrive().catch(() => {}));
   $("team-find-btn").addEventListener("click", () => onFindTeams());
-  $("team-look-again-btn").addEventListener("click", () => onFindTeams());
-  $("team-join-pick-btn").addEventListener("click", onPickJoinFolder);
   $("team-join-team").addEventListener("change", (e) => showInvitesOf(Number(e.target.value)));
   $("team-join-btn").addEventListener("click", onJoin);
   $("team-add-member-btn").addEventListener("click", onAddMember);

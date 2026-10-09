@@ -150,15 +150,15 @@ export async function oneDriveFolderIfAllowed() {
   return (await teamFolderPermission(handle)) === "granted" ? handle : null;
 }
 
-// Every team in the OneDrive folder: the folder itself if it holds a team, and each folder one level down that does
+// Every team in the OneDrive folder: the folder itself if it holds a team, and each folder up to two levels down that does
 // (a shared folder added with "Add shortcut to My files" appears there). Closed teams are left out.
 // -> [{ handle, folderName, team, invites: [invitation, …] }]
 export async function findTeams(oneDrive) {
   const out = [];
   const look = async (handle) => {
     const team = await readTeamJson(handle, [], "team.json");
-    if (team.status !== "ok" || !team.data?.teamId) return;
-    if ((await readTeamJson(handle, [], "closed.json")).status === "ok") return;
+    if (team.status !== "ok" || !team.data?.teamId) return false;
+    if ((await readTeamJson(handle, [], "closed.json")).status === "ok") return true;
     const invites = [];
     for (const n of await listTeamNames(handle, ["invites"], "file").catch(() => [])) {
       const r = await readTeamJson(handle, ["invites"], n);
@@ -170,12 +170,24 @@ export async function findTeams(oneDrive) {
       if (p.status === "ok") creatorName = p.data.name || null;
     }
     out.push({ handle, folderName: handle.name, team: team.data, creatorName, invites });
+    return true;
   };
   await look(oneDrive);
   if (out.length) return out; // the OneDrive folder picked was a team folder itself
-  for await (const [, handle] of oneDrive.entries()) {
-    if (handle.kind !== "directory" || handle.name.startsWith(".")) continue;
-    try { await look(handle); } catch { /* a folder OneDrive cannot open right now - skipped */ }
+  // Two levels down (Boaz, 1.2.2.8 test: no "Choose a folder instead…" - a team folder kept inside another folder is
+  // found too). A team's own folder is not searched further.
+  const subfolders = async (dir) => {
+    const list = [];
+    for await (const [, h] of dir.entries()) if (h.kind === "directory" && !h.name.startsWith(".")) list.push(h);
+    return list;
+  };
+  for (const handle of await subfolders(oneDrive)) {
+    try {
+      if (await look(handle)) continue;
+      for (const inner of await subfolders(handle)) {
+        try { await look(inner); } catch { /* skipped */ }
+      }
+    } catch { /* a folder OneDrive cannot open right now - skipped */ }
   }
   return out.sort((a, b) => String(a.team.name).localeCompare(String(b.team.name)));
 }
