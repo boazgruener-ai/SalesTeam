@@ -443,6 +443,13 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
   invitation for you in this team. Ask the Team Lead to add you (Settings > Team > Add member…)."
 - The Team Lead gets a top-bar notice when an invitation is accepted: "Annick Zutter joined the team - add her to
   groups?".
+- **As built (1.2.2.8, Boaz's live tests 2026-10-08/09):** the button is **Join Team** (nobody can join as someone
+  else - the name comes from the invitation, so the button does not repeat it). With one team, its name is the heading
+  ("Join the team "TimeToAct2"") and no list is shown. Invitation names match on letters and digits only ("member2" =
+  "Member 2"). An invitation waiting for this person is a priority message in the top bar on every page ("Boaz has
+  invited you - **Join…**", greyed out while the Join screen is open); Join… opens the Join screen with it ticked.
+  A team found without an invitation for this person is named: "You have no invitation to the team "X" yet. Ask
+  your Team Lead to invite you." - and SalesTeam then looks again by itself every 30 s.
 
 ### 10a.3 Choosing the team from a list instead of a folder (D18)
 - Chrome lets SalesTeam use a folder only after the person picked it once. So the first time, Join and Create ask
@@ -458,6 +465,19 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
   OneDrive.
 - The team folder is then reached through the OneDrive folder; reconnecting after a Chrome restart asks for the
   OneDrive folder once, as it asks for the team folder today.
+- **REVERSED in the 1.2.2.8 test (Boaz, 2026-10-09): the team's folder is chosen directly, not the OneDrive folder.**
+  Chrome refuses the OneDrive folder itself ("contains system files") when Windows keeps Desktop / Documents in it -
+  the normal setup on a company PC. So:
+  - **Create:** "Choose the team folder…" - in Chrome's folder window, OneDrive on the left, **New folder**, the
+    team's name, Select Folder. The folder's name fills in the team name. A folder that already holds files is
+    refused ("Choose the team folder again and click New folder to make an empty one"). SalesTeam does not create
+    `SalesTeam - <team name>`.
+  - **Join:** three numbered steps, each saying where it happens - in the e-mail (Open), on the OneDrive website (Add
+    shortcut to My files), back in SalesTeam ("Choose your team's folder…"). SalesTeam then finds team folders in the
+    chosen folder and up to two levels down. No "Look again" and no "Choose a folder instead…": while nothing joinable
+    is found it looks again by itself every 30 s.
+  - The result pop-ups have one OK and name only the next step (share the team folder: File Explorer > right-click >
+    Share, "Can edit"; invite with Add member…).
 
 ### 10a.4 Not in a team yet: Join first, Create for the Team Lead only (D19 - Boaz, 2026-10-08)
 - Only a Team Lead creates a team; members never do. A PC that is not in a team cannot know which one its user will
@@ -502,11 +522,14 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 | 0 | **Data and rules.** `team-groups.js` (pure: `teamLeadOf`, `groupFacts`, `matchesFilter`, `groupsOf`, `membersOf`, `mayAccess`, `voidAssignments`, `groupCounts`) and `geo-regions.js`, all in `test_pure_modules.py` (shuffle tests for the lead chain, null facts, Other, pins). `teamGroups` / `teamGroupPins` keys; Team-Lead-only rule in `applyChange` (two passes); `isTeamLead()` everywhere (the six direct reads); summary gains `g`, `myGroups`, `lead`. **Rename Team Admin → Team Lead** in all user text (~40 strings, help ids kept). Measure the group computation on the live data. | 1.2.2.5; fixes 1.2.2.6 (clear "✓ Saved", creator from team.json, Team Lead has no Leave the team, Sync now removed) |
 | 1 | **Settings > Team.** Members ⋮ (Make Team Lead…, Groups…, Release all, Remove…); Groups section, editor with preview, delete, counts; hand-over flow; Reassign candidates fixed (no former members, only those with access). `test_team_sync.py`: hand-over between two members, a non-lead's group record ignored on every PC. **Close the team… (D16).** | 1.2.2.7 |
 | 1b | **Invitations and the team list (D17, D18).** Add member… (name, e-mail) writes an invitation; the members table shows "Invited" with ⋮ Cancel invitation; Join and Create start from "Choose your OneDrive folder" once; Join lists only teams with an invitation for this person, and refuses without one; Create makes the team folder itself. `test_team_sync.py`: an invited member joins with the invitation's name; joining without an invitation is refused; an invitation cannot be used twice. Not-in-a-team screen: Join first, Create as Team Lead only, hidden when invited (D19). | 1.2.2.8 |
-| 2 | **Visibility.** `canSee` in the companies and contacts tables, Leads Dashboard, side panel, account/contact page, Decisions, exports, LinkedIn badge. | 1.2.2.9 |
-| 3 | **Picker, column, header, notices, log.** Shared picker on the three pages, deep links from the overview, Groups column, header line; notice detectors; team-log lines. | 1.2.2.10 |
-| 4 | **Group changes.** Add to / Remove from group… (row, page, bulk); pins from automatic work and `group_move` decisions; voided assignments and the Team Lead's explicit releases with the before-save count. `test_team_sync.py`: research moves an assigned account → pinned → approved → assignee loses it; unassigned moves at once. | 1.2.2.11 |
-| 5 | **Pipeline and Discovery.** Access in `mayWork`, candidates with access, Team Lead fills gaps, Discovery Team Lead only. `test_team_sync.py`: shares disjoint and covering per group; a group with nobody online goes to the Team Lead. | 1.2.2.12 |
+| 2 | **Visibility.** `canSee` in the companies and contacts tables, Leads Dashboard, side panel, account/contact page, Decisions, exports, LinkedIn badge. | 1.2.2.10 |
+| 3 | **Picker, column, header, notices, log.** Shared picker on the three pages, deep links from the overview, Groups column, header line; notice detectors; team-log lines. | 1.2.2.11 |
+| 4 | **Group changes.** Add to / Remove from group… (row, page, bulk); pins from automatic work and `group_move` decisions; voided assignments and the Team Lead's explicit releases with the before-save count. `test_team_sync.py`: research moves an assigned account → pinned → approved → assignee loses it; unassigned moves at once. | 1.2.2.12 |
+| 5 | **Pipeline and Discovery.** Access in `mayWork`, candidates with access, Team Lead fills gaps, Discovery Team Lead only. `test_team_sync.py`: shares disjoint and covering per group; a group with nobody online goes to the Team Lead. | 1.2.2.13 |
 | 6 | Help ("Account groups", "Working as a team", Team Lead), PRD section + gen_docs mirror, one 1.2.3 release-notes entry covering both items, listing/website check → **1.2.3** rebuilt. | 1.2.3 |
+
+1.2.2.9 (2026-10-09) is not a step of this table: a PC that lost its saved shadow no longer re-sends every row
+(team-sync.js waits for the full re-read, then seeds the shadow from the merged state). Steps 2-5 moved up one number.
 
 Each step: `check_js_syntax.py`, `test_pure_modules.py`, `test_team_sync.py`, then Reload on the live install
 with numbered test steps for two Chrome profiles (Team Lead and Member).
@@ -617,6 +640,8 @@ with numbered test steps for two Chrome profiles (Team Lead and Member).
   joining picks the team from a dropdown, creating makes the team folder itself (10a.3). Agree, including
   SalesTeam creating the team folder on Create?
   **Answer 2026-10-08: agreed, including SalesTeam creating the team folder.**
+  **Reversed 2026-10-09 (1.2.2.8 test): the team folder is chosen directly - Chrome refuses the OneDrive folder on PCs
+  where Windows keeps Desktop / Documents in it (10a.3).**
 - **D19 — Create a team is for the Team Lead (Boaz, 2026-10-08).** Not-in-a-team screen leads with Join; Create is a
   smaller "as Team Lead" line, hidden when an invitation for this person is waiting (10a.4).
   **Answer 2026-10-08: agreed.**
