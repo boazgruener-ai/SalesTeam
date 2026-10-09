@@ -494,7 +494,7 @@ async function openEditor(groupId, { copyFrom = null } = {}) {
       await askConfirm(
         "Advanced mode is on. Members see only their groups' accounts; you see all of them." +
         (inOther.length ? `\n\n${namesOf(inOther, ctx).join(", ")} ${inOther.length === 1 ? "is" : "are"} in Other until you add them to a group.` : ""),
-        { okLabel: "OK", cancelLabel: "Close" });
+        { okLabel: "OK", cancelLabel: null });
     }
   });
 

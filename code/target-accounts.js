@@ -5979,7 +5979,7 @@ document.getElementById("account-web-research-btn").addEventListener("click", as
     `Search the public web for "${company.company}"?\n\nThe search runs on Anthropic's servers with your own API key: several web searches plus the AI's reading of them, which costs a small amount. It can take up to a minute (at most 4 minutes) and you can press Stop at any time to keep what was found so far. No LinkedIn activity is used. The result is saved on this account with its sources, and any initiatives found are added to its Initiatives list.`,
     { okLabel: "Search the web", cancelLabel: "Cancel" }))) return;
   if (webResearchRunning.size >= WEB_RESEARCH_MAX_PARALLEL) {
-    await askConfirm(`${webResearchRunning.size} researches are already running. Please wait for one to finish before starting another.`, { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(`${webResearchRunning.size} researches are already running. Please wait for one to finish before starting another.`, { okLabel: "OK", cancelLabel: null });
     return;
   }
   const controller = new AbortController();
@@ -6213,7 +6213,7 @@ document.getElementById("bulk-research-start-btn").addEventListener("click", asy
     { okLabel: "Start", cancelLabel: "Cancel" }))) return;
   const reply = await chrome.runtime.sendMessage({ type: "BULK_WEB_RESEARCH_START", items, budget, autofill: document.getElementById("bulk-autofill").checked }).catch((err) => ({ ok: false, error: err.message }));
   if (!reply?.ok) {
-    await askConfirm(reply?.error || "The web research could not be started.", { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(reply?.error || "The web research could not be started.", { okLabel: "OK", cancelLabel: null });
     return;
   }
   document.getElementById("bulk-research-dialog").close();
@@ -6976,7 +6976,7 @@ async function exportTableCsv(kind) {
   let rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
   const noun = (n) => (accounts ? `account${n === 1 ? "" : "s"}` : `contact${n === 1 ? "" : "s"}`);
   if (all === 0) {
-    await askConfirm(`There are no ${noun(0)} to export yet.`, { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(`There are no ${noun(0)} to export yet.`, { okLabel: "OK", cancelLabel: null });
     return;
   }
   // A filter is on (Boaz, 2026-10-02: a forgotten saved filter made the file look half empty): always ask which.
@@ -7003,7 +7003,7 @@ async function exportTableCsv(kind) {
   const filename = `SalesTeam-${accounts ? "accounts" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
   downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
   appendActivityLog({ actor: "user", action: "csv_exported", label: `Exported ${rows.length} ${noun(rows.length)} to ${filename}` });
-  await askConfirm(`Saved ${rows.length} ${noun(rows.length)} to your Downloads folder as ${filename}. It opens in Excel.`, { okLabel: "OK", cancelLabel: "Close" });
+  await askConfirm(`Saved ${rows.length} ${noun(rows.length)} to your Downloads folder as ${filename}. It opens in Excel.`, { okLabel: "OK", cancelLabel: null });
 }
 
 document.getElementById("export-accounts-csv-page-btn").addEventListener("click", () => exportTableCsv("accounts"));
@@ -7056,7 +7056,7 @@ document.getElementById("hubspot-import-page-btn").addEventListener("click", () 
 document.getElementById("hubspot-export-btn").addEventListener("click", async () => {
   const { companies, contacts } = hubspotExportSelection();
   if (companies.length === 0) {
-    await askConfirm("There are no accounts to export for this choice.", { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm("There are no accounts to export for this choice.", { okLabel: "OK", cancelLabel: null });
     return;
   }
   const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
@@ -7068,7 +7068,7 @@ document.getElementById("hubspot-export-btn").addEventListener("click", async ()
   downloadBlob(new Blob([files.contactsCsv], { type: "text/csv;charset=utf-8" }), `SalesTeam-HubSpot-contacts-${stamp}.csv`);
   document.getElementById("hubspot-export-dialog").close();
   appendActivityLog({ actor: "user", action: "hubspot_exported", label: `Exported ${files.companyCount} companies and ${files.contactCount} contacts to HubSpot files` });
-  await askConfirm(`Saved two files to your Downloads folder:\n\n${files.companyCount} companies: SalesTeam-HubSpot-companies-${stamp}.csv\n${files.contactCount} contacts: SalesTeam-HubSpot-contacts-${stamp}.csv\n\nIn HubSpot, import the companies file first, then the contacts file.`, { okLabel: "OK", cancelLabel: "Close" });
+  await askConfirm(`Saved two files to your Downloads folder:\n\n${files.companyCount} companies: SalesTeam-HubSpot-companies-${stamp}.csv\n${files.contactCount} contacts: SalesTeam-HubSpot-contacts-${stamp}.csv\n\nIn HubSpot, import the companies file first, then the contacts file.`, { okLabel: "OK", cancelLabel: null });
 });
 
 document.getElementById("hubspot-import-choose-btn").addEventListener("click", () => document.getElementById("hubspot-import-file-input").click());

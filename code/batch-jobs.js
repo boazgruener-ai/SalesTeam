@@ -84,7 +84,7 @@ async function waitForPipelineToMakeWay(newLabel) {
 //
 // The SAME job already running (Boaz, 2026-10-06: a second click on Scan All Topics, unsure whether the first one had
 // started, got "only one batch process at a time ... before you start: Scanner" - the same name twice): with
-// `sameJob: { message, stop }` the user is asked instead - Close lets it continue, OK stops it and starts again.
+// `sameJob: { message, stop }` the user is asked instead - "Let it continue" or "Stop it and start again".
 const RESTART_WAIT_MS = 120000;
 export async function guardBatchStart(newLabel, askConfirm, { sameJob } = {}) {
   let running = await getRunningBatch();
@@ -94,7 +94,7 @@ export async function guardBatchStart(newLabel, askConfirm, { sameJob } = {}) {
   else if (!running) chrome.runtime.sendMessage({ type: "PIPELINE_PAUSE", forLabel: newLabel }).catch(() => {});
   if (!running) return true;
   if (running.label === newLabel && sameJob) {
-    if (!(await askConfirm(sameJob.message, { okLabel: "OK", cancelLabel: "Close" }))) return false;
+    if (!(await askConfirm(sameJob.message, { okLabel: "Stop it and start again", cancelLabel: "Let it continue" }))) return false;
     await sameJob.stop();
     setStatusMessage("wait", { text: "Stopping the running job… the new one starts right after." });
     try {
@@ -107,10 +107,10 @@ export async function guardBatchStart(newLabel, askConfirm, { sameJob } = {}) {
     } finally {
       clearStatusMessage("wait");
     }
-    await askConfirm(`${running.label} has not stopped yet. Please try again in a moment.`, { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(`${running.label} has not stopped yet. Please try again in a moment.`, { okLabel: "OK", cancelLabel: null });
     return false;
   }
-  await askConfirm(busyMessage(running, newLabel), { okLabel: "OK", cancelLabel: "Close" });
+  await askConfirm(busyMessage(running, newLabel), { okLabel: "OK", cancelLabel: null });
   return false;
 }
 

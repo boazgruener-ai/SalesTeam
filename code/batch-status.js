@@ -98,7 +98,7 @@ async function render(state) {
     const fresh = (await chrome.storage.local.get(BULK_STATE_KEY))[BULK_STATE_KEY];
     if (fresh && !fresh.acknowledged) {
       await chrome.storage.local.set({ [BULK_STATE_KEY]: { ...fresh, acknowledged: true } });
-      await askConfirm(resultText(fresh), { okLabel: "OK", cancelLabel: "Close" });
+      await askConfirm(resultText(fresh), { okLabel: "OK", cancelLabel: null });
     }
     announcing = false;
   }
@@ -152,7 +152,7 @@ async function renderLane(state) {
       await chrome.storage.local.set({ [WEB_LANE_STATE_KEY]: { ...fresh, acknowledged: true } });
       const why = stopReasonText(fresh);
       const text = ["Web research finished.", measureShortText(fresh), why, "The details are in the Activity Log."].filter(Boolean).join("\n\n");
-      await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
+      await askConfirm(text, { okLabel: "OK", cancelLabel: null });
     }
     laneAnnouncing = false;
   }
@@ -198,7 +198,7 @@ async function renderDiscovery(state) {
       const why = fresh.stoppedReason === "user" ? "" : stopReasonText(fresh);
       const next = await discoveryNextSteps().catch(() => "");
       const text = ["Finding new accounts finished.", discoveryShortText(fresh), why, next || "The details are in the Activity Log."].filter(Boolean).join("\n\n");
-      await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
+      await askConfirm(text, { okLabel: "OK", cancelLabel: null });
     }
     discoveryAnnouncing = false;
   }

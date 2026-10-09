@@ -1839,7 +1839,7 @@ async function confirmReadyGate() {
     : " Automatic preparation can get them ready: Settings > Automation.";
   if (ready === 0) {
     const have = total === 0 ? "You have no target accounts yet." : "None of your accounts is Ready yet.";
-    await askConfirm(`${have} The Scanner needs at least one Ready account to start.${more}`, { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(`${have} The Scanner needs at least one Ready account to start.${more}`, { okLabel: "OK", cancelLabel: null });
     return false;
   }
   // 1.2.1 step 4 (design 7.3): the progress, and - while the pipeline is preparing them - the time left, from
@@ -1880,7 +1880,7 @@ scanBtn.addEventListener("click", async () => {
   if (!(await confirmReadyGate())) return;
   const sameJob = {
     message: "You already have a scanner running (searching LinkedIn for posts and jobs).\n\n" +
-      "Press Close to let it continue, or press OK to stop it and start a new scan.",
+      "Let it continue, or stop it and start a new scan?",
     stop: () => chrome.storage.local.set({ scanAbortRequested: true }),
   };
   showScanStarting(true);

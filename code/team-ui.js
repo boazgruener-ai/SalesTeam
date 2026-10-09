@@ -728,7 +728,7 @@ async function onLeave() {
     if (!r.ok) throw new Error(r.error || "could not leave");
     setText("team-member-status", "");
     if (mine && !r.signedOff) {
-      await askConfirm("You have left the team. The team folder could not be reached, so your assigned accounts are still marked as yours for your colleagues - the Team Lead can release them (Settings > Team > Release all).", { okLabel: "OK", cancelLabel: "Close" });
+      await askConfirm("You have left the team. The team folder could not be reached, so your assigned accounts are still marked as yours for your colleagues - the Team Lead can release them (Settings > Team > Release all).", { okLabel: "OK", cancelLabel: null });
     }
   } catch (err) {
     setText("team-member-status", `Could not leave: ${err.message}`, true);
@@ -759,7 +759,7 @@ async function onClose() {
     setText("team-member-status", "");
     await askConfirm(`The team "${m.teamName}" is closed.\n\nThis browser works on its own again, with the data as it is now. ` +
       (others.length ? "Your colleagues' SalesTeam stops sharing the next time it reads the team folder, and tells them. " : "") +
-      "You can create or join another team at any time.", { okLabel: "OK", cancelLabel: "Close" });
+      "You can create or join another team at any time.", { okLabel: "OK", cancelLabel: null });
   } catch (err) {
     setText("team-member-status", `Not closed: ${err.message}`, true);
   } finally {
@@ -1018,7 +1018,7 @@ export async function renderTeamSettings() {
       const waiting = (st.outbox || 0) + (st.inflight ? st.inflight.records : 0);
       const lines = [
         waiting ? `${waiting} change${waiting === 1 ? "" : "s"} of yours wait to be written to the team folder.` : "All your changes are in the team folder.",
-        `Last written: ${timeText(st.lastFlushAt)} · colleagues' changes last read: ${timeText(st.lastReadAt)}.`,
+        `Last written: ${st.lastFlushAt ? timeText(st.lastFlushAt) : "no changes yet"} · colleagues' changes last read: ${timeText(st.lastReadAt)}.`,
       ];
       if (st.lastError) lines.push(`Last problem: ${st.lastError}${st.errorSince ? ` (since ${timeText(st.errorSince)})` : ""}. SalesTeam tries again by itself.`);
       setText("team-member-sync", lines.join("\n"), Boolean(st.lastError));

@@ -28,6 +28,7 @@ function ensureStyle() {
     #salesteam-confirm-dialog .sc-ok { background: #0a66c2; color: #fff; }
     #salesteam-confirm-dialog .sc-ok.sc-danger { background: #b3261e; }
     #salesteam-confirm-dialog .sc-cancel { background: #f0f0f0; color: #1f2933; }
+    #salesteam-confirm-dialog .sc-cancel[hidden] { display: none; }
     #salesteam-notice-dialog { border: none; border-radius: 10px; padding: 20px 24px; width: 480px; max-width: 90vw;
       box-shadow: 0 8px 30px rgba(0,0,0,.25); font-family: inherit; }
     #salesteam-notice-dialog::backdrop { background: rgba(0,0,0,.5); }
@@ -54,6 +55,7 @@ function ensureDialog() {
   return dialogEl;
 }
 
+// `cancelLabel: null`: a message with one OK only (1.2.2.8, Boaz: "OK" next to "Close" said the same thing twice).
 // `title`: an optional heading - "Advanced tools → Re-score All Priorities" (1.2.2.8, Boaz: each tool its own pop-up).
 export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false, title = "" } = {}) {
   return new Promise((resolve) => {
@@ -68,7 +70,8 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
     const okBtn = dialog.querySelector(".sc-ok");
     const cancelBtn = dialog.querySelector(".sc-cancel");
     okBtn.textContent = okLabel;
-    cancelBtn.textContent = cancelLabel;
+    cancelBtn.textContent = cancelLabel || "";
+    cancelBtn.hidden = cancelLabel === null;
     okBtn.classList.toggle("sc-danger", danger);
     let settled = false;
     const finish = (value) => {
@@ -86,7 +89,7 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
     dialog.onclose = () => finish(false); // Escape
     pendingFinish = finish;
     dialog.showModal();
-    cancelBtn.focus();
+    (cancelLabel === null ? okBtn : cancelBtn).focus();
   });
 }
 

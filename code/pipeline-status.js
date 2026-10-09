@@ -115,7 +115,7 @@ async function render(state) {
     const fresh = (await chrome.storage.local.get(PIPELINE_STATE_KEY))[PIPELINE_STATE_KEY];
     if (fresh && !fresh.acknowledged) {
       await chrome.storage.local.set({ [PIPELINE_STATE_KEY]: { ...fresh, acknowledged: true } });
-      await askConfirm(pipelineResultText(fresh), { okLabel: "OK", cancelLabel: "Close" });
+      await askConfirm(pipelineResultText(fresh), { okLabel: "OK", cancelLabel: null });
     }
     announcing = false;
   }
@@ -142,7 +142,7 @@ export async function kickAndExplain(source) {
     ? "Automatic preparation is on and has started. It works in a small LinkedIn window of its own; the bar at " +
       "the top of the page shows which account it is on, with Pause."
     : `Automatic preparation is on, but it cannot start right now.\n\n${await pipelineStatusLine()}`;
-  await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
+  await askConfirm(text, { okLabel: "OK", cancelLabel: null });
 }
 
 // U5: existing users are asked once, on the first SalesTeam page they open after updating. New users are
