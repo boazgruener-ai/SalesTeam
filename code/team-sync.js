@@ -130,14 +130,19 @@ async function ensureLoaded() {
   // PC, 8 Oct): only my own files were re-read; the colleagues' cursors stayed, so their earlier records - among them
   // the Team Lead hand-backs - were gone from the state for good and this PC named a former member Team Lead.
   // REREAD_VERSION: the same full re-read once on every PC, to repair a state that lost records that way.
-  if (!got.state || (mem.meta.rereadV || 0) < REREAD_VERSION) {
+  // Lost SHADOW (1.2.2.8, Boaz's PC 8 Oct: 7921 rows re-sent as new changes, able to overwrite colleagues' newer edits):
+  // with nothing to compare against, every local row looks new. So nothing is sent until the full re-read is done;
+  // then the shadow is seeded from the merged state (seedShadow) and only rows the team has never seen go out.
+  if (!got.shadow) mem.meta.shadowLost = true;
+  if (!got.state || !got.shadow || (mem.meta.rereadV || 0) < REREAD_VERSION) {
     mem.meta.selfCursor = 0;
     mem.meta.cursors = {};
     mem.meta.basesApplied = [];
     mem.meta.rereadV = REREAD_VERSION;
     // Re-reading the team's history from the start: what it holds already happened - no "made you Team Lead",
     // "reassigned your account" or "joined" from it (1.2.2.8 test: a backlog of years-old role changes in the top bar).
-    mem.replaying = true;
+    // Saved in meta: a worker restarted half-way through the re-read is still replaying.
+    mem.meta.replaying = true;
   }
   mem.clock = createClock(membership?.memberId || "?", mem.meta.clockLast);
   return mem;
@@ -194,7 +199,7 @@ function diffKeyInto(key, value, out, rewrite) {
 
 // Inside the queue. Returns the rows that must be written back (clobbered).
 async function diffKeys(keys, values = null) {
-  if (!keys.length) return new Set();
+  if (!keys.length || mem.meta.shadowLost) return new Set(); // seedShadow diffs every key once the re-read is done
   const t0 = performance.now();
   if (!values) values = await chrome.storage.local.get(keys);
   const records = [];
@@ -341,7 +346,7 @@ async function applyRemote(records) {
   await save(["state"]);
   if (affected.size) await writeBack(affected);
   await noteRoleChange(leadsBefore, records);
-  if (takenFrom.size && !mem.replaying) {
+  if (takenFrom.size && !mem.meta.replaying) {
     const now = Date.now();
     const added = [];
     for (const [id, author] of takenFrom) {
@@ -361,7 +366,7 @@ async function applyRemote(records) {
 // 1.2.3 step 1 (design 3.3, 3.4): "Boaz made you Team Lead" / "… deputy" / "ended your deputy role" - in the top bar
 // until OK, on the PC whose role changed. Compared before and after a batch, so a record read twice says nothing.
 async function noteRoleChange(before, records) {
-  if (mem.replaying) return;
+  if (mem.meta.replaying) return;
   const me = membership?.memberId;
   const after = leadNow();
   if (!me || !before.known || !after.known) return;
@@ -382,7 +387,7 @@ async function noteRoleChange(before, records) {
 // 1.2.3 step 1b (10a.2): "Annick Zutter joined the team" - on the PCs with the Team Lead's rights, when an invitation
 // this PC knew as open is read back as accepted.
 async function noteInvitesAccepted(before) {
-  if (mem.replaying || !hasLeadRights()) return;
+  if (mem.meta.replaying || !hasLeadRights()) return;
   const texts = [];
   for (const [id, inv] of Object.entries(mem.meta.invites || {})) {
     if (inviteState(before[id]) !== "open" || inviteState(inv) !== "accepted") continue;
@@ -565,8 +570,50 @@ async function readRound(root, me) {
     await recordTeamLog(logged, priors);
     measure({ kind: "read", files: update.files, bytes: update.bytes, records: records.length, rows, ms: Math.round(performance.now() - t0) });
     await save([]);
-    if (update.files < MAX_FILES_PER_ROUND) mem.replaying = false; // caught up: from here on, what is read is news
+    if (update.files < MAX_FILES_PER_ROUND) {
+      mem.meta.replaying = false; // caught up: from here on, what is read is news
+      if (mem.meta.shadowLost) await seedShadow();
+    }
   });
+}
+
+// Inside the queue, once a lost shadow's full re-read is done. Every row the team knows gets the team's value on this
+// PC (rows the team deleted are removed) and the shadow is seeded from exactly those; then one diff sends only the
+// local rows the team has never seen (edits whose outbox was lost with the shadow). The team's values win: with no
+// shadow there is no telling which of a differing pair is newer, and the team's may be a colleague's later edit.
+async function seedShadow() {
+  let rewrite = new Set();
+  await withAccountWriteLock(async () => {
+    const values = await chrome.storage.local.get(TEAM_SHARED_KEYS);
+    const updates = new Map(TEAM_SHARED_KEYS.map((key) => [key, new Map()]));
+    for (const [e, byId] of Object.entries(mem.state.entities || {})) {
+      for (const id of Object.keys(byId)) {
+        const target = rowTarget(e, id);
+        if (target && updates.has(target.key)) updates.get(target.key).set(rowKey(e, id), projectRow(mem.state, e, id));
+      }
+    }
+    const toSet = {};
+    const toRemove = [];
+    let seeded = 0;
+    for (const key of TEAM_SHARED_KEYS) {
+      const teamRows = updates.get(key);
+      const next = patchValue(key, values[key], teamRows);
+      const known = new Map([...extractRows(key, next)].filter(([rk]) => teamRows.get(rk)));
+      mem.shadow[key] = diffRows({}, known).shadow;
+      seeded += known.size;
+      if (next === undefined) { if (values[key] !== undefined) toRemove.push(key); }
+      else if (next !== values[key]) toSet[key] = next;
+    }
+    mem.meta.shadowLost = false;
+    await save(["shadow"]);
+    if (Object.keys(toSet).length) await chrome.storage.local.set(toSet);
+    if (toRemove.length) await chrome.storage.local.remove(toRemove);
+    const after = { ...values, ...toSet };
+    for (const key of toRemove) delete after[key];
+    rewrite = await diffKeys(TEAM_SHARED_KEYS, after);
+    measure({ kind: "seed", rows: seeded });
+  });
+  if (rewrite.size) await writeBack(rewrite);
 }
 
 let leaving = false; // leaveTeam has written the sign-off heartbeat: a round still running must not overwrite it

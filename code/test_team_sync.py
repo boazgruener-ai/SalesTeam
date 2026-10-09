@@ -862,6 +862,26 @@ def main():
     check("lost state: the re-read history says nothing in the top bar (1.2.2.8)", kim.local("teamNotices") or [], [])
     check("lost state: the hand-overs are not logged twice", len([x for x in kim.local("teamLog") or [] if x.get("kind") == "team"]), log_before)
 
+    # 1.2.2.8 (Boaz's PC, 8 Oct: 7921 rows re-sent): a lost SHADOW must not send every local row out again. Lou edits
+    # Acme meanwhile; Kim's stale Acme must not overwrite it. Only Kim's row the team has never seen goes out.
+    r, folder = lou.sync(folder)
+    ta = lou.local("targetAccounts"); ta["acme ag"]["score"] = 5; lou.set_local({"targetAccounts": ta})
+    r, folder = lou.sync(folder)
+    sent_before = sum(len(f["changes"]) for f in files_of(kim_id))
+    kim.e("delete DB.state; delete DB.shadow; mem = null; MAX_FILES_PER_ROUND = 1;")
+    ta = kim.local("targetAccounts"); ta["beta ag"] = {"score": 2}; kim.set_local({"targetAccounts": ta})
+    for _ in range(8):
+        r, folder = kim.sync(folder)
+    kim.e("MAX_FILES_PER_ROUND = 300;")
+    sent = [c for f in files_of(kim_id) for c in f["changes"]][sent_before:]
+    check("lost shadow: Kim sends only the row the team never had", sorted({c.get("id") for c in sent}), ["ta:beta ag"])
+    check("lost shadow: Kim gets Lou's newer Acme", (kim.local("targetAccounts") or {}).get("acme ag", {}).get("score"), 5)
+    r, folder = kim.sync(folder)
+    check("lost shadow: nothing more goes out afterwards", len([c for f in files_of(kim_id) for c in f["changes"]]) - sent_before, len(sent))
+    r, folder = lou.sync(folder)
+    check("lost shadow: Lou keeps Acme 5 and gets Beta", ((lou.local("targetAccounts") or {}).get("acme ag", {}).get("score"),
+          (lou.local("targetAccounts") or {}).get("beta ag", {}).get("score")), (5, 2))
+
     print()
     for f in _failures:
         print("FAIL  %s" % f)
