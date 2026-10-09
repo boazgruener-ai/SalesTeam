@@ -191,20 +191,18 @@
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <a href="#" id="tab-accounts" class="nav-item active">Target Accounts</a>
-        <button id="import-target-accounts-page-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Adds the companies, contacts and initiatives you do not have yet and fills in what is missing - nothing is replaced or removed.">Import Research Workbook…</button>
-        <button id="restore-target-accounts-page-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="export-page-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot can import">Export…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
         <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
-        <button id="export-accounts-csv-page-btn" type="button" class="nav-item" title="Save the accounts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
-        <button id="hubspot-export-page-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
-        <button id="hubspot-import-page-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
       </details>
 
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
-        <button id="export-contacts-csv-page-btn" type="button" class="nav-item" title="Save the contacts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
+        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="export-contacts-page-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot can import">Export…</button>
       </details>
 
       <details class="nav-group">
@@ -330,8 +328,8 @@
       <div id="list-view">
       <p id="empty-state" class="empty-state" hidden>
         No Target Accounts data imported yet.
-        <button id="empty-import-btn" type="button">Import Research Workbook…</button>
-        Choose your research workbook (.xlsx), or a Target Accounts backup you exported earlier.
+        <button id="empty-import-btn" type="button">Import…</button>
+        Choose your research workbook (.xlsx), a SalesTeam CSV or a HubSpot export.
       </p>
 
       <section id="accounts-stats-section" hidden>
@@ -410,8 +408,8 @@
 
     <div id="contacts-list-view" hidden>
       <p id="contacts-empty-state" class="empty-state" hidden>
-        No Target Contacts imported yet - the Contacts sheet of the same workbook (Import Research Workbook
-        above) is currently empty.
+        No Target Contacts imported yet - the Contacts sheet of the same workbook (Import… on Target Accounts)
+        is currently empty.
       </p>
 
       <section id="contacts-stats-section" hidden>
@@ -589,7 +587,7 @@
        trigger buttons above; each still uses the exact same "Run"/limit-
        input/checkbox/status/Stop-button ids target-accounts.js already
        wires, just relocated here instead of an always-visible header row. -->
-  <!-- Opened from any page's menu (Import Research Workbook…) via #action=import-accounts. The file picker only opens from
+  <!-- Opened from any page's menu (Import…) via #action=import. The file picker only opens from
        a real click, so the dialog has its own button rather than trying to open the picker on arrival. -->
   <!-- Bulk edit (2026-09-22). One dialog for both tables - the Priority row is hidden for contacts,
        where priority is a company-level field. Every field defaults to "leave unchanged", so an
@@ -771,74 +769,83 @@
     </div>
   </dialog>
 
-  <dialog id="hubspot-export-dialog" class="action-dialog">
-    <h3>Export to HubSpot</h3>
-    <p class="page-subtitle">
-      Saves two files you can import into HubSpot (Contacts &rarr; Import): one for <strong>companies</strong> and one for
-      <strong>contacts</strong>. Import the companies file first, then the contacts file - HubSpot links each contact to its
-      company by name. The columns use HubSpot's own names, so HubSpot maps most of them for you; the "SalesTeam ..."
-      columns (priority, score, status) can be created as new HubSpot properties in the import's mapping step.
-    </p>
-    <label class="hubspot-field">Which accounts?
-      <select id="hubspot-export-scope">
-        <option value="all">All accounts</option>
-        <option value="P1">Priority P1 only</option>
-        <option value="P2">Priority P1 - P2</option>
-        <option value="P3">Priority P1 - P3</option>
-      </select>
-    </label>
-    <label class="hubspot-field">Export at most this many companies (leave empty for all)
-      <input type="number" id="hubspot-export-max" min="1" step="1" placeholder="all" style="width: 110px" />
-    </label>
-    <p id="hubspot-export-summary" class="page-subtitle" role="status"></p>
-    <p class="page-subtitle">Note: HubSpot's Industry field only accepts its own list of values; if your industry text is not recognized, skip that column in the mapping step.</p>
+  <!-- 1.2.3 Export & Import step 2 (EXPORT_IMPORT_DESIGN.md 7.1): one Export… for every format - it replaces
+       Export Accounts (CSV), Export Contacts (CSV) and Export to HubSpot…. Which rows: asked only when the table has a
+       search or a filter on (exportTableCsv's question). -->
+  <dialog id="export-dialog" class="action-dialog">
+    <h3>Export</h3>
+    <fieldset class="io-choice">
+      <legend>Format</legend>
+      <label><input type="radio" name="export-format" value="csv" checked /> CSV - SalesTeam's own columns (opens in Excel)</label>
+      <label><input type="radio" name="export-format" value="hubspot" /> HubSpot - files HubSpot can import</label>
+    </fieldset>
+    <fieldset class="io-choice">
+      <legend>Accounts or contacts?</legend>
+      <label><input type="radio" name="export-what" value="accounts" checked /> Accounts</label>
+      <label><input type="radio" name="export-what" value="contacts" /> Contacts</label>
+      <label><input type="radio" name="export-what" value="both" /> Both - accounts and their contacts, two files</label>
+    </fieldset>
+    <fieldset class="io-choice">
+      <legend>Save to</legend>
+      <div class="export-folder-row">
+        <input type="text" id="export-folder-name" readonly placeholder="No folder chosen yet - files go to Downloads" title="Chrome shows SalesTeam only the folder's name, not its full path. Choose folder… opens in this same folder." />
+        <button id="export-folder-btn" type="button" title="Choose the folder exports are saved in - remembered for next time">Choose folder…</button>
+      </div>
+      <p class="export-folder-hint">Chrome shows only the folder's name. Choose folder… opens in that folder, so you can see where it is.</p>
+    </fieldset>
+    <p id="export-note" class="page-subtitle"></p>
     <div class="action-dialog-actions">
-      <button id="hubspot-export-btn" type="button">Save the two files</button>
+      <button id="export-go-btn" type="button">Export</button>
       <button type="button" class="action-dialog-close-btn">Close</button>
     </div>
   </dialog>
 
-  <dialog id="hubspot-import-dialog" class="action-dialog">
-    <h3>Import from HubSpot</h3>
+  <!-- 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format - it replaces Import Research Workbook…
+       and Import from HubSpot…. Team Lead (or no team) only. Every format goes through the same check-first summary,
+       safety copy and add-and-fill import. -->
+  <dialog id="import-dialog" class="action-dialog">
+    <h3>Import</h3>
+    <fieldset class="io-choice">
+      <legend>File type</legend>
+      <label><input type="radio" name="import-format" value="salesteam" checked /> SalesTeam CSV - a file exported with Export…</label>
+      <label><input type="radio" name="import-format" value="hubspot" /> HubSpot export (CSV) - companies or contacts</label>
+      <!-- 1.2.2.13 (Boaz): last - the research now runs inside SalesTeam, so a workbook made outside is rarely used. -->
+      <label><input type="radio" name="import-format" value="workbook" /> Research workbook (.xlsx) - research done outside SalesTeam</label>
+    </fieldset>
     <p class="page-subtitle">
-      In HubSpot, export your <strong>companies</strong> and/or your <strong>contacts</strong> as a CSV file (Contacts or
-      Companies &rarr; Export), then choose the file here - one file at a time; do the companies first. SalesTeam
-      <strong>only adds</strong> what it does not have yet: companies are matched by name, contacts by name and company.
-      Nothing you already have is changed or removed.
+      An import <strong>only adds and fills in</strong>: companies, contacts and initiatives you do not have yet are
+      added, empty fields are filled, and nothing you have is replaced or removed. Where the file and an account
+      disagree by more than 10%, the same rules as for web findings decide; what could change a priority comes to
+      Decisions. You see what it will do before anything is saved.
     </p>
+    <fieldset id="import-what-field" class="io-choice" hidden>
+      <legend>Accounts or contacts?</legend>
+      <label><input type="radio" name="import-what" value="accounts" checked /> Accounts - one file</label>
+      <label><input type="radio" name="import-what" value="contacts" /> Contacts - one file</label>
+      <label><input type="radio" name="import-what" value="both" /> Both - choose the accounts file and the contacts file together</label>
+    </fieldset>
+    <p id="import-format-note" class="page-subtitle"></p>
+    <label id="import-currency-field" class="hubspot-field" hidden>If the file has no currency column, its revenue is in
+      <select id="import-currency"></select>
+    </label>
     <div class="action-dialog-actions">
-      <button id="hubspot-import-choose-btn" type="button">Choose HubSpot CSV file…</button>
+      <button id="import-choose-btn" type="button">Choose file…</button>
       <button type="button" class="action-dialog-close-btn">Close</button>
     </div>
-    <input type="file" id="hubspot-import-file-input" accept=".csv,text/csv" hidden />
-    <p id="hubspot-import-status" class="page-subtitle" role="status" hidden></p>
-  </dialog>
-
-  <dialog id="import-accounts-dialog" class="action-dialog">
-    <h3>Import Research Workbook</h3>
-    <p class="page-subtitle">
-      Load the Excel workbook (.xlsx) that the SalesTeam research prompt produces - in ChatGPT or any other AI
-      assistant - or one you filled in yourself from the template. An import <strong>only adds and fills in</strong>:
-      companies, contacts and initiatives you do not have yet are added, empty fields are filled, and nothing you have
-      is replaced or removed. Where the file and an account disagree by more than 10%, the same rules as for web
-      findings decide; what could change a priority comes to Decisions. (To bring back a SalesTeam backup, use "Restore Accounts &amp; Contacts
-      from Backup…" instead.)
-    </p>
-    <div class="action-dialog-actions">
-      <button id="import-accounts-choose-btn" type="button">Choose workbook…</button>
-      <button type="button" class="action-dialog-close-btn">Close</button>
+    <input type="file" id="import-csv-file-input" accept=".csv,text/csv" hidden />
+    <div id="import-workbook-help">
+      <h4 class="import-help-heading">Don't have a workbook yet?</h4>
+      <div class="import-help-buttons">
+        <button id="import-copy-prompt-btn" type="button" title="Copy the research prompt to the clipboard, ready to paste into ChatGPT or another AI assistant">Copy research prompt</button>
+        <button id="import-download-prompt-btn" type="button" title="Save the research prompt as a text file">Download research prompt (.txt)</button>
+        <button id="import-download-template-btn" type="button" title="An empty workbook with the right sheets and columns, mandatory ones marked">Download empty Excel template</button>
+      </div>
+      <p id="import-help-status" class="page-subtitle" role="status"></p>
+      <details class="import-columns-details">
+        <summary>Which columns are mandatory?</summary>
+        <div id="import-columns-list"></div>
+      </details>
     </div>
-    <h4 class="import-help-heading">Don't have a workbook yet?</h4>
-    <div class="import-help-buttons">
-      <button id="import-copy-prompt-btn" type="button" title="Copy the research prompt to the clipboard, ready to paste into ChatGPT or another AI assistant">Copy research prompt</button>
-      <button id="import-download-prompt-btn" type="button" title="Save the research prompt as a text file">Download research prompt (.txt)</button>
-      <button id="import-download-template-btn" type="button" title="An empty workbook with the right sheets and columns, mandatory ones marked">Download empty Excel template</button>
-    </div>
-    <p id="import-help-status" class="page-subtitle" role="status"></p>
-    <details class="import-columns-details">
-      <summary>Which columns are mandatory?</summary>
-      <div id="import-columns-list"></div>
-    </details>
   </dialog>
 
   <dialog id="restore-accounts-dialog" class="action-dialog">
@@ -846,8 +853,8 @@
     <p class="page-subtitle">
       Bring back accounts, contacts and initiatives from a SalesTeam backup - the backup zip made by Backup &amp;
       Restore, or an older .json file. You choose what to restore; the parts you tick <strong>replace</strong> what
-      is loaded now, and a safety copy of your current data is saved first. (To load a research workbook, use
-      "Import Research Workbook…" instead.)
+      is loaded now, and a safety copy of your current data is saved first. (To load a research workbook or a CSV
+      file, use "Import…" instead.)
     </p>
     <div class="action-dialog-actions">
       <button id="restore-accounts-choose-btn" type="button">Choose backup file…</button>

@@ -807,12 +807,10 @@ document.getElementById("open-decisions-btn").addEventListener("click", () => sh
 initDecisionsDot();
 
 openTargetAccountsBtn.addEventListener("click", () => showEmbeddedPage("target-accounts.html", "Target Accounts Dashboard"));
-document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
-document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import", "Target Accounts Dashboard"));
+document.getElementById("nav-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export", "Target Accounts Dashboard"));
+document.getElementById("nav-import-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import&what=contacts", "Target Contacts Dashboard"));
+document.getElementById("nav-export-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export&what=contacts", "Target Contacts Dashboard"));
 // 1.2.3 (Export & Import design 6): Import and Restore are the Team Lead's in a team - not shown to members.
 hideImportForMembers();
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));

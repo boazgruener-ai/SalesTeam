@@ -237,7 +237,8 @@ async function prettyWhere(where) {
 
 function pad2(n) { return String(n).padStart(2, "0"); }
 function localDateStamp(d = new Date()) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
-function localDateTimeStamp(d = new Date()) { return `${localDateStamp(d)}_${pad2(d.getHours())}${pad2(d.getMinutes())}`; }
+// "2026-10-09_20h26" (1.2.2.13, Boaz: "_2026" for 20:26 read like the year a second time).
+function localDateTimeStamp(d = new Date()) { return `${localDateStamp(d)}_${pad2(d.getHours())}h${pad2(d.getMinutes())}`; }
 function versionTag() { const v = runningVersion(); return v ? `_v${v}` : ""; }
 
 function downloadBlob(blob, filename) {
@@ -502,7 +503,8 @@ export async function restoreFromFile(file) {
 }
 
 // ---------------------------------------------------------------- reinstall: find a backup in a folder
-const BACKUP_FILE_NAME = /^salesteam-backup-(\d{4})-(\d{2})-(\d{2})(?:_(\d{4}))?_v[\d.]+\.zip$/;
+// The time is "_20h26" since 1.2.2.13, "_2026" before - both are found.
+const BACKUP_FILE_NAME = /^salesteam-backup-(\d{4})-(\d{2})-(\d{2})(?:_(\d{2})h?(\d{2}))?_v[\d.]+\.zip$/;
 
 // Looks through a folder (and up to three levels of subfolders, skipping Before-restore) for SalesTeam backup zips.
 // -> newest first: [{ name, path, size, sortKey, entry }]
@@ -512,7 +514,7 @@ async function findBackupsInFolder(handle) {
     for await (const [name, entry] of dir.entries()) {
       if (entry.kind === "file") {
         const m = BACKUP_FILE_NAME.exec(name);
-        if (m) found.push({ name, path: [...parts, name].join("/"), sortKey: `${m[1]}${m[2]}${m[3]}${m[4] || "0000"}`, entry });
+        if (m) found.push({ name, path: [...parts, name].join("/"), sortKey: `${m[1]}${m[2]}${m[3]}${m[4] ? m[4] + m[5] : "0000"}`, entry });
       } else if (entry.kind === "directory" && depth < 3 && name !== "Before-restore" && name !== "Before-import") {
         await walk(entry, depth + 1, [...parts, name]);
       }

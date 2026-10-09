@@ -4,8 +4,10 @@
 
 import { mayImport } from "./storage.js";
 
-// The left-menu items every page has (Leads Dashboard, Scanner, Settings).
-export const IMPORT_MENU_IDS = ["nav-import-target-accounts-btn", "nav-restore-accounts-btn", "nav-hubspot-import-btn"];
+// The left-menu item every page has (Leads Dashboard, Scanner, Settings). Since build step 2 there is one Import…
+// for every format, and Restore lives only in Settings > Restore (D9). The Target Contacts group has the same Import…
+// (Boaz, 1.2.2.13: Export was in both groups, Import only in one), starting on Contacts.
+export const IMPORT_MENU_IDS = ["nav-import-btn", "nav-import-contacts-btn"];
 
 export function hideImportForMembers(ids = IMPORT_MENU_IDS) {
   const apply = async () => {

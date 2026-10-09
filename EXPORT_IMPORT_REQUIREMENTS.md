@@ -2,6 +2,8 @@
 
 Target release: **1.2.3** (test builds 1.2.2.x, together with team advanced mode and Exclusions & Relationships)
 Status: **Requirements — agreed 2026-10-09** (all questions in section 6 answered "as proposed"). Design: EXPORT_IMPORT_DESIGN.md.
+**Additions 2026-10-09: Microsoft Dynamics (R10) and one currency (R11) — AGREED**, asked for by Boaz during the
+1.2.2.13 test (Q8 Dynamics 365 Sales, Q9 yes, Q10 header rows asked from his wife's company).
 Date: 2026-10-09
 
 ---
@@ -64,9 +66,10 @@ settings in Settings > Change Settings > Advanced. Anything not decided automati
 
 - R1.1 Target Accounts gets one **Export…** and one **Import…** (button on the page and in the left menu),
   replacing the separate items.
-- R1.2 **Export…** offers: **CSV** (SalesTeam's own columns), **HubSpot**, **Salesforce**. Then: accounts,
+- R1.2 **Export…** offers: **CSV** (SalesTeam's own columns), **HubSpot**, **Salesforce**, **Microsoft Dynamics** (R10). Then: accounts,
   contacts or both; all or only the rows the table shows (today's question).
-- R1.3 **Import…** offers: **Research workbook (.xlsx)**, **CSV**, **HubSpot**, **Salesforce**. The file
+- R1.3 **Import…** offers: **CSV**, **HubSpot**, **Salesforce**, **Microsoft Dynamics** and, last, **Research workbook (.xlsx)**
+  (1.2.2.13: research now runs inside SalesTeam, so the workbook is rarely needed). The file
   type is recognised from its columns where possible; a wrong file says what it looks like instead.
 - R1.4 Target Contacts gets the same Export… (contacts pre-selected). The Leads Dashboard keeps its own
   Export (leads are a different thing). Backup and Restore stay in Settings (Q2).
@@ -164,6 +167,30 @@ the file's value in the place of the web finding ("current" vs "import"):
   Columns recognised by Salesforce's field names and labels. Follows R2–R6.
 - R7.3 Salesforce Leads (the object) are out of scope (Q6).
 
+### R10 — Microsoft Dynamics 365 Sales (PROPOSED 2026-10-09)
+
+- R10.1 **Export:** two files, **Accounts** and **Contacts**, with Dynamics 365 Sales' own column names (Account
+  Name, Website, Industry, Number of Employees, Annual Revenue, Address 1: City, Address 1: Country/Region,
+  Description; First Name, Last Name, Job Title, Email, Business Phone, Company Name, Address 1: City / Country,
+  LinkedIn as a description line), ready for Dynamics' Import Data wizard. The pop-up says to import Accounts
+  first, then Contacts (Company Name links each contact to its account). Revenue in the display currency.
+- R10.2 **Import:** an Accounts or Contacts file exported from Dynamics with **Export to Excel** (.xlsx) or as a
+  CSV. Columns recognised by Dynamics' display names and its field names (`name`, `websiteurl`,
+  `numberofemployees`, `revenue`, `address1_city`, `address1_country`, `firstname`, `lastname`, `jobtitle`,
+  `emailaddress1`, `parentcustomerid`). Dynamics' hidden "(Do Not Modify)" columns are ignored. Follows R2–R6.
+- R10.3 Dynamics Leads and Opportunities are out of scope (as Salesforce Leads, Q6).
+- R10.4 Like Salesforce, checked once against a real Dynamics 365 Sales environment before it ships (a free
+  trial, or a header-only sample file from a company that uses it - no customer data needed).
+
+### R11 — One currency (agreed 2026-10-09)
+
+- R11.1 Revenues are shown and exported in the default currency (Change Settings > Advanced > Revenue &
+  Currency, default USD, the Team Lead's in a team); the stored amount keeps its own currency.
+- R11.2 Export column titles name the currency: "Global Revenue (USD)".
+- R11.3 An import never assumes a currency: a per-row currency or one named in the column title is used;
+  otherwise the user must choose before Import is possible, and a plausibility check warns when the figures
+  look like another currency. (Design 8b, D13–D15.)
+
 ### R8 — CSV import (SalesTeam's own columns)
 
 - R8.1 A CSV made by SalesTeam's own Export (or the same columns, e.g. edited in Excel) can be imported.
@@ -179,7 +206,7 @@ the file's value in the place of the web finding ("current" vs "import"):
 
 ## 4. Out of scope
 
-- Live connections to HubSpot or Salesforce (API, sign-in, two-way sync) — files only.
+- Live connections to HubSpot, Salesforce or Dynamics (API, sign-in, two-way sync) — files only.
 - Importing Leads (Posts) from a CRM.
 - Undo of a single import other than Restore from the automatic backup.
 - A company-wide Admin role above teams (later item).
@@ -214,3 +241,15 @@ the file's value in the place of the web finding ("current" vs "import"):
 - **Q6** Salesforce: Accounts + Contacts only (proposed), or also Salesforce Leads?
 - **Q7** Is a new "Import differences" tolerance setting wanted in Advanced, or is 10% fixed? *Proposed: a
   setting, default 10%.*
+
+### Added 2026-10-09 (Microsoft Dynamics) — open
+
+- **Q8** Which Dynamics? "Microsoft Dynamics" is two different products: **Dynamics 365 Sales** (the CRM -
+  accounts, contacts, opportunities) and **Dynamics 365 Business Central** (accounting/ERP - customers,
+  vendors). *Proposed: Dynamics 365 Sales.* Ask your wife's company which one they open to see their
+  customers and contacts.
+- **Q9** Same step as Salesforce (step 3, test builds 1.2.2.14+), both shipping in 1.2.3? *Proposed: yes.*
+- **Q10** For the live check: a free Dynamics 365 Sales trial (30 days, set up by you), or only the **column
+  header row** of an Accounts and a Contacts export from your wife's company (no data rows)? *Proposed: the
+  header rows first - they show the real column names her company's Dynamics uses, including any custom
+  columns - and the trial only if the import into Dynamics itself needs testing.*

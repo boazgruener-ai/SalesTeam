@@ -150,6 +150,13 @@ export function planCompanyUpdate(row, extra, fileRow, opts = {}) {
   const tolerancePct = Number.isFinite(Number(opts.tolerancePct)) ? Number(opts.tolerancePct) : DEFAULT_IMPORT_TOLERANCE_PCT;
   const overridesNow = (extra && extra.overrides) || {};
   const effective = { ...row, ...overridesNow };
+  // An account with no stored headcount shows its LinkedIn size instead (the Employees column: employeeCount, else
+  // the band ">5,000"). A file SalesTeam exported carries that shown value back - not new information, and a band
+  // must not become a hard number (1.2.2.13 round-trip test: 8 accounts "filled" with the number from their band).
+  if (isBlankFinding(effective.globalEmployees) && !isBlankFinding(fileRow.globalEmployees)) {
+    const shown = typeof effective.employeeCount === "number" ? effective.employeeCount : parseLooseNumber(effective.employeeRange);
+    if (shown !== null && shown === parseLooseNumber(fileRow.globalEmployees)) fileRow = { ...fileRow, globalEmployees: null };
+  }
   const data = importAsFinding(fileRow);
   const answered = (extra && extra.importFindingsDismissed) || {};
   const open = (extra && extra.importFindings) || {};
@@ -307,7 +314,12 @@ export function planImport(parsed, current, opts = {}) {
     const slug = importProfileSlug(fc.lastVerified2 || fc.linkedinProfileUrl);
     const email = fc.publicBusinessEmail ? String(fc.publicBusinessEmail).trim().toLowerCase() : "";
     const nameKey = importContactKey(account.row.company, fullName);
-    const hit = (slug && bySlug.get(slug)) || (email && byEmail.get(email)) || (nameKey && byKey.get(nameKey)) || null;
+    // Also under the company name the file gives: "Holcim Schweiz / Suisse / Svizzera" is an account of its own AND an
+    // alias of Holcim Group, so the account match can land on the group while the person is stored under the
+    // subsidiary (1.2.2.13 round-trip test: 6 existing contacts counted as new).
+    const fileNameKey = fc.company ? importContactKey(fc.company, fullName) : null;
+    const hit = (slug && bySlug.get(slug)) || (email && byEmail.get(email)) || (nameKey && byKey.get(nameKey))
+      || (fileNameKey && byKey.get(fileNameKey)) || null;
     if (hit) {
       const key = importContactKey(hit.company, hit.fullName);
       if (!key || contactsTouched.has(key) || hit.__new) continue;

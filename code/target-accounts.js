@@ -64,7 +64,6 @@ import {
   getPendingDiscoveredMergePreview,
   mergeDiscoveredIntoWorkbook,
   mergeTargetAccounts,
-  addHubspotRowsToWorkbook,
   addWebResearchInitiatives,
   getKeptSeparatePairs,
   addKeptSeparatePairs,
@@ -104,16 +103,18 @@ import { RAISED_REASON, relationshipTagText } from "./relationships.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
 import { coverageLines } from "./pipeline-plan.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBefore } from "./backup-restore.js";
+import { EXPORT_FOLDER_KEY, getStoredFolder, pickExportFolder, folderPermission, requestFolderPermission, writeToFolder, folderPickerSupported } from "./backup-folder.js";
 import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
-import { DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
+import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney } from "./value-normalize.js";
 import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES, sizeBucketKey } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine } from "./pipeline-status.js";
-import { parseCsv, detectHubspotFile, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
+import { parseCsv, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
+import { detectImportFile, describeImportFile, salesteamCsvRows, applyFileCurrency } from "./csv-import.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
 import { runContactDiscoveryForExistingCompanies } from "./contact-discovery-extraction.js";
@@ -144,11 +145,11 @@ const resultCountEl = document.getElementById("result-count");
 const colgroupEl = document.getElementById("companies-colgroup");
 const theadEl = document.getElementById("companies-thead");
 const tbodyEl = document.getElementById("companies-tbody");
-const importTargetAccountsPageBtn = document.getElementById("import-target-accounts-page-btn");
+const importTargetAccountsPageBtn = document.getElementById("import-page-btn");
 const importTargetAccountsPageFileInput = document.getElementById("import-target-accounts-page-file-input");
 const targetAccountsPageIoStatusEl = document.getElementById("target-accounts-page-io-status");
 // Import / restore progress and results appear as a pop-up, not only as a line of text on the page.
-mirrorStatusToPopup(["target-accounts-page-io-status", "account-web-research-status", "hubspot-import-status"]);
+mirrorStatusToPopup(["target-accounts-page-io-status", "account-web-research-status"]);
 const resolveCompanyIdsBtn = document.getElementById("resolve-company-ids-btn");
 const stopResolveCompanyIdsBtn = document.getElementById("stop-resolve-company-ids-btn");
 const resolveCompanyIdsLimitInput = document.getElementById("resolve-company-ids-limit-input");
@@ -4060,16 +4061,58 @@ mergeDiscoveredBtn.addEventListener("click", async () => {
 // that took a workbook OR a backup was unclear): a research workbook (.xlsx) or a backup (.zip / .json).
 let importPickerMode = "research";
 
-function openImportDialog() {
-  renderImportColumnsHelp();
-  document.getElementById("import-help-status").textContent = "";
-  document.getElementById("import-accounts-dialog").showModal();
+// 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format. The research workbook keeps its own file
+// picker and help (prompt, template, mandatory columns); a SalesTeam CSV or a HubSpot export is read by
+// csv-import.js / hubspot.js. All of them then go through runPlannedImport below.
+const IMPORT_TITLES = { workbook: "Import Research Workbook", salesteam: "Import SalesTeam CSV", hubspot: "Import HubSpot Export" };
+const IMPORT_FORMAT_NOTES = {
+  workbook: "Only for research done outside SalesTeam: the Excel workbook the SalesTeam research prompt produces in ChatGPT or another AI assistant, or one you filled in yourself from the template. SalesTeam researches accounts itself, so you normally do not need this.",
+  salesteam: "An accounts or contacts file saved with Export… (CSV - SalesTeam's own columns), for example after editing it in Excel. The computed columns (Priority, Status, Readiness …) are worked out again, not read back.",
+  hubspot: "In HubSpot, export your companies and/or your contacts as CSV files. Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
+};
+
+function selectedImportFormat() {
+  return document.querySelector('input[name="import-format"]:checked')?.value || "salesteam";
 }
 
-document.getElementById("empty-import-btn").addEventListener("click", openImportDialog);
-document.getElementById("restore-target-accounts-page-btn").addEventListener("click", () => {
-  document.getElementById("restore-accounts-dialog").showModal();
-});
+// Accounts, contacts or both (Boaz, 1.2.2.13 test: the Import asked no such question, unlike Export). A workbook holds
+// both sheets already, so the question is only for the CSV formats. "Both" = the two files chosen together in one
+// picker and imported as ONE run: one summary, one safety copy, contacts linked to the accounts of the same import.
+function selectedImportWhat() {
+  return document.querySelector('input[name="import-what"]:checked')?.value || "accounts";
+}
+
+function refreshImportDialog() {
+  const format = selectedImportFormat();
+  document.getElementById("import-format-note").textContent = IMPORT_FORMAT_NOTES[format];
+  document.getElementById("import-workbook-help").hidden = format !== "workbook";
+  document.getElementById("import-currency-field").hidden = format === "workbook";
+  document.getElementById("import-what-field").hidden = format === "workbook";
+  document.getElementById("import-choose-btn").textContent = format !== "workbook" && selectedImportWhat() === "both" ? "Choose the two files…" : "Choose file…";
+}
+for (const radio of document.querySelectorAll('input[name="import-what"]')) radio.addEventListener("change", refreshImportDialog);
+for (const radio of document.querySelectorAll('input[name="import-format"]')) radio.addEventListener("change", refreshImportDialog);
+
+// what: "contacts" when opened from the Target Contacts menu; otherwise Accounts. The file type stays as last chosen.
+async function openImportDialog(format = null, what = null) {
+  if (!(await mayImport())) return;
+  for (const [name, value] of [["import-format", format], ["import-what", what || "accounts"]]) {
+    if (!value) continue;
+    const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (what === "contacts") showView("contactsList");
+  // D7: a file without a currency column - its revenue is read as the display currency unless another is picked here.
+  const currencySelect = document.getElementById("import-currency");
+  if (currencySelect.options.length === 0) for (const code of SUPPORTED_CURRENCIES) currencySelect.appendChild(new Option(code, code));
+  currencySelect.value = (await getRevenueNormalization()).targetCurrency;
+  renderImportColumnsHelp();
+  document.getElementById("import-help-status").textContent = "";
+  refreshImportDialog();
+  document.getElementById("import-dialog").showModal();
+}
+
+document.getElementById("empty-import-btn").addEventListener("click", () => openImportDialog());
 document.getElementById("restore-accounts-choose-btn").addEventListener("click", () => {
   document.getElementById("restore-accounts-dialog").close();
   importPickerMode = "restore";
@@ -4140,16 +4183,20 @@ document.getElementById("import-download-template-btn").addEventListener("click"
   }
 });
 
-document.getElementById("import-accounts-choose-btn").addEventListener("click", () => {
-  document.getElementById("import-accounts-dialog").close();
+document.getElementById("import-choose-btn").addEventListener("click", () => {
+  document.getElementById("import-dialog").close();
+  if (selectedImportFormat() !== "workbook") {
+    const input = document.getElementById("import-csv-file-input");
+    input.multiple = selectedImportWhat() === "both";
+    input.click();
+    return;
+  }
   importPickerMode = "research";
   importTargetAccountsPageFileInput.accept = ".xlsx";
   importTargetAccountsPageFileInput.click();
 });
 
-importTargetAccountsPageBtn.addEventListener("click", () => {
-  openImportDialog();
-});
+importTargetAccountsPageBtn.addEventListener("click", () => openImportDialog());
 
 // EXPERIMENTAL (v0.29.25, see PRD 6.16): resolves each Target Account
 // company's LinkedIn numeric company ID, needed for a future feature that
@@ -4483,11 +4530,11 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
   const lowerName = file.name.toLowerCase();
   const isBackupFile = lowerName.endsWith(".zip") || lowerName.endsWith(".json");
   if (importPickerMode === "research" && isBackupFile) {
-    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is a backup file, not a research workbook. Use "Restore Accounts & Contacts from Backup…" to load it.`;
+    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is a backup file, not a research workbook. Use Settings > Restore to load it.`;
     return;
   }
   if (importPickerMode === "restore" && !isBackupFile) {
-    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is not a backup file (.zip or .json). Use "Import Research Workbook…" for an Excel workbook.`;
+    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is not a backup file (.zip or .json). Use "Import…" for an Excel workbook or a CSV file.`;
     return;
   }
   targetAccountsPageIoStatusEl.textContent = `${importPickerMode === "restore" ? "Reading" : "Importing"} ${file.name}…`;
@@ -4614,36 +4661,47 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
       c.aliases = [...aliasesByCompanyId.get(c.companyId)];
     }
   }
+  await runPlannedImport({ parsed: fullWorkbook, fileName: file.name, format: "workbook", legacyList: list, prevCount: prevMeta.count });
+});
+
+// The one import path every format shares (design 3.4-3.6): the check-first summary, the safety copy, the
+// add-and-fill write, then priorities, the Activity Log and one pop-up with the same counts. `legacyList` adds the
+// legacy targetAccounts map entries (lead matching) for companies that are new to it.
+async function runPlannedImport({ parsed, fileName, format, legacyList, prevCount = null }) {
+  const title = IMPORT_TITLES[format] || "Import";
   // 1.2.3 step 1 (design 3.4, D5): check first - what the import will do, in plain words, before anything is written.
-  const preview = await previewWorkbookImport(fullWorkbook, { fileName: file.name });
+  const preview = await previewWorkbookImport(parsed, { fileName });
   const checkLines = [
     ...preview.newCompanyNames.slice(0, 200).map((n) => `New account: ${n}`),
     ...(preview.newCompanyNames.length > 200 ? [`… and ${preview.newCompanyNames.length - 200} more new accounts`] : []),
     ...preview.decisions.map((d) => `For Decisions: ${d.company} - ${d.label}: current ${d.current}, in the file ${d.imported}`),
   ];
   const go = await askConfirm(
-    `${file.name}\n\n${importSummaryText(preview.counts) || "Nothing new - everything in this file is already there."}.\n\n` +
+    `${fileName}\n\n${capitalize(importSummaryText(preview.counts))}.\n\n` +
     "Nothing you have is replaced or removed. A safety copy of your current data is saved first.",
-    { title: "Import Research Workbook", okLabel: "Import", details: checkLines.length ? { summary: "Details", lines: checkLines } : null },
+    { title, okLabel: "Import", details: checkLines.length ? { summary: "Details", lines: checkLines } : null },
   );
   if (!go) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
   targetAccountsPageIoStatusEl.textContent = "Saving a safety copy of your current data first…";
   if (!(await safetyCopyBefore("before-import"))) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
-  targetAccountsPageIoStatusEl.textContent = `Importing ${file.name}…`;
+  targetAccountsPageIoStatusEl.textContent = `Importing ${fileName}…`;
   let counts;
   let plan;
   try {
-    ({ counts, plan } = await mergeImportIntoWorkbook(fullWorkbook, { fileName: file.name }));
+    ({ counts, plan } = await mergeImportIntoWorkbook(parsed, { fileName, format }));
   } catch (err) {
     targetAccountsPageIoStatusEl.textContent = `Import failed - ${err.message}`;
-    await askConfirm(`Import failed - ${err.message}`, { title: "Import Research Workbook", cancelLabel: null });
+    await askConfirm(`Import failed - ${err.message}`, { title, cancelLabel: null });
     return;
   }
-  await importTargetAccounts(list, file.name, { merge: true });
+  if (legacyList && legacyList.length) await importTargetAccounts(legacyList, fileName, { merge: true });
   // Exclusions only for the companies this import added (Q4); customer / partner rows become relationships as before.
-  const backfill = await backfillCompanyExclusionsFromWorkbook(fullWorkbook, {
-    hideOnlyNames: new Set(plan.newCompanyNames.map((n) => normalizeCompanyName(n))),
-  }).catch(() => null);
+  // Only the research workbook has an Exclusion_List sheet and Excluded / Relationship columns.
+  const backfill = format === "workbook"
+    ? await backfillCompanyExclusionsFromWorkbook(parsed, {
+      hideOnlyNames: new Set(plan.newCompanyNames.map((n) => normalizeCompanyName(n))),
+    }).catch(() => null)
+    : null;
   await loadWorkbook();
   const backfillNote = backfill && backfill.addedCount > 0
     ? ` - ${backfill.addedCount} new compan${backfill.addedCount === 1 ? "y" : "ies"} put on your exclusion lists, as the file marks them`
@@ -4654,19 +4712,84 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
   const summary = importSummaryText(counts) || "nothing new";
   const decisionsNote = counts.decisions > 0
     ? ` ${counts.decisions === 1 ? "One difference is" : `${counts.decisions} differences are`} waiting in Decisions.` : "";
-  targetAccountsPageIoStatusEl.textContent = `${file.name} imported at ${formatImportStamp(Date.now())}: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`;
+  targetAccountsPageIoStatusEl.textContent = `${fileName} imported at ${formatImportStamp(Date.now())}: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`;
   appendActivityLog({
     actor: "user",
     action: "import_done",
-    format: "workbook",
-    file: file.name,
+    format,
+    file: fileName,
     counts,
-    label: `Imported research workbook ${file.name}: ${summary}${backfillNote}`,
-    prevValue: prevMeta.count,
+    label: `${title}: ${fileName}: ${summary}${backfillNote}`,
+    prevValue: prevCount,
     newValue: counts,
   });
   // R6.3: one pop-up, one OK - the same counts as the check.
-  await askConfirm(`${file.name} imported: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`, { title: "Import Research Workbook", cancelLabel: null });
+  await askConfirm(`${fileName} imported: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`, { title, cancelLabel: null });
+}
+
+function capitalize(text) { return text ? text[0].toUpperCase() + text.slice(1) : text; }
+
+// A SalesTeam CSV or a HubSpot export (design 3.1): read into workbook rows, then the same path as the workbook.
+document.getElementById("import-csv-file-input").addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  event.target.value = "";
+  if (files.length === 0) return;
+  if (!(await mayImport())) { targetAccountsPageIoStatusEl.textContent = IMPORT_REFUSED; return; }
+  const chosen = selectedImportFormat();
+  const what = selectedImportWhat();
+  const title = IMPORT_TITLES[chosen];
+  const formatName = chosen === "hubspot" ? "HubSpot" : "SalesTeam";
+  const say = (text) => askConfirm(text, { title, cancelLabel: null });
+  if (what === "both" && files.length !== 2) {
+    await say(`For "Both", choose the accounts file and the contacts file together (hold Ctrl and click both) - ${files.length === 1 ? "only one file was chosen" : `${files.length} files were chosen`}.`);
+    return;
+  }
+  const parsed = { companies: [], contacts: [] };
+  const byKind = {};
+  try {
+    for (const file of files) {
+      const { headers, records } = parseCsv(await file.text());
+      const detected = detectImportFile(headers);
+      const looks = describeImportFile(detected);
+      if (!detected || detected.format !== chosen) {
+        const expected = chosen === "hubspot"
+          ? "a HubSpot companies or contacts export (it needs a \"Company name\" column, or \"First Name\" / \"Last Name\" / \"Email\" columns)"
+          : "a file SalesTeam exported (Export… > CSV - SalesTeam's own columns)";
+        await say(`"${file.name}" does not look like ${expected}.` +
+          (looks ? `\n\nIt looks like ${looks} - choose that under "File type" in the Import window and try again.` : ""));
+        return;
+      }
+      if (what !== "both" && detected.kind !== what) {
+        await say(`"${file.name}" is ${looks}, not ${what === "accounts" ? "an accounts" : "a contacts"} file - choose "${detected.kind === "accounts" ? "Accounts" : "Contacts"}" (or "Both") under "Accounts or contacts?" in the Import window and try again.`);
+        return;
+      }
+      if (byKind[detected.kind]) {
+        await say(`"${byKind[detected.kind]}" and "${file.name}" are both ${detected.kind} files. For "Both", choose one ${formatName} accounts file and one contacts file.`);
+        return;
+      }
+      byKind[detected.kind] = file.name;
+      const rows = detected.format === "hubspot"
+        ? (detected.kind === "accounts" ? hubspotCompanyRows(records) : hubspotContactRows(records))
+        : salesteamCsvRows(records, detected.kind);
+      if (rows.length === 0) {
+        await say(`No usable ${detected.kind} rows were found in "${file.name}".`);
+        return;
+      }
+      parsed[detected.kind === "accounts" ? "companies" : "contacts"].push(...rows);
+    }
+  } catch (err) {
+    await say(`Import failed - the file could not be read (${err.message}).`);
+    return;
+  }
+  const withCurrency = applyFileCurrency(parsed, document.getElementById("import-currency").value);
+  const legacyList = withCurrency.companies.map((c) => ({
+    company: c.company, industry: c.industry || null, researchStatus: c.researchStatus || null,
+    officialName: c.zefixOfficialName || null, alternativeName: c.alternativeCompanyName || null,
+    linkedinLink: c.linkedinLink || null, aliases: [],
+  }));
+  // Accounts first in the name, as in the plan (contacts are matched to the accounts of the same import).
+  const fileName = [byKind.accounts, byKind.contacts].filter(Boolean).join(" + ");
+  await runPlannedImport({ parsed: withCurrency, fileName, format: chosen, legacyList });
 });
 
 // ---- Account/Contact views (PRD 6.19) ----
@@ -6981,7 +7104,7 @@ function tableCsv(columns, rows) {
       // Stored as 1-3; the table and the file both say what it means.
       if (column.id === "seniorityPriority" && v != null && v !== "") v = SENIORITY_PRIORITY_LABELS[v] || v;
       cells.push(v == null ? "" : v);
-      if (column.currencyField) cells.push(row[column.currencyField] || "");
+      if (column.currencyField) cells.push(rawValue(row, { id: column.currencyField }) || "");
     }
     return cells;
   });
@@ -6989,150 +7112,176 @@ function tableCsv(columns, rows) {
   return toCsv(compact.headers, compact.rows);
 }
 
-async function exportTableCsv(kind) {
+// Every row of a table in its sort order, with its search and column filters set aside for the moment.
+function allTableRowsSorted(kind) {
+  const accounts = kind === "accounts";
+  const search = accounts ? searchInputEl : contactsSearchInputEl;
+  const filters = accounts ? columnFilters : contactColumnFilters;
+  const savedSearch = search.value;
+  const savedFilters = { ...filters };
+  clearTableFilters(search, filters);
+  const rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+  search.value = savedSearch;
+  Object.assign(filters, savedFilters);
+  return rows;
+}
+
+// The rows an export takes from one table: what the table shows - and when a search or filter is on, the question
+// "all or only the filtered" (Boaz, 2026-10-02: a forgotten saved filter made the file look half empty). null = Cancel.
+async function chooseExportRows(kind) {
   const accounts = kind === "accounts";
   const all = accounts ? workbook.companies.length : workbook.contacts.length;
-  let rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+  const rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
   const noun = (n) => (accounts ? `account${n === 1 ? "" : "s"}` : `contact${n === 1 ? "" : "s"}`);
-  if (all === 0) {
-    await askConfirm(`There are no ${noun(0)} to export yet.`, { okLabel: "OK", cancelLabel: null });
-    return;
-  }
-  // A filter is on (Boaz, 2026-10-02: a forgotten saved filter made the file look half empty): always ask which.
+  if (all === 0) return [];
   const chips = tableFilterChips(accounts ? searchInputEl : contactsSearchInputEl,
     accounts ? columnFilters : contactColumnFilters, accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS);
-  if (chips.length > 0) {
-    const choices = [{ value: "all", label: `All ${all} ${noun(all)}` }];
-    if (rows.length > 0) choices.push({ value: "shown", label: `Only the ${rows.length} filtered` });
-    const scope = await askChoice(
-      `A filter is on, so the table shows ${rows.length} of ${all} ${noun(all)}:\n${chips.map((c) => `  - ${c.label}`).join("\n")}\n\n` +
-      "Which do you want to export?", choices);
-    if (!scope) return;
-    if (scope === "all") {
-      // Every row in the table's sort order: the filtered rows' order applied to all of them.
-      const savedSearch = (accounts ? searchInputEl : contactsSearchInputEl).value;
-      const savedFilters = accounts ? { ...columnFilters } : { ...contactColumnFilters };
-      clearTableFilters(accounts ? searchInputEl : contactsSearchInputEl, accounts ? columnFilters : contactColumnFilters);
-      rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
-      (accounts ? searchInputEl : contactsSearchInputEl).value = savedSearch;
-      Object.assign(accounts ? columnFilters : contactColumnFilters, savedFilters);
-    }
+  if (chips.length === 0) return rows;
+  const choices = [{ value: "all", label: `All ${all} ${noun(all)}` }];
+  if (rows.length > 0) choices.push({ value: "shown", label: `Only the ${rows.length} filtered` });
+  const scope = await askChoice(
+    `A filter is on, so the ${accounts ? "Target Accounts" : "Target Contacts"} table shows ${rows.length} of ${all} ${noun(all)}:\n` +
+    `${chips.map((c) => `  - ${c.label}`).join("\n")}\n\nWhich do you want to export?`, choices);
+  if (!scope) return null;
+  return scope === "all" ? allTableRowsSorted(kind) : rows;
+}
+
+// ---- Export… (1.2.3 Export & Import step 2, design 7.1) ----
+// One dialog for every export: Format (CSV with SalesTeam's own columns / HubSpot) -> What (accounts, contacts, both)
+// -> Export. "Both" takes the accounts the table shows and every contact of those accounts. A file holds the rows the
+// table shows (search and filters applied), so once advanced-mode visibility filters the table, exports follow it.
+const EXPORT_NOTES = {
+  csv: "One file per table, with every column under SalesTeam's own column names; it opens in Excel. If a search or filter is on, you are asked whether to export all rows or only the filtered ones.",
+  hubspot: "Files with HubSpot's own column names (in HubSpot: Import). Import the companies file first, then the contacts file - HubSpot links each contact to its company by name. Revenue is in your display currency. HubSpot's Industry field only accepts its own list of values; if yours are not recognised, skip that column in the mapping step.",
+};
+
+function selectedExportChoice(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value;
+}
+function refreshExportDialog() {
+  document.getElementById("export-note").textContent = EXPORT_NOTES[selectedExportChoice("export-format") || "csv"];
+}
+for (const radio of document.querySelectorAll('input[name="export-format"]')) radio.addEventListener("change", refreshExportDialog);
+
+// Opened from Target Contacts it starts on Contacts, from anywhere else on Accounts; the format stays as last chosen.
+// Where Export… saves: the folder chosen last time (remembered), else Downloads.
+async function refreshExportFolder() {
+  const handle = await getStoredFolder(EXPORT_FOLDER_KEY);
+  // Only the name: Chrome never gives an extension a folder's full path. Empty = nothing chosen yet (Downloads).
+  document.getElementById("export-folder-name").value = handle ? handle.name : "";
+  document.getElementById("export-folder-btn").hidden = !folderPickerSupported();
+}
+document.getElementById("export-folder-btn").addEventListener("click", async () => {
+  try {
+    if (await pickExportFolder()) await refreshExportFolder();
+  } catch (err) {
+    await askConfirm(`Couldn't use that folder (${err.message}). Exports go to your Downloads folder.`, { title: "Export", cancelLabel: null });
   }
-  const csv = tableCsv(accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS, rows);
-  const filename = `SalesTeam-${accounts ? "accounts" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
-  appendActivityLog({ actor: "user", action: "csv_exported", label: `Exported ${rows.length} ${noun(rows.length)} to ${filename}` });
-  await askConfirm(`Saved ${rows.length} ${noun(rows.length)} to your Downloads folder as ${filename}. It opens in Excel.`, { okLabel: "OK", cancelLabel: null });
-}
-
-document.getElementById("export-accounts-csv-page-btn").addEventListener("click", () => exportTableCsv("accounts"));
-document.getElementById("export-contacts-csv-page-btn").addEventListener("click", () => {
-  showView("contactsList");
-  exportTableCsv("contacts");
 });
 
-// ---- HubSpot export / import (by file) ----
-const HUBSPOT_SCOPE_RANK = { P1: 1, P2: 2, P3: 3 };
-
-function hubspotExportSelection() {
-  const scope = document.getElementById("hubspot-export-scope").value;
-  const maxRank = HUBSPOT_SCOPE_RANK[scope] || 99;
-  const companies = workbook.companies.filter((c) => {
-    if (maxRank === 99) return true;
-    const rank = Number(String(accountPriorityInfo(c).priority || "P9").replace("P", ""));
-    return rank <= maxRank;
-  }).map((c) => ({ ...c, salesTeamPriority: accountPriorityInfo(c).priority })); // D4: exported as shown
-  // "Export at most N companies" - applied before the contact set is derived, so the contacts that
-  // come along are exactly the ones belonging to the companies actually exported. The scope dropdown
-  // alone is too coarse to try HubSpot out: P1 on its own is already hundreds of accounts.
-  const matched = companies.length;
-  const cap = Number(document.getElementById("hubspot-export-max")?.value) || 0;
-  const capped = cap > 0 ? companies.slice(0, cap) : companies;
-  const ids = new Set(capped.map((c) => c.companyId));
-  const names = new Set(capped.map((c) => normalizeCompanyName(c.company)));
-  const contacts = workbook.contacts.filter((c) => (c.companyId && ids.has(c.companyId)) || names.has(normalizeCompanyName(c.company)));
-  return { companies: capped, contacts, matched, capApplied: capped.length < matched };
+// "2026-10-09_20h26" - local date and time, so two exports on one day never get Windows' " (1)"; the "h" because
+// "_2026" for 20:26 read like the year twice (1.2.2.13, Boaz). Backups use the same form (backup-restore.js).
+function exportStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}h${p(d.getMinutes())}`;
 }
 
-function refreshHubspotExportSummary() {
-  const { companies, contacts, matched, capApplied } = hubspotExportSelection();
-  document.getElementById("hubspot-export-summary").textContent =
-    `${companies.length} compan${companies.length === 1 ? "y" : "ies"}` +
-    `${capApplied ? ` (of ${matched} matching - limited by "at most")` : ""}` +
-    ` and ${contacts.length} contact${contacts.length === 1 ? "" : "s"} will be exported.`;
+// Writes the files into the remembered folder when Chrome still allows it, else to Downloads. -> where they went.
+async function saveExportFiles(files) {
+  const handle = await getStoredFolder(EXPORT_FOLDER_KEY);
+  if (handle && (await folderPermission(handle)) === "granted") {
+    try {
+      for (const f of files) await writeToFolder(handle, [], f.name, new Blob([f.csv], { type: "text/csv;charset=utf-8" }));
+      return `the folder "${handle.name}"`;
+    } catch { /* the folder was moved or deleted: Downloads instead, nothing lost */ }
+  }
+  for (const [i, f] of files.entries()) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 400)); // two downloads in a row: give the browser a moment between them
+    downloadBlob(new Blob([f.csv], { type: "text/csv;charset=utf-8" }), f.name);
+  }
+  return "your Downloads folder";
 }
-document.getElementById("hubspot-export-scope").addEventListener("change", refreshHubspotExportSummary);
-document.getElementById("hubspot-export-max").addEventListener("input", refreshHubspotExportSummary);
-document.getElementById("hubspot-export-page-btn").addEventListener("click", () => {
-  refreshHubspotExportSummary();
-  document.getElementById("hubspot-export-dialog").showModal();
-});
-document.getElementById("hubspot-import-page-btn").addEventListener("click", () => {
-  document.getElementById("hubspot-import-status").hidden = true;
-  document.getElementById("hubspot-import-dialog").showModal();
-});
 
-document.getElementById("hubspot-export-btn").addEventListener("click", async () => {
-  const { companies, contacts } = hubspotExportSelection();
-  if (companies.length === 0) {
-    await askConfirm("There are no accounts to export for this choice.", { okLabel: "OK", cancelLabel: null });
+function openExportDialog({ format = null, what = null } = {}) {
+  for (const [name, value] of [["export-format", format], ["export-what", what || "accounts"]]) {
+    if (!value) continue;
+    const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (what === "contacts") showView("contactsList");
+  refreshExportDialog();
+  refreshExportFolder();
+  document.getElementById("export-dialog").showModal();
+}
+
+async function runExport(format, what) {
+  let accountRows = null;
+  let contactRows = null;
+  if (what !== "contacts") {
+    accountRows = await chooseExportRows("accounts");
+    if (accountRows === null) return;
+  }
+  if (what === "contacts") {
+    contactRows = await chooseExportRows("contacts");
+    if (contactRows === null) return;
+  }
+  if (what === "both") {
+    const ids = new Set(accountRows.map((c) => c.companyId).filter(Boolean));
+    const keys = new Set(accountRows.map((c) => normalizeCompanyName(c.company)));
+    contactRows = allTableRowsSorted("contacts").filter((c) => (c.companyId && ids.has(c.companyId)) || keys.has(normalizeCompanyName(c.company)));
+  }
+  if ((accountRows ? accountRows.length : 0) + (contactRows ? contactRows.length : 0) === 0) {
+    await askConfirm("There is nothing to export for this choice.", { title: "Export", cancelLabel: null });
     return;
   }
-  const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
-  const statusOfContact = (c) => effectiveStatus(leadStatusBucket(findLeadsForContact(c, allLeads)), contactExtras[contactKeyFor(c.company, c.fullName)]?.manualStatus);
-  const files = buildHubspotFiles(companies, contacts, statusOfCompany, statusOfContact);
-  const stamp = new Date().toISOString().slice(0, 10);
-  downloadBlob(new Blob([files.companiesCsv], { type: "text/csv;charset=utf-8" }), `SalesTeam-HubSpot-companies-${stamp}.csv`);
-  await new Promise((r) => setTimeout(r, 400)); // two downloads in a row: give the browser a moment between them
-  downloadBlob(new Blob([files.contactsCsv], { type: "text/csv;charset=utf-8" }), `SalesTeam-HubSpot-contacts-${stamp}.csv`);
-  document.getElementById("hubspot-export-dialog").close();
-  appendActivityLog({ actor: "user", action: "hubspot_exported", label: `Exported ${files.companyCount} companies and ${files.contactCount} contacts to HubSpot files` });
-  await askConfirm(`Saved two files to your Downloads folder:\n\n${files.companyCount} companies: SalesTeam-HubSpot-companies-${stamp}.csv\n${files.contactCount} contacts: SalesTeam-HubSpot-contacts-${stamp}.csv\n\nIn HubSpot, import the companies file first, then the contacts file.`, { okLabel: "OK", cancelLabel: null });
-});
-
-document.getElementById("hubspot-import-choose-btn").addEventListener("click", () => document.getElementById("hubspot-import-file-input").click());
-document.getElementById("hubspot-import-file-input").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  event.target.value = "";
-  if (!file) return;
-  const statusEl = document.getElementById("hubspot-import-status");
-  statusEl.hidden = false;
-  if (!(await mayImport())) { statusEl.textContent = IMPORT_REFUSED; return; }
-  try {
-    const { headers, records } = parseCsv(await file.text());
-    const kind = detectHubspotFile(headers);
-    if (!kind || records.length === 0) {
-      statusEl.textContent = `Import failed - "${file.name}" does not look like a HubSpot companies or contacts export (it needs a "Company name" column, or "First Name"/"Last Name"/"Email" columns).`;
-      return;
-    }
-    const companyRows = kind === "companies" ? hubspotCompanyRows(records) : [];
-    const contactRows = kind === "contacts" ? hubspotContactRows(records) : [];
-    const found = kind === "companies" ? `${companyRows.length} companies` : `${contactRows.length} contacts`;
-    if (companyRows.length + contactRows.length === 0) {
-      statusEl.textContent = `Import failed - no usable ${kind} rows were found in "${file.name}".`;
-      return;
-    }
-    if (!(await askConfirm(`Add the ${found} in "${file.name}" to your Target Accounts?\n\nOnly ones SalesTeam does not have yet are added; nothing existing is changed or removed.`, { okLabel: "Add them", cancelLabel: "Cancel" }))) {
-      statusEl.textContent = "Import cancelled.";
-      return;
-    }
-    statusEl.textContent = `Importing ${file.name}…`;
-    const counts = await addHubspotRowsToWorkbook(companyRows, contactRows);
-    await loadWorkbook();
-    const priority = await autoPrioritizeNewCompanies().catch(() => ({ applied: 0 }));
-    const parts = [];
-    if (kind === "companies") parts.push(`${counts.companiesAdded} ${counts.companiesAdded === 1 ? "company" : "companies"} added, ${counts.companiesAlreadyHad} already in SalesTeam`);
-    else {
-      parts.push(`${counts.contactsAdded} ${counts.contactsAdded === 1 ? "contact" : "contacts"} added, ${counts.contactsAlreadyHad} already in SalesTeam`);
-      if (counts.companiesCreatedFromContacts > 0) parts.push(`${counts.companiesCreatedFromContacts} new ${counts.companiesCreatedFromContacts === 1 ? "company" : "companies"} created for contacts whose company was not in SalesTeam`);
-    }
-    if (priority.applied > 0) parts.push(`priorities calculated for ${priority.applied}`);
-    statusEl.textContent = `Done - ${parts.join("; ")}.`;
-    appendActivityLog({ actor: "user", action: "hubspot_imported", label: `Imported HubSpot ${kind} file "${file.name}": ${parts.join("; ")}` });
-  } catch (err) {
-    statusEl.textContent = `Import failed - ${err.message}`;
+  const stamp = exportStamp();
+  const files = [];
+  if (format === "hubspot") {
+    // The values the table shows - edits, LinkedIn and web research on top of the stored row (1.2.2.13 round-trip
+    // test: the raw rows went out, so Galenica's 7,971 came back as the old 4,511) - and revenue in the display
+    // currency, which is what Import reads a HubSpot file in unless told otherwise.
+    const companies = (accountRows || []).map((c) => {
+      const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
+      const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: accountPriorityInfo(c).priority }; // D4: exported as shown
+    });
+    contactRows = contactRows && contactRows.map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
+    const statusOfContact = (c) => effectiveStatus(leadStatusBucket(findLeadsForContact(c, allLeads)), contactExtras[contactKeyFor(c.company, c.fullName)]?.manualStatus);
+    const built = buildHubspotFiles(companies, contactRows || [], statusOfCompany, statusOfContact);
+    if (accountRows) files.push({ name: `SalesTeam-HubSpot-companies-${stamp}.csv`, csv: built.companiesCsv, text: `${built.companyCount} companies` });
+    if (contactRows) files.push({ name: `SalesTeam-HubSpot-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
+  } else {
+    const n = (count, one) => `${count} ${one}${count === 1 ? "" : "s"}`;
+    if (accountRows) files.push({ name: `SalesTeam-accounts-${stamp}.csv`, csv: tableCsv(COMPANY_COLUMNS, accountRows), text: n(accountRows.length, "account") });
+    if (contactRows) files.push({ name: `SalesTeam-contacts-${stamp}.csv`, csv: tableCsv(CONTACT_LIST_COLUMNS, contactRows), text: n(contactRows.length, "contact") });
   }
+  const where = await saveExportFiles(files);
+  const list = files.map((f) => `${f.text}: ${f.name}`).join("\n");
+  appendActivityLog({
+    actor: "user", action: format === "hubspot" ? "hubspot_exported" : "csv_exported",
+    label: `Exported ${files.map((f) => f.text).join(" and ")} (${format === "hubspot" ? "HubSpot" : "CSV"})`,
+  });
+  const hint = format === "hubspot"
+    ? (files.length > 1 ? "\n\nIn HubSpot, import the companies file first, then the contacts file." : "")
+    : "\n\nThey open in Excel.";
+  await askConfirm(`Saved ${files.length === 1 ? "one file" : `${files.length} files`} to ${where}:\n\n${list}${hint}`, { title: "Export", cancelLabel: null });
+}
+
+document.getElementById("export-go-btn").addEventListener("click", async () => {
+  const format = selectedExportChoice("export-format") || "csv";
+  const what = selectedExportChoice("export-what") || "accounts";
+  // After a browser restart Chrome asks again before writing into the folder - only possible from this click, so
+  // asked here, before the rows question (same lesson as the backups: asked after the work, Chrome refused).
+  const handle = await getStoredFolder(EXPORT_FOLDER_KEY);
+  if (handle && (await folderPermission(handle)) === "prompt") await requestFolderPermission(handle);
+  document.getElementById("export-dialog").close();
+  if (what === "contacts") showView("contactsList");
+  runExport(format, what);
 });
+document.getElementById("export-page-btn").addEventListener("click", () => openExportDialog());
+document.getElementById("export-contacts-page-btn").addEventListener("click", () => openExportDialog({ what: "contacts" }));
+document.getElementById("import-contacts-page-btn").addEventListener("click", () => openImportDialog(null, "contacts"));
 
 // ---- Merge duplicate accounts ----
 // A duplicate is the same real company entered twice - typically a ChatGPT-researched row and a LinkedIn-discovered one
@@ -7530,10 +7679,9 @@ for (const link of document.querySelectorAll('#app-nav a.nav-item[href^="#"]')) 
 // automatically on load. Same idea as Settings' own #setup-section/etc,
 // just for a dialog instead of a page section.
 const ACTION_DIALOG_IDS = {
-  "import-accounts": "import-accounts-dialog",
+  import: "import-dialog",
+  export: "export-dialog",
   "restore-accounts": "restore-accounts-dialog",
-  "export-hubspot": "hubspot-export-dialog",
-  "import-hubspot": "hubspot-import-dialog",
   resolve: "resolve-dialog",
   "fetch-size": "fetch-size-dialog",
   prioritize: "prioritize-companies-dialog",
@@ -7542,14 +7690,23 @@ const ACTION_DIALOG_IDS = {
   "web-lane": "web-lane-dialog",
   "web-discovery": "web-discovery-dialog",
 };
-const IMPORT_ACTIONS = new Set(["import-accounts", "restore-accounts", "import-hubspot"]);
+// 1.2.3 step 2 (design 7.3): one Import… and one Export…. The old action names still open them, with their format
+// (and what) chosen - a link or an open tab from before keeps working.
+const ACTION_ALIASES = {
+  "import-accounts": ["import", { format: "workbook" }],
+  "import-hubspot": ["import", { format: "hubspot" }],
+  "export-hubspot": ["export", { format: "hubspot" }],
+  "export-accounts-csv": ["export", { format: "csv", what: "accounts" }],
+  "export-contacts-csv": ["export", { format: "csv", what: "contacts" }],
+};
+const IMPORT_ACTIONS = new Set(["import", "restore-accounts"]);
 async function openActionFromHash() {
-  const action = new URLSearchParams(location.hash.slice(1)).get("action");
+  const params = new URLSearchParams(location.hash.slice(1));
+  let action = params.get("action");
+  let preset = { what: params.get("what") || null };
+  if (ACTION_ALIASES[action]) [action, preset] = ACTION_ALIASES[action];
   // 1.2.3 (design 6): in a team only the Team Lead imports and restores - a member's link does nothing.
   if (IMPORT_ACTIONS.has(action) && !(await mayImport())) return;
-  // The CSV exports have no dialog of their own (another page's menu opens them here).
-  if (action === "export-accounts-csv") { exportTableCsv("accounts"); return; }
-  if (action === "export-contacts-csv") { showView("contactsList"); exportTableCsv("contacts"); return; }
   const dialogId = ACTION_DIALOG_IDS[action];
   if (!dialogId) return;
   // 25th round of direct feedback (2026-09-19): "I even managed to get 2
@@ -7570,12 +7727,11 @@ async function openActionFromHash() {
   // underneath the dialog (not the Accounts list), so closing it lands
   // the user somewhere that makes sense for what they clicked.
   if (action === "discover-contacts") showView("contactsList");
-  if (action === "export-hubspot") refreshHubspotExportSummary();
-  if (action === "import-hubspot") { document.getElementById("hubspot-import-status").hidden = true; }
+  if (action === "import") { openImportDialog(preset.format, preset.what); return; }
+  if (action === "export") { openExportDialog(preset); return; }
   if (action === "web-lane") { openWebLaneDialog(); return; }
   if (action === "web-discovery") { openWebDiscoveryDialog(); return; }
   if (action === "find-duplicates") { renderFindDuplicates().then(() => document.getElementById(dialogId).showModal()); return; }
-  if (action === "import-accounts") { renderImportColumnsHelp(); document.getElementById("import-help-status").textContent = ""; }
   document.getElementById(dialogId).showModal();
 }
 
@@ -7592,7 +7748,7 @@ async function init() {
   loadContactHiddenColumns();
   loadContactFilterSortState();
   await teamAccounts.ready();
-  hideImportForMembers(["import-target-accounts-page-btn", "restore-target-accounts-page-btn", "hubspot-import-page-btn",
+  hideImportForMembers(["import-page-btn", "import-contacts-page-btn",
     "open-settings-restore-btn", "empty-import-btn"]);
   // Assignments and claims arrive from the team in the background: repaint the lists' badges and filter.
   // A list hidden behind an account page is marked stale and redrawn when it is shown again (route) - otherwise

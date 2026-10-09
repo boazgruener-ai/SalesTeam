@@ -1901,19 +1901,20 @@ async function planWorkbookImport(parsed, { fileName = null, at = Date.now() } =
 }
 
 // The check-first summary (design 3.4): what the import would do, with nothing written.
+// Every format goes through these two (build step 2): the research workbook, a SalesTeam CSV and a HubSpot export.
 export async function previewWorkbookImport(parsed, { fileName = null } = {}) {
   const { plan } = await planWorkbookImport(parsed, { fileName });
   return { counts: plan.counts, newCompanyNames: plan.newCompanyNames, decisions: plan.decisions };
 }
 
 export async function mergeImportIntoWorkbook(parsed, opts = {}) { return withAccountWriteLock(() => mergeImportIntoWorkbookUnlocked(parsed, opts)); }
-async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {}) {
+async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null, format = "workbook" } = {}) {
   if (!(await mayImport())) throw new Error(IMPORT_REFUSED);
   const importedAt = Date.now();
   const { wb, extras, contactExtras, plan } = await planWorkbookImport(parsed, { fileName, at: importedAt });
   const membership = (await chrome.storage.local.get("teamMembership")).teamMembership || null;
   const run = {
-    id: `imp-${importedAt}`, file: fileName, at: importedAt,
+    id: `imp-${importedAt}`, file: fileName, format, at: importedAt,
     by: membership ? membership.name || membership.memberId || null : null, summary: importSummaryText(plan.counts),
   };
 
@@ -1951,7 +1952,7 @@ async function mergeImportIntoWorkbookUnlocked(parsed, { fileName = null } = {})
       ...(last && newExclusionRows.length ? { exclusionList: [...(wb.exclusionList || []), ...newExclusionRows] } : {}),
     },
     [TARGET_ACCOUNT_EXTRAS_KEY]: extras,
-    ...(last ? { [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: importedAt } : {}),
+    ...(last && format === "workbook" ? { [TARGET_ACCOUNTS_WORKBOOK_IMPORTED_AT_KEY]: importedAt } : {}),
   });
 
   // First the new accounts, each batch with its own contacts / initiatives / investment / sources.
@@ -4781,48 +4782,6 @@ export async function addKeptSeparatePairs(pairKeys) {
 
 export async function clearKeptSeparatePairs() {
   await chrome.storage.local.set({ [KEPT_SEPARATE_KEY]: [] });
-}
-
-// HubSpot import: ADDS companies and contacts SalesTeam does not have yet (matched by company name / person). Nothing
-// existing is changed or removed. A contact whose company is unknown gets a minimal company row so it has a home.
-export async function addHubspotRowsToWorkbook(companyRows, contactRows) { return withAccountWriteLock(() => addHubspotRowsToWorkbookUnlocked(...arguments)); }
-async function addHubspotRowsToWorkbookUnlocked(companyRows, contactRows) {
-  const wb = await getTargetAccountsWorkbook();
-  const companies = [...(wb.companies || [])];
-  const contacts = [...(wb.contacts || [])];
-  const byKey = new Map(companies.map((c) => [normalizeCompanyName(c.company), c]));
-  const counts = { companiesAdded: 0, companiesAlreadyHad: 0, companiesCreatedFromContacts: 0, contactsAdded: 0, contactsAlreadyHad: 0 };
-  for (const row of companyRows) {
-    const key = normalizeCompanyName(row.company);
-    if (!key) continue;
-    if (byKey.has(key)) { counts.companiesAlreadyHad++; continue; }
-    companies.push(row);
-    byKey.set(key, row);
-    counts.companiesAdded++;
-  }
-  const contactKeys = new Set(contacts.map((c) => contactKeyFor(c.company, c.fullName)));
-  let created = 0;
-  for (const row of contactRows) {
-    const companyKey = normalizeCompanyName(row.company);
-    if (!companyKey) continue;
-    let company = byKey.get(companyKey);
-    if (!company) {
-      created++;
-      company = { companyId: `HS-c-${Date.now()}-${created}`, company: row.company, researchStatus: "Created from a HubSpot contact", source: "HubSpot" };
-      companies.push(company);
-      byKey.set(companyKey, company);
-      counts.companiesCreatedFromContacts++;
-    }
-    const key = contactKeyFor(company.company, row.fullName);
-    if (!key || contactKeys.has(key)) { counts.contactsAlreadyHad++; continue; }
-    contactKeys.add(key);
-    contacts.push({ ...row, company: company.company, companyId: company.companyId });
-    counts.contactsAdded++;
-  }
-  if (counts.companiesAdded > 0 || counts.companiesCreatedFromContacts > 0 || counts.contactsAdded > 0) {
-    await chrome.storage.local.set({ [TARGET_ACCOUNTS_WORKBOOK_KEY]: { ...wb, companies, contacts } });
-  }
-  return counts;
 }
 
 // Initiatives found by the web research are added to the account's Initiatives list (same sheet as the research workbook's

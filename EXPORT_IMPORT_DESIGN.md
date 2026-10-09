@@ -1,7 +1,8 @@
 # SalesTeam — Export & Import: Design
 
 Target release: **1.2.3** (test builds 1.2.2.x)
-Status: **Design — AGREED 2026-10-09** (D1–D10 all as proposed).
+Status: **Design — AGREED 2026-10-09** (D1–D10 all as proposed). **Addition 2026-10-09: section 8a Microsoft
+Dynamics (D11–D12) and section 8b One currency (D13–D15) — AGREED 2026-10-09, built in step 3.**
 Requirements: EXPORT_IMPORT_REQUIREMENTS.md (agreed 2026-10-09).
 Date: 2026-10-09
 
@@ -289,6 +290,73 @@ like the chosen kind says what it looks like ("This looks like a HubSpot contact
 
 ---
 
+## 8a. Microsoft Dynamics 365 Sales (R10) — PROPOSED
+
+- **One module for both CRMs' shape.** Salesforce and Dynamics differ only in column names, so `crm-files.js`
+  (pure) holds one column table per CRM - `{ field, label, apiName }` per column - and three functions that take
+  the table: `buildCrmFiles(crm, companies, contacts, money)`, `crmAccountRows(crm, records)`,
+  `crmContactRows(crm, records)`. Salesforce (section 8) uses the same module; no second copy of the logic.
+- **Export** (`buildCrmFiles("dynamics", …)`): two CSVs for Dynamics' Import Data wizard.
+  - Accounts: Account Name, Website, Industry, Number of Employees, Annual Revenue (display currency),
+    Address 1: City, Address 1: Country/Region, Description (SalesTeam priority, LinkedIn page, relationship).
+  - Contacts: First Name, Last Name, Job Title, Email, Business Phone, Company Name, Address 1: City,
+    Address 1: Country/Region, Description (LinkedIn profile).
+  - Pop-up: "In Dynamics: Import Data — Accounts first, then Contacts (Company Name links each contact)."
+- **Import** (`crmAccountRows("dynamics", …)` / `crmContactRows`): recognises display names and field names
+  (`name`, `websiteurl`, `numberofemployees`, `revenue`, `address1_city`, `address1_country`, `industrycode`,
+  `firstname`, `lastname`, `fullname`, `jobtitle`, `emailaddress1`, `telephone1`, `parentcustomerid`).
+  Columns starting "(Do Not Modify)" are skipped. A "Currency" column (ISO code or Dynamics' currency name,
+  e.g. "Swiss Franc") is read when present; otherwise D7 applies.
+- **.xlsx as well as .csv:** Dynamics' everyday export is "Export to Excel" (.xlsx, one sheet). The Import
+  dialog accepts .xlsx for Dynamics and reads the first sheet with the existing `xlsx-lite.js` reader.
+- `detectImportFile` learns both CRMs, so a wrong choice still says what the file looks like ("This looks like
+  a Dynamics contacts export").
+- **Live check:** the header rows of a real Accounts and Contacts export (Q10) fix the column names; Industry is
+  an option set in Dynamics (like Salesforce's picklist) - if the wizard rejects free text, the export puts the
+  industry in Description instead (decided at test, same as Salesforce).
+
+## 8b. One currency — the default currency everywhere (D13–D15, agreed 2026-10-09)
+
+Boaz, 1.2.2.13 test: revenues should read in one currency - the default one in Change Settings > Advanced >
+Revenue & Currency (`revenueNormalization.targetCurrency`, default USD, team-shared: the Team Lead's applies) -
+and an import must never read a CHF file as USD.
+
+- **D13 — Shown in the default currency, stored as found.** The Global / Local Revenue cells show the amount
+  converted to the default currency (`normalizeMoney`, the rates already used for scoring); the original amount
+  and currency are in the cell's tooltip ("from 2.4 m CHF"). The stored value and its currency are never
+  rewritten, so changing the default currency later loses nothing. Sorting and filters use the converted amount.
+- **D14 — Every export in the default currency, named in the column title.** "Global Revenue (USD)", "Local
+  Revenue (USD)" in the SalesTeam CSV (its separate "… Currency" columns are dropped), and the same amounts in
+  the HubSpot, Salesforce and Dynamics files, whose revenue column titles carry the currency where the CRM's
+  import accepts it (otherwise the export pop-up names it).
+- **D15 — An import never guesses a file's currency.** In this order:
+  1. a currency column per row (Dynamics' Currency, an older SalesTeam CSV) - each row in its own currency;
+  2. a currency in the revenue column title ("Global Revenue (USD)") - that currency;
+  3. neither - the check-first summary asks "Revenue in this file is in: [choose…]" with **no pre-selected
+     answer**; Import stays disabled until one is chosen (replaces 1.2.2.13's dropdown that defaulted to the
+     display currency). Files without revenue figures are not asked.
+  - **Plausibility check:** for accounts already holding a revenue, the median ratio file / stored (both
+    converted with the chosen currency) is computed; when it sits near an exchange rate instead of near 1 (e.g.
+    0.9 for CHF read as USD) the summary warns: "These figures look like CHF, not USD - check the currency."
+    Pure (`currencyPlausibility` in csv-import.js), with harness cases.
+- **D16 — Revenue written without its unit (millions / billions).** Found in the 1.2.2.13 HubSpot export: seven
+  accounts held revenues such as Cornèr Bank 491.1 CHF, Metrohm 400 CHF, ISS Schweiz 914 CHF, Lindt & Sprüngli
+  Schweiz 5.92 CHF - all from web research answers that lost "million"/"billion". The arbitration's units rule
+  only fires on a *pair* (stored against found); into an empty field a lone value was filled as it came.
+  - **Check (pure, `revenueUnitsCheck`):** revenue per employee, using the larger of the employee count and the
+    **targeting minimum** - the low end of the smallest size band ticked in Setup (`targetUniverseConfig.sizeBuckets`
+    against `SIZE_PRIORITY_BUCKETS`: 201 when 201-500 is the smallest ticked, 1,001 when it is 1,001-5,000; Boaz
+    2026-10-09: never a fixed 200) - so it works even when the headcount is missing or wrong. When the smallest
+    ticked band starts at 0 (0-200), only a real employee count is used, and an account without one is not judged. Below 10,000 per employee per year (in the default currency) the value is impossible for a company in
+    scope. The likely unit is the one of ×1,000 / ×1,000,000 / ×1,000,000,000 that puts revenue per employee
+    between 20,000 and 2,000,000 (Lindt 5.92 → 5.92 bn; Cornèr 491.1 → 491.1 m); none fits → no suggestion.
+  - **Going forward:** a web finding, import or edit that would *fill* such a value is not written; it becomes a
+    Decisions card instead.
+  - **Existing data:** each account already holding such a value gets a Decisions card - "Revenue 491.1 CHF looks
+    like it is in millions → 491.1 million CHF?" - **Correct it** / **Keep**. Nothing is changed without an answer.
+  - An account below the targeting minimum with a credible tiny revenue (HT5 AG: an empty holding, 0 employees) is
+    out of scope rather than a units error - the card offers **Remove account** as well.
+
 ## 9. Research workbook specifics
 
 - Workbook rows that match an existing account go through the plan like any other format — **no row is
@@ -310,7 +378,7 @@ like the chosen kind says what it looks like ("This looks like a HubSpot contact
 | 0 | next 1.2.2.x | `import-merge.js` (pure) + harness cases; workbook import goes through it (add-and-fill, id remap, no legacy-map rebuild, exclusions only for new companies); `importFindings` + Decisions kind `import_finding` with Team Lead routing; `importTolerancePct` + Advanced field; dead `buildAutoBackup` removed. **Removes the data loss on its own.** |
 | 1 | +1 | Check-first summary, `safetyCopyBefore("before-import")`, batched writes, result pop-up, Activity Log, `importRun` + one team-log line; `mayImport()` gating of Import, Restore and team-shared Import Settings sections |
 | 2 | +1 | One Export… / Import… dialogs and menus (all pages), routes + aliases; SalesTeam CSV import; HubSpot import through the plan (fills gaps on existing accounts) |
-| 3 | +1 | Salesforce export and import (salesforce.js + harness cases); live check in a Salesforce dev org |
+| 3 | +1 | Salesforce **and Microsoft Dynamics** export and import (one pure `crm-files.js` + harness cases); Dynamics .xlsx import; **one currency (8b, D13–D15)**; **revenue units check + Decisions (D16)**; live checks (Salesforce dev org; Dynamics header rows or trial, Q10) |
 | 4 | — | Help "Export and import", PRD section, release notes (1.2.3) |
 
 Each step: `check_js_syntax.py`, `test_pure_modules.py`, `test_team_sync.py` (step 0–1: a two-member case —
@@ -337,3 +405,14 @@ member's import refused, Lead's import reaches the member without deleting the m
 - **D9** "Restore from Backup…" leaves the Target Accounts menu group; Restore stays in Settings. *Proposed.*
 - **D10** Build order: this item's step 0 **before** advanced-mode step 2 (Visibility), because step 0
   stops a real data loss. *Proposed.*
+
+### Added 2026-10-09 — PROPOSED
+
+- **D11** Salesforce and Dynamics share one pure module (`crm-files.js`) with a column table per CRM, instead of
+  a `salesforce.js` and a `dynamics.js` with the same logic twice. A third CRM later is one more table.
+- **D12** The Dynamics import reads its own "Export to Excel" .xlsx directly (no "save as CSV first" step for
+  the user).
+- **D13–D15** One currency: shown and exported in the default currency, an import never guesses (section 8b).
+- **D16** Revenue written without its unit: checked against the targeting minimum, fixed only through Decisions
+  (section 8b). *Agreed 2026-10-09.*
+- *D11–D15 agreed 2026-10-09 (Boaz: Dynamics 365 Sales, same step as Salesforce, currency as proposed).*

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SalesTeam - AI Sales Team for LinkedIn",
-  "version": "1.2.2.12",
+  "version": "1.2.2.13",
   "description": "Searches LinkedIn for relevant companies, contacts and posts, auto-filters noise, gets AI-prioritized results and drafts outreach.",
   "permissions": ["storage", "unlimitedStorage", "sidePanel", "clipboardWrite", "power", "alarms"],
   "host_permissions": ["https://www.linkedin.com/*", "https://api.anthropic.com/*"],

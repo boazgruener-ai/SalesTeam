@@ -31,7 +31,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
+PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2714,6 +2714,7 @@ def main():
     test_relationships(ctx)
     test_team_invites(ctx)
     test_import_merge(ctx)
+    test_csv_import(ctx)
 
     print()
     for f in _failures:
@@ -2839,6 +2840,67 @@ def test_import_merge(ctx):
     check("import: ...both counted as kept, rule 'source'", e("AXA.kept.filter(function (k) { return k.rule === 'source'; }).length + '/' + AXA.counts.taken"), "2/0")
     check("import: a cited web headcount is not overruled", e("GAL.counts.taken"), 0)
     check("import: the stored row's own value can still be corrected (rule 11)", e("ROW.companyPatches['axa switzerland'].overrides.globalHqCountry + '/' + ROW.counts.taken"), "France/1")
+
+
+
+def test_csv_import(ctx):
+    """1.2.3 Export & Import step 2 (design 3.1): SalesTeam CSV and HubSpot files read into workbook rows."""
+    e = ctx.eval
+    check("detect: SalesTeam accounts export", e("JSON.stringify(detectImportFile(['Company', 'Industry', 'Priority', 'Priority Score', 'LinkedIn Link', 'Employees']))"),
+          '{"format":"salesteam","kind":"accounts"}')
+    check("detect: SalesTeam contacts export (has Name, like HubSpot companies)", e("JSON.stringify(detectImportFile(['Name', 'Company', 'Status', 'Job Title', 'Contact Link']))"),
+          '{"format":"salesteam","kind":"contacts"}')
+    check("detect: HubSpot companies", e("JSON.stringify(detectImportFile(['Record ID', 'Company name', 'Company Domain Name', 'Industry']))"),
+          '{"format":"hubspot","kind":"accounts"}')
+    check("detect: HubSpot contacts", e("JSON.stringify(detectImportFile(['Record ID', 'First Name', 'Last Name', 'Email', 'Associated Company']))"),
+          '{"format":"hubspot","kind":"contacts"}')
+    check("detect: a CRM file with only a Company column is not taken for SalesTeam's", e("detectImportFile(['Company', 'Owner'])"), None)
+    check("detect: says what a wrong file looks like", e("describeImportFile(detectImportFile(['First Name', 'Email']))"), "a HubSpot contacts export")
+    e("""
+      var CSV_ROWS = salesteamCsvRows([
+        { 'Company': 'Acme AG', 'Priority': 'P1', 'Employees': "1'250", 'Global Revenue': '2,500,000', 'Global HQ City': 'Zug', 'Readiness': 'Ready', 'Source': 'Web' },
+        { 'Company': '', 'Employees': '5' },
+      ], 'accounts');
+      var CSV_CONTACTS = salesteamCsvRows([{ 'Name': 'Ben Neu', 'Company': 'Newco AG', 'Job Title': 'CIO', 'Status': 'Contacted', 'Contact Link': 'https://www.linkedin.com/in/ben/' }], 'contacts');
+    """)
+    check("salesteam csv: a row without a company is skipped", e("CSV_ROWS.length"), 1)
+    check("salesteam csv: numbers read with separators", e("CSV_ROWS[0].globalEmployees + '/' + CSV_ROWS[0].globalRevenue"), "1250/2500000")
+    check("salesteam csv: computed columns are not read back", e("'salesTeamPriority' in CSV_ROWS[0] || 'readiness' in CSV_ROWS[0]"), False)
+    check("salesteam csv: a new row is marked source CSV, not the file's old source", e("CSV_ROWS[0].source"), "CSV")
+    check("salesteam csv: contact columns mapped", e("CSV_CONTACTS[0].fullName + '|' + CSV_CONTACTS[0].jobTitle + '|' + CSV_CONTACTS[0].lastVerified2"),
+          "Ben Neu|CIO|https://www.linkedin.com/in/ben/")
+    e("""
+      var CUR = applyFileCurrency({ companies: [{ company: 'A', globalRevenue: 5 }, { company: 'B', globalRevenue: 7, revenueCurrency: 'EUR' }, { company: 'C' }] }, 'CHF');
+    """)
+    check("D7: revenue without a currency is read as the chosen one", e("CUR.companies[0].revenueCurrency"), "CHF")
+    check("D7: a currency in the file is kept", e("CUR.companies[1].revenueCurrency"), "EUR")
+    check("D7: no revenue, no currency added", e("'revenueCurrency' in CUR.companies[2]"), False)
+    check("D7: fileNeedsCurrency", e("fileNeedsCurrency({ companies: [{ globalRevenue: 1 }] }) + '/' + fileNeedsCurrency(CUR)"), "true/false")
+    # The same plan as the workbook: an existing account gets its empty field filled, nothing replaced.
+    e("""
+      var CSV_PLAN = planImport({ companies: CSV_ROWS, contacts: CSV_CONTACTS },
+        { companies: [{ companyId: 'C-1', company: 'Acme AG', globalEmployees: 1200 }], contacts: [], extras: {}, contactExtras: {} },
+        { buckets: ctxFor().buckets, locationTier: ctxFor().locationTier, tolerancePct: 10, fileName: 'x.csv', at: 1 });
+    """)
+    check("csv through the plan: empty HQ city filled", e("CSV_PLAN.companyPatches['acme'].overrides.globalHqCity"), "Zug")
+    check("csv through the plan: 1200 vs 1250 kept, within 10%", e("'globalEmployees' in CSV_PLAN.companyPatches['acme'].overrides"), False)
+    check("csv through the plan: a contact's unknown company becomes an account", e("CSV_PLAN.newCompanyNames.join()"), "Newco AG")
+    # 1.2.2.13 round-trip test (Boaz exported and re-imported unchanged files: 6 new contacts, 1,261 fills).
+    e("""
+      var RT = planImport(
+        { companies: [{ company: 'ADM Switzerland', globalEmployees: 5000 }],
+          contacts: [{ company: 'Holcim Schweiz / Suisse / Svizzera', fullName: 'Pascal Degen' }] },
+        { companies: [
+            { companyId: 'C-1', company: 'Holcim Group', aliases: ['Holcim Schweiz / Suisse / Svizzera'] },
+            { companyId: 'D-2', company: 'Holcim Schweiz / Suisse / Svizzera' },
+            { companyId: 'C-3', company: 'ADM Switzerland', employeeRange: '>5,000' } ],
+          contacts: [{ contactId: 'P-1', companyId: 'D-2', company: 'Holcim Schweiz / Suisse / Svizzera', fullName: 'Pascal Degen' }],
+          extras: {}, contactExtras: {} },
+        { buckets: ctxFor().buckets, locationTier: ctxFor().locationTier, tolerancePct: 10, at: 1 });
+    """)
+    check("round trip: a person under a subsidiary that is also a group alias is not new", e("RT.counts.newContacts"), 0)
+    check("round trip: the LinkedIn band shown as Employees is not filled in as a number", e("RT.counts.filled"), 0)
+    check("salesteam csv: the worked-out Seniority is not read back", e("'seniority' in salesteamCsvRows([{ Name: 'A B', Company: 'X', Seniority: 'C-level' }], 'contacts')[0]"), False)
 
 
 if __name__ == "__main__":

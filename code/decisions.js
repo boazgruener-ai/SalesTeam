@@ -295,6 +295,13 @@ async function decide(choice) {
 
 $("decision-choice-a").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
 $("decision-choice-b").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
+// 1.2.2.13 (Boaz): a way out without answering anything. Decisions is shown inside the page whose menu opened it;
+// that page closes it (the same message Change Settings' "Back to menu" sends). Opened on its own, it goes back.
+$("decision-cancel").addEventListener("click", () => {
+  if (window.parent !== window) window.parent.postMessage({ type: "salesteam-close-embedded" }, location.origin);
+  else history.back();
+});
+
 $("decision-skip").addEventListener("click", () => {
   if (busy || !currentId) return;
   skipped = [...skipped.filter((id) => id !== currentId), currentId];

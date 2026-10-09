@@ -1905,6 +1905,14 @@ thead .actions-col {
 
 /* Import Research Workbook dialog - helpers for people who do not have a workbook yet */
 .import-help-heading { margin: 16px 0 6px; font-size: 13px; color: var(--ink); }
+/* 1.2.3 one Import… / Export… dialog: the format and "what" choices */
+.io-choice { border: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.io-choice legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+.io-choice label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.export-folder-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#export-folder-name { flex: 1; min-width: 200px; padding: 6px 8px; font-size: 13px; font-weight: 600; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--gray-light); color: var(--ink); }
+.export-folder-hint { margin: 4px 0 0; font-size: 12px; color: var(--gray); }
 .import-help-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
 .import-help-buttons button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; }
 .import-columns-details { margin-top: 8px; font-size: 12px; }
