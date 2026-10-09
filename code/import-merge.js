@@ -131,6 +131,20 @@ function withinTolerance(p, effective, data, tolerancePct) {
   return Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1) <= tolerancePct / 100;
 }
 
+// Where an account's current value of `field` came from, when that is stronger than any file: a hand edit, LinkedIn,
+// LinkedIn Discovery or cited web research. null when the value is the stored row's own (an earlier import) or an
+// override an import or an uncited research put there - those an import may still replace by the rules.
+const STRONGER_SOURCE_LABELS = { user: "a hand edit", linkedin: "LinkedIn", discovery: "LinkedIn Discovery", web: "cited web research" };
+export function strongerSourceOf(extra, field) {
+  const overrides = (extra && extra.overrides) || {};
+  if (!(field in overrides) || isBlankFinding(overrides[field])) return null;
+  const p = extra.provenance && extra.provenance[field];
+  // An override without a provenance stamp (revenue, city, registry fields) was typed in or taken from a research.
+  if (!p) return "an edit or a web research";
+  if (p.src === "workbook" || (p.src === "web" && !p.cited)) return null;
+  return STRONGER_SOURCE_LABELS[p.src] || p.src;
+}
+
 // -> { overrides, evidence, findings, fills, taken, kept, decisions } for one matched account.
 export function planCompanyUpdate(row, extra, fileRow, opts = {}) {
   const tolerancePct = Number.isFinite(Number(opts.tolerancePct)) ? Number(opts.tolerancePct) : DEFAULT_IMPORT_TOLERANCE_PCT;
@@ -163,7 +177,14 @@ export function planCompanyUpdate(row, extra, fileRow, opts = {}) {
     const { decisions } = arbitrateAccount({ proposals, extra: { overrides: overridesNow }, ctx, settings, data });
     for (const d of decisions) {
       const p = d.proposal;
-      if (d.action === "apply") {
+      // 1.2.2.10 live test: rules 2, 10 and 11 replaced values that LinkedIn and cited web research had set (AXA's
+      // LinkedIn headcount, Galenica's and Swiss Prime Site's cited counts, AXA's and Allianz's HQ country) - and the
+      // pipeline then put three of them back. A file never overrules a person, LinkedIn or cited web research; it
+      // may only replace what an earlier file put there.
+      const stronger = p.state === "different" ? strongerSourceOf(extra, p.key === "revenueCurrency" ? "globalRevenue" : p.key) : null;
+      if (d.action === "apply" && stronger) {
+        note(out.kept, p, "source", `the current value comes from ${stronger}, which an import does not overrule`);
+      } else if (d.action === "apply") {
         out.overrides[p.key] = p.found;
         const ev = EVIDENCE_FIELD[p.key] ? fileRow[EVIDENCE_FIELD[p.key]] : null;
         out.evidence[p.key] = ev || fileRow.evidenceStatus || null;

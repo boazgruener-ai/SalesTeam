@@ -2796,6 +2796,24 @@ def test_import_merge(ctx):
     e("var BAD = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 0, globalRevenue: 5000000 }] }, IM_CURRENT, IM_OPTS);")
     check("import: 0 employees from the file is never written", e("'globalEmployees' in ((BAD.companyPatches['banded'] || {}).overrides || {})"), False)
     check("import: summary text", e("importSummaryText({ newCompanies: 1, filled: 2, decisions: 1 })"), "1 new account, 2 empty fields filled, 1 difference for Decisions")
+    # 1.2.2.10 live test (Boaz, 9 Oct): an import never overrules a hand edit, LinkedIn or cited web research
+    e("""
+      var axaRow = { companyId: 'A', company: 'AXA Switzerland', companyType: 'International company', globalEmployees: 1001, globalHqCountry: 'Switzerland' };
+      var axaExtra = { overrides: { swissEmployees: 4500, globalHqCountry: 'Switzerland', globalEmployees: 1001 },
+        provenance: { globalEmployees: { src: 'linkedin', v: 1001 }, globalHqCountry: { src: 'web', cited: true, v: 'Switzerland' } } };
+      var AXA = planImport({ companies: [{ company: 'AXA Switzerland', globalEmployees: 4700, globalHqCountry: 'France' }] },
+        { companies: [axaRow], extras: { 'axa switzerland': axaExtra } }, IM_OPTS);
+      var galRow = { companyId: 'G', company: 'Galenica', globalEmployees: 7000, globalEmployeesConfidence: 'estimate', globalHqCountry: 'Switzerland' };
+      var GAL = planImport({ companies: [{ company: 'Galenica', globalEmployees: 4511 }] },
+        { companies: [galRow], extras: { galenica: { overrides: { globalEmployees: 7971 }, provenance: { globalEmployees: { src: 'web', cited: true, v: 7971 } } } } }, IM_OPTS);
+      var ROW = planImport({ companies: [{ company: 'AXA Switzerland', globalHqCountry: 'France' }] },
+        { companies: [axaRow], extras: {} }, IM_OPTS);
+    """)
+    check("import: a LinkedIn headcount is not overruled", e("'globalEmployees' in ((AXA.companyPatches['axa switzerland'] || {}).overrides || {})"), False)
+    check("import: a cited web HQ country is not overruled (rule 11)", e("'globalHqCountry' in ((AXA.companyPatches['axa switzerland'] || {}).overrides || {})"), False)
+    check("import: ...both counted as kept, rule 'source'", e("AXA.kept.filter(function (k) { return k.rule === 'source'; }).length + '/' + AXA.counts.taken"), "2/0")
+    check("import: a cited web headcount is not overruled", e("GAL.counts.taken"), 0)
+    check("import: the stored row's own value can still be corrected (rule 11)", e("ROW.companyPatches['axa switzerland'].overrides.globalHqCountry + '/' + ROW.counts.taken"), "France/1")
 
 
 if __name__ == "__main__":
