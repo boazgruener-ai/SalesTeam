@@ -5,7 +5,7 @@
 //   initTeamSettings() - Settings > Team: create / join / leave / close, the folder, members (⋮), groups, sync state.
 // The folder work itself runs in the background worker (team-sync.js); this file only asks it (TEAM_* messages).
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
-import { askConfirm } from "./confirm-dialog.js";
+import { askConfirm, showNotice } from "./confirm-dialog.js";
 import { backupNow } from "./backup-restore.js";
 import { getUserProfile } from "./storage.js";
 import { groupIndex, OTHER_GROUP } from "./team-groups.js";
@@ -407,14 +407,11 @@ async function onCreate() {
     await renderTeamSettings();
     const c = r.counts || {};
     const invitedNames = invites.map((x) => x.name);
-    await askConfirm(
-      `The team "${teamName}" is set up, with you as Team Lead. Its folder is "${handle.name}".\n\n` +
-      `Its starting data: ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts), plus your Setup and rules.\n\n` +
-      (invitedNames.length ? `Invited: ${invitedNames.join(", ")}. ` : "Nobody is invited yet - use Add member… below the members. ") +
-      `Next, in File Explorer > OneDrive: right-click "${handle.name}" > Always keep on this device; then right-click it > Share, ` +
-      "type your colleagues' e-mail addresses, \"Can edit\", Send. Each of them clicks Open in that e-mail, then Add shortcut to My files - SalesTeam then shows them Join Team.\n\n" +
-      "SalesTeam shares while a SalesTeam page or the side panel is open.",
-      { okLabel: "OK", cancelLabel: "Close" });
+    // Boaz (1.2.2.8 test): a result with one OK, and only the next step.
+    showNotice(
+      `The team "${teamName}" is set up, with you as Team Lead. It starts with ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts).\n\n` +
+      (invitedNames.length ? `Invited: ${invitedNames.join(", ")}.\n\nNext: share` : "Next: invite your colleagues with Add member… below, and share") +
+      ` the folder "${handle.name}" with them - in File Explorer, right-click it > Share, type their e-mail addresses, Can edit, Send.`);
   } catch (err) {
     setText(status, `Not created: ${err.message}`, true);
   } finally {
@@ -676,15 +673,17 @@ async function onJoin() {
     await renderTeamSettings();
     const c = r.counts || {};
     const missing = await personalGaps();
-    await askConfirm(
-      `You are now in the team "${recheck.team?.name || ""}", as ${r.name || inv.name}.\n\n` +
-      `This browser now holds the team's ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts). ` +
-      "Changes you make are shared with your colleagues, and theirs arrive here by themselves." +
-      (r.brought?.accounts ? `\n\nYou brought ${r.brought.accounts} of your own account${r.brought.accounts === 1 ? "" : "s"} into the team${r.brought.assigned ? " - assigned to you" : ""}.` : "") +
-      (r.brought?.proposals ? `\n\n${r.brought.proposals} account${r.brought.proposals === 1 ? "" : "s"} you worked on ${r.brought.proposals === 1 ? "is" : "are"} waiting for the Team Lead's decision (Decisions).` : "") +
-      (missing.length ? `\n\nStill to do, for you alone: ${missing.join("; ")}.` : "") +
-      "\n\nSalesTeam shares while a SalesTeam page or the side panel is open.",
-      { okLabel: "OK", cancelLabel: "Close" });
+    showNotice(
+      `You are now in the team "${recheck.team?.name || ""}", as ${r.name || inv.name}. This browser holds the team's ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts); your changes and your colleagues' are shared by themselves.` +
+      (r.brought?.accounts ? `
+
+You brought ${r.brought.accounts} of your own account${r.brought.accounts === 1 ? "" : "s"} into the team${r.brought.assigned ? " - assigned to you" : ""}.` : "") +
+      (r.brought?.proposals ? `
+
+${r.brought.proposals} account${r.brought.proposals === 1 ? "" : "s"} you worked on ${r.brought.proposals === 1 ? "is" : "are"} waiting for the Team Lead's decision (Decisions).` : "") +
+      (missing.length ? `
+
+Still to do, for you alone: ${missing.join("; ")}.` : ""));
   } catch (err) {
     setText(status, `Not joined: ${err.message}`, true);
   } finally {
