@@ -779,7 +779,9 @@ function routeSettings() {
   // under it: the LinkedIn touches and the seller-research offer belong to Automation only.
   const navEl = document.getElementById(`nav-${activeId}`);
   const label = navEl ? [...navEl.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim() : "";
-  document.getElementById("settings-title").textContent = label ? `SalesTeam Settings → ${label}` : "SalesTeam Settings";
+  const advanced = navEl?.closest("details")?.querySelector("summary")?.textContent.trim() === "Advanced tools";
+  document.getElementById("settings-title").textContent = !label ? "SalesTeam Settings"
+    : `${advanced ? "Advanced tools" : "SalesTeam Settings"} → ${label}`;
   document.getElementById("linkedin-touch-stat").hidden = activeId !== "automation-section";
   renderSellerResearchOffer();
 }

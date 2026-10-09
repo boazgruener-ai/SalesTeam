@@ -2210,54 +2210,6 @@ el("about-research-btn").addEventListener("click", async () => {
   await runSellerResearch();
 });
 
-// 1.2.1 step 7 (design 3.12, R4.6): the once-only offer, also at the top of Change Settings - this page covers the
-// Settings cards that carry the same box (1.2.0.36 showed it only there, so it went unseen). Same rule as settings.js:
-// a finished setup whose research never ran, and not declined.
-function renderSettingsResearchOffer() {
-  let box = el("settings-research-offer");
-  // Not for a team member (D3): the research proposes changes to the shared setup, which is the Team Lead's.
-  const show = completedBefore && setupResearch.status === "none" && !setupResearch.declinedInSettings && !teamMemberReadOnly;
-  if (!show) {
-    if (box) box.hidden = true;
-    return;
-  }
-  if (!box) {
-    box = document.createElement("div");
-    box.id = "settings-research-offer";
-    box.className = "wizard-note settings-research-offer";
-    const text = document.createElement("p");
-    text.innerHTML = "<strong>New:</strong> ";
-    text.append("SalesTeam can research your company's website and propose improvements to the setup " +
-      `(about ${usd(SELLER_RESEARCH_ESTIMATE_USD)}). The proposals are shown next to the current settings; nothing ` +
-      "changes unless you take one.");
-    const yes = document.createElement("button");
-    yes.type = "button";
-    yes.textContent = "Research";
-    yes.addEventListener("click", () => {
-      box.hidden = true;
-      showStep(STEP_ORDER.indexOf("about"));
-      el("about-research-btn").click();
-    });
-    const no = document.createElement("button");
-    no.type = "button";
-    no.textContent = "No thanks";
-    no.addEventListener("click", async () => {
-      box.hidden = true;
-      setupResearch = { ...setupResearch, declinedInSettings: Date.now() };
-      await saveSetupResearch(setupResearch);
-      try {
-        await appendActivityLog({ actor: "user", action: "setup_research", label: "Declined the setup research offered in Settings" });
-      } catch { /* the log is informational */ }
-    });
-    const row = document.createElement("div");
-    row.className = "settings-research-offer-buttons";
-    row.append(yes, no);
-    box.append(text, row);
-    el("wizard-nav-bar").after(box);
-  }
-  box.hidden = false;
-}
-
 // ---- The progress screen (design 3.6) ----
 
 // The research is one AI call that decides itself how many pages to read, so there are no fixed steps to count. The
@@ -3052,15 +3004,17 @@ async function init() {
   if (settingsMode) {
     await mountAdvancedSteps({ onDirty: markStepDirty });
     document.body.classList.add("settings-mode");
-    el("page-title-text").textContent = "Change Settings";
-    el("page-subtitle-setup").hidden = true;
-    el("page-subtitle-change").hidden = false;
-    el("linkedin-use-note").hidden = true; // the note belongs to the first-time setup, not to Change Settings
-    el("change-back-to-menu-link").hidden = false;
     const askedStep = new URLSearchParams(location.search).get("step");
+    // Boaz (1.2.2.8 test): the heading names the page - Revenue & Currency and the research-findings rules are Advanced
+    // tools pages - and nothing generic sits under it. The seller-research offer lives on Settings > Automation only.
+    const advanced = { revenue: "Revenue & Currency", findings: "How to handle research findings" }[askedStep];
+    el("page-title-text").textContent = advanced ? `Advanced tools → ${advanced}` : "SalesTeam Settings → Change Settings";
+    el("page-subtitle-setup").hidden = true;
+    el("page-subtitle-change").hidden = Boolean(advanced);
+    el("linkedin-use-note").hidden = true; // the note belongs to the first-time setup, not to Change Settings
+    el("change-back-to-menu-link").hidden = Boolean(advanced);
     if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
     else showSettingsHome();
-    renderSettingsResearchOffer();
     // Settings' once-only offer (design 3.12): About you opens with the research started. The button's own checks
     // apply - with no company website or API key it says what is missing instead.
     if (askedStep === "about" && new URLSearchParams(location.search).get("research") === "1") el("about-research-btn").click();
@@ -3087,8 +3041,6 @@ async function applyTeamMemberReadOnly() {
   if (!membership || leadRightsOf(membership, got.teamAccountStates)) return;
   teamMemberReadOnly = true;
   document.body.classList.add("team-member-readonly");
-  const offer = document.getElementById("settings-research-offer");
-  if (offer) offer.hidden = true;
   const save = document.getElementById("nav-save-btn");
   if (save && STEP_ORDER[currentStepIndex] !== "about") { save.disabled = true; save.title = "Only the Team Lead can change this setting"; }
   const note = document.getElementById("team-member-setup-note");

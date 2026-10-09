@@ -118,8 +118,8 @@
       <details class="nav-group nav-group-debug">
         <summary class="nav-group-label">Advanced tools</summary>
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
-        <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
-        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="1.2.1 test: find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts (new)…</button>
+        <button id="nav-web-lane-btn" type="button" class="nav-item" title="Research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web…</button>
+        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="Find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-target-accounts-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
@@ -238,13 +238,8 @@
     </section>
 
     <section class="settings-card" id="discovery-queue-section">
-      <h3>Discovery Queue (debug - Phase 4 test harness)</h3>
-      <p class="field-hint">
-        Temporary test panel for the resumable Discovery scan queue (PRD 6.20 Phase 4) - Phase 5/6 (the
-        actual company/contact discovery scans) don't exist yet to drive this for real, so these buttons
-        simulate one loop iteration each, exercising the same state machine those phases will call into.
-        Remove or fold into real progress UI once Phase 5/6 ship.
-      </p>
+      <!-- Boaz (1.2.2.8 test): the heading "Advanced tools → <page>" names it; one plain sentence instead of build notes. -->
+      <p class="field-hint">The state of the Discovery scan queue, with buttons to step it by hand - for support.</p>
       <pre id="discovery-queue-state-display" class="debug-state-display"></pre>
       <div class="settings-buttons-row">
         <button type="button" id="discovery-queue-start-btn">Start (test)</button>
@@ -258,12 +253,8 @@
     </section>
 
     <section class="settings-card" id="company-discovery-section">
-      <h3>Company Discovery (debug - Phase 5 live test)</h3>
-      <p class="field-hint">
-        Temporary test panel for the real Company discovery scan (PRD 6.20 Phase 5) - runs a live LinkedIn
-        Company Search using your saved onboarding criteria, checkpointing into the Discovery Queue above.
-        Remove or fold into real progress UI once Phase 5 is fully wired into the main scan flow.
-      </p>
+      <p class="field-hint">Runs a LinkedIn company search with your Setup criteria and adds the companies found to the
+        Discovery Queue - for support.</p>
       <!-- 1.2.0.43 (Boaz): moved here from the Setup's Size step - only this panel and the Discovery Queue panel
            read it; building the list from the Setup uses "How big is your list". -->
       <div class="settings-buttons-row">
@@ -288,13 +279,8 @@
     </section>
 
     <section class="settings-card" id="contact-discovery-section">
-      <h3>Contact Discovery (debug - Phase 6 live test)</h3>
-      <p class="field-hint">
-        Temporary test panel for the real Contact discovery scan (PRD 6.20 Phase 6) - visits each Phase-5-
-        discovered company's own People tab with your saved Target Contacts profile, checkpointing into the
-        Discovery Queue above. Only runs when the queue is in "discovering_contacts" status (i.e. Phase 5 has
-        already run to completion). Remove or fold into real progress UI once Phase 6 is fully wired in.
-      </p>
+      <p class="field-hint">Visits each discovered company's People tab with your target-contact profile. It runs once
+        Company Discovery has finished - for support.</p>
       <p id="contact-discovery-status" class="field-hint"></p>
       <div class="settings-buttons-row">
         <button type="button" id="contact-discovery-run-btn">Run contact discovery</button>

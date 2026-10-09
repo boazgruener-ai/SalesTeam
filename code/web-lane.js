@@ -274,7 +274,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
           state.failed++;
           state.lastError = err.message;
           state.results.push({ key: item.key, company: item.company, isPublic: item.isPublic, topics: item.topics, error: String(err.message || err).slice(0, 200) });
-          appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: `Web research (new) - ${item.company}: failed - ${String(err.message || err).slice(0, 200)}` }).catch(() => {});
+          appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: `Web research - ${item.company}: failed - ${String(err.message || err).slice(0, 200)}` }).catch(() => {});
           consecutiveFailures++;
           const blocked = apiBlockedReason(err);
           // An automatic run tells the pipeline too, so neither tries again today with this key (W6).

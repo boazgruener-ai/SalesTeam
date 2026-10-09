@@ -13,7 +13,6 @@
        <dialog>/showModal() pattern, explicitly-labeled buttons instead. -->
   <dialog id="merge-discovered-dialog">
     <h3>Add Discovery results to your Target Accounts?</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
     <p>
       This adds the companies/contacts below to your Target Accounts list - click a company to check it on
       LinkedIn first if you want. A company already on your list won't be duplicated; it's just left as is.
@@ -46,17 +45,14 @@
   </dialog>
 
   <dialog id="web-lane-dialog">
-    <h3>Research accounts on the web (new)</h3>
+    <!-- Boaz (1.2.2.8 test): "Advanced tools → <tool>", and only what this tool does - no version history. -->
+    <h3>Advanced tools → Research accounts on the web</h3>
     <p>
-      The new web research of SalesTeam 1.2.1. Each account is asked <strong>only for what it still lacks</strong>: HQ,
-      employees, industry (if your setup weighs it), initiatives, named senior people and a short summary. It reads the
-      company's own pages and reports first and searches only for the rest. People it finds are added as contacts, with
-      their LinkedIn profile when a web search lists one - no LinkedIn page is visited.
+      Fills in what each account still lacks - HQ, employees, industry, initiatives, senior people and a short summary -
+      from the company's own pages and web searches. People found are added as contacts; no LinkedIn page is visited.
     </p>
-    <p>
-      Publicly traded companies go first, then by priority. It runs in the background, beside the automatic LinkedIn work,
-      and costs money on your own Anthropic API key. When it finishes, it reports the cost and time per account.
-    </p>
+    <p>Listed companies go first, then by priority. It costs money on your Anthropic API key; the report at the end shows
+      the cost per account.</p>
     <p id="web-lane-candidates" class="page-subtitle"></p>
     <p><label>Accounts to research: <input type="number" id="web-lane-limit" min="1" max="500" value="20" style="width:5em"></label></p>
     <p><label>Stop when the cost reaches US$ <input type="number" id="web-lane-budget" min="0" step="0.5" value="5" style="width:5em"></label></p>
@@ -73,23 +69,14 @@
   </dialog>
 
   <dialog id="web-discovery-dialog">
-    <h3>Find new accounts (new)</h3>
+    <h3>Advanced tools → Find new accounts</h3>
     <p>
-      The new account discovery of SalesTeam 1.2.1, using the countries, sizes and industries of your Setup wizard.
-      It looks for <strong>listing pages on the web</strong> (rankings, directories, industry lists), reads them, and adds
-      the best companies as accounts marked <strong>Web</strong>. Companies you already have, removed or excluded are left
-      out. The automatic LinkedIn work then looks each new account up on LinkedIn.
+      Finds companies that match your Setup (countries, sizes, industries) on web listing pages and adds them as accounts
+      marked <strong>Web</strong>. Companies you already have, removed or excluded are skipped.
     </p>
-    <p>
-      <strong>Optional - LinkedIn:</strong> tick the box below to also search LinkedIn for about a fifth of the target. LinkedIn's
-      free company search mostly finds <strong>local branches of international groups</strong> (e.g. "... Switzerland"),
-      which listing pages tend to miss. It runs in a small separate window, counts against your daily LinkedIn limit,
-      and the automatic LinkedIn work steps aside meanwhile.
-    </p>
-    <p>
-      The web search costs money on your own Anthropic API key. When it finishes, it reports what was found and what it
-      cost. Stop adds nothing from the web; the cost limit adds what was found by then.
-    </p>
+    <p><strong>LinkedIn (optional):</strong> also searches LinkedIn for local branches of international groups, which
+      listings tend to miss. It counts against your daily LinkedIn limit.</p>
+    <p>It costs money on your Anthropic API key. Stop adds nothing; reaching the cost limit adds what was found by then.</p>
     <p id="web-discovery-setup" class="page-subtitle"></p>
     <p><label>New accounts to find: <input type="number" id="web-discovery-target" min="1" max="300" value="10" style="width:5em"></label>
       <span class="page-subtitle">(it looks for 15% more, since some will lack evidence)</span></p>
@@ -110,13 +97,11 @@
   </dialog>
 
   <dialog id="find-duplicates-dialog">
-    <h3>Find &amp; Merge Duplicates</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
+    <h3>Advanced tools → Find &amp; Merge Duplicates</h3>
     <p id="find-duplicates-intro">
-      The same company sometimes appears twice - for example once from your research file and once from LinkedIn
-      Discovery. Each proposal below lists accounts that look like the same company (same name or same LinkedIn
-      page). Pick the one to keep and press Merge - its contacts, initiatives, sources and Post leads move over. If
-      they are really different companies, press Keep separate and they will not be proposed again.
+      Accounts that look like the same company (same name or same LinkedIn page). Pick the one to keep and press Merge -
+      its contacts, initiatives, sources and leads move over. Different companies: press Keep separate and they are not
+      proposed again.
     </p>
     <div id="find-duplicates-list"></div>
     <p id="find-duplicates-status" class="page-subtitle" role="status"></p>
@@ -295,8 +280,8 @@
         </div>
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
         <button id="nav-run-pipeline-btn" type="button" class="nav-item" title="Data pipeline (1.2, manual start): work through the accounts that most need it - re-check LinkedIn, read sizes, find known contacts' profiles, discover contacts">Run pipeline now…</button>
-        <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
-        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="1.2.1 test: find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts (new)…</button>
+        <button id="nav-web-lane-btn" type="button" class="nav-item" title="Research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web…</button>
+        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="Find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
@@ -869,12 +854,9 @@
   </dialog>
 
   <dialog id="resolve-dialog" class="action-dialog">
-    <h3>Resolve LinkedIn Company IDs</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
-    <p class="page-subtitle">
-      Look up each Target Account company on LinkedIn to resolve its numeric company ID - the Scanner searches
-      only companies it has an id for.
-    </p>
+    <h3>Advanced tools → Resolve LinkedIn Company IDs</h3>
+    <p class="page-subtitle">Looks each account up on LinkedIn to find its company ID - the Scanner can only search
+      companies that have one.</p>
     <label for="resolve-company-ids-limit-input" id="resolve-company-ids-limit-label">
       Limit to
       <input type="number" id="resolve-company-ids-limit-input" min="1" title="Only resolve this many companies this run - leave blank to resolve everything still missing an ID. Useful for a quick test before committing to a full run." />
@@ -889,12 +871,9 @@
   </dialog>
 
   <dialog id="discover-contacts-dialog" class="action-dialog">
-    <h3>Discover Contacts for Existing Companies</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
-    <p class="page-subtitle">
-      Look up contacts at each existing Target Account company via its own LinkedIn People tab, using the Setup
-      wizard's target-contact profile - only visits a company currently below the contact-count threshold.
-    </p>
+    <h3>Advanced tools → Discover Contacts for Existing Companies</h3>
+    <p class="page-subtitle">Finds contacts on each account's LinkedIn People tab that match your target-contact profile.
+      Only accounts below the contact threshold are visited.</p>
     <label for="discover-contacts-existing-limit-input" id="discover-contacts-existing-limit-label">
       Limit to
       <input type="number" id="discover-contacts-existing-limit-input" min="1" title="Only visit this many companies this run - leave blank to work through every company currently below the contact threshold. Useful for a quick test before committing to a full run." />
@@ -909,13 +888,9 @@
   </dialog>
 
   <dialog id="fetch-size-dialog" class="action-dialog">
-    <h3>Fetch Company Size</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
-    <p class="page-subtitle">
-      Visit each company (imported or discovered) currently missing a real employee count on its own LinkedIn
-      page and read it off there - LinkedIn's company-search result cards never show size, only a company's own
-      page does.
-    </p>
+    <h3>Advanced tools → Fetch Company Size</h3>
+    <p class="page-subtitle">Reads the employee count from the company's own LinkedIn page, for each account that has none
+      yet.</p>
     <label for="fetch-company-size-limit-input" id="fetch-company-size-limit-label">
       Limit to
       <input type="number" id="fetch-company-size-limit-input" min="1" title="Only visit this many companies this run - leave blank to work through every company currently missing a size. Useful for a quick test before committing to a full run." />
@@ -930,12 +905,9 @@
   </dialog>
 
   <dialog id="prioritize-companies-dialog" class="action-dialog">
-    <h3>Prioritize Companies</h3>
-    <p class="page-subtitle">
-      Score every eligible company's Priority (P1-P5): imported research is trusted directly when confident,
-      otherwise a free deterministic pre-score (Location/Size/Industry/matched Contacts) runs, optionally
-      refined by an AI Strategic Fit judgment.
-    </p>
+    <h3>Advanced tools → Prioritize Companies</h3>
+    <p class="page-subtitle">Scores each account's priority (P1-P5) from location, size, industry and contacts; research
+      you imported is used where it is confident. AI Strategic Fit can refine the score.</p>
     <label for="prioritize-companies-rescore-checkbox" id="prioritize-companies-rescore-label">
       <input type="checkbox" id="prioritize-companies-rescore-checkbox" />
       Rescore already-scored companies too
