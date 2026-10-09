@@ -775,6 +775,13 @@ function routeSettings() {
     const navEl = document.getElementById(`nav-${id}`);
     if (navEl) navEl.classList.toggle("active", id === activeId);
   }
+  // Boaz (1.2.2.8 test): the heading names the page - "SalesTeam Settings → Automation" - and nothing generic sits
+  // under it: the LinkedIn touches and the seller-research offer belong to Automation only.
+  const navEl = document.getElementById(`nav-${activeId}`);
+  const label = navEl ? [...navEl.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim() : "";
+  document.getElementById("settings-title").textContent = label ? `SalesTeam Settings → ${label}` : "SalesTeam Settings";
+  document.getElementById("linkedin-touch-stat").hidden = activeId !== "automation-section";
+  renderSellerResearchOffer();
 }
 
 window.addEventListener("hashchange", routeSettings);
@@ -786,7 +793,8 @@ async function renderSellerResearchOffer() {
   const [completedAt, research, team] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch(), chrome.storage.local.get(["teamMembership", "teamAccountStates"])]);
   // Team use (D3): the seller setup is the Team Lead's - a member is not offered to research it.
   const member = team.teamMembership && !leadRightsOf(team.teamMembership, team.teamAccountStates);
-  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings) || Boolean(member);
+  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings) || Boolean(member)
+    || currentSectionId() !== "automation-section" || location.hash.startsWith("#change-settings") || location.hash === "#wizard";
   document.getElementById("seller-research-offer-text").textContent =
     "SalesTeam can research your company's website and propose improvements to the setup " +
     `(about US$${SELLER_RESEARCH_ESTIMATE_USD.toFixed(2)}). The proposals are shown next to the current settings; ` +

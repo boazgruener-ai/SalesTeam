@@ -140,11 +140,9 @@
     <main id="app-main">
       <div id="page-native-content">
       <div id="page-header-bar">
-        <h1>SalesTeam Settings</h1>
-        <p class="page-subtitle">
-          Shared by the Sales Mentor, Customer Voice, and the Dashboard's per-lead Draft Message — configure once
-          here. Any other general (non-lead-specific) settings added later will live on this page too.
-        </p>
+        <!-- Boaz (1.2.2.8 test): "SalesTeam Settings → <page>", nothing generic under it - the LinkedIn touches only on
+             Automation. -->
+        <h1 id="settings-title">SalesTeam Settings</h1>
         <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
       </div>
 
@@ -411,30 +409,17 @@
       </div>
 
       <div id="team-create" hidden>
-        <h4>Create a team</h4>
-        <p class="field-hint">You become the Team Lead. Your accounts, contacts, leads (posts), Setup and rules become the team's
-          starting data. Everyone in the team sees the shared data, including who contacted whom.</p>
-        <ol class="team-steps">
-          <li>First, below: click <b>Choose your OneDrive folder…</b>. In the window that opens, click <b>OneDrive</b> in the
-            list on the left (with a work account it is called "OneDrive - <i>your company</i>") and click <b>Select Folder</b>.
-            If Chrome asks whether SalesTeam may view and edit the files, choose <b>Allow on every visit</b>. SalesTeam creates
-            the team's folder in it.</li>
-          <li>Enter your name, the team's name, and the colleagues you invite (name and e-mail). You can invite more
-            later (Settings &gt; Team &gt; Add member…).</li>
-          <li>Click <b>Create the team…</b>. SalesTeam creates the folder <b>SalesTeam - <i>team name</i></b> in your OneDrive
-            folder, saves a full backup of your data and copies it into the folder - the messages below the button show how
-            far it is. This can take a minute.</li>
-          <li>Then open <b>File Explorer &gt; OneDrive</b>, right-click the new folder and choose <b>Always keep on this device</b>
-            (on Windows 11 you may first need <b>Show more options</b>).</li>
-          <li>Right-click the folder again, choose <b>Share</b>, type your colleagues' e-mail addresses, check that they
-            <b>can edit</b>, and click <b>Send</b>. SalesTeam cannot share it for you.</li>
-          <li>Each colleague then opens Settings &gt; Team &gt; <b>Join a team…</b> and accepts your invitation.</li>
-        </ol>
+        <!-- Boaz (1.2.2.8 test): as simple as possible - one folder button, no folder concepts; what to do after Create is
+             said in the dialog that follows it. -->
+        <p class="field-hint">You become the Team Lead. Your accounts, contacts, leads (posts), Setup and rules become the
+          team's starting data.</p>
         <label>Your OneDrive folder</label>
         <div class="team-onedrive-row">
           <span id="team-create-onedrive">Not chosen yet</span>
           <button type="button" id="team-create-onedrive-btn">Choose your OneDrive folder…</button>
         </div>
+        <p class="field-hint" id="team-create-onedrive-hint">In the window that opens, click <b>OneDrive</b> on the left
+          ("OneDrive - <i>your company</i>" with a work account), then <b>Select Folder</b> and <b>Allow on every visit</b>.</p>
         <label for="team-create-name">Your name</label>
         <input type="text" id="team-create-name" placeholder="e.g. Jane Doe" />
         <label for="team-create-team">Team name</label>
@@ -444,7 +429,6 @@
         <div id="team-create-invitees"></div>
         <div class="settings-buttons-row">
           <button type="button" id="team-create-btn" class="team-primary-btn">Create the team…</button>
-          <button type="button" id="team-create-pick-btn" title="For a team folder that is not directly in OneDrive: choose a new, empty folder yourself">Use a folder I choose instead…</button>
           <button type="button" class="team-cancel-btn">Cancel</button>
         </div>
         <p class="field-hint team-status" id="team-create-status" role="status"></p>
