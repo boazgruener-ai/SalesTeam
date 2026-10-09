@@ -444,7 +444,7 @@ async function onCreate(ownFolder = false) {
       `Its starting data: ${c.accounts ?? "?"} accounts, ${c.contacts ?? "?"} contacts and ${c.leads ?? "?"} leads (posts), plus your Setup and rules.\n\n` +
       (invitedNames.length ? `Invited: ${invitedNames.join(", ")}. ` : "Nobody is invited yet - use Add member… below the members. ") +
       `Next, in File Explorer > OneDrive: right-click "${handle.name}" > Always keep on this device; then right-click it > Share, ` +
-      "type your colleagues' e-mail addresses, \"Can edit\", Send. Each of them then opens Settings > Team > Join a team and accepts.\n\n" +
+      "type your colleagues' e-mail addresses, \"Can edit\", Send. Each of them clicks Open in that e-mail, then Add shortcut to My files - SalesTeam then shows them Join Team.\n\n" +
       "SalesTeam shares while a SalesTeam page or the side panel is open.",
       { okLabel: "OK", cancelLabel: "Close" });
   } catch (err) {
@@ -592,10 +592,11 @@ function showTeams(teams, via, foundNames = []) {
     // Boaz (1.2.2.8 test): name the team, so the member knows what to ask for; nothing meant for the Team Lead.
     const names = foundNames.map((n) => `"${n}"`);
     setText("team-join-status", names.length === 1
-      ? `Found the team ${names[0]}, but there is no invitation for you in it yet. Ask your Team Lead to invite you to ${names[0]}.`
+      ? `You have no invitation to the team ${names[0]} yet. Ask your Team Lead to invite you.`
       : names.length
-        ? `Found the teams ${names.slice(0, -1).join(", ")} and ${names.at(-1)}, but none has an invitation for you yet. Ask your Team Lead to invite you.`
-        : "No team found in your OneDrive yet. It appears once your Team Lead has shared its folder with you and you have added it (see below).", true);
+        ? `You have no invitation to the teams ${names.slice(0, -1).join(", ")} or ${names.at(-1)} yet. Ask your Team Lead to invite you.`
+        // Boaz (1.2.2.8 test, KISS): one step for the member - the only one OneDrive cannot do for them.
+        : "You have no invitation yet. Ask your Team Lead to invite you. When their e-mail arrives, click Open, then Add shortcut to My files.", true);
     $("team-join-invites").replaceChildren();
   }
   // Boaz (1.2.2.8 test): one way on - with the team listed, Find my team… and its explanation step back (Look again
@@ -609,13 +610,11 @@ function showTeams(teams, via, foundNames = []) {
   // keeps looking by itself while nothing joinable is found.
   $("team-find-btn").hidden = true;
   const waiting = !teams.some((t) => t.mine.length);
-  if (waiting) $("team-join-status").textContent += " SalesTeam looks again by itself every 30 seconds.";
+  if (waiting) $("team-join-status").textContent += " SalesTeam then shows Join Team here by itself.";
   scheduleAutoLook(waiting && via === "onedrive");
   $("team-join-intro").hidden = true; // it explains Find my team…, which has been clicked
   $("team-join-row").hidden = !teams.length;
   // The ways round a team not found (help, Look again, another folder) only when no invitation in this name is listed.
-  // A team found without an invitation: the folder is there, so the help on getting it there says nothing.
-  $("team-join-more").hidden = teams.some((t) => t.mine.length) || (!teams.length && foundNames.length > 0);
 }
 
 let autoLookTimer = null;
@@ -649,7 +648,6 @@ async function onFindTeams({ repick = false } = {}) {
   }
   if (!oneDrive) {
     setText(status, "SalesTeam needs your OneDrive folder to find the team. Click Find my team… again and allow it.", true);
-    $("team-join-more").hidden = false;
     return;
   }
   setText(status, `Looking for teams in "${oneDrive.name}"…`);
@@ -928,7 +926,7 @@ async function onAddMember() {
   const rows = inviteeEditor(1);
   const share = document.createElement("p");
   share.className = "field-hint";
-  share.textContent = `Also share the folder${addMemberFolder ? ` "${addMemberFolder}"` : ""} with them in OneDrive (File Explorer > right-click the folder > Share, "Can edit") - SalesTeam cannot do that.`;
+  share.textContent = `Also share the folder${addMemberFolder ? ` "${addMemberFolder}"` : ""} with them in OneDrive (File Explorer > right-click the folder > Share, "Can edit") - SalesTeam cannot do that. They click Open in OneDrive's e-mail, then Add shortcut to My files.`;
   const msg = document.createElement("p");
   msg.className = "field-hint team-status";
   const actions = document.createElement("div");
@@ -1144,7 +1142,6 @@ export function initTeamSettings() {
     $("team-find-btn").hidden = false;
     $("team-join-intro").hidden = false;
     $("team-join-row").hidden = true;
-    $("team-join-more").hidden = true;
     $("team-join-title").textContent = "Join a team";
     showFlow("join");
   });
