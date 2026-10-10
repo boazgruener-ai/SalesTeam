@@ -10,7 +10,7 @@ import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages,
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl, WEB_FINDING_FIELDS } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
-import { planImport, importValueKey, importSummaryText, DEFAULT_IMPORT_TOLERANCE_PCT } from "./import-merge.js";
+import { planImport, importValueKey, importSummaryText, importDetailLines, DEFAULT_IMPORT_TOLERANCE_PCT } from "./import-merge.js";
 import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, matchesExclusion, matchesRelationship, websiteDomain, webCompanyId } from "./company-identity.js";
 import { createPersonIndex, contactDuplicatePairs, contactPairKey, fullerFirst, linkedinProfileSlug } from "./person-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
@@ -1906,7 +1906,7 @@ async function planWorkbookImport(parsed, { fileName = null, at = Date.now() } =
 // Every format goes through these two (build step 2): the research workbook, a SalesTeam CSV and a HubSpot export.
 export async function previewWorkbookImport(parsed, { fileName = null } = {}) {
   const { plan } = await planWorkbookImport(parsed, { fileName });
-  return { counts: plan.counts, newCompanyNames: plan.newCompanyNames, decisions: plan.decisions };
+  return { counts: plan.counts, newCompanyNames: plan.newCompanyNames, decisions: plan.decisions, detailLines: importDetailLines(plan) };
 }
 
 export async function mergeImportIntoWorkbook(parsed, opts = {}) { return withAccountWriteLock(() => mergeImportIntoWorkbookUnlocked(parsed, opts)); }

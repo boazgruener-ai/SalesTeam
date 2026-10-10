@@ -2,7 +2,7 @@
 // research workbook's own row shape ({ companies, contacts }); everything after that - match, plan, check-first,
 // safety copy, write, Decisions, logs - is the one import path every format shares (import-merge.js, storage.js).
 //
-//   detectImportFile(headers)  -> { format: "salesteam" | "hubspot" | "salesforce", kind: "accounts" | "contacts" } or null
+//   detectImportFile(headers, chosen)  -> { format: "salesteam" | "hubspot" | "salesforce" | "dynamics", kind: "accounts" | "contacts" } or null
 //   salesteamCsvRows(records, kind)  -> rows from a file SalesTeam itself exported (Export… > SalesTeam columns)
 //   applyFileCurrency(parsed, currency)  -> revenue without a currency is read as `currency` (D7, D15 case 3)
 //   currencyPlausibility(pairs, chosen, money)  -> do the file's figures look like another currency? (D15)
@@ -96,16 +96,17 @@ const SALESTEAM_ACCOUNT_MARKERS = ["priority", "priority score", "priority reaso
 const SALESTEAM_CONTACT_MARKERS = ["contact link", "business email", "job title", "seniority", "linkedin status"];
 
 // Which file is this, from its header row alone. SalesTeam's own files are checked first: its contacts file has a
-// "Name" column, which a HubSpot companies export also has.
-export function detectImportFile(headers) {
+// "Name" column, which a HubSpot companies export also has. `chosen` (the file type picked in the Import window) only
+// settles a file whose titles Salesforce and Dynamics share.
+export function detectImportFile(headers, chosen) {
   // "Global Revenue (USD)" counts as "global revenue" (D14).
   const h = new Set((headers || []).map((x) => String(x || "").trim().toLowerCase().replace(/\s*\([a-z]{3}\)$/, "")).filter(Boolean));
   const count = (names) => names.filter((n) => h.has(n)).length;
   const crmPerson = h.has("first name") || h.has("last name");
   if (h.has("name") && h.has("company") && !crmPerson && count(SALESTEAM_CONTACT_MARKERS) >= 1) return { format: "salesteam", kind: "contacts" };
   if (h.has("company") && !h.has("name") && !h.has("company name") && count(SALESTEAM_ACCOUNT_MARKERS) >= 2) return { format: "salesteam", kind: "accounts" };
-  // Salesforce before HubSpot: both have First Name / Last Name / Email (crm-files.js tells them apart).
-  const crm = detectCrmFile(headers);
+  // Salesforce and Dynamics before HubSpot: all have First Name / Last Name / Email (crm-files.js tells them apart).
+  const crm = detectCrmFile(headers, chosen);
   if (crm) return crm;
   if (crmPerson || h.has("email")) return { format: "hubspot", kind: "contacts" };
   if (h.has("company name") || h.has("company domain name") || (h.has("name") && h.has("record id"))) return { format: "hubspot", kind: "accounts" };

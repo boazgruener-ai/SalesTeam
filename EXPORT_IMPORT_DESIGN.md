@@ -340,7 +340,67 @@ like the chosen kind says what it looks like ("This looks like a HubSpot contact
 
 ---
 
-## 8a. Microsoft Dynamics 365 Sales (R10) — PROPOSED
+## 8a. Microsoft Dynamics 365 Sales (R10) — BUILT in 1.2.2.19, import checked with real files in 1.2.2.20, export check open
+
+- **Built in 1.2.2.19 (2026-10-10)** without the header rows of a real export (Q10 - they had not arrived): the column
+  table in `crm-files.js` holds the display names and field names of Dynamics 365 Sales' standard columns, from
+  Microsoft's documentation. What differs from the proposal below:
+  - **Accounts written:** Account Name, Website, Relationship Type, Number of Employees, Annual Revenue, Address 1:
+    Street 1, Address 1: City, Address 1: ZIP/Postal Code, Address 1: Country/Region, Description. The address comes
+    from the registry address, as for Salesforce. **Relationship Type** is Customer / Partner / Prospect.
+  - **Industry is not written as a column.** It is an option set, and a value outside it stops the row, so the
+    industry goes into Description ("Industry: …") and is read back from there. An organisation's own file has its
+    Industry column read.
+  - **Contacts written:** First Name, Last Name, Job Title, Email, Business Phone, Company Name, Address 1: City,
+    Address 1: Country/Region, Description.
+  - **No Currency column is written** (it is a lookup by the currency's name in the organisation); the export pop-up
+    names the currency, as for Salesforce. On import a Currency column is read by code or by name ("Swiss Franc"); a
+    name SalesTeam does not know leaves the question open (D15 case 3).
+  - **"(Do Not Modify) Account" / "… Contact"** hold the record's id in an Export to Excel file: kept as the row id
+    (`DYN-<id>`), so a second import of the same file matches by it. The other "(Do Not Modify)" columns are ignored.
+  - A contacts view with only **Full Name** (Dynamics' default view) is read. A file with nothing but titles both
+    CRMs use ("Account Name", "Website") is read as the file type chosen in the Import window.
+  - `.xlsx`: `parseFirstSheetRecords` (xlsx-lite.js) reads the first sheet; checked in a browser with a file in the
+    shape of Export to Excel (hidden columns, second hidden sheet).
+  - Harness: 31 cases (955 in all).
+- **Real files, 1.2.2.20 (2026-10-10):** two Export to Excel files of a German organisation ("Meine aktiven Firmen",
+  "Meine aktiven Kontakte"). What they showed:
+  - **The column titles are in the organisation's language** - "(Nicht ändern) Firma", "Firmenname", "Adresse 1: Ort",
+    "Vorname", "Nachname", "Position", "Telefon (geschäftlich)". 1.2.2.19 knew only the English titles and did not
+    recognise these files.
+  - **The file itself names every column's field.** A very hidden sheet "hiddenSheet" holds one text in cell A1:
+    `account:<checksum>:accountid=<title>&name=<title>&address1_city=<title>&…` (titles URL-encoded). `xlsx-lite.js`
+    hands that text on as `fieldKey`; `withDynamicsFieldNames` (pure, `crm-files.js`) replaces each title with its
+    field name before the file is recognised and read. No list of titles per language is kept.
+  - The same title can mean two things: "Firmenname" is `name` in the accounts file and `parentcustomerid` in the
+    contacts file. The field names settle it.
+  - **Full Name is "Last, First"** in this organisation ("Muster, Anna"): turned round when a view holds only Full
+    Name. First Name / Last Name are used when the view has them.
+  - A column of a related record ("E-Mail (Primärer Kontakt) (Kontakt)") has a field name with a prefix
+    (`<id>.emailaddress1`) and is not read. Custom columns are not read.
+  - A contact with no company ("Firmenname" empty) is skipped, as in every import.
+  - A CSV file from a Dynamics that is not in English has no hidden sheet and is not recognised - use Export to Excel.
+  - Harness: 8 more cases (963 in all); both real files run through the import code.
+- **Round trip, 1.2.2.21-1.2.2.23 (2026-10-10):** an export to a Dynamics file, imported again, said "1 empty field
+  filled, 84 differences kept as they are". It must say nothing (as for every format). Causes and fixes:
+  - Job titles cut to the column limit (100; Salesforce 128) counted as contact differences. `import-merge.js`
+    `isStartOf`: a file value that is the start of the current one is not a difference. Nothing is written either
+    way - a contact keeps its current value.
+  - One person stored twice with the same LinkedIn profile: the file row matched the other entry. `crmContactRows`
+    now takes `contactId` from the Description line "SalesTeam id", and `planImport` matches a contact by its own id
+    first - only when the name is still that person, since another SalesTeam numbers its contacts the same way.
+  - The summary could not say which rows it meant. `importDetailLines` adds a line per Filled / Updated / Kept entry
+    to Details.
+  - The limits are per CRM; an organisation's own Export to Excel file carries its real limits as data validations
+    (Job Title 165 in the files received) - of use if SalesTeam later writes into such a file.
+- **Still open - the export (R10.4):** SalesTeam's Dynamics files have English column titles. Does Dynamics' import map
+  every column by itself, in particular in an organisation in another language, and take the files without refusals
+  (as Salesforce's did only after 1.2.2.17). The real files also show that Dynamics' own **Import from Excel** expects
+  the organisation's own exported file (titles in its language plus the hidden sheet) - writing into such a file is a
+  possible way to an import with no column mapping at all; not decided.
+
+*The proposal as agreed 2026-10-09:*
+
 
 - **One module for both CRMs' shape.** Salesforce and Dynamics differ only in column names, so `crm-files.js`
   (pure) holds one column table per CRM - `{ field, label, apiName }` per column - and three functions that take

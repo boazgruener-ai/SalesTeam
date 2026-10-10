@@ -115,6 +115,14 @@ function importFreeId(id, used, prefix) {
   }
 }
 
+// A CRM file cuts a value to its column's limit (Job Title: 100 characters in Dynamics, 128 in Salesforce) and a city
+// to its first part. The start of the current value is that same value, not a difference (1.2.2.20 round-trip test:
+// an export of 2,387 contacts came back with "84 differences", all of them job titles cut at 100).
+function isStartOf(imported, current) {
+  const a = importValueKey(imported), b = importValueKey(current);
+  return a.length >= 3 && b.startsWith(a);
+}
+
 // ---- one existing account ---------------------------------------------------------------------------------
 
 function withinTolerance(p, effective, data, tolerancePct) {
@@ -325,7 +333,7 @@ export function planImport(parsed, current, opts = {}) {
   }
 
   // Contacts: LinkedIn profile, then e-mail, then the name within the account.
-  const bySlug = new Map(), byEmail = new Map(), byKey = new Map();
+  const bySlug = new Map(), byEmail = new Map(), byKey = new Map(), byId = new Map();
   const people = createPersonIndex();
   const indexContact = (c) => {
     const slug = importProfileSlug(c.lastVerified2 || c.linkedinProfileUrl);
@@ -334,6 +342,7 @@ export function planImport(parsed, current, opts = {}) {
     if (email && !byEmail.has(email)) byEmail.set(email, c);
     const key = importContactKey(c.company, c.fullName);
     if (key && !byKey.has(key)) byKey.set(key, c);
+    if (c.contactId && !byId.has(String(c.contactId))) byId.set(String(c.contactId), c);
     people.add(c.company, c, c);
   };
   (current.contacts || []).forEach(indexContact);
@@ -363,7 +372,14 @@ export function planImport(parsed, current, opts = {}) {
     // alias of Holcim Group, so the account match can land on the group while the person is stored under the
     // subsidiary (1.2.2.13 round-trip test: 6 existing contacts counted as new).
     const fileNameKey = fc.company ? importContactKey(fc.company, fullName) : null;
-    const hit = (slug && bySlug.get(slug)) || (email && byEmail.get(email)) || (nameKey && byKey.get(nameKey))
+    // The entry's own id, when the file carries it (a file SalesTeam exported) and it is still that person: an id alone
+    // proves nothing - another SalesTeam numbers its contacts the same way. Before the LinkedIn profile, because one
+    // person stored twice shares the profile, and the first of the two would take the other's row (1.2.2.22
+    // round-trip test: "CTO" compared with the twin entry's "Chief Technology Officer", and its empty city filled).
+    const own = fc.contactId ? byId.get(String(fc.contactId)) : null;
+    const ownKey = own ? importContactKey(own.company, own.fullName) : null;
+    const hit = (own && (ownKey === nameKey || ownKey === fileNameKey) && own)
+      || (slug && bySlug.get(slug)) || (email && byEmail.get(email)) || (nameKey && byKey.get(nameKey))
       || (fileNameKey && byKey.get(fileNameKey))
       // The same person written another way: "Dr. …", "Oezlem" / "Özlem", a middle name (person-identity.js).
       || people.find(account.row.company, fc) || (fc.company && people.find(fc.company, fc)) || null;
@@ -380,7 +396,7 @@ export function planImport(parsed, current, opts = {}) {
         if (isBlankFinding(cur) || (typeof cur === "string" && !cur.trim())) {
           overrides[field] = typeof v === "string" ? v.trim() : v;
           plan.fills.push({ field, label: field, current: null, imported: overrides[field], rule: 1, why: "the field was empty", company: hit.company, contact: hit.fullName, key });
-        } else if (importValueKey(cur) !== importValueKey(v)) {
+        } else if (importValueKey(cur) !== importValueKey(v) && !isStartOf(v, cur)) {
           plan.kept.push({ field, label: field, current: cur, imported: v, rule: "contact", why: "a contact keeps its current value", company: hit.company, contact: hit.fullName, key });
         }
       }
@@ -425,6 +441,21 @@ export function planImport(parsed, current, opts = {}) {
     filled: plan.fills.length, taken: plan.taken.length, kept: plan.kept.length, decisions: plan.decisions.length, skipped: plan.skipped.length,
   };
   return plan;
+}
+
+// What stands behind "1 empty field filled, 1 difference kept as it is" - one line each, for Details in the
+// check-first summary (1.2.2.22: a round trip that did not come back empty could not say which rows it meant).
+export function importDetailLines(plan, limit = 200) {
+  const who = (x) => (x.contact ? `${x.contact} (${x.company})` : x.company);
+  const lines = (items, text) => [
+    ...items.slice(0, limit).map(text),
+    ...(items.length > limit ? [`… and ${items.length - limit} more`] : []),
+  ];
+  return [
+    ...lines(plan.fills || [], (x) => `Filled: ${who(x)} - ${x.label}: ${x.imported}`),
+    ...lines(plan.taken || [], (x) => `Updated: ${who(x)} - ${x.label}: current ${x.current}, in the file ${x.imported}`),
+    ...lines(plan.kept || [], (x) => `Kept as it is: ${who(x)} - ${x.label}: current ${x.current}, in the file ${x.imported} (${x.why})`),
+  ];
 }
 
 // "12 new accounts, 3 new contacts, 41 empty fields filled, ..." - the counts in words, for the pop-up and the logs.

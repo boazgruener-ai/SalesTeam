@@ -2778,6 +2778,7 @@ def main():
     test_import_merge(ctx)
     test_csv_import(ctx)
     test_crm_files(ctx)
+    test_import_cut_values(ctx)
     test_whole_employees(ctx)
     test_person_identity(ctx)
     test_revenue_units(ctx)
@@ -3003,6 +3004,41 @@ def test_csv_import(ctx):
     check("salesteam csv: the worked-out Seniority is not read back", e("'seniority' in salesteamCsvRows([{ Name: 'A B', Company: 'X', Seniority: 'C-level' }], 'contacts')[0]"), False)
 
 
+def test_import_cut_values(ctx):
+    """1.2.2.21 (Boaz's Dynamics round trip): a contact value the CRM file cut short is not a difference."""
+    e = ctx.eval
+    e("""
+      var LONG = 'Head of Group Information Technology, Digital Transformation and Artificial Intelligence, Member of the Executive Board';
+      var CUT_NOW = { companies: [{ companyId: 'C-1', company: 'Acme AG' }], contacts: [
+        { contactId: 'P-1', companyId: 'C-1', company: 'Acme AG', fullName: 'Anna Muster', jobTitle: LONG, city: 'Zürich (ZH)' },
+        { contactId: 'P-2', companyId: 'C-1', company: 'Acme AG', fullName: 'Peter Beispiel', jobTitle: 'Chief Financial Officer', city: 'Bern' } ] };
+      var CUT = planImport({ companies: [{ company: 'Acme AG' }], contacts: [
+        { company: 'Acme AG', fullName: 'Anna Muster', jobTitle: LONG.slice(0, 100).trim(), city: 'Zürich' },
+        { company: 'Acme AG', fullName: 'Peter Beispiel', jobTitle: 'Chief Operating Officer', city: 'Be' } ] }, CUT_NOW, {});
+      var BACK_ROWS = crmContactRows('dynamics', parseCsvForTest(buildCrmFiles('dynamics', CUT_NOW.companies, CUT_NOW.contacts).contactsCsv));
+      var BACK_PLAN = planImport({ companies: [], contacts: BACK_ROWS }, CUT_NOW, {});
+    """ .replace("parseCsvForTest", "(function (csv) { var lines = csv.replace(/^\\uFEFF/, '').trim().split('\\r\\n').map(function (l) { var out = [], cur = '', q = false; for (var i = 0; i < l.length; i++) { var ch = l[i]; if (q) { if (ch === '\"' && l[i + 1] === '\"') { cur += '\"'; i++; } else if (ch === '\"') q = false; else cur += ch; } else if (ch === '\"') q = true; else if (ch === ',') { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; }); return lines.slice(1).map(function (r) { var o = {}; lines[0].forEach(function (h, i) { o[h] = r[i]; }); return o; }); })"))
+    check("import: a job title cut at the column limit and a shortened city are not differences", e("CUT.kept.filter(function (k) { return k.contact === 'Anna Muster'; }).length"), 0)
+    check("import: a really different job title is still a difference; two letters are not 'the start'", e("CUT.kept.map(function (k) { return k.contact + ':' + k.field; }).join('|')"), "Peter Beispiel:jobTitle|Peter Beispiel:city")
+    e("""
+      var TWIN_NOW = { companies: [{ companyId: 'C-1', company: 'Acme AG' }], contacts: [
+        { contactId: 'P-10', companyId: 'C-1', company: 'Acme AG', fullName: 'Rita Muster', jobTitle: 'Chief Technology Officer', lastVerified2: 'https://www.linkedin.com/in/ritamuster/' },
+        { contactId: 'P-11', companyId: 'C-1', company: 'Acme AG', fullName: 'Dr. Rita Muster', jobTitle: 'CTO', city: 'Flawil', lastVerified2: 'https://www.linkedin.com/in/ritamuster/' } ] };
+      var TWIN_FILE = crmContactRows('dynamics', [{ 'First Name': 'Dr. Rita', 'Last Name': 'Muster', 'Job Title': 'CTO', 'Company Name': 'Acme AG', 'Address 1: City': 'Flawil',
+        'Description': 'LinkedIn: https://www.linkedin.com/in/ritamuster/\\nSalesTeam id: P-11' }]);
+      var TWIN = planImport({ companies: [], contacts: TWIN_FILE }, TWIN_NOW, {});
+      var OTHER = planImport({ companies: [], contacts: [{ contactId: 'P-11', company: 'Acme AG', fullName: 'Somebody Else', jobTitle: 'CFO' }] }, TWIN_NOW, {});
+    """)
+    check("import: a SalesTeam file's row carries its entry's id", e("TWIN_FILE[0].contactId"), "P-11")
+    check("import: a person stored twice - the file's row is matched to its own entry, not the twin", e("JSON.stringify([TWIN.counts.filled, TWIN.counts.kept, TWIN.counts.newContacts])"), "[0,0,0]")
+    check("import: the same id for another person is not a match", e("OTHER.counts.newContacts + '|' + OTHER.newContacts[0].contactId"), "1|P-11-i1")
+    check("import details: one line per filled field and per difference kept", e("importDetailLines({ fills: [{ company: 'Acme AG', label: 'website', imported: 'https://acme.ch' }], kept: CUT.kept }).join(' / ')"),
+          "Filled: Acme AG - website: https://acme.ch / Kept as it is: Peter Beispiel (Acme AG) - jobTitle: current Chief Financial Officer, in the file Chief Operating Officer (a contact keeps its current value) / Kept as it is: Peter Beispiel (Acme AG) - city: current Bern, in the file Be (a contact keeps its current value)")
+    check("import details: a long list is cut", e("importDetailLines({ kept: CUT.kept }, 1).length + '|' + importDetailLines({ kept: CUT.kept }, 1)[1]"), "2|… and 1 more")
+    check("import: a Dynamics export of the same contacts comes back with nothing to do", e("JSON.stringify(BACK_PLAN.counts)"),
+          '{"newCompanies":0,"newContacts":0,"newInitiatives":0,"filled":0,"taken":0,"kept":0,"decisions":0,"skipped":0}')
+
+
 def test_crm_files(ctx):
     """1.2.3 Export & Import step 3 (design 8): Salesforce files written in the wizard's own columns and read back."""
     e = ctx.eval
@@ -3088,6 +3124,113 @@ def test_crm_files(ctx):
     check("salesforce fix: no state (a canton is refused for Switzerland)", FIX[1]["Billing State/Province"] + "|" + FIX[1]["Billing Country"], "|Switzerland")
     check("salesforce fix: one city, at most 40 characters", FIX[2]["Billing City"], "Harrison, New York")
     check("salesforce fix: the whole HQ text stays in Description", "Harrison, New York (global); Geneva" in FIX[2]["Description"], True)
+
+    # Microsoft Dynamics 365 Sales (design 8a): the same module with its own column table.
+    DYN_ACC = "Account Name,Website,Relationship Type,Number of Employees,Annual Revenue,Address 1: Street 1,Address 1: City,Address 1: ZIP/Postal Code,Address 1: Country/Region,Description"
+    DYN_CON = "First Name,Last Name,Job Title,Email,Business Phone,Company Name,Address 1: City,Address 1: Country/Region,Description"
+    e("""
+      var DYN = buildCrmFiles('dynamics', [
+          { companyId: 'C-1', company: 'AXA Switzerland', globalRevenue: 6200000000.4, globalEmployees: 4700.6, industry: 'Insurance',
+            globalHqCity: 'Paris', globalHqCountry: 'France', zefixAddress: 'General-Guisan-Strasse 40, 8400 Winterthur',
+            linkedinLink: 'https://www.linkedin.com/company/axa-switzerland/', companyType: 'Public', website: 'https://www.axa.ch',
+            salesTeamPriority: 'P1', salesTeamPriorityScore: 81.6, relationship: ['customer'] },
+          { companyId: 'C-2', company: 'Zug AG', globalHqCity: 'Zug', globalHqCountry: 'Switzerland' } ],
+        [ { contactId: 'P-1', company: 'AXA Switzerland', fullName: 'Anna Maria Muster', jobTitle: 'CIO', publicBusinessEmail: 'a@axa.ch',
+            publicBusinessPhone: '+41 52 000 00 00', city: 'Winterthur', country: 'Switzerland', lastVerified2: 'https://www.linkedin.com/in/anna/' } ],
+        { registryCountry: 'Switzerland' });
+    """)
+    e("var DYN_P = %s; var DYN_C = %s;" % (json.dumps(read_csv(e("DYN.accountsCsv"))), json.dumps(read_csv(e("DYN.contactsCsv")))))
+    check("dynamics export: accounts header is Dynamics' own column names (no Industry, no Currency)", e("DYN_P.headers.join(',')"), DYN_ACC)
+    check("dynamics export: contacts header", e("DYN_C.headers.join(',')"), DYN_CON)
+    check("dynamics export: address from the registry address",
+          e("['Address 1: Street 1','Address 1: ZIP/Postal Code','Address 1: City','Address 1: Country/Region'].map(function (k) { return DYN_P.records[0][k]; }).join('|')"),
+          "General-Guisan-Strasse 40|8400|Winterthur|Switzerland")
+    check("dynamics export: whole numbers, Relationship Type", e("[DYN_P.records[0]['Number of Employees'], DYN_P.records[0]['Annual Revenue'], DYN_P.records[0]['Relationship Type'], DYN_P.records[1]['Relationship Type']].join('|')"),
+          "4701|6200000000|Customer|Prospect")
+    check("dynamics export: industry goes into Description", e("/^Industry: Insurance$/m.test(DYN_P.records[0].Description) && /SalesTeam id: C-1/.test(DYN_P.records[0].Description)"), True)
+    check("salesforce export: industry stays in its own column, not in Description", e("/Industry:/.test(SF_P.records[0].Description) + '|' + SF_P.records[0].Industry"), "false|Insurance")
+    check("dynamics export: contact", e("['First Name','Last Name','Job Title','Email','Business Phone','Company Name'].map(function (k) { return DYN_C.records[0][k]; }).join('|')"),
+          "Anna Maria|Muster|CIO|a@axa.ch|+41 52 000 00 00|AXA Switzerland")
+    check("dynamics detect: SalesTeam's own Dynamics accounts file", e("JSON.stringify(detectImportFile(DYN_P.headers))"), '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics detect: SalesTeam's own Dynamics contacts file", e("JSON.stringify(detectImportFile(DYN_C.headers))"), '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics detect: Export to Excel, default accounts view",
+          e("JSON.stringify(detectImportFile(['(Do Not Modify) Account', '(Do Not Modify) Row Checksum', '(Do Not Modify) Modified On', 'Account Name', 'Main Phone', 'Address 1: City', 'Primary Contact', 'Email (Primary Contact)']))"),
+          '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics detect: Export to Excel, default contacts view (Full Name only)",
+          e("JSON.stringify(detectImportFile(['(Do Not Modify) Contact', '(Do Not Modify) Row Checksum', '(Do Not Modify) Modified On', 'Full Name', 'Email', 'Company Name', 'Business Phone']))"),
+          '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics detect: field names", e("JSON.stringify(detectImportFile(['name', 'websiteurl', 'numberofemployees', 'revenue', 'address1_city']))"), '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics detect: titles both CRMs use follow the chosen file type",
+          e("detectImportFile(['Account Name', 'Website', 'Industry'], 'dynamics').format + '|' + detectImportFile(['Account Name', 'Website', 'Industry'], 'salesforce').format + '|' + detectImportFile(['Account Name', 'Website', 'Industry']).format"),
+          "dynamics|salesforce|salesforce")
+    check("dynamics detect: a Salesforce file stays Salesforce even when Dynamics was chosen", e("detectImportFile(%s, 'dynamics').format" % json.dumps(SF_ACC.split(","))), "salesforce")
+    check("dynamics detect: Salesforce's samples are still Salesforce", e("detectImportFile(%s).format + '|' + detectImportFile(%s).format" % (json.dumps(SF_ACC.split(",")), json.dumps(SF_CON.split(",")))), "salesforce|salesforce")
+    check("dynamics detect: HubSpot contacts with a Company Name column stay HubSpot", e("detectImportFile(['First Name', 'Last Name', 'Email', 'Company Name', 'Phone Number']).format"), "hubspot")
+    check("dynamics detect: says what the file is", e("describeImportFile(detectImportFile(DYN_C.headers))"), "a Microsoft Dynamics contacts export")
+    e("""
+      var DBACK = crmAccountRows('dynamics', DYN_P.records);
+      var DBACK_C = crmContactRows('dynamics', DYN_C.records);
+    """)
+    check("dynamics round trip: HQ and industry come back from Description", e("[DBACK[0].globalHqCity, DBACK[0].globalHqCountry, DBACK[0].industry, DBACK[0].companyType].join('|')"), "Paris|France|Insurance|Public")
+    check("dynamics round trip: numbers, website, source", e("[DBACK[0].globalRevenue, DBACK[0].globalEmployees, DBACK[0].website, DBACK[0].source, DBACK[0].researchStatus].join('|')"),
+          "6200000000|4701|https://www.axa.ch|Microsoft Dynamics|Imported from Microsoft Dynamics")
+    check("dynamics round trip: revenue without a currency asks for one", e("fileNeedsCurrency({ companies: DBACK })"), True)
+    check("dynamics round trip: contact", e("[DBACK_C[0].fullName, DBACK_C[0].company, DBACK_C[0].jobTitle, DBACK_C[0].publicBusinessEmail, DBACK_C[0].publicBusinessPhone, DBACK_C[0].city, DBACK_C[0].lastVerified2].join('|')"),
+          "Anna Maria Muster|AXA Switzerland|CIO|a@axa.ch|+41 52 000 00 00|Winterthur|https://www.linkedin.com/in/anna/")
+    e("""
+      var DORG = crmAccountRows('dynamics', [
+        { '(Do Not Modify) Account': 'a1b2', '(Do Not Modify) Row Checksum': 'x==', '(Do Not Modify) Modified On': '45000.5', 'Account Name': 'Contoso AG',
+          'Main Phone': '555-0100', 'Address 1: City': 'Basel', 'Address 1: Country/Region': 'Switzerland', 'Industry': 'Consulting',
+          'Annual Revenue': '1500000', 'Currency': 'Swiss Franc', 'Number of Employees': '1,200', 'Website': 'contoso.ch' },
+        { name: 'Fabrikam', revenue: '250000', transactioncurrencyid: 'Groat', numberofemployees: '40', address1_city: 'Bern' },
+        { 'Account Name': 'Adventure Works', 'Annual Revenue': '$2,000,000.00' },
+        { 'Account Name': '' } ]);
+      var DORG_C = crmContactRows('dynamics', [
+        { '(Do Not Modify) Contact': 'c9', 'Full Name': 'Yvonne McKay', 'Email': 'y@contoso.ch', 'Company Name': 'Contoso AG', 'Business Phone': '555-0101', 'Job Title': 'Head of IT' },
+        { firstname: 'Rene', lastname: 'Valdes', parentcustomerid: 'Fabrikam', emailaddress1: 'r@fabrikam.com', jobtitle: 'CTO', telephone1: '555' },
+        { 'Full Name': 'No Company' } ]);
+    """)
+    check("dynamics org file: address read as HQ, industry column read, record id kept",
+          e("[DORG[0].globalHqCity, DORG[0].globalHqCountry, DORG[0].industry, DORG[0].companyId, DORG[0].website].join('|')"), "Basel|Switzerland|Consulting|DYN-a1b2|https://contoso.ch")
+    check("dynamics org file: Currency column names the currency; numbers read", e("[DORG[0].globalRevenue, DORG[0].revenueCurrency, DORG[0].globalEmployees].join('|')"), "1500000|CHF|1200")
+    check("dynamics org file: a row with its currency needs no question", e("fileNeedsCurrency({ companies: [DORG[0]] })"), False)
+    check("dynamics org file: field names; an unknown currency name is asked for, not guessed",
+          e("[DORG[1].company, DORG[1].globalRevenue, DORG[1].revenueCurrency, DORG[1].globalHqCity, fileNeedsCurrency({ companies: [DORG[1]] })].join('|')"), "Fabrikam|250000||Bern|true")
+    check("dynamics org file: revenue with a currency sign keeps it", e("DORG[2].globalRevenue + '|' + fileNeedsCurrency({ companies: [DORG[2]] })"), "$2,000,000.00|false")
+    check("dynamics org file: a row without a name is skipped", e("DORG.length"), 3)
+    check("dynamics org contacts: Full Name only", e("[DORG_C[0].fullName, DORG_C[0].company, DORG_C[0].jobTitle, DORG_C[0].publicBusinessEmail, DORG_C[0].publicBusinessPhone, DORG_C[0].contactId].join('|')"),
+          "Yvonne McKay|Contoso AG|Head of IT|y@contoso.ch|555-0101|DYN-c9")
+    check("dynamics org contacts: field names", e("[DORG_C[1].fullName, DORG_C[1].company, DORG_C[1].jobTitle, DORG_C[1].publicBusinessEmail].join('|')"), "Rene Valdes|Fabrikam|CTO|r@fabrikam.com")
+    check("dynamics org contacts: no company -> skipped", e("DORG_C.length"), 2)
+    # 2026-10-10: real "Export to Excel" files of a German organisation - titles in German, field names in the hidden sheet.
+    e("""
+      var DE_ACC = withDynamicsFieldNames({
+        headers: ['(Nicht ändern) Firma', '(Nicht ändern) Zeilenprüfsumme', '(Nicht ändern) Geändert am', 'Firmenname', 'Telefon 1', 'Adresse 1: Ort', 'Primärer Kontakt', 'E-Mail (Primärer Kontakt) (Kontakt)', 'Kundenbetreuer', 'Besitzer (Unternehmenseinheit)'],
+        records: [{ '(Nicht ändern) Firma': '5db9', '(Nicht ändern) Zeilenprüfsumme': 'x==', '(Nicht ändern) Geändert am': '46287.31', 'Firmenname': 'Firma XYZ', 'Adresse 1: Ort': 'Zürich', 'Besitzer (Unternehmenseinheit)': 'BU' }],
+        fieldKey: 'account:abc/DEF+1==:accountid=%28Nicht%20%c3%a4ndern%29%20Firma&checksumLogicalName=%28Nicht%20%c3%a4ndern%29%20Zeilenpr%c3%bcfsumme&modifiedon=%28Nicht%20%c3%a4ndern%29%20Ge%c3%a4ndert%20am&name=Firmenname&telephone1=Telefon%201&address1_city=Adresse%201%3a%20Ort&primarycontactid=Prim%c3%a4rer%20Kontakt&7befeabe-bf01-4207-97f8-7a96e05d2332.emailaddress1=E-Mail%20%28Prim%c3%a4rer%20Kontakt%29%20%28Kontakt%29&ownerid=Kundenbetreuer&owningbusinessunit=Besitzer%20%28Unternehmenseinheit%29' });
+      var DE_KEY = 'contact:abc==:contactid=%28Nicht%20%c3%a4ndern%29%20Kontakt&fullname=%20Vollst%c3%a4ndiger%20Name&firstname=Vorname&middlename=Zweiter%20Vorname&lastname=Nachname&parentcustomerid=Firmenname&jobtitle=Position&emailaddress1=E-Mail&telephone1=Telefon%20%28gesch%c3%a4ftlich%29&mobilephone=Mobiltelefonnummer&new_lastactivity=Letzte%20Aktivit%c3%a4t';
+      var DE_CON = withDynamicsFieldNames({
+        headers: ['(Nicht ändern) Kontakt', 'Vollständiger Name', 'Vorname', 'Zweiter Vorname', 'Nachname', 'Firmenname', 'Position', 'E-Mail', 'Telefon (geschäftlich)', 'Mobiltelefonnummer', 'Letzte Aktivität'],
+        records: [
+          { '(Nicht ändern) Kontakt': 'b1e8', 'Vollständiger Name': 'Muster, Anna', 'Vorname': 'Anna', 'Nachname': 'Muster', 'Firmenname': 'Firma XYZ', 'Position': 'Online Marketing Specialist', 'E-Mail': 'a@xyz.ch', 'Telefon (geschäftlich)': '044 000 00 00' },
+          { '(Nicht ändern) Kontakt': 'b1e9', 'Vollständiger Name': 'Ohne, Firma', 'Vorname': 'Firma', 'Nachname': 'Ohne' } ],
+        fieldKey: DE_KEY });
+      var DE_FULL = withDynamicsFieldNames({ headers: ['Vollständiger Name', 'Firmenname'], records: [{ 'Vollständiger Name': 'Muster, Anna', 'Firmenname': 'Firma XYZ' }, { 'Vollständiger Name': 'Peter Meier', 'Firmenname': 'Firma XYZ' }], fieldKey: DE_KEY });
+      var DE_ROWS = crmAccountRows('dynamics', DE_ACC.records);
+      var DE_ROWS_C = crmContactRows('dynamics', DE_CON.records);
+    """)
+    check("dynamics German export: titles become field names", e("DE_ACC.headers.join('|')"),
+          "accountid|checksumlogicalname|modifiedon|name|telephone1|address1_city|primarycontactid|7befeabe-bf01-4207-97f8-7a96e05d2332.emailaddress1|ownerid|owningbusinessunit")
+    check("dynamics German export: accounts file recognised", e("JSON.stringify(detectImportFile(DE_ACC.headers, 'dynamics'))"), '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics German export: contacts file recognised", e("JSON.stringify(detectImportFile(DE_CON.headers, 'dynamics'))"), '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics German export: contacts view with Full Name only recognised", e("JSON.stringify(detectImportFile(DE_FULL.headers, 'dynamics'))"), '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics German export: account", e("[DE_ROWS.length, DE_ROWS[0].company, DE_ROWS[0].globalHqCity, DE_ROWS[0].companyId, DE_ROWS[0].source].join('|')"), "1|Firma XYZ|Zürich|DYN-5db9|Microsoft Dynamics")
+    check("dynamics German export: contact (same title 'Firmenname' is the contact's company here)",
+          e("[DE_ROWS_C.length, DE_ROWS_C[0].fullName, DE_ROWS_C[0].company, DE_ROWS_C[0].jobTitle, DE_ROWS_C[0].publicBusinessEmail, DE_ROWS_C[0].publicBusinessPhone, DE_ROWS_C[0].contactId].join('|')"),
+          "1|Anna Muster|Firma XYZ|Online Marketing Specialist|a@xyz.ch|044 000 00 00|DYN-b1e8")
+    check("dynamics German export: 'Last, First' full name turned round, a plain one kept", e("crmContactRows('dynamics', DE_FULL.records).map(function (r) { return r.fullName; }).join('|')"), "Anna Muster|Peter Meier")
+    check("dynamics field names: a file without the hidden sheet is left as it is", e("withDynamicsFieldNames({ headers: ['Account Name'], records: [{ 'Account Name': 'A' }], fieldKey: '' }).headers.join('|') + '|' + dynamicsFieldNames('just some text')"), "Account Name|null")
+    check("currency names", e("[currencyOfName('Swiss Franc'), currencyOfName('eur'), currencyOfName('US Dollar'), currencyOfName('Groat'), currencyOfName('')].join('|')"), "CHF|EUR|USD||")
 
 
 def test_whole_employees(ctx):

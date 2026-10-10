@@ -191,8 +191,8 @@
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <a href="#" id="tab-accounts" class="nav-item active">Target Accounts</a>
-        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV, a HubSpot or a Salesforce export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
-        <button id="export-page-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot or Salesforce can import">Export…</button>
+        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="export-page-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
         <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
@@ -201,8 +201,8 @@
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
-        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV, a HubSpot or a Salesforce export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
-        <button id="export-contacts-page-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot or Salesforce can import">Export…</button>
+        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="export-contacts-page-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
       </details>
 
       <details class="nav-group">
@@ -329,7 +329,7 @@
       <p id="empty-state" class="empty-state" hidden>
         No Target Accounts data imported yet.
         <button id="empty-import-btn" type="button">Import…</button>
-        Choose your research workbook (.xlsx), a SalesTeam CSV, a HubSpot or a Salesforce export.
+        Choose your research workbook (.xlsx), a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export.
       </p>
 
       <section id="accounts-stats-section" hidden>
@@ -779,6 +779,7 @@
       <label><input type="radio" name="export-format" value="csv" checked /> CSV - SalesTeam's own columns (opens in Excel)</label>
       <label><input type="radio" name="export-format" value="hubspot" /> HubSpot - files HubSpot can import</label>
       <label><input type="radio" name="export-format" value="salesforce" /> Salesforce - files Salesforce's Data Import Wizard can import</label>
+      <label><input type="radio" name="export-format" value="dynamics" /> Microsoft Dynamics - files Dynamics 365 Sales can import</label>
     </fieldset>
     <fieldset class="io-choice">
       <legend>Accounts or contacts?</legend>
@@ -827,6 +828,7 @@
       <label><input type="radio" name="import-format" value="salesteam" checked /> SalesTeam CSV - a file exported with Export…</label>
       <label><input type="radio" name="import-format" value="hubspot" /> HubSpot export (CSV) - companies or contacts</label>
       <label><input type="radio" name="import-format" value="salesforce" /> Salesforce export (CSV) - accounts or contacts</label>
+      <label><input type="radio" name="import-format" value="dynamics" /> Microsoft Dynamics export (Excel or CSV) - accounts or contacts</label>
       <!-- 1.2.2.13 (Boaz): last - the research now runs inside SalesTeam, so a workbook made outside is rarely used. -->
       <label><input type="radio" name="import-format" value="workbook" /> Research workbook (.xlsx) - research done outside SalesTeam</label>
     </fieldset>

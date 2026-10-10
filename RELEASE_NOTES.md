@@ -1,5 +1,42 @@
 # SalesTeam — v1.2.3
 
+## Export and Import: one menu for CSV, HubSpot, Salesforce and Microsoft Dynamics (builds 1.2.2.10-1.2.2.23)
+
+- **One Import… and one Export…** - in the Target Accounts Dashboard and Target Contacts Dashboard menus. They replace
+  Import Research Workbook…, Import from HubSpot…, Export Accounts (CSV), Export Contacts (CSV) and Export to HubSpot….
+  Choose the file type, then accounts, contacts or both.
+- **An import only adds and fills in** - companies, contacts and initiatives you do not have are added and empty fields
+  are filled. Nothing you have is replaced or removed, whatever the file type. Before this, importing a research
+  workbook replaced the list and could drop accounts found on the web.
+- **You see it first** - before anything is saved, a summary says how many accounts and contacts are new, how many
+  fields will be filled and how many differences were found. A safety copy of your data is saved before the import.
+- **Differences** - where the file and an account disagree by more than 10%, the same rules as for web findings
+  decide. The ones that could change a priority come to Decisions as **Import difference**, with **Keep current** and
+  **Use import**. The 10% is in Change Settings > Advanced.
+- **SalesTeam CSV** - a file saved with Export… can be edited in Excel and imported again.
+- **Salesforce** - Export… writes an accounts file and a contacts file with Salesforce's own column names, so its Data
+  Import Wizard maps every column by itself. Import reads Salesforce account and contact exports. Checked with a real
+  Salesforce organisation.
+- **Microsoft Dynamics** - Export… writes an accounts file and a contacts file with the column names of Dynamics 365
+  Sales. Import reads the Excel file that Dynamics' **Export to Excel** saves, as it is, in any language - checked with
+  real files from a German Dynamics organisation - or a CSV file. The files SalesTeam exports have English column
+  names from Microsoft's documentation; importing them into a real Dynamics environment has not yet been checked.
+- **Export, then import: nothing to do** - importing a file you exported from SalesTeam reports nothing new, nothing
+  filled and no differences. A job title that a CRM file had to cut to its limit (100 characters for Dynamics, 128 for
+  Salesforce) no longer counts as a difference; your own, longer title always stays. **Details** in the import summary
+  now lists every filled field and every difference, with the current value and the file's value.
+- **One currency** - revenue is shown in your default currency everywhere (Change Settings > Advanced > Revenue &
+  Currency), and every export is in it. An import never guesses a file's currency: when the file does not say, Import
+  asks, and warns when the figures look like another currency.
+- **Revenue without its unit** - a revenue such as "491.1" that lost its "million" is no longer filled in. It comes to
+  Decisions with the likely unit: **Correct it** or **Keep**.
+- **Headcount as a whole number** - employee figures such as 941.2 (full-time equivalents from annual reports) are
+  rounded, in what is stored and in what comes in.
+- **The same person only once** - a person who was in an account twice (with and without "Dr.", with a middle name, with
+  "oe" for "ö") is recognised as one. Pairs already in your data come to Decisions as **Same person?** with **Merge** and
+  **Keep both**.
+- **In a team** - Import… and Restore are for the Team Lead and the deputy. Export… is for everyone.
+
 ## Exclusions and relationships: customers and partners stay accounts (builds 1.2.2.1-1.2.2.4)
 
 - **Customers and partners are no longer excluded** - until now, a company on the Setup's customer or partner list was

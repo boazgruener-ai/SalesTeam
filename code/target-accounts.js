@@ -115,9 +115,9 @@ import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batc
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine } from "./pipeline-status.js";
 import { parseCsv, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
-import { buildCrmFiles, crmAccountRows, crmContactRows, CRM_NAMES } from "./crm-files.js";
+import { buildCrmFiles, crmAccountRows, crmContactRows, withDynamicsFieldNames, CRM_NAMES, CRM_SHORT_NAMES } from "./crm-files.js";
 import { detectImportFile, describeImportFile, salesteamCsvRows, applyFileCurrency, fileNeedsCurrency, currencyPlausibility } from "./csv-import.js";
-import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
+import { parseFullTargetAccountsWorkbook, parseFirstSheetRecords } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
 import { runContactDiscoveryForExistingCompanies } from "./contact-discovery-extraction.js";
 import { sizeFetchConfirmText, runCompanySizeFetch } from "./company-size-extraction.js";
@@ -4101,14 +4101,15 @@ mergeDiscoveredBtn.addEventListener("click", async () => {
 let importPickerMode = "research";
 
 // 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format. The research workbook keeps its own file
-// picker and help (prompt, template, mandatory columns); a SalesTeam CSV, a HubSpot or a Salesforce export is read by
+// picker and help (prompt, template, mandatory columns); a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export is read by
 // csv-import.js / hubspot.js / crm-files.js. All of them then go through runPlannedImport below.
-const IMPORT_TITLES = { workbook: "Import Research Workbook", salesteam: "Import SalesTeam CSV", hubspot: "Import HubSpot Export", salesforce: "Import Salesforce Export" };
+const IMPORT_TITLES = { workbook: "Import Research Workbook", salesteam: "Import SalesTeam CSV", hubspot: "Import HubSpot Export", salesforce: "Import Salesforce Export", dynamics: "Import Microsoft Dynamics Export" };
 const IMPORT_FORMAT_NOTES = {
   workbook: "Only for research done outside SalesTeam: the Excel workbook the SalesTeam research prompt produces in ChatGPT or another AI assistant, or one you filled in yourself from the template. SalesTeam researches accounts itself, so you normally do not need this.",
   salesteam: "An accounts or contacts file saved with Export… (CSV - SalesTeam's own columns), for example after editing it in Excel. The computed columns (Priority, Status, Readiness …) are worked out again, not read back.",
   hubspot: "In HubSpot, export your companies and/or your contacts as CSV files. Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
   salesforce: "In Salesforce, export your accounts and/or your contacts as CSV files (a report saved as CSV, or Data Loader). Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
+  dynamics: "In Dynamics 365 Sales, open your accounts or your contacts and choose Export to Excel - the Excel file (.xlsx) is read as it is; a CSV file works too. Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
 };
 
 function selectedImportFormat() {
@@ -4222,6 +4223,8 @@ document.getElementById("import-choose-btn").addEventListener("click", () => {
   document.getElementById("import-dialog").close();
   if (selectedImportFormat() !== "workbook") {
     const input = document.getElementById("import-csv-file-input");
+    // Dynamics' everyday export is "Export to Excel" (design 8a, D12).
+    input.accept = selectedImportFormat() === "dynamics" ? ".xlsx,.csv,text/csv" : ".csv,text/csv";
     input.multiple = selectedImportWhat() === "both";
     input.click();
     return;
@@ -4717,6 +4720,7 @@ async function runPlannedImport({ parsed, fileName, format, legacyList, prevCoun
     ...preview.newCompanyNames.slice(0, 200).map((n) => `New account: ${n}`),
     ...(preview.newCompanyNames.length > 200 ? [`… and ${preview.newCompanyNames.length - 200} more new accounts`] : []),
     ...preview.decisions.map((d) => `For Decisions: ${d.company} - ${d.label}: current ${d.current}, in the file ${d.imported}`),
+    ...preview.detailLines,
   ];
   const go = await askConfirm(
     `${fileName}\n\n${capitalize(importSummaryText(preview.counts))}.\n\n` +
@@ -4820,7 +4824,7 @@ function askFileCurrency(parsed, fileName, title) {
   });
 }
 
-// A SalesTeam CSV, a HubSpot or a Salesforce export (design 3.1): read into workbook rows, then the same path as the workbook.
+// A SalesTeam CSV, a HubSpot, a Salesforce or a Dynamics export (design 3.1): read into workbook rows, then the same path as the workbook.
 document.getElementById("import-csv-file-input").addEventListener("change", async (event) => {
   const files = [...event.target.files];
   event.target.value = "";
@@ -4839,14 +4843,16 @@ document.getElementById("import-csv-file-input").addEventListener("change", asyn
   const byKind = {};
   try {
     for (const file of files) {
-      const { headers, records } = parseCsv(await file.text());
-      const detected = detectImportFile(headers);
+      const { headers, records } = /\.xlsx$/i.test(file.name) ? withDynamicsFieldNames(await parseFirstSheetRecords(await file.arrayBuffer())) : parseCsv(await file.text());
+      const detected = detectImportFile(headers, chosen);
       const looks = describeImportFile(detected);
       if (!detected || detected.format !== chosen) {
         const expected = chosen === "hubspot"
           ? "a HubSpot companies or contacts export (it needs a \"Company name\" column, or \"First Name\" / \"Last Name\" / \"Email\" columns)"
           : chosen === "salesforce"
             ? "a Salesforce accounts or contacts export (it needs an \"Account Name\" column, plus \"First Name\" / \"Last Name\" for contacts)"
+            : chosen === "dynamics"
+              ? "a Dynamics accounts or contacts export (it needs an \"Account Name\" column for accounts, or \"Full Name\" and \"Company Name\" columns for contacts)"
             : "a file SalesTeam exported (Export… > CSV - SalesTeam's own columns)";
         await say(`"${file.name}" does not look like ${expected}.` +
           (looks ? `\n\nIt looks like ${looks} - choose that under "File type" in the Import window and try again.` : ""));
@@ -7250,13 +7256,14 @@ async function chooseExportRows(kind) {
 }
 
 // ---- Export… (1.2.3 Export & Import step 2, design 7.1) ----
-// One dialog for every export: Format (CSV with SalesTeam's own columns / HubSpot / Salesforce) -> What (accounts, contacts, both)
+// One dialog for every export: Format (CSV with SalesTeam's own columns / HubSpot / Salesforce / Dynamics) -> What (accounts, contacts, both)
 // -> Export. "Both" takes the accounts the table shows and every contact of those accounts. A file holds the rows the
 // table shows (search and filters applied), so once advanced-mode visibility filters the table, exports follow it.
 const EXPORT_NOTES = {
   csv: "One file per table, with every column under SalesTeam's own column names; it opens in Excel. If a search or filter is on, you are asked whether to export all rows or only the filtered ones.",
   hubspot: "Files with HubSpot's own column names (in HubSpot: Import). Import the companies file first, then the contacts file - HubSpot links each contact to its company by name. Revenue is in your display currency. HubSpot's Industry field only accepts its own list of values; if yours are not recognised, skip that column in the mapping step.",
   salesforce: "Files with Salesforce's own column names, so its Data Import Wizard maps every column by itself. Import the accounts file first, then the contacts file - each contact is linked to its account by Account Name. Type is Customer, Partner or Prospect; priority, LinkedIn page and SalesTeam's id go into Description.",
+  dynamics: "Files with Dynamics 365 Sales' own column names, so its Import Data wizard maps every column by itself. Import the accounts file first, then the contacts file - each contact is linked to its account by Company Name. Relationship Type is Customer, Partner or Prospect; industry, priority, LinkedIn page and SalesTeam's id go into Description.",
 };
 
 function selectedExportChoice(name) {
@@ -7318,7 +7325,7 @@ function openExportDialog({ format = null, what = null } = {}) {
   document.getElementById("export-dialog").showModal();
 }
 
-// The registry address's country for the Salesforce billing address (crm-files.js billingOf): the target country when
+// The registry address's country for the Salesforce billing / Dynamics address (crm-files.js billingOf): the target country when
 // Setup names exactly one, else none.
 async function singleTargetCountry() {
   const u = await getTargetUniverseConfig();
@@ -7363,8 +7370,8 @@ async function runExport(format, what) {
     const built = buildHubspotFiles(companies, contactRows || [], statusOfCompany, statusOfContact);
     if (accountRows) files.push({ name: `SalesTeam-HubSpot-companies-${stamp}.csv`, csv: built.companiesCsv, text: `${built.companyCount} companies` });
     if (contactRows) files.push({ name: `SalesTeam-HubSpot-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
-  } else if (format === "salesforce") {
-    // As HubSpot: the shown values, revenue in the default currency (D14), plus the relationship for Type (design 8).
+  } else if (CRM_NAMES[format]) {
+    // Salesforce or Dynamics. As HubSpot: the shown values, revenue in the default currency (D14), plus the relationship for Type (design 8, 8a).
     const companies = (accountRows || []).map((c) => {
       const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
       const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
@@ -7372,9 +7379,9 @@ async function runExport(format, what) {
       return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: info.priority, relationship: info.relationship };
     });
     const contacts = (contactRows || []).map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
-    const built = buildCrmFiles("salesforce", companies, contacts, { registryCountry: await singleTargetCountry() });
-    if (accountRows) files.push({ name: `SalesTeam-Salesforce-accounts-${stamp}.csv`, csv: built.accountsCsv, text: `${built.accountCount} accounts` });
-    if (contactRows) files.push({ name: `SalesTeam-Salesforce-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
+    const built = buildCrmFiles(format, companies, contacts, { registryCountry: await singleTargetCountry() });
+    if (accountRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-accounts-${stamp}.csv`, csv: built.accountsCsv, text: `${built.accountCount} accounts` });
+    if (contactRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
   } else {
     const n = (count, one) => `${count} ${one}${count === 1 ? "" : "s"}`;
     if (accountRows) files.push({ name: `SalesTeam-accounts-${stamp}.csv`, csv: tableCsv(COMPANY_COLUMNS, accountRows), text: n(accountRows.length, "account") });
@@ -7393,6 +7400,8 @@ async function runExport(format, what) {
     : format === "salesforce"
       // design 8: Annual Revenue is a plain number (the wizard would not map "Annual Revenue (USD)"), so it is named here.
       ? `${accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : ""}${files.length > 1 ? "\n\nIn Salesforce (Data Import Wizard), import the accounts file first, then the contacts file - each contact is linked to its account by Account Name." : ""}`
+      : format === "dynamics"
+        ? `${accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : ""}${files.length > 1 ? "\n\nIn Dynamics 365 Sales (Import from CSV), import the accounts file first, then the contacts file - each contact is linked to its account by Company Name." : ""}`
       : "\n\nThey open in Excel.";
   await askConfirm(`Saved ${files.length === 1 ? "one file" : `${files.length} files`} to ${where}:\n\n${list}${hint}`, { title: "Export", cancelLabel: null });
 }
