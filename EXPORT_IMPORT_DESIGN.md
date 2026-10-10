@@ -311,6 +311,21 @@ like the chosen kind says what it looks like ("This looks like a HubSpot contact
       claim it.
   - Import reads the same titles (and the API names above), so a file exported from Salesforce in this shape comes
     back in as it went out.
+- **Built in 1.2.2.16** (pure `crm-files.js`, one column table per CRM - Dynamics adds its own table once the header
+  rows are in). Export… and Import… offer Salesforce; files `SalesTeam-Salesforce-accounts/contacts-<stamp>.csv`.
+  - **Description holds "Label: value" lines** - priority (with score), company type, LinkedIn page, HQ city, HQ
+    country, registry address, `SalesTeam id` (contacts: LinkedIn profile, id) - and Import reads them back. A file
+    whose Description carries `SalesTeam id` is SalesTeam's own: its Billing columns were worked out from those lines
+    and are not read again, so the HQ round-trips exactly. A Salesforce org's own file: Billing City / Country are read
+    as the HQ city / country.
+  - **Billing address:** a registry address of the form "street, ZIP city[, state][, country]" is split into the
+    Billing columns; its country is the one the address names, else Setup's single target country, else the HQ
+    country when the HQ is in the same city, else empty (about 100 accounts hold a Swiss registry address under a
+    foreign HQ - a French Billing Country under a Winterthur street would be wrong). An address in no such shape
+    leaves Billing Street empty and uses the HQ city and country.
+  - Record ids ("Account ID" / "Contact ID" / "Id") become `SF-<id>`; a revenue that names its currency ("USD 1,500,000")
+    keeps it, a plain number is asked for (D15 case 3). Industry is written as free text - still to be checked
+    against a real org's picklist.
 
 ---
 

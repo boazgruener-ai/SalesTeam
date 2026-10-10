@@ -18,6 +18,7 @@ or document, the right move is to lift the logic back out into a pure module rat
 the test.
 """
 
+import csv
 import io
 import os
 import re
@@ -31,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
+PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2776,6 +2777,7 @@ def main():
     test_team_invites(ctx)
     test_import_merge(ctx)
     test_csv_import(ctx)
+    test_crm_files(ctx)
     test_revenue_units(ctx)
 
     print()
@@ -2997,6 +2999,79 @@ def test_csv_import(ctx):
     check("round trip: a person under a subsidiary that is also a group alias is not new", e("RT.counts.newContacts"), 0)
     check("round trip: the LinkedIn band shown as Employees is not filled in as a number", e("RT.counts.filled"), 0)
     check("salesteam csv: the worked-out Seniority is not read back", e("'seniority' in salesteamCsvRows([{ Name: 'A B', Company: 'X', Seniority: 'C-level' }], 'contacts')[0]"), False)
+
+
+def test_crm_files(ctx):
+    """1.2.3 Export & Import step 3 (design 8): Salesforce files written in the wizard's own columns and read back."""
+    e = ctx.eval
+    SF_ACC = "Account Name,Annual Revenue,Billing Street,Billing City,Billing State/Province,Billing Zip/Postal Code,Billing Country,Description,Employees,Fax,Industry,Phone,Shipping Street,Shipping City,Shipping State/Province,Shipping Zip/Postal Code,Shipping Country,Type,Website"
+    SF_CON = "First Name,Last Name,Email,Phone,Title,Account Name,Mailing Street,Mailing City,Mailing State/Province,Mailing Zip/Postal Code,Mailing Country,Lead Source,Consent Status"
+    check("detect: Salesforce's sample accounts file", e("JSON.stringify(detectImportFile(%s))" % json.dumps(SF_ACC.split(","))),
+          '{"format":"salesforce","kind":"accounts"}')
+    check("detect: Salesforce's sample contacts file (not HubSpot contacts)", e("JSON.stringify(detectImportFile(%s))" % json.dumps(SF_CON.split(","))),
+          '{"format":"salesforce","kind":"contacts"}')
+    check("detect: Salesforce API names (Data Loader)", e("JSON.stringify(detectImportFile(['Id', 'Name', 'AnnualRevenue', 'NumberOfEmployees', 'BillingCountry']))"),
+          '{"format":"salesforce","kind":"accounts"}')
+    check("detect: HubSpot contacts still HubSpot", e("JSON.stringify(detectImportFile(['First Name', 'Last Name', 'Email', 'Associated Company']))"),
+          '{"format":"hubspot","kind":"contacts"}')
+    check("detect: says what a Salesforce file is", e("describeImportFile(detectImportFile(%s))" % json.dumps(SF_CON.split(","))), "a Salesforce contacts export")
+    check("registry address: street, zip, city", e("JSON.stringify(splitRegistryAddress('Rütistrasse 12, 8952 Schlieren'))"),
+          '{"street":"Rütistrasse 12","zip":"8952","city":"Schlieren","state":null,"country":null}')
+    check("registry address: canton and country after the city", e("JSON.stringify(splitRegistryAddress('Rue de Morges 23, 1023 Crissier, VD, Switzerland'))"),
+          '{"street":"Rue de Morges 23","zip":"1023","city":"Crissier","state":"VD","country":"Switzerland"}')
+    check("registry address: no zip -> not split", e("splitRegistryAddress('Meilen, Switzerland')"), None)
+    e("""
+      var SF = buildCrmFiles('salesforce', [
+          { companyId: 'C-1', company: 'AXA Switzerland', globalRevenue: 6200000000, globalEmployees: 4700, industry: 'Insurance',
+            globalHqCity: 'Paris', globalHqCountry: 'France', zefixAddress: 'General-Guisan-Strasse 40, 8400 Winterthur',
+            linkedinLink: 'https://www.linkedin.com/company/axa-switzerland/', companyType: 'Public', website: 'https://www.axa.ch',
+            salesTeamPriority: 'P1', salesTeamPriorityScore: 81.6, relationship: ['partner'] },
+          { companyId: 'C-2', company: 'Acme, "the" AG', globalHqCity: 'Zug', globalHqCountry: 'Switzerland', relationship: ['customer', 'partner'] } ],
+        [ { contactId: 'P-1', company: 'AXA Switzerland', fullName: 'Anna Maria Muster', jobTitle: 'CIO', publicBusinessEmail: 'a@axa.ch',
+            city: 'Winterthur', country: 'Switzerland', lastVerified2: 'https://www.linkedin.com/in/anna/' } ],
+        { registryCountry: 'Switzerland' });
+    """)
+    # parseCsv lives in hubspot.js (not pure): the files are read back with Python's csv module, as a CRM would.
+    def read_csv(text):
+        rows = list(csv.reader(io.StringIO(text.lstrip("﻿"), newline="")))
+        return {"headers": rows[0], "records": [dict(zip(rows[0], r)) for r in rows[1:]]}
+    e("var SF_P = %s; var SF_C = %s;" % (json.dumps(read_csv(e("SF.accountsCsv"))), json.dumps(read_csv(e("SF.contactsCsv")))))
+    check("export: accounts header is exactly Salesforce's sample", e("SF_P.headers.join(',')"), SF_ACC)
+    check("export: contacts header = sample + Description", e("SF_C.headers.join(',')"), SF_CON + ",Description")
+    check("export: billing from the registry address, in the registry's country (not the French HQ)",
+          e("['Billing Street','Billing Zip/Postal Code','Billing City','Billing Country'].map(function (k) { return SF_P.records[0][k]; }).join('|')"),
+          "General-Guisan-Strasse 40|8400|Winterthur|Switzerland")
+    check("export: no registry address -> HQ city and country", e("SF_P.records[1]['Billing City'] + '|' + SF_P.records[1]['Billing Country']"), "Zug|Switzerland")
+    check("export: Type is the relationship (customer wins)", e("SF_P.records[0].Type + '|' + SF_P.records[1].Type"), "Partner|Customer")
+    check("export: a company name with comma and quotes survives", e("SF_P.records[1]['Account Name']"), 'Acme, "the" AG')
+    check("export: priority and SalesTeam id in Description", e("/SalesTeam priority: P1 \\(score 82\\)/.test(SF_P.records[0].Description) && /SalesTeam id: C-1/.test(SF_P.records[0].Description)"), True)
+    check("export: contact split into first / last, Lead Source Other, Consent empty",
+          e("[SF_C.records[0]['First Name'], SF_C.records[0]['Last Name'], SF_C.records[0]['Lead Source'], SF_C.records[0]['Consent Status']].join('|')"),
+          "Anna Maria|Muster|Other|")
+    e("""
+      var BACK = crmAccountRows('salesforce', SF_P.records);
+      var BACK_C = crmContactRows('salesforce', SF_C.records);
+    """)
+    check("round trip: HQ comes back from Description, not from the billing address", e("BACK[0].globalHqCity + '|' + BACK[0].globalHqCountry"), "Paris|France")
+    check("round trip: registry address, LinkedIn page, company type", e("[BACK[0].zefixAddress, BACK[0].linkedinLink, BACK[0].companyType].join('|')"),
+          "General-Guisan-Strasse 40, 8400 Winterthur|https://www.linkedin.com/company/axa-switzerland/|Public")
+    check("round trip: numbers", e("BACK[0].globalRevenue + '|' + BACK[0].globalEmployees"), "6200000000|4700")
+    check("round trip: revenue without a currency asks for one (D15 case 3)", e("fileNeedsCurrency({ companies: BACK })"), True)
+    check("round trip: source Salesforce", e("BACK[0].source"), "Salesforce")
+    check("round trip: contact", e("[BACK_C[0].fullName, BACK_C[0].company, BACK_C[0].jobTitle, BACK_C[0].publicBusinessEmail, BACK_C[0].lastVerified2].join('|')"),
+          "Anna Maria Muster|AXA Switzerland|CIO|a@axa.ch|https://www.linkedin.com/in/anna/")
+    e("""
+      var ORG = crmAccountRows('salesforce', [
+        { 'Account ID': '001A', 'Account Name': 'Suspendisse Non Associates', 'Annual Revenue': '500000', 'Billing City': 'Every City',
+          'Billing Country': 'United States', 'Employees': '20', 'Website': 'www.example.com/sample', 'Description': 'Manufacturer in Every City CA' },
+        { Id: '001B', Name: 'Enim', AnnualRevenue: 'USD 1,500,000', NumberOfEmployees: '' },
+        { 'Account Name': '' } ]);
+    """)
+    check("org file: billing address read as HQ", e("ORG[0].globalHqCity + '|' + ORG[0].globalHqCountry"), "Every City|United States")
+    check("org file: record id kept, website gets https", e("ORG[0].companyId + '|' + ORG[0].website"), "SF-001A|https://www.example.com/sample")
+    check("org file: API names; revenue naming its currency kept as text; empty employees left out",
+          e("ORG[1].company + '|' + ORG[1].globalRevenue + '|' + ('globalEmployees' in ORG[1])"), "Enim|USD 1,500,000|false")
+    check("org file: a row without a name is skipped", e("ORG.length"), 2)
 
 
 if __name__ == "__main__":

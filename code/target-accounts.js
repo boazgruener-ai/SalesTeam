@@ -115,6 +115,7 @@ import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batc
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine } from "./pipeline-status.js";
 import { parseCsv, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
+import { buildCrmFiles, crmAccountRows, crmContactRows, CRM_NAMES } from "./crm-files.js";
 import { detectImportFile, describeImportFile, salesteamCsvRows, applyFileCurrency, fileNeedsCurrency, currencyPlausibility } from "./csv-import.js";
 import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
@@ -4100,13 +4101,14 @@ mergeDiscoveredBtn.addEventListener("click", async () => {
 let importPickerMode = "research";
 
 // 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format. The research workbook keeps its own file
-// picker and help (prompt, template, mandatory columns); a SalesTeam CSV or a HubSpot export is read by
-// csv-import.js / hubspot.js. All of them then go through runPlannedImport below.
-const IMPORT_TITLES = { workbook: "Import Research Workbook", salesteam: "Import SalesTeam CSV", hubspot: "Import HubSpot Export" };
+// picker and help (prompt, template, mandatory columns); a SalesTeam CSV, a HubSpot or a Salesforce export is read by
+// csv-import.js / hubspot.js / crm-files.js. All of them then go through runPlannedImport below.
+const IMPORT_TITLES = { workbook: "Import Research Workbook", salesteam: "Import SalesTeam CSV", hubspot: "Import HubSpot Export", salesforce: "Import Salesforce Export" };
 const IMPORT_FORMAT_NOTES = {
   workbook: "Only for research done outside SalesTeam: the Excel workbook the SalesTeam research prompt produces in ChatGPT or another AI assistant, or one you filled in yourself from the template. SalesTeam researches accounts itself, so you normally do not need this.",
   salesteam: "An accounts or contacts file saved with Export… (CSV - SalesTeam's own columns), for example after editing it in Excel. The computed columns (Priority, Status, Readiness …) are worked out again, not read back.",
   hubspot: "In HubSpot, export your companies and/or your contacts as CSV files. Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
+  salesforce: "In Salesforce, export your accounts and/or your contacts as CSV files (a report saved as CSV, or Data Loader). Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
 };
 
 function selectedImportFormat() {
@@ -4818,7 +4820,7 @@ function askFileCurrency(parsed, fileName, title) {
   });
 }
 
-// A SalesTeam CSV or a HubSpot export (design 3.1): read into workbook rows, then the same path as the workbook.
+// A SalesTeam CSV, a HubSpot or a Salesforce export (design 3.1): read into workbook rows, then the same path as the workbook.
 document.getElementById("import-csv-file-input").addEventListener("change", async (event) => {
   const files = [...event.target.files];
   event.target.value = "";
@@ -4827,7 +4829,7 @@ document.getElementById("import-csv-file-input").addEventListener("change", asyn
   const chosen = selectedImportFormat();
   const what = selectedImportWhat();
   const title = IMPORT_TITLES[chosen];
-  const formatName = chosen === "hubspot" ? "HubSpot" : "SalesTeam";
+  const formatName = CRM_NAMES[chosen] || (chosen === "hubspot" ? "HubSpot" : "SalesTeam");
   const say = (text) => askConfirm(text, { title, cancelLabel: null });
   if (what === "both" && files.length !== 2) {
     await say(`For "Both", choose the accounts file and the contacts file together (hold Ctrl and click both) - ${files.length === 1 ? "only one file was chosen" : `${files.length} files were chosen`}.`);
@@ -4843,7 +4845,9 @@ document.getElementById("import-csv-file-input").addEventListener("change", asyn
       if (!detected || detected.format !== chosen) {
         const expected = chosen === "hubspot"
           ? "a HubSpot companies or contacts export (it needs a \"Company name\" column, or \"First Name\" / \"Last Name\" / \"Email\" columns)"
-          : "a file SalesTeam exported (Export… > CSV - SalesTeam's own columns)";
+          : chosen === "salesforce"
+            ? "a Salesforce accounts or contacts export (it needs an \"Account Name\" column, plus \"First Name\" / \"Last Name\" for contacts)"
+            : "a file SalesTeam exported (Export… > CSV - SalesTeam's own columns)";
         await say(`"${file.name}" does not look like ${expected}.` +
           (looks ? `\n\nIt looks like ${looks} - choose that under "File type" in the Import window and try again.` : ""));
         return;
@@ -4859,7 +4863,9 @@ document.getElementById("import-csv-file-input").addEventListener("change", asyn
       byKind[detected.kind] = file.name;
       const rows = detected.format === "hubspot"
         ? (detected.kind === "accounts" ? hubspotCompanyRows(records) : hubspotContactRows(records))
-        : salesteamCsvRows(records, detected.kind);
+        : CRM_NAMES[detected.format]
+          ? (detected.kind === "accounts" ? crmAccountRows(detected.format, records) : crmContactRows(detected.format, records))
+          : salesteamCsvRows(records, detected.kind);
       if (rows.length === 0) {
         await say(`No usable ${detected.kind} rows were found in "${file.name}".`);
         return;
@@ -7243,12 +7249,13 @@ async function chooseExportRows(kind) {
 }
 
 // ---- Export… (1.2.3 Export & Import step 2, design 7.1) ----
-// One dialog for every export: Format (CSV with SalesTeam's own columns / HubSpot) -> What (accounts, contacts, both)
+// One dialog for every export: Format (CSV with SalesTeam's own columns / HubSpot / Salesforce) -> What (accounts, contacts, both)
 // -> Export. "Both" takes the accounts the table shows and every contact of those accounts. A file holds the rows the
 // table shows (search and filters applied), so once advanced-mode visibility filters the table, exports follow it.
 const EXPORT_NOTES = {
   csv: "One file per table, with every column under SalesTeam's own column names; it opens in Excel. If a search or filter is on, you are asked whether to export all rows or only the filtered ones.",
   hubspot: "Files with HubSpot's own column names (in HubSpot: Import). Import the companies file first, then the contacts file - HubSpot links each contact to its company by name. Revenue is in your display currency. HubSpot's Industry field only accepts its own list of values; if yours are not recognised, skip that column in the mapping step.",
+  salesforce: "Files with Salesforce's own column names, so its Data Import Wizard maps every column by itself. Import the accounts file first, then the contacts file - each contact is linked to its account by Account Name. Type is Customer, Partner or Prospect; priority, LinkedIn page and SalesTeam's id go into Description.",
 };
 
 function selectedExportChoice(name) {
@@ -7310,6 +7317,14 @@ function openExportDialog({ format = null, what = null } = {}) {
   document.getElementById("export-dialog").showModal();
 }
 
+// The registry address's country for the Salesforce billing address (crm-files.js billingOf): the target country when
+// Setup names exactly one, else none.
+async function singleTargetCountry() {
+  const u = await getTargetUniverseConfig();
+  const list = u && u.locationMode !== "continent" ? [...new Set(u.countries || [])] : [];
+  return list.length === 1 ? list[0] : null;
+}
+
 async function runExport(format, what) {
   let accountRows = null;
   let contactRows = null;
@@ -7347,6 +7362,18 @@ async function runExport(format, what) {
     const built = buildHubspotFiles(companies, contactRows || [], statusOfCompany, statusOfContact);
     if (accountRows) files.push({ name: `SalesTeam-HubSpot-companies-${stamp}.csv`, csv: built.companiesCsv, text: `${built.companyCount} companies` });
     if (contactRows) files.push({ name: `SalesTeam-HubSpot-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
+  } else if (format === "salesforce") {
+    // As HubSpot: the shown values, revenue in the default currency (D14), plus the relationship for Type (design 8).
+    const companies = (accountRows || []).map((c) => {
+      const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
+      const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
+      const info = accountPriorityInfo(c);
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: info.priority, relationship: info.relationship };
+    });
+    const contacts = (contactRows || []).map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    const built = buildCrmFiles("salesforce", companies, contacts, { registryCountry: await singleTargetCountry() });
+    if (accountRows) files.push({ name: `SalesTeam-Salesforce-accounts-${stamp}.csv`, csv: built.accountsCsv, text: `${built.accountCount} accounts` });
+    if (contactRows) files.push({ name: `SalesTeam-Salesforce-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
   } else {
     const n = (count, one) => `${count} ${one}${count === 1 ? "" : "s"}`;
     if (accountRows) files.push({ name: `SalesTeam-accounts-${stamp}.csv`, csv: tableCsv(COMPANY_COLUMNS, accountRows), text: n(accountRows.length, "account") });
@@ -7355,14 +7382,17 @@ async function runExport(format, what) {
   const where = await saveExportFiles(files);
   const list = files.map((f) => `${f.text}: ${f.name}`).join("\n");
   appendActivityLog({
-    actor: "user", action: format === "hubspot" ? "hubspot_exported" : "csv_exported",
-    label: `Exported ${files.map((f) => f.text).join(" and ")} (${format === "hubspot" ? "HubSpot" : "CSV"})`,
+    actor: "user", action: format === "csv" ? "csv_exported" : `${format}_exported`,
+    label: `Exported ${files.map((f) => f.text).join(" and ")} (${format === "hubspot" ? "HubSpot" : CRM_NAMES[format] || "CSV"})`,
   });
   // D14: HubSpot's import maps "Annual Revenue" by that exact title, so the currency is named here instead.
   const currencyNote = format === "hubspot" && accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : "";
   const hint = format === "hubspot"
     ? `${currencyNote}${files.length > 1 ? "\n\nIn HubSpot, import the companies file first, then the contacts file." : ""}`
-    : "\n\nThey open in Excel.";
+    : format === "salesforce"
+      // design 8: Annual Revenue is a plain number (the wizard would not map "Annual Revenue (USD)"), so it is named here.
+      ? `${accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : ""}${files.length > 1 ? "\n\nIn Salesforce (Data Import Wizard), import the accounts file first, then the contacts file - each contact is linked to its account by Account Name." : ""}`
+      : "\n\nThey open in Excel.";
   await askConfirm(`Saved ${files.length === 1 ? "one file" : `${files.length} files`} to ${where}:\n\n${list}${hint}`, { title: "Export", cancelLabel: null });
 }
 

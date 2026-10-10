@@ -7,7 +7,7 @@
 // does the joining of the three account stores and hands this module one flat `view` per account.
 //
 // view = {
-//   key, company, source,                         // source: "Imported" | "Discovered" | "HubSpot" | "Web"
+//   key, company, source,                         // source: "Imported" | "Discovered" | "HubSpot" | "Salesforce" | "Web"
 //   linkedinCompanyId, linkedinLink,
 //   website, primarySourceUrl,                    // what identifies it without LinkedIn (1.2.1, webUsable)
 //   salesTeamPriority,                            // effective: manual override, else the row's
@@ -208,7 +208,7 @@ export function deriveProvenance(view, field, facts, now) {
     const link = isHttpUrl(view.primarySourceUrl) ? String(view.primarySourceUrl).trim() : null;
     return { ...base, src: "web", at: f.discoveredAt || importedAt, cited: Boolean(link), ...(link ? { link } : {}) };
   }
-  if (view.source === "HubSpot") return { ...base, src: "workbook", at: importedAt, evidence: null };
+  if (view.source === "HubSpot" || view.source === "Salesforce") return { ...base, src: "workbook", at: importedAt, evidence: null };
   return {
     ...base,
     src: "workbook",

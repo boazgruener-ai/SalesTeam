@@ -2,7 +2,7 @@
 // research workbook's own row shape ({ companies, contacts }); everything after that - match, plan, check-first,
 // safety copy, write, Decisions, logs - is the one import path every format shares (import-merge.js, storage.js).
 //
-//   detectImportFile(headers)  -> { format: "salesteam" | "hubspot", kind: "accounts" | "contacts" } or null
+//   detectImportFile(headers)  -> { format: "salesteam" | "hubspot" | "salesforce", kind: "accounts" | "contacts" } or null
 //   salesteamCsvRows(records, kind)  -> rows from a file SalesTeam itself exported (Export… > SalesTeam columns)
 //   applyFileCurrency(parsed, currency)  -> revenue without a currency is read as `currency` (D7, D15 case 3)
 //   currencyPlausibility(pairs, chosen, money)  -> do the file's figures look like another currency? (D15)
@@ -10,6 +10,7 @@
 // PURE - no chrome APIs, no storage, no DOM (test_pure_modules.py runs it).
 
 import { parseLooseNumber, convertCurrency, extractCurrency, SUPPORTED_CURRENCIES } from "./value-normalize.js";
+import { detectCrmFile, CRM_NAMES } from "./crm-files.js";
 
 // The column titles of the Target Accounts table (target-accounts.js COMPANY_COLUMNS) that hold a stored value. The
 // computed ones (Priority, Status, Readiness, Size, Groups, the scores …) are SalesTeam's own and are worked out again
@@ -103,6 +104,9 @@ export function detectImportFile(headers) {
   const crmPerson = h.has("first name") || h.has("last name");
   if (h.has("name") && h.has("company") && !crmPerson && count(SALESTEAM_CONTACT_MARKERS) >= 1) return { format: "salesteam", kind: "contacts" };
   if (h.has("company") && !h.has("name") && !h.has("company name") && count(SALESTEAM_ACCOUNT_MARKERS) >= 2) return { format: "salesteam", kind: "accounts" };
+  // Salesforce before HubSpot: both have First Name / Last Name / Email (crm-files.js tells them apart).
+  const crm = detectCrmFile(headers);
+  if (crm) return crm;
   if (crmPerson || h.has("email")) return { format: "hubspot", kind: "contacts" };
   if (h.has("company name") || h.has("company domain name") || (h.has("name") && h.has("record id"))) return { format: "hubspot", kind: "accounts" };
   return null;
@@ -112,6 +116,7 @@ export function detectImportFile(headers) {
 export function describeImportFile(detected) {
   if (!detected) return null;
   if (detected.format === "salesteam") return `a SalesTeam ${detected.kind} file`;
+  if (CRM_NAMES[detected.format]) return `a ${CRM_NAMES[detected.format]} ${detected.kind} export`;
   return `a HubSpot ${detected.kind === "accounts" ? "companies" : "contacts"} export`;
 }
 
