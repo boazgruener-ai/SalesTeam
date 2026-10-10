@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2779,6 +2779,7 @@ def main():
     test_csv_import(ctx)
     test_crm_files(ctx)
     test_whole_employees(ctx)
+    test_person_identity(ctx)
     test_revenue_units(ctx)
 
     print()
@@ -3100,6 +3101,48 @@ def test_whole_employees(ctx):
     check("employees: both fields rounded", e("JSON.stringify(withWholeEmployees({ company: 'SNB', globalEmployees: 941.2, swissEmployees: 925.72 }))"),
           '{"company":"SNB","globalEmployees":941,"swissEmployees":926}')
     check("employees: a web finding is rounded", e("computeFindingProposals({ company: 'SNB' }, null, { employeesGlobal: '941.2' }).filter(function (p) { return p.key === 'globalEmployees'; })[0].found"), 941)
+
+
+def test_person_identity(ctx):
+    """Contact deduplication (2026-10-10): the ~10 people the Salesforce import showed in SalesTeam twice."""
+    e = ctx.eval
+    same = lambda a, b: e("samePerson(%s, %s)" % (json.dumps(a), json.dumps(b)))
+    check("same: Dr. title", same({"fullName": "Hansjoerg Rodi", "lastVerified2": "https://www.linkedin.com/in/hansjoerg-rodi-bb3236220"}, {"fullName": "Dr. Hansjoerg Rodi"}), True)
+    check("same: Ö written as Oe", same({"fullName": "Oezlem Civelek"}, {"fullName": "Özlem Civelek"}), True)
+    check("same: ä written as a", same({"fullName": "Heiko Schäfer"}, {"fullName": "Dr. Heiko Schafer"}), True)
+    check("same: hyphenated first name", same({"fullName": "Hans-Jörg Muster"}, {"fullName": "Hansjoerg Muster"}), True)
+    check("same: middle initial", same({"fullName": "Keelan I. Adamson", "lastVerified2": "https://www.sec.gov/Archives/x.htm"}, {"fullName": "Keelan Adamson"}), True)
+    check("same: nickname in brackets", same({"fullName": "Weng Kuan (WK) Tan"}, {"fullName": "Weng Kuan Tan"}), True)
+    check("same: middle name", same({"fullName": "Guido Fabrizio Pinna"}, {"fullName": "Guido Pinna"}), True)
+    check("same: one LinkedIn profile, trailing slash", same({"fullName": "Andreas Ronchetti Salomon", "lastVerified2": "https://www.linkedin.com/in/aronchetti/"},
+                                                               {"fullName": "Andreas Ronchetti", "lastVerified2": "https://ch.linkedin.com/in/aronchetti?trk=x"}), True)
+    check("different: namesakes with two profiles", same({"fullName": "Patrick Graf", "lastVerified2": "https://www.linkedin.com/in/pgraf1"},
+                                                          {"fullName": "Patrick Graf", "lastVerified2": "https://www.linkedin.com/in/pgraf2"}), False)
+    check("different: another first name", same({"fullName": "Thomas Muster"}, {"fullName": "Andreas Muster"}), False)
+    check("different: a single name matches nothing by name", same({"fullName": "Madonna"}, {"fullName": "Madonna"}), False)
+    check("Ma is a surname, not a title", e("personNameWords('Jack Ma').join(' ')"), "jack ma")
+    check("profile slug: only linkedin.com/in", e("[linkedinProfileSlug('https://www.sec.gov/x'), linkedinProfileSlug('https://www.linkedin.com/in/Oezlem%C3%96/')].join('|')"), "|oezlemö")
+    e("""
+      var IDX = createPersonIndex();
+      IDX.add('Kühne + Nagel', { fullName: 'Hansjoerg Rodi' }, 'K1');
+      IDX.add('Basler Kantonalbank', { fullName: 'Oezlem Civelek', lastVerified2: 'https://www.linkedin.com/in/oezlemcivelek' }, 'B1');
+    """)
+    check("index: found at the same account", e("IDX.find('Kühne + Nagel', { fullName: 'Dr. Hansjoerg Rodi' })"), "K1")
+    check("index: not at another account", e("IDX.find('Kuehne Logistics', { fullName: 'Dr. Hansjoerg Rodi' })"), None)
+    check("index: by LinkedIn profile", e("IDX.find('Basler Kantonalbank', { fullName: 'Ö. Civelek', lastVerified2: 'https://www.linkedin.com/in/oezlemcivelek/' })"), "B1")
+    check("index: a namesake with another profile is someone else", e("IDX.find('Basler Kantonalbank', { fullName: 'Özlem Civelek', lastVerified2: 'https://www.linkedin.com/in/other' })"), None)
+    e("""
+      var PAIRS = contactDuplicatePairs([
+        { key: 'a', company: 'Sanitas', fullName: 'Andreas Schönenberger', jobTitle: 'CEO' },
+        { key: 'b', company: 'Sanitas', fullName: 'Dr. Andreas Schönenberger', lastVerified2: 'https://www.linkedin.com/in/aschoenenberger', jobTitle: 'CEO', source: 'Web' },
+        { key: 'c', company: 'Allianz Suisse', fullName: 'Patrick Maurer' },
+        { key: 'd', company: 'Montana Aerospace', fullName: 'Patrick Maurer' },
+        { key: 'e', company: 'Mammut', fullName: 'Heiko Schäfer' },
+        { key: 'f', company: 'Mammut', fullName: 'Dr. Heiko Schäfer' } ], { keptApart: new Set([contactPairKey('f', 'e')]) });
+      var KEEP = fullerFirst(PAIRS[0][0], PAIRS[0][1])[0].key;
+    """)
+    check("pairs: one pair - other accounts and 'Keep both' left out", e("PAIRS.length"), 1)
+    check("pairs: the fuller entry (with LinkedIn) is kept on Merge", e("KEEP"), "b")
 
 
 if __name__ == "__main__":

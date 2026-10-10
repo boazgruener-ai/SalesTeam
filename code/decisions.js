@@ -23,6 +23,7 @@ const CHOICES = {
   id_taken: [["same", "Same company"], ["different", "Different company"]],
   name_match: [["same", "Same company"], ["different", "Different company"]],
   duplicate: [["merge", "Merge"], ["separate", "Keep both"]],
+  contact_duplicate: [["merge", "Merge"], ["separate", "Keep both"]],
   lacking_evidence: [["keep", "Keep"], ["remove", "Remove"]],
   finding: [["web", "Use web finding"], ["current", "Keep current"]],
   import_finding: [["import", "Use import"], ["current", "Keep current"]],
@@ -33,6 +34,7 @@ const KIND_PLURAL = {
   id_taken: ["LinkedIn company already used", "LinkedIn companies already used"],
   name_match: ["possible same company", "possible same companies"],
   duplicate: ["possible duplicate", "possible duplicates"],
+  contact_duplicate: ["person entered twice", "people entered twice"],
   lacking_evidence: ["account lacking evidence", "accounts lacking evidence"],
   finding: ["web finding", "web findings"],
   import_finding: ["import difference", "import differences"],
@@ -161,6 +163,24 @@ function bodyFor(item) {
       <p class="note"><strong>Merge</strong> keeps the first and moves the others' contacts, initiatives, sources and
       Post leads over; this cannot be undone. <strong>Keep both</strong>: they are never proposed again.</p>`;
   }
+  if (item.kind === "contact_duplicate") {
+    const members = p.members || [];
+    const cell = (fn) => members.map((m) => `<td>${fn(m)}</td>`).join("");
+    const profile = (m) => (m.linkedin && /linkedin\.com\/in\//i.test(m.linkedin) ? link(m.linkedin, "LinkedIn profile") : (m.linkedin ? `${esc(m.linkedin)} <span class="note">(not a LinkedIn profile)</span>` : "none"));
+    return `
+      <p>The same person seems to be in <strong>${esc(item.company)}</strong> twice, written differently - a title such
+      as "Dr.", a middle name or initial, or ö written as oe.</p>
+      <table class="compare">
+        <tr><th></th>${cell((m) => `<strong>${esc(m.fullName)}</strong>${m === members[0] ? " <span class=\"note\">(kept on Merge)</span>" : ""}`)}</tr>
+        <tr><th>Job title</th>${cell((m) => esc(show(m.jobTitle)))}</tr>
+        <tr><th>LinkedIn</th>${cell(profile)}</tr>
+        <tr><th>E-mail</th>${cell((m) => esc(show(m.email)))}</tr>
+        <tr><th>Found by</th>${cell((m) => esc(m.source === "Web" ? "web research" : m.source === "Discovered" ? "LinkedIn search" : "research / import"))}</tr>
+      </table>
+      <p class="note"><strong>Merge</strong> keeps the first and adds what only the second has (LinkedIn profile, e-mail,
+      phone, status, chats); the second is removed. <strong>Keep both</strong>: two people who share a name - never
+      proposed again.</p>`;
+  }
   if (item.kind === "lacking_evidence") {
     return `
       <p>${esc(p.text)}</p>
@@ -237,6 +257,7 @@ function similarLabel(item, n) {
   if (item.kind === "join_proposal") return `Also for ${esc(p.byName)}'s other ${n} join proposal${n === 1 ? "" : "s"}`;
   if (item.kind === "finding") return `Also for the other ${n} ${esc(p.label)} finding${n === 1 ? "" : "s"}`;
   if (item.kind === "import_finding") return `Also for the other ${n} ${esc(p.label)} import difference${n === 1 ? "" : "s"}`;
+  if (item.kind === "contact_duplicate") return `Also for the other ${n} ${n === 1 ? "person" : "people"} entered twice`;
   if (item.kind === "revenue_units") return `Also for the other ${n} revenue${n === 1 ? "" : "s"} that look written in ${esc(UNIT_WORDS[p.factor] || "")}s`;
   if (item.kind === "lacking_evidence") {
     const cause = p.reason === "empty_page" ? "with an empty LinkedIn page" : "with no LinkedIn company found";

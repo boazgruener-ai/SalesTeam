@@ -12,6 +12,7 @@ import { computeFindingProposals, researchConfirms, webCitationFor, findingValue
 import { mergeFieldChanges } from "./extras-merge.js";
 import { planImport, importValueKey, importSummaryText, DEFAULT_IMPORT_TOLERANCE_PCT } from "./import-merge.js";
 import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, matchesExclusion, matchesRelationship, websiteDomain, webCompanyId } from "./company-identity.js";
+import { createPersonIndex, contactDuplicatePairs, contactPairKey, fullerFirst, linkedinProfileSlug } from "./person-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 import { relationshipOf } from "./company-identity.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
@@ -2201,6 +2202,9 @@ async function computeDiscoveredMergeDiff() {
   }
 
   const existingContactKeys = new Set(workbook.contacts.map((c) => contactKeyFor(c.company, c.fullName)));
+  // The same person written another way ("Dr. …", "Oezlem" / "Özlem", a middle name) counts as on file (person-identity.js).
+  const knownPeople = createPersonIndex();
+  for (const c of workbook.contacts) knownPeople.add(c.company, c, true);
   const newContactRows = [];
   // Two distinct "not added" reasons, tracked separately (2026-09-17, the
   // user's own request for a fuller breakdown) - a genuine duplicate
@@ -2223,8 +2227,9 @@ async function computeDiscoveredMergeDiff() {
     const row = buildDiscoveredContactRow(dcontact, companyRow);
     const key = contactKeyFor(row.company, row.fullName);
     if (!key) { orphanedContactsSkipped++; continue; }
-    if (existingContactKeys.has(key)) { duplicateContactsSkipped++; continue; }
+    if (existingContactKeys.has(key) || knownPeople.find(row.company, row)) { duplicateContactsSkipped++; continue; }
     existingContactKeys.add(key);
+    knownPeople.add(row.company, row, true);
     newContactRows.push(row);
   }
 
@@ -2411,11 +2416,14 @@ async function appendContactsToWorkbookUnlocked(newContactRows) {
   if (!newContactRows || newContactRows.length === 0) return 0;
   const workbook = await getTargetAccountsWorkbook();
   const existingContactKeys = new Set((workbook.contacts || []).map((c) => contactKeyFor(c.company, c.fullName)));
+  const knownPeople = createPersonIndex(); // the same person written another way is not added again
+  for (const c of workbook.contacts || []) knownPeople.add(c.company, c, true);
   const toAdd = [];
   for (const row of newContactRows) {
     const key = contactKeyFor(row.company, row.fullName);
-    if (!key || existingContactKeys.has(key)) continue;
+    if (!key || existingContactKeys.has(key) || knownPeople.find(row.company, row)) continue;
     existingContactKeys.add(key);
+    knownPeople.add(row.company, row, true);
     toAdd.push(row);
   }
   if (toAdd.length === 0) return 0;
@@ -4785,6 +4793,51 @@ export async function clearKeptSeparatePairs() {
   await chrome.storage.local.set({ [KEPT_SEPARATE_KEY]: [] });
 }
 
+// Contact deduplication (2026-10-10): one person entered twice at one account. The kept entry gets what only the other
+// one had (a LinkedIn profile, e-mail, phone …), the higher status (Contacted / Responded) and both chat histories; the
+// other is removed (deletedAt + mergedInto, as for a merged account). A "LinkedIn" link that is no LinkedIn profile
+// (an SEC filing stored as Keelan Adamson's profile) gives way to the other entry's real profile.
+const CONTACT_MERGE_FIELDS = ["jobTitle", "publicBusinessEmail", "publicBusinessPhone", "lastVerified2", "lastVerified", "profileUrl",
+  "city", "country", "function", "swissBased", "primarySourceUrl", "seniorityLevel", "seniorityPriority"];
+
+export async function mergeTargetContacts(keepKey, dropKey) { return withAccountWriteLock(async () => {
+  if (!keepKey || !dropKey || keepKey === dropKey) throw new Error("Pick two different contacts to merge.");
+  const [workbook, extras] = await Promise.all([getTargetAccountsWorkbook(), getTargetContactExtras()]);
+  const rowOf = (key) => (workbook.contacts || []).find((c) => contactKeyFor(c.company, c.fullName) === key);
+  const keepRow = rowOf(keepKey);
+  const dropRow = rowOf(dropKey);
+  if (!keepRow || !dropRow) throw new Error("One of the two contacts could not be found.");
+  const keepExtra = { ...emptyExtra(), ...(extras[keepKey] || {}) };
+  const dropExtra = { ...emptyExtra(), ...(extras[dropKey] || {}) };
+  const keepView = { ...keepRow, ...(keepExtra.overrides || {}) };
+  const dropView = { ...dropRow, ...(dropExtra.overrides || {}) };
+  const blank = (v) => v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+  const overrides = { ...(keepExtra.overrides || {}) };
+  for (const f of CONTACT_MERGE_FIELDS) if (blank(keepView[f]) && !blank(dropView[f])) overrides[f] = dropView[f];
+  if (!linkedinProfileSlug(keepView.lastVerified2) && linkedinProfileSlug(dropView.lastVerified2)) overrides.lastVerified2 = dropView.lastVerified2;
+  const rank = (s) => MERGE_STATUS_RANK[s] || 0;
+  const status = rank(dropExtra.manualStatus) > rank(keepExtra.manualStatus)
+    ? { manualStatus: dropExtra.manualStatus, manualStatusAt: dropExtra.manualStatusAt || Date.now() } : {};
+  extras[keepKey] = {
+    ...keepExtra, ...status, overrides,
+    mentorHistory: [...(keepExtra.mentorHistory || []), ...(dropExtra.mentorHistory || [])],
+    customerVoiceHistory: [...(keepExtra.customerVoiceHistory || []), ...(dropExtra.customerVoiceHistory || [])],
+  };
+  extras[dropKey] = { ...dropExtra, deletedAt: Date.now(), mergedInto: keepKey };
+  await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: extras });
+  return { keep: keepRow.fullName, drop: dropRow.fullName };
+}); }
+
+// "Keep both": two people who share a name - never proposed again (stored on both, so it travels with each contact).
+export async function keepContactsApart(keyA, keyB) {
+  const extras = await getTargetContactExtras();
+  for (const [k, o] of [[keyA, keyB], [keyB, keyA]]) {
+    const cur = { ...emptyExtra(), ...(extras[k] || {}) };
+    extras[k] = { ...cur, notSamePerson: [...new Set([...(cur.notSamePerson || []), o])] };
+  }
+  await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: extras });
+}
+
 // Initiatives found by the web research are added to the account's Initiatives list (same sheet as the research workbook's
 // initiatives, so they appear in the account view and in exports). A name already listed for the company is not added again.
 export async function addWebResearchInitiatives(companyId, companyName, items) { return withAccountWriteLock(() => addWebResearchInitiativesUnlocked(...arguments)); }
@@ -4842,6 +4895,11 @@ async function mergeTargetAccountsUnlocked(keepKey, dropKey, { keepId = null, dr
     .filter((c) => !isDropRow(c))
     .filter((c) => (keep.companyId ? c.companyId === keep.companyId : normalizeCompanyName(c.company) === keepKey))
     .map((c) => contactKeyFor(keep.company, c.fullName)));
+  const keptPeople = createPersonIndex(); // "Dr. A. Muster" on the dropped account is the kept account's "A. Muster"
+  for (const c of workbook.contacts || []) {
+    if (isDropRow(c) || !(keep.companyId ? c.companyId === keep.companyId : normalizeCompanyName(c.company) === keepKey)) continue;
+    keptPeople.add(keep.company, c, contactKeyFor(keep.company, c.fullName));
+  }
   const movedContactKeys = []; // { oldKey, newKey }
   const contacts = [];
   let contactsMoved = 0;
@@ -4850,8 +4908,9 @@ async function mergeTargetAccountsUnlocked(keepKey, dropKey, { keepId = null, dr
     if (!isDropRow(c)) { contacts.push(c); continue; }
     const oldKey = contactKeyFor(c.company, c.fullName);
     const newKey = contactKeyFor(keep.company, c.fullName);
-    if (newKey && keptContactKeys.has(newKey)) { contactsDuplicate++; if (oldKey) movedContactKeys.push({ oldKey, newKey }); continue; }
-    if (newKey) keptContactKeys.add(newKey);
+    const samePersonKey = newKey && !keptContactKeys.has(newKey) ? keptPeople.find(keep.company, c) : null;
+    if (newKey && (keptContactKeys.has(newKey) || samePersonKey)) { contactsDuplicate++; if (oldKey) movedContactKeys.push({ oldKey, newKey: samePersonKey || newKey }); continue; }
+    if (newKey) { keptContactKeys.add(newKey); keptPeople.add(keep.company, c, newKey); }
     if (oldKey && newKey) movedContactKeys.push({ oldKey, newKey });
     contacts.push(moveToKeep(c));
     contactsMoved++;
@@ -5549,8 +5608,9 @@ export async function applyWebLaneResearch(key, result, { topics = null } = {}) 
   if (found.length > 0 && company.companyId) {
     const levels = ((await getTargetContactProfile()).seniorityLevels || []).filter((l) => l && typeof l === "object");
     const today = new Date().toISOString().slice(0, 10);
-    const known = new Map((workbook.contacts || []).filter((ct) => ct.companyId === company.companyId)
-      .map((ct) => [contactKeyFor(company.company, ct.fullName), ct]));
+    // The same person written another way ("Dr. …", "Oezlem" / "Özlem", a middle name) is not added again (person-identity.js).
+    const known = createPersonIndex();
+    for (const ct of (workbook.contacts || []).filter((c) => c.companyId === company.companyId)) known.add(company.company, ct, { ct, key: contactKeyFor(company.company, ct.fullName) });
     const rows = [];
     // At most LANE_MAX_PEOPLE new people per research, those at a chosen seniority level first, most senior first
     // (the prompt asks for that too; 2026-10-01 a research named up to 16).
@@ -5563,9 +5623,9 @@ export async function applyWebLaneResearch(key, result, { topics = null } = {}) 
     let newPeople = 0;
     for (const p of ranked) {
       const ctKey = contactKeyFor(company.company, p.fullName);
-      const existing = known.get(ctKey);
+      const existing = known.find(company.company, { fullName: p.fullName, lastVerified2: p.linkedinUrl });
       if (existing) {
-        if (p.linkedinUrl && !existing.lastVerified2 && (await setContactLinkedinProfile(ctKey, p.linkedinUrl)) !== undefined) out.profiles++;
+        if (p.linkedinUrl && !linkedinProfileSlug(existing.ct.lastVerified2) && (await setContactLinkedinProfile(existing.key, p.linkedinUrl)) !== undefined) out.profiles++;
         continue;
       }
       if (newPeople >= LANE_MAX_PEOPLE) continue;
@@ -5585,6 +5645,7 @@ export async function applyWebLaneResearch(key, result, { topics = null } = {}) 
         primarySourceUrl: p.sourceUrl,
         source: "Web",
       });
+      known.add(company.company, rows[rows.length - 1], { ct: rows[rows.length - 1], key: ctKey });
     }
     out.contacts = await appendContactsToWorkbook(rows);
     out.profiles += rows.filter((r) => r.lastVerified2).length;
@@ -6047,6 +6108,27 @@ async function buildDecisionQueue(views) {
     });
   }
 
+  // The same person entered twice at one account (contact deduplication, person-identity.js): Merge or Keep both.
+  {
+    const contactExtras = await getTargetContactExtras();
+    const liveContacts = [];
+    for (const c of workbook.contacts || []) {
+      const key = contactKeyFor(c.company, c.fullName);
+      const extra = key ? contactExtras[key] : null;
+      if (!key || (extra && extra.deletedAt) || !byKey.has(normalizeCompanyName(c.company))) continue;
+      liveContacts.push({ ...c, ...((extra && extra.overrides) || {}), company: c.company, fullName: c.fullName, key });
+    }
+    const keptApart = new Set();
+    for (const [k, e] of Object.entries(contactExtras)) for (const o of (e && e.notSamePerson) || []) keptApart.add(contactPairKey(k, o));
+    const card = (c) => ({ key: c.key, fullName: c.fullName, jobTitle: c.jobTitle || null, linkedin: c.lastVerified2 || null,
+      email: c.publicBusinessEmail || null, phone: c.publicBusinessPhone || null, source: c.source || null });
+    for (const pair of contactDuplicatePairs(liveContacts, { keptApart })) {
+      const [keep, drop] = fullerFirst(pair[0], pair[1]);
+      const v = byKey.get(normalizeCompanyName(keep.company));
+      items.push({ ...base(v), id: `cdup:${contactPairKey(keep.key, drop.key)}`, kind: "contact_duplicate", payload: { members: [card(keep), card(drop)] } });
+    }
+  }
+
   // Lacking evidence (R12.5)
   for (const v of live) {
     if (!v.lacking || (v.pipeline && v.pipeline.keep)) continue;
@@ -6219,6 +6301,15 @@ export async function applyDecision(item, choice) {
       for (let i = 0; i < members.length; i++) for (let j = i + 1; j < members.length; j++) pairs.push(accountPairKey(members[i], members[j]));
       await addKeptSeparatePairs(pairs);
       label = `Kept ${members.map((m) => `"${m.company}"`).join(" and ")} as separate companies`;
+    }
+  } else if (item.kind === "contact_duplicate") {
+    const [keep, drop] = p.members || [];
+    if (choice === "merge") {
+      await mergeTargetContacts(keep.key, drop.key);
+      label = `"${drop.fullName}" merged into "${keep.fullName}" (${item.company}): the same person`;
+    } else {
+      await keepContactsApart(keep.key, drop.key);
+      label = `"${keep.fullName}" and "${drop.fullName}" (${item.company}) kept as two people`;
     }
   } else if (item.kind === "lacking_evidence") {
     if (choice === "remove") {

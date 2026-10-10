@@ -16,6 +16,7 @@ import { normalizeCompanyName, websiteDomain, linkedinCompanySlug } from "./comp
 import { parseLooseNumber, revenueUnitsCheck, withWholeEmployees } from "./value-normalize.js";
 import { computeFindingProposals, isBlankFinding } from "./web-research-apply.js";
 import { arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
+import { createPersonIndex } from "./person-identity.js";
 
 export const DEFAULT_IMPORT_TOLERANCE_PCT = 10;
 
@@ -325,6 +326,7 @@ export function planImport(parsed, current, opts = {}) {
 
   // Contacts: LinkedIn profile, then e-mail, then the name within the account.
   const bySlug = new Map(), byEmail = new Map(), byKey = new Map();
+  const people = createPersonIndex();
   const indexContact = (c) => {
     const slug = importProfileSlug(c.lastVerified2 || c.linkedinProfileUrl);
     if (slug && !bySlug.has(slug)) bySlug.set(slug, c);
@@ -332,6 +334,7 @@ export function planImport(parsed, current, opts = {}) {
     if (email && !byEmail.has(email)) byEmail.set(email, c);
     const key = importContactKey(c.company, c.fullName);
     if (key && !byKey.has(key)) byKey.set(key, c);
+    people.add(c.company, c, c);
   };
   (current.contacts || []).forEach(indexContact);
   const usedContactIds = new Set((current.contacts || []).map((c) => c && c.contactId).filter(Boolean));
@@ -361,7 +364,9 @@ export function planImport(parsed, current, opts = {}) {
     // subsidiary (1.2.2.13 round-trip test: 6 existing contacts counted as new).
     const fileNameKey = fc.company ? importContactKey(fc.company, fullName) : null;
     const hit = (slug && bySlug.get(slug)) || (email && byEmail.get(email)) || (nameKey && byKey.get(nameKey))
-      || (fileNameKey && byKey.get(fileNameKey)) || null;
+      || (fileNameKey && byKey.get(fileNameKey))
+      // The same person written another way: "Dr. …", "Oezlem" / "Özlem", a middle name (person-identity.js).
+      || people.find(account.row.company, fc) || (fc.company && people.find(fc.company, fc)) || null;
     if (hit) {
       const key = importContactKey(hit.company, hit.fullName);
       if (!key || contactsTouched.has(key) || hit.__new) continue;

@@ -9,13 +9,14 @@
 import { companyLinkSlug } from "./readiness.js";
 import { parseSizeBand, jobGaveUp } from "./pipeline-plan.js";
 
-export const DECISION_KINDS = ["page_changed", "id_taken", "name_match", "duplicate", "lacking_evidence", "finding", "import_finding", "revenue_units"];
+export const DECISION_KINDS = ["page_changed", "id_taken", "name_match", "duplicate", "contact_duplicate", "lacking_evidence", "finding", "import_finding", "revenue_units"];
 
 export const DECISION_KIND_LABELS = {
   page_changed: "LinkedIn page changed",
   id_taken: "LinkedIn company already used",
   name_match: "Same company?",
   duplicate: "Possible duplicate",
+  contact_duplicate: "Same person?",
   lacking_evidence: "Lacking evidence",
   finding: "Web finding",
   import_finding: "Import difference",
@@ -241,6 +242,8 @@ export function similarKey(item) {
   if (item.kind === "finding") return `finding:${item.payload && item.payload.field}`;
   if (item.kind === "import_finding") return `import:${item.payload && item.payload.field}`;
   if (item.kind === "lacking_evidence") return `lacking:${item.payload && item.payload.reason}`;
+  // Contact deduplication: "Merge" for every person entered twice at once (the confirmation lists them all).
+  if (item.kind === "contact_duplicate") return "contact_duplicate";
   // D16: the same unit from the same place - "Correct it" for every revenue written in millions at once.
   if (item.kind === "revenue_units") { const p = item.payload || {}; return p.factor ? `units:${p.origin}:${p.factor}:${p.outOfScope ? 1 : 0}` : null; }
   return null;
