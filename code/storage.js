@@ -1,7 +1,7 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
 import { leadRightsOf, mayImportFor } from "./team-groups.js";
-import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum } from "./value-normalize.js";
+import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum, withWholeEmployees, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
 import { joinProposalItems, applyJoinProposal } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, sizeBucketKey } from "./web-findings-arbitration.js";
@@ -5647,6 +5647,45 @@ export async function repairListingRevenueInMillions() { return withAccountWrite
     label: `Revenue read from a listing in millions put into plain units for ${fixed.length} account${fixed.length === 1 ? "" : "s"}: ${fixed.join(", ")}`,
   }).catch(() => {});
   return fixed.length;
+}); }
+
+// 1.2.2.17 (Boaz): headcounts stored with decimals before every entry point rounded them (full-time equivalents from
+// annual reports) - rounded once on the update: workbook rows, overrides and open import differences. Nothing to do ->
+// nothing written, so it is safe on every update.
+export async function repairEmployeeDecimals() { return withAccountWriteLock(async () => {
+  const [workbook, extras] = await Promise.all([getTargetAccountsWorkbook(), getTargetAccountExtras()]);
+  const fixed = new Set();
+  const companies = (workbook.companies || []).map((c) => {
+    const next = withWholeEmployees(c);
+    if (next !== c) fixed.add(c.company);
+    return next;
+  });
+  let extrasChanged = false;
+  const nextExtras = { ...extras };
+  for (const [key, extra] of Object.entries(extras || {})) {
+    if (!extra) continue;
+    const overrides = withWholeEmployees(extra.overrides);
+    let findings = extra.importFindings;
+    for (const f of HEADCOUNT_FIELDS) {
+      const finding = findings && findings[f];
+      if (!finding || wholeEmployees(finding.value) === finding.value) continue;
+      findings = { ...findings, [f]: { ...finding, value: wholeEmployees(finding.value) } };
+    }
+    if (overrides === extra.overrides && findings === extra.importFindings) continue;
+    nextExtras[key] = { ...extra, overrides, ...(findings ? { importFindings: findings } : {}) };
+    extrasChanged = true;
+    fixed.add(key);
+  }
+  if (!fixed.size) return 0;
+  const writes = {};
+  if (companies.some((c, i) => c !== workbook.companies[i])) writes[TARGET_ACCOUNTS_WORKBOOK_KEY] = { ...workbook, companies };
+  if (extrasChanged) writes[TARGET_ACCOUNT_EXTRAS_KEY] = nextExtras;
+  await chrome.storage.local.set(writes);
+  await appendActivityLog({
+    actor: "system", action: "data_repair",
+    label: `Employee counts with decimals (full-time equivalents) rounded to whole numbers for ${fixed.size} account${fixed.size === 1 ? "" : "s"}`,
+  }).catch(() => {});
+  return fixed.size;
 }); }
 
 export async function addWebDiscoveredCompanies(rows, { runAt = Date.now() } = {}) { return withAccountWriteLock(() => addWebDiscoveredCompaniesUnlocked(...arguments)); }

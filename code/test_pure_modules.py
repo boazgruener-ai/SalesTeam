@@ -2778,6 +2778,7 @@ def main():
     test_import_merge(ctx)
     test_csv_import(ctx)
     test_crm_files(ctx)
+    test_whole_employees(ctx)
     test_revenue_units(ctx)
 
     print()
@@ -3072,6 +3073,33 @@ def test_crm_files(ctx):
     check("org file: API names; revenue naming its currency kept as text; empty employees left out",
           e("ORG[1].company + '|' + ORG[1].globalRevenue + '|' + ('globalEmployees' in ORG[1])"), "Enim|USD 1,500,000|false")
     check("org file: a row without a name is skipped", e("ORG.length"), 2)
+    # Salesforce's error file from the first real import (2026-10-10): 7 of 9 refusals came from the file.
+    e("""
+      var FIX = buildCrmFiles('salesforce', [
+          { company: 'BB Biotech', globalEmployees: 72.8, globalRevenue: 180000000.4 },
+          { company: "McDonald's Switzerland", zefixAddress: 'Rue de Morges 23, 1023 Crissier, VD, Switzerland' },
+          { company: 'PepsiCo Switzerland', globalHqCity: 'Harrison, New York (global); Geneva (Swiss/European office)', globalHqCountry: 'United States' } ], [], {});
+    """)
+    def fix_rows():
+        return read_csv(e("FIX.accountsCsv"))["records"]
+    FIX = fix_rows()
+    check("salesforce fix: Employees and Annual Revenue are whole numbers", FIX[0]["Employees"] + "|" + FIX[0]["Annual Revenue"], "73|180000000")
+    check("salesforce fix: no state (a canton is refused for Switzerland)", FIX[1]["Billing State/Province"] + "|" + FIX[1]["Billing Country"], "|Switzerland")
+    check("salesforce fix: one city, at most 40 characters", FIX[2]["Billing City"], "Harrison, New York")
+    check("salesforce fix: the whole HQ text stays in Description", "Harrison, New York (global); Geneva" in FIX[2]["Description"], True)
+
+
+def test_whole_employees(ctx):
+    """1.2.2.17 (Boaz): a headcount is stored as a whole number - FTE figures from annual reports are rounded."""
+    e = ctx.eval
+    check("employees: FTE number rounded", e("wholeEmployees(941.2) + '|' + wholeEmployees(925.72) + '|' + wholeEmployees(72.5)"), "941|926|73")
+    check("employees: plain numeric string with decimals rounded", e("wholeEmployees('1419.4')"), 1419)
+    check("employees: whole values and text left as they are", e("JSON.stringify([wholeEmployees(8500), wholeEmployees(\"1'250\"), wholeEmployees('>5,000'), wholeEmployees('6,500+'), wholeEmployees(null)])"),
+          '[8500,"1\'250",">5,000","6,500+",null]')
+    check("employees: row copied only when something changed", e("var r0 = { company: 'A', globalEmployees: 10 }; withWholeEmployees(r0) === r0"), True)
+    check("employees: both fields rounded", e("JSON.stringify(withWholeEmployees({ company: 'SNB', globalEmployees: 941.2, swissEmployees: 925.72 }))"),
+          '{"company":"SNB","globalEmployees":941,"swissEmployees":926}')
+    check("employees: a web finding is rounded", e("computeFindingProposals({ company: 'SNB' }, null, { employeesGlobal: '941.2' }).filter(function (p) { return p.key === 'globalEmployees'; })[0].found"), 941)
 
 
 if __name__ == "__main__":

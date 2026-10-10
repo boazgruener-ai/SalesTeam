@@ -39,6 +39,7 @@ import {
   autoMergeDiscoveryResults,
   repairListingRevenueInMillions,
   migrateCompanyRelationshipsIfNeeded,
+  repairEmployeeDecimals,
   restoreRelationshipFilteredLeads,
 } from "./storage.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -111,6 +112,8 @@ chrome.runtime.onInstalled.addListener((details) => {
   // replans so the web findings that only existed because of it are settled again.
   if (details.reason === "update") {
     repairListingRevenueInMillions().then((n) => { if (n) kickPipeline("data_repair").catch(() => {}); }).catch(() => {});
+    // 1.2.2.17: headcounts are whole numbers (FTE figures such as 941.2 rounded).
+    repairEmployeeDecimals().catch(() => {});
     // 1.2.3 (R3.1): customers / partners leave the exclusion list - the accounts they hid come back and join the
     // normal pipeline queue (one kick, no burst).
     migrateCompanyRelationshipsIfNeeded({ trigger: "update" })

@@ -1,6 +1,6 @@
 // What a web research can propose for an account, and how it is compared with what the account already has.
 // Shared by the Target Accounts page and the background bulk research.
-import { parseLooseNumber, normalizeMoney } from "./value-normalize.js";
+import { parseLooseNumber, normalizeMoney, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
 
 // Revenue fields carry a currency in a SEPARATE field, so two figures can only be compared once
 // both are expressed in the same one. Without this, a stored 113,530,000,000 USD and a found
@@ -134,6 +134,7 @@ export function computeFindingProposals(company, overrides, data, money = null) 
     // parseLooseNumber, not Number(): a found "102m" or ">5,000" is a perfectly good figure written
     // in a way Number() throws away entirely.
     if (f.numeric) { found = parseLooseNumber(found); if (found === null) continue; } else found = String(found).trim();
+    if (HEADCOUNT_FIELDS.includes(f.key)) found = wholeEmployees(found);
     const current = effective[f.key];
     if (isBlankFinding(current)) { out.push({ key: f.key, label: f.label, found, current: null, state: "new" }); continue; }
     if (f.numeric) {

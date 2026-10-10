@@ -13,7 +13,7 @@
 // planImport and writes what it returns.
 
 import { normalizeCompanyName, websiteDomain, linkedinCompanySlug } from "./company-identity.js";
-import { parseLooseNumber, revenueUnitsCheck } from "./value-normalize.js";
+import { parseLooseNumber, revenueUnitsCheck, withWholeEmployees } from "./value-normalize.js";
 import { computeFindingProposals, isBlankFinding } from "./web-research-apply.js";
 import { arbitrateAccount, arbitrationContext } from "./web-findings-arbitration.js";
 
@@ -291,7 +291,8 @@ export function planImport(parsed, current, opts = {}) {
   const resolved = new Map(); // file companyId -> entry
   const touched = new Set();
 
-  for (const fileRow of parsed.companies || []) {
+  for (const rawRow of parsed.companies || []) {
+    const fileRow = withWholeEmployees(rawRow); // a headcount is stored as a whole number
     const name = fileRow && typeof fileRow.company === "string" ? fileRow.company.trim() : "";
     if (!name) { plan.skipped.push({ name: "(no name)", reason: "the row has no company name" }); continue; }
     const hit = matchCompany(index, fileRow);

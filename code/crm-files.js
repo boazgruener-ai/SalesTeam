@@ -19,17 +19,17 @@ import { parseLooseNumber } from "./value-normalize.js";
 export const CRM_COLUMNS = {
   salesforce: {
     accounts: [
-      { label: "Account Name", api: ["name", "account.name"], field: "company" },
+      { label: "Account Name", api: ["name", "account.name"], field: "company", max: 255 },
       { label: "Annual Revenue", api: ["annualrevenue"], field: "globalRevenue" },
-      { label: "Billing Street", api: ["billingstreet"] },
-      { label: "Billing City", api: ["billingcity"] },
+      { label: "Billing Street", api: ["billingstreet"], max: 255 },
+      { label: "Billing City", api: ["billingcity"], max: 40 },
       { label: "Billing State/Province", api: ["billingstate"] },
-      { label: "Billing Zip/Postal Code", api: ["billingpostalcode"] },
-      { label: "Billing Country", api: ["billingcountry"] },
+      { label: "Billing Zip/Postal Code", api: ["billingpostalcode"], max: 20 },
+      { label: "Billing Country", api: ["billingcountry"], max: 80 },
       { label: "Description", api: ["description"] },
       { label: "Employees", api: ["numberofemployees"], field: "globalEmployees" },
       { label: "Fax", api: ["fax"] },
-      { label: "Industry", api: ["industry"], field: "industry" },
+      { label: "Industry", api: ["industry"], field: "industry", max: 255 },
       { label: "Phone", api: ["phone"] },
       { label: "Shipping Street", api: ["shippingstreet"] },
       { label: "Shipping City", api: ["shippingcity"] },
@@ -37,20 +37,20 @@ export const CRM_COLUMNS = {
       { label: "Shipping Zip/Postal Code", api: ["shippingpostalcode"] },
       { label: "Shipping Country", api: ["shippingcountry"] },
       { label: "Type", api: ["type"] },
-      { label: "Website", api: ["website"] },
+      { label: "Website", api: ["website"], max: 255 },
     ],
     contacts: [
-      { label: "First Name", api: ["firstname"] },
-      { label: "Last Name", api: ["lastname"] },
-      { label: "Email", api: ["email"], field: "publicBusinessEmail" },
-      { label: "Phone", api: ["phone"], field: "publicBusinessPhone" },
-      { label: "Title", api: ["title"], field: "jobTitle" },
+      { label: "First Name", api: ["firstname"], max: 40 },
+      { label: "Last Name", api: ["lastname"], max: 80 },
+      { label: "Email", api: ["email"], field: "publicBusinessEmail", max: 80 },
+      { label: "Phone", api: ["phone"], field: "publicBusinessPhone", max: 40 },
+      { label: "Title", api: ["title"], field: "jobTitle", max: 128 },
       { label: "Account Name", api: ["account.name", "accountname"], field: "company" },
       { label: "Mailing Street", api: ["mailingstreet"] },
-      { label: "Mailing City", api: ["mailingcity"], field: "city" },
+      { label: "Mailing City", api: ["mailingcity"], field: "city", max: 40 },
       { label: "Mailing State/Province", api: ["mailingstate"] },
       { label: "Mailing Zip/Postal Code", api: ["mailingpostalcode"] },
-      { label: "Mailing Country", api: ["mailingcountry"], field: "country" },
+      { label: "Mailing Country", api: ["mailingcountry"], field: "country", max: 80 },
       { label: "Lead Source", api: ["leadsource"] },
       { label: "Consent Status", api: [] },
       { label: "Description", api: ["description"] },
@@ -118,9 +118,32 @@ function billingOf(c, registryCountry) {
   const reg = splitRegistryAddress(c.zefixAddress);
   if (reg) {
     const sameCity = c.globalHqCity && String(c.globalHqCity).trim().toLowerCase() === reg.city.toLowerCase();
-    return { street: reg.street, city: reg.city, state: reg.state || "", zip: reg.zip, country: reg.country || registryCountry || (sameCity ? c.globalHqCountry : "") || "" };
+    // No state: with Salesforce's state and country lists on, a canton ("VD" for McDonald's Switzerland) is refused
+    // for a country without states there (live test 2026-10-10). It stays in Description's registry address.
+    return { street: reg.street, city: reg.city, state: "", zip: reg.zip, country: reg.country || registryCountry || (sameCity ? c.globalHqCountry : "") || "" };
   }
-  return { street: "", city: c.globalHqCity || "", state: "", zip: "", country: c.globalHqCountry || "" };
+  return { street: "", city: shortCity(c.globalHqCity), state: "", zip: "", country: c.globalHqCountry || "" };
+}
+
+// A city field holds one city: "Harrison, New York (global); Geneva (Swiss/European office)" (PepsiCo, refused at
+// 63 characters - Salesforce allows 40) -> "Harrison, New York". The whole text stays in Description's "HQ city" line.
+export function shortCity(text) {
+  let city = String(text || "").split(/[;(]/)[0].trim();
+  if (city.length > 40) city = city.split(",")[0].trim();
+  return city;
+}
+
+// Salesforce's Employees is a whole number: "72.8" was refused for six accounts (live test 2026-10-10).
+function wholeNumber(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const n = typeof v === "number" ? v : parseLooseNumber(v);
+  return Number.isFinite(n) ? Math.round(n) : "";
+}
+
+// A value longer than its column allows refuses the whole row, so it is cut to the limit.
+function fit(col, value) {
+  const text = value ?? "";
+  return col.max && typeof text === "string" && text.length > col.max ? text.slice(0, col.max).trim() : text;
 }
 
 function descriptionText(kind, row, extra) {
@@ -155,16 +178,16 @@ export function buildCrmFiles(crm, companies, contacts, opts = {}) {
     const website = c.website || "";
     const byLabel = {
       "Account Name": c.company,
-      "Annual Revenue": c.globalRevenue ?? "",
+      "Annual Revenue": wholeNumber(c.globalRevenue),
       "Billing Street": b.street, "Billing City": b.city, "Billing State/Province": b.state,
       "Billing Zip/Postal Code": b.zip, "Billing Country": b.country,
       "Description": descriptionText("accounts", c, priority ? [priority] : []),
-      "Employees": c.globalEmployees ?? "",
+      "Employees": wholeNumber(c.globalEmployees),
       "Industry": c.industry || "",
       "Type": accountType(c.relationship),
       "Website": website,
     };
-    return table.accounts.map((col) => byLabel[col.label] ?? "");
+    return table.accounts.map((col) => fit(col, byLabel[col.label]));
   });
   const contactRows = (contacts || []).map((p) => {
     const [first, last] = splitName(p.fullName);
@@ -173,13 +196,13 @@ export function buildCrmFiles(crm, companies, contacts, opts = {}) {
       "Email": p.publicBusinessEmail || "", "Phone": p.publicBusinessPhone || "", "Title": p.jobTitle || "",
       // Exactly as in the accounts file, so the wizard links each contact to its account.
       "Account Name": p.company || "",
-      "Mailing City": p.city || "", "Mailing Country": p.country || "",
+      "Mailing City": shortCity(p.city), "Mailing Country": p.country || "",
       // No LinkedIn value in the standard list; "Other" exists in every org. Consent Status stays empty: SalesTeam
       // never knows whether a person agreed to marketing.
       "Lead Source": "Other",
       "Description": descriptionText("contacts", p, []),
     };
-    return table.contacts.map((col) => byLabel[col.label] ?? "");
+    return table.contacts.map((col) => fit(col, byLabel[col.label]));
   });
   return {
     accountsCsv: toCsv(table.accounts.map((c) => c.label), accountRows),

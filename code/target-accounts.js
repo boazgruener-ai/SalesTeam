@@ -109,7 +109,7 @@ import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
-import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber } from "./value-normalize.js";
+import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
 import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES, sizeBucketKey } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -5193,7 +5193,8 @@ function diffEditFormValues(fields, importedRow, existingOverrides, formValues) 
     }
     const raw = formValues[f.key];
     const trimmed = typeof raw === "string" ? raw.trim() : raw;
-    const normalized = f.type === "number" ? (trimmed === "" ? null : Number(trimmed)) : (trimmed === "" ? null : trimmed);
+    const typed = f.type === "number" ? (trimmed === "" ? null : Number(trimmed)) : (trimmed === "" ? null : trimmed);
+    const normalized = HEADCOUNT_FIELDS.includes(f.key) ? wholeEmployees(typed) : typed; // 941.2 typed -> 941
     const importedValue = importedRow[f.key] ?? null;
     const prevEffective = wasOverridden ? existingOverrides[f.key] : importedValue;
     if (normalized === importedValue) {

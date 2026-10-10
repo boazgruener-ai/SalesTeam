@@ -326,6 +326,17 @@ like the chosen kind says what it looks like ("This looks like a HubSpot contact
   - Record ids ("Account ID" / "Contact ID" / "Id") become `SF-<id>`; a revenue that names its currency ("USD 1,500,000")
     keeps it, a plain number is asked for (D15 case 3). Industry is written as free text - still to be checked
     against a real org's picklist.
+- **First real import (Salesforce Starter trial, 2026-10-10):** 559 of 569 added, 1 skipped, 9 refused. Industry as
+  free text was accepted. Fixed in 1.2.2.17: Employees and Annual Revenue are written as whole numbers (six refusals
+  for values such as 72.8); Billing State is never written (a canton "VD" is refused for Switzerland when the org's
+  state and country lists are on); a city is one city, cut at ";" or "(" and at most 40 characters (PepsiCo's 63-character
+  HQ text) - the full text stays in Description; every column is cut to Salesforce's length limit. The other two
+  (Luzerner Kantonsspital, Novartis Pharma Schweiz) were Salesforce's own duplicate rule matching another account -
+  an org setting, not a file error.
+- **Headcount stored as a whole number (Boaz, 2026-10-10).** The six refused Employees values were full-time
+  equivalents from annual reports (Swiss National Bank 941.2). Since 1.2.2.17 every way in rounds them before they are
+  stored - web findings, imports, hand edits (`wholeEmployees`, value-normalize.js) - and `repairEmployeeDecimals` rounds
+  what was stored before, once, on the update (workbook rows, overrides, open import differences; one Activity Log line).
 
 ---
 

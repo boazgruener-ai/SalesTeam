@@ -129,6 +129,32 @@ export function parseLooseNumber(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Headcount is a whole number. Annual reports of Swiss banks, hospitals and public bodies give full-time equivalents
+// with decimals (Swiss National Bank 941.2, Graubündner Kantonalbank 925.72), and Salesforce refused six such accounts
+// (live test 2026-10-10, Boaz: round before storing). Every way a headcount gets in rounds it: web findings
+// (web-research-apply.js), imports (import-merge.js), hand edits, and repairEmployeeDecimals for what was stored before.
+// A number or a plain numeric string with decimals -> rounded number; anything else (">5,000", "6,500+") unchanged.
+export const HEADCOUNT_FIELDS = ["globalEmployees", "swissEmployees"];
+
+export function wholeEmployees(value) {
+  if (typeof value === "number") return Number.isFinite(value) && !Number.isInteger(value) ? Math.round(value) : value;
+  if (typeof value !== "string" || !/^[\s\d.,'’]+$/.test(value)) return value;
+  const n = parseLooseNumber(value);
+  return n === null || Number.isInteger(n) ? value : Math.round(n);
+}
+
+// The same row, or a copy with its headcounts rounded when one had decimals.
+export function withWholeEmployees(row) {
+  if (!row) return row;
+  let out = row;
+  for (const f of HEADCOUNT_FIELDS) {
+    if (row[f] === undefined || row[f] === null) continue;
+    const v = wholeEmployees(row[f]);
+    if (v !== row[f]) { if (out === row) out = { ...row }; out[f] = v; }
+  }
+  return out;
+}
+
 // True when the raw value holds something, but nothing numeric can be got out of it - the case that
 // deserves a human ("not disclosed", a stray currency code). A blank is not a problem, just empty.
 export function isUnparseableNumber(raw) {
