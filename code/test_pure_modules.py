@@ -2620,6 +2620,15 @@ def test_team_groups(ctx):
     check("void: assignee left without access",
           e("JSON.stringify(voidAssignments({ roche: 'anna', acme: 'anna', ubs: 'boaz', nestle: 'luc' }, { roche: ['g-swiss'], acme: ['other'], ubs: ['g-vip'], nestle: ['g-swiss'] }, IX, LEADS))"),
           '[{"key":"acme","member":"anna"}]')
+    check("void: a former member's accounts stay assigned (R6.4)", e("voidAssignments({ roche: 'gone' }, { roche: ['g-swiss'] }, IX, LEADS).length"), 0)
+    # Step 4 (design 8.2): pins.
+    check("pins: live only while assigned to the member it was written for",
+          e("JSON.stringify(Object.keys(livePins({ a: { groups: ['g-swiss'], for: 'anna' }, b: { groups: ['g-swiss'], for: 'anna' }, c: { groups: ['g-swiss'], for: 'anna' }, d: { groups: [] } }, { a: 'anna', b: 'luc', d: 'anna' })))"), '["a"]')
+    check("pins: same groups in any order", e("sameGroups(['g-vip', 'g-swiss'], ['g-swiss', 'g-vip']) && !sameGroups(['g-vip'], ['other'])"), True)
+    check("pins: a change of members or name is not a change of what a group holds",
+          e("groupDefsKey(GROUPS) === groupDefsKey(Object.assign({}, GROUPS, { 'g-swiss': Object.assign({}, GROUPS['g-swiss'], { name: 'CH', members: [] }) }))"), True)
+    check("pins: a filter change is", e("groupDefsKey(GROUPS) === groupDefsKey(Object.assign({}, GROUPS, { 'g-swiss': Object.assign({}, GROUPS['g-swiss'], { filter: { country: ['Austria'] } }) }))"), False)
+    check("pins: the reason in words", e("factsDiffText(groupFacts({ globalHqCountry: 'Switzerland', globalEmployees: 800 }, { buckets: [{ key: 'L', min: 501, max: 1000 }, { key: 'XXL', min: 5001, max: Infinity }] }), groupFacts({ globalHqCountry: 'Switzerland', globalEmployees: 9000 }, { buckets: [{ key: 'L', min: 501, max: 1000 }, { key: 'XXL', min: 5001, max: Infinity }] }))"), "size L → XXL")
     check("void: nothing in basic mode", e("voidAssignments({ a: 'x' }, { a: ['other'] }, groupIndex({}, TEAM), LEADS).length"), 0)
     check("counts", e("JSON.stringify(groupCounts({ roche: ['g-swiss', 'g-vip'], ubs: ['g-vip'], acme: ['other'] }, IX, { assignments: { roche: 'anna' }, ready: { ubs: true, acme: true } }))"),
           '{"g-empty":{"accounts":0,"assigned":0,"unassigned":0,"ready":0},"g-swiss":{"accounts":1,"assigned":1,"unassigned":0,"ready":0},"g-vip":{"accounts":2,"assigned":1,"unassigned":1,"ready":1},"other":{"accounts":1,"assigned":0,"unassigned":1,"ready":1}}')

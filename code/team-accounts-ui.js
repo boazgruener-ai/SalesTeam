@@ -17,13 +17,15 @@
 //   teamAccounts.onChange(fn)
 
 import { summaryOffLimits } from "./team-claims.js";
-import { leadRightsOf, isTeamLeadOf, canSeeAccount, canSeeLead, isLiveGroup } from "./team-groups.js";
+import { leadRightsOf, isTeamLeadOf, canSeeAccount, canSeeLead, isLiveGroup, groupIndex, groupsOf } from "./team-groups.js";
 import { normalizeCompanyName } from "./storage.js";
 
 const KEY = "teamAccountStates"; // team-sync.js TEAM_ACCOUNTS_KEY
 const MEMBERSHIP_KEY = "teamMembership";
 const GROUPS_KEY = "teamGroups";
+const PINS_KEY = "teamGroupPins"; // step 4: assigned accounts held in their old groups until the Team Lead decides
 let groupRows = {};
+let pinRows = {};
 
 let summary = null;
 let membership = null;
@@ -38,8 +40,9 @@ function dayText(ms) {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || (!changes[KEY] && !changes[MEMBERSHIP_KEY] && !changes[GROUPS_KEY])) return;
+  if (area !== "local" || (!changes[KEY] && !changes[MEMBERSHIP_KEY] && !changes[GROUPS_KEY] && !changes[PINS_KEY])) return;
   if (changes[GROUPS_KEY]) groupRows = changes[GROUPS_KEY].newValue || {};
+  if (changes[PINS_KEY]) pinRows = changes[PINS_KEY].newValue || {};
   if (changes[KEY]) summary = changes[KEY].newValue || null;
   if (changes[MEMBERSHIP_KEY]) membership = changes[MEMBERSHIP_KEY].newValue || null;
   for (const fn of listeners) { try { fn(); } catch { /* one page's redraw must not stop another's */ } }
@@ -50,8 +53,9 @@ const nameOf = (m) => (m === summary?.me ? "you" : summary?.names?.[m] || "a col
 export const teamAccounts = {
   ready() {
     if (!loaded) {
-      loaded = chrome.storage.local.get([KEY, MEMBERSHIP_KEY, GROUPS_KEY]).then((d) => {
+      loaded = chrome.storage.local.get([KEY, MEMBERSHIP_KEY, GROUPS_KEY, PINS_KEY]).then((d) => {
         groupRows = d[GROUPS_KEY] || {};
+        pinRows = d[PINS_KEY] || {};
         summary = d[KEY] || null;
         membership = d[MEMBERSHIP_KEY] || null;
       }).catch(() => {});
@@ -119,8 +123,47 @@ export const teamAccounts = {
   // 1.2.2.7: "Strategic Accounts, Swiss Accounts" - the account's groups by name (null without groups).
   groupNames(key, separator = ", ") {
     if (!membership || !summary?.groupsOn) return null;
-    return (summary.g?.[key] || ["other"]).map((g) => (g === "other" ? "Other" : groupRows[g]?.name || g)).join(separator);
+    const names = (ids) => ids.map((g) => (g === "other" ? "Other" : groupRows[g]?.name || g)).join(separator);
+    // Step 4 (design 7): "Swiss accounts (move to VIP waiting)" - new data would move this assigned account; the Team
+    // Lead has not decided yet (Decisions).
+    const pin = pinRows[key];
+    const a = summary.accounts?.[key]?.a;
+    const waiting = pin && Array.isArray(pin.proposed) && pin.proposed.length && a && (!pin.for || pin.for === a);
+    return names(summary.g?.[key] || ["other"]) + (waiting ? ` (move to ${names(pin.proposed.filter((g) => g === "other" || isLiveGroup(g, groupRows[g])))} - waiting for ${this.hasLeadRights() ? "your decision" : "the Team Lead's decision"})` : "");
   },
+  // Step 4 (design 8.1): the named-accounts groups this account is on / could be added to - Add to group… and
+  // Remove from group… are offered only where they would do something.
+  namedGroups(key) {
+    const on = [];
+    const off = [];
+    if (membership && summary?.groupsOn) {
+      for (const [id, g] of Object.entries(groupRows)) {
+        if (!isLiveGroup(id, g) || g.kind !== "named") continue;
+        ((g.accounts || []).includes(key) ? on : off).push(id);
+      }
+    }
+    return { on, off };
+  },
+  // 1.2.2.35 (Boaz, 2026-10-11): the groups are the Team Lead's. The names of the groups an account would LEAVE if
+  // its data changed from factsBefore to factsAfter (team-groups.js groupFacts) - [] without groups, and for the Team
+  // Lead and the deputy, whose own edit applies at once. Joining a further group is not leaving one.
+  groupsLeftBy(key, factsBefore, factsAfter) {
+    return this.hasLeadRights() ? [] : this.groupChange(key, factsBefore, factsAfter).left;
+  },
+  // The same change for anyone, the Team Lead included - who is warned before saving (Boaz, 2026-10-11: in case it
+  // was not meant). -> { left: [names], into: "names", loses: the assignee's name when they have no access to the
+  // account's new groups (the account then becomes unassigned), else null }
+  groupChange(key, factsBefore, factsAfter) {
+    if (!membership || !summary?.groupsOn) return { left: [], into: "", loses: null };
+    const index = groupIndex(groupRows, Object.keys(summary.ofMember || {}));
+    const before = groupsOf(key, factsBefore, index);
+    const after = groupsOf(key, factsAfter, index);
+    const names = (ids) => ids.map((g) => (g === "other" ? "Other" : groupRows[g]?.name || g));
+    const a = summary.accounts?.[key]?.a || null;
+    const keeps = !a || a === summary.lead || a === summary.deputy || (summary.ofMember?.[a] || ["other"]).some((g) => after.includes(g));
+    return { left: names(before.filter((g) => !after.includes(g))), into: names(after).join(", "), loses: keeps ? null : nameOf(a) };
+  },
+  hasNamedGroups: () => Boolean(membership && summary?.groupsOn) && Object.entries(groupRows).some(([id, g]) => isLiveGroup(id, g) && g.kind === "named"),
   // Is this company one of the team's accounts (a lead's company may be none yet)?
   isAccount: (key) => Boolean(membership && key && summary?.g?.[key]),
 

@@ -21,7 +21,10 @@ import {
   pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed, stampMember,
   leadChain, setTeamCreator, isGatedRow, recordsBetween,
 } from "./team-merge.js";
-import { groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, isLiveGroup, OTHER_GROUP } from "./team-groups.js";
+import {
+  groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, isLiveGroup, OTHER_GROUP,
+  mayAccess, livePins, sameGroups, groupDefsKey, factsDiffText,
+} from "./team-groups.js";
 import {
   claimIdFor, accountKeyOfChange, activeMembersOf, claimView, assignmentView, offLimitsFor, teamAccountSummary,
 } from "./team-claims.js";
@@ -115,7 +118,13 @@ function emptyMeta() {
 
 async function ensureLoaded() {
   if (mem) return mem;
-  const got = await teamDbGetAll(["state", "shadow", "outbox", "inflight", "meta", "claims"]);
+  const got = await teamDbGetAll(["state", "shadow", "outbox", "inflight", "meta", "claims", "groupsSnap"]);
+  // Step 4: the groups as last computed, kept across a worker restart - the "before" a pin is judged against
+  // (holdMoves), and the summary's groups until the first fresh computation.
+  if (!groupsByKey && got.groupsSnap?.byKey) {
+    groupsByKey = got.groupsSnap.byKey;
+    factsByKey = got.groupsSnap.facts || null;
+  }
   mem = {
     state: got.state || newState(),
     shadow: got.shadow || {},
@@ -206,6 +215,11 @@ async function diffKeys(keys, values = null) {
   const rewrite = new Set();
   let rowCount = 0;
   for (const key of keys) rowCount += diffKeyInto(key, values[key], records, rewrite);
+  // Step 4 (design 8.2): the accounts this PC itself just changed - a pin is written only for those (holdMoves).
+  for (const r of records) {
+    const k = accountKeyOfChange(mem.state, r, normalizeCompanyName);
+    if (k) localTouched.set(k, Date.now());
+  }
   if (records.length) holdOrSend(records);
   measure({ kind: "diff", keys: keys.join(","), rows: rowCount, records: records.length, ms: Math.round(performance.now() - t0) });
   await save(["state", "shadow", "outbox", "claims"]);
@@ -336,12 +350,13 @@ async function applyRemote(records) {
     if (r.op !== "unassign" || r.e !== "account" || !String(r.id).startsWith("@")) continue;
     const author = stampMember(r.t);
     if (author === me || (r.member || author) !== me) continue;
-    if (activeAssignments(mem.state, "account", r.id).some((a) => a.member === me)) takenFrom.set(r.id, author);
+    if (activeAssignments(mem.state, "account", r.id).some((a) => a.member === me)) takenFrom.set(r.id, { author, why: r.why || null, into: r.into || null });
   }
   for (const r of records) {
     if (!applyChange(mem.state, r)) continue;
     observe(mem.clock, r.t);
     if (r.op === "claim" || r.op === "assign") ackDue = true;
+    if (pinsExist && (r.op === "assign" || r.op === "unassign")) markGroupsDirty();
     if (rowTarget(r.e, r.id)) affected.add(rowKey(r.e, r.id));
     // 1.2.3: a Team Lead record decides which group records count - every group row may have changed.
     if (r.e === "team") for (const rk of gatedRowKeys()) affected.add(rk);
@@ -353,11 +368,22 @@ async function applyRemote(records) {
   if (takenFrom.size && !mem.meta.replaying) {
     const now = Date.now();
     const added = [];
-    for (const [id, author] of takenFrom) {
+    // Step 4 (design 8.3, 11): an account of mine lost to a group move - one line for all of a batch.
+    const moved = [];
+    for (const [id, { author, why, into }] of takenFrom) {
       const list = activeAssignments(mem.state, "account", id);
       if (list.some((a) => a.member === me)) continue; // given back meanwhile
       const key = id.slice(1);
+      if (why === "groups") { moved.push({ name: accountDisplayName(key), into }); continue; }
       added.push({ key, name: accountDisplayName(key), by: memberName(author), to: list[0] ? memberName(list[0].member) : null, at: now });
+    }
+    if (moved.length === 1) {
+      added.push({ kind: "group", at: now, text: moved[0].into
+        ? `${moved[0].name} moved to ${moved[0].into} - it is no longer in your groups, so it is no longer assigned to you.`
+        : `${moved[0].name} is no longer in your groups, so it is no longer assigned to you.` });
+    } else if (moved.length) {
+      added.push({ kind: "group", at: now, text: `${moved.length} of your accounts are no longer in your groups, so they are no longer assigned to you: ` +
+        `${moved.slice(0, 8).map((x) => x.name).join(", ")}${moved.length > 8 ? ", …" : ""}.` });
     }
     if (added.length) {
       const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
@@ -876,6 +902,14 @@ const GROUP_INPUT_KEYS = ["teamGroups", "teamGroupPins", "targetAccountsWorkbook
   "companyRelationships", "companyExclusions"];
 const GROUPS_EVERY_MS = 2000;
 let groupsByKey = null; // { key: [group ids] } or null (basic mode)
+let factsByKey = null; // step 4: { key: facts } of the last computation - "size L → XXL" on a pin (in memory only)
+let groupsIndex = null; // the groupIndex of the last computation / publish (who is in which group)
+// Step 4 (design 8.2): accounts this PC changed itself, by the time the change was noticed (diffKeys).
+const localTouched = new Map();
+// A pin counts only while its account is assigned (livePins): with pins about, an assignment change recomputes the groups.
+let pinsExist = false;
+let groupsSnapJson = null; // what teamDb holds as groupsSnap (written only when it changes)
+const GROUP_DATA_KEYS = ["targetAccountsWorkbook", "targetAccounts", "targetAccountExtras", "companyRelationships", "companyExclusions"];
 let leadByKey = {}; // step 2: { lead key: member } for leads of non-accounts scanned by a member (not the Team Lead)
 let groupsDirty = true;
 let groupsAt = 0;
@@ -895,15 +929,113 @@ async function computeGroupsOf(groups, pins, team) {
   const t1 = performance.now();
   const index = groupIndex(groups, team);
   const byKey = {};
-  for (const v of views) byKey[v.key] = groupsOf(v.key, groupFacts(v, { buckets: SIZE_PRIORITY_BUCKETS }), index, pins || {});
-  return { byKey, index, accounts: views.length, viewsMs: Math.round(t1 - t0), ms: Math.round(performance.now() - t1) };
+  const facts = {};
+  for (const v of views) {
+    facts[v.key] = groupFacts(v, { buckets: SIZE_PRIORITY_BUCKETS });
+    byKey[v.key] = groupsOf(v.key, facts[v.key], index, pins || {});
+  }
+  return { byKey, facts, index, accounts: views.length, viewsMs: Math.round(t1 - t0), ms: Math.round(performance.now() - t1) };
+}
+
+// { key: member } - who each account is assigned to, as the merged state has it (a void one included).
+function assignmentsNow() {
+  const out = {};
+  for (const id of Object.keys(mem.state.entities.account || {})) {
+    if (!id.startsWith("@")) continue;
+    const first = activeAssignments(mem.state, "account", id)[0];
+    if (first) out[id.slice(1)] = first.member;
+  }
+  return out;
+}
+
+// D6 (design 8.3): an assignment whose assignee has no access through the account's groups any more is void - the
+// account counts as unassigned on every PC, without waiting for anyone to write anything. Only for a current member:
+// the accounts of someone who left stay as they are until the Team Lead releases or reassigns them (R6.4).
+function voidAssignee(key, member) {
+  if (!groupsByKey || !groupsIndex || !member || !key) return false;
+  if (!currentTeam().includes(member)) return false;
+  return !mayAccess(member, groupsByKey[key] || [OTHER_GROUP], groupsIndex, leadNow());
+}
+
+const groupNamesText = (ids, groups) => (ids || []).map((id) => (id === OTHER_GROUP ? "Other" : groups?.[id]?.name || id)).join(", ");
+
+// Step 4 (design 8.2, 8.3). An ASSIGNED account whose data changed so that its groups change:
+//   - changed on this PC by a member (research, the pipeline, an edit): the account is PINNED to its old groups and the
+//     Team Lead decides in Decisions (teamGroupPins) - nobody loses access by research alone;
+//   - changed on this PC by the Team Lead (or deputy): applies at once; an assignee left without access is released;
+//   - changed on a colleague's PC: that PC decides, nothing is done here.
+// A change of the groups themselves (filter, list) is the Team Lead's own edit and is never pinned. r is the fresh
+// computation; a held account is put back to its old groups in r.byKey.
+async function holdMoves(r, groups, pins, assigned, startedAt) {
+  const defs = groupDefsKey(groups);
+  const before = groupsByKey;
+  const sameDefs = mem.meta.groupDefs === defs;
+  mem.meta.groupDefs = defs;
+  const now = Date.now();
+  // A mark is for the computation that follows it: whatever was noticed before this one started has been looked at
+  // when it ends (else a later change of the same account by a colleague would be taken for this PC's own).
+  const seen = [...localTouched].filter(([, at]) => at <= startedAt).map(([k]) => k);
+  if (mem.meta.replaying || mem.meta.shadowLost) { for (const k of seen) localTouched.delete(k); return; }
+  const lead = hasLeadRights();
+  const newPins = {};
+  const gone = [];
+  const release = [];
+  let again = false;
+  if (before && sameDefs) {
+    // A change not compared with the shadow yet: not known whether it is this PC's own - held for one more round.
+    const pending = diffTimer !== null || GROUP_DATA_KEYS.some((k) => dirty.has(k));
+    const team = currentTeam();
+    const leads = leadNow();
+    for (const key of Object.keys(r.byKey)) {
+      const was = before[key];
+      const member = assigned[key];
+      if (!was || !member || sameGroups(was, r.byKey[key])) continue;
+      if (!localTouched.has(key)) {
+        if (pending) { r.byKey[key] = was; again = true; }
+        continue;
+      }
+      if (!lead) {
+        // Research on an assigned account runs on its assignee's PC (R6.2): only that PC pins.
+        if (member !== membership.memberId) continue;
+        newPins[key] = { groups: was, proposed: r.byKey[key], reason: factsDiffText(factsByKey?.[key], r.facts[key]), for: member, by: membership.memberId, at: now };
+        r.byKey[key] = was;
+      } else if (team.includes(member) && !mayAccess(member, r.byKey[key], r.index, leads)) {
+        release.push({ key, member, into: groupNamesText(r.byKey[key], groups) });
+      }
+    }
+  }
+  // The pin is removed once the account is released or reassigned (8.2) - by the Team Lead's PC, so one PC writes it.
+  if (lead) for (const [key, pin] of Object.entries(pins)) if (!assigned[key] || (pin?.for && pin.for !== assigned[key])) gone.push(key);
+  if (Object.keys(newPins).length || gone.length) {
+    await withAccountWriteLock(async () => {
+      const cur = { ...((await chrome.storage.local.get("teamGroupPins")).teamGroupPins || {}), ...newPins };
+      for (const key of gone) delete cur[key];
+      await chrome.storage.local.set({ teamGroupPins: cur });
+    });
+  }
+  for (const k of seen) localTouched.delete(k);
+  if (release.length) releaseVoided(release).catch(() => {});
+  if (again) markGroupsDirty();
 }
 
 async function refreshGroups() {
   const got = await chrome.storage.local.get(["teamGroups", "teamGroupPins"]);
-  if (!groupsOn(got.teamGroups)) { groupsByKey = null; leadByKey = {}; return; }
-  const r = await computeGroupsOf(got.teamGroups, got.teamGroupPins, currentTeam());
+  if (!groupsOn(got.teamGroups)) {
+    groupsByKey = null; factsByKey = null; groupsIndex = null; leadByKey = {};
+    if (groupsSnapJson !== "null") { groupsSnapJson = "null"; await teamDbPutAll({ groupsSnap: null }); }
+    return;
+  }
+  const assigned = assignmentsNow();
+  pinsExist = Object.keys(got.teamGroupPins || {}).length > 0;
+  const startedAt = Date.now();
+  const r = await computeGroupsOf(got.teamGroups, livePins(got.teamGroupPins, assigned), currentTeam());
+  await holdMoves(r, got.teamGroups, got.teamGroupPins || {}, assigned, startedAt);
   groupsByKey = r.byKey;
+  factsByKey = r.facts;
+  groupsIndex = r.index;
+  const snap = { byKey: r.byKey, facts: r.facts };
+  const snapJson = JSON.stringify(snap);
+  if (snapJson !== groupsSnapJson) { groupsSnapJson = snapJson; await teamDbPutAll({ groupsSnap: snap }); }
   // Step 2 (D12): a lead whose company is not an account belongs to the member who scanned it. Leads from before
   // scannedBy existed: the author of the record that first set the lead (its firstSeenAt never changes). Only
   // members other than the Team Lead are listed - everything else counts as the Team Lead's.
@@ -990,6 +1122,13 @@ async function publishSummary() {
     const got = await chrome.storage.local.get("teamGroups");
     value.groupsOn = true;
     const index = groupIndex(got.teamGroups, currentTeam());
+    groupsIndex = index;
+    // Step 4 (D6): a void assignment is not shown - the account is unassigned in its new group, on every PC.
+    for (const [key, e] of Object.entries(accounts)) {
+      if (!e.a || !voidAssignee(key, e.a)) continue;
+      delete e.a; delete e.as; delete e.ac;
+      if (!e.h) delete accounts[key];
+    }
     value.myGroups = memberGroups(ctx.me, index);
     if (!value.myGroups.length) value.myGroups = [OTHER_GROUP];
     // Step 1: everyone's groups - Reassign to… offers only members with access to the account.
@@ -1007,6 +1146,7 @@ async function publishSummary() {
 function pushOwn(record) {
   applyChange(mem.state, record);
   mem.outbox.push(record);
+  if (pinsExist && (record.op === "assign" || record.op === "unassign")) markGroupsDirty();
 }
 
 // Inside the queue (diffKeys). New local records go out, except those of an account whose claim of mine is still
@@ -1272,12 +1412,14 @@ async function assignInner(key, to, { later = false } = {}) {
   const a = assignmentView(mem.state, key, ctx);
   const current = a.assignee?.member || null;
   if (current === target) return { ok: true, ...describeClaim(key) };
-  if (current && current !== me && !admin) return { ok: false, reason: "assigned", ...describeClaim(key) };
+  // Step 4 (D6): a colleague's void assignment (no access any more) does not stand in the way - it is released first.
+  const stale = Boolean(current) && current !== me && voidAssignee(key, current);
+  if (current && current !== me && !admin && !stale) return { ok: false, reason: "assigned", ...describeClaim(key) };
   const c = claimView(mem.state, key, ctx);
   if (c.state === "other" || c.state === "lost") return { ok: false, reason: "held", ...describeClaim(key) };
   const now = Date.now();
   const id = claimIdFor(key);
-  if (current) pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "unassign", ...(current === me ? {} : { member: current }) });
+  if (current) pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "unassign", ...(current === me ? {} : { member: current }), ...(stale ? { why: "groups" } : {}) });
   pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "assign", ...(target === me ? {} : { member: target }) });
   mem.claims.assigning[key] = { to: target, at: now };
   delete mem.claims.assignLost[key];
@@ -1370,6 +1512,34 @@ async function unassignInner(key, { later = false } = {}) {
     scheduleTick(0);
     return { ok: true, ...describeClaim(key) };
   }
+}
+
+// Step 4 (design 8.3): the Team Lead's explicit release of assignments a group change has made void - written with
+// the change that caused it (filter or list edit, a member taken out of a group, Move it), so the log says why and a
+// later group change cannot bring an old assignment back. items: [{ key, member, into? }], into = the new groups' names.
+export function releaseVoided(items, { into = null } = {}) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    if (!hasLeadRights()) return { ok: false, reason: "not_lead" };
+    const now = Date.now();
+    let count = 0;
+    for (const it of items || []) {
+      if (!it || !it.key || !it.member || it.member === membership.memberId) continue;
+      const id = claimIdFor(it.key);
+      if (!activeAssignments(mem.state, "account", id).some((x) => x.member === it.member)) continue;
+      const names = it.into || into;
+      pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "unassign", member: it.member, why: "groups", ...(names ? { into: names } : {}) });
+      count++;
+    }
+    if (count) {
+      await save(["state", "outbox"]);
+      markGroupsDirty();
+      await publishSummary();
+      scheduleTick(0);
+    }
+    return { ok: true, count };
+  });
 }
 
 export function dismissAssignNotice(key) {
@@ -1549,6 +1719,14 @@ export function assignmentCounts() {
   });
 }
 
+// R6.2 with D6: a colleague's void assignment (no access to the account any more) keeps nobody out.
+function offLimitsNow(key, ctx) {
+  const o = offLimitsFor(mem.state, key, ctx);
+  if (!o || o.reason !== "assigned" || !voidAssignee(key, o.member)) return o;
+  const c = claimView(mem.state, key, ctx);
+  return c.state === "other" || c.state === "lost" ? { reason: "held", member: c.holder.member, sinceWall: c.holder.sinceWall } : null;
+}
+
 // The pipeline and the web lane (design 6.5, R3.5): null when not in a team. Otherwise `connected` (no automatic
 // work while the team cannot see it) and mayWork(key): not held by a colleague, and in this member's share of the
 // accounts (rendezvous over the members active now - a joining or leaving member moves only its own share).
@@ -1565,7 +1743,7 @@ export async function teamWorkGate() {
         if (!connected || !key) return false;
         const now = claimContext();
         // Step 5 (R6.2, Q6): a colleague's assigned account is off-limits; my own assigned ones are always mine.
-        if (offLimitsFor(mem.state, key, now)) return false;
+        if (offLimitsNow(key, now)) return false;
         if (assignmentView(mem.state, key, now).mine) return true;
         const state = claimView(mem.state, key, now).state;
         // An account I already hold is mine to finish, whatever the share says now.
@@ -1574,7 +1752,7 @@ export async function teamWorkGate() {
       // Work the member started itself (bulk research of chosen accounts): no shares, only R6.2.
       offLimits(key) {
         if (!connected) return { reason: "offline" };
-        const o = key ? offLimitsFor(mem.state, key, claimContext()) : null;
+        const o = key ? offLimitsNow(key, claimContext()) : null;
         return o && { ...o, name: memberName(o.member) };
       },
     };
@@ -1599,6 +1777,9 @@ async function startFresh(memberId) {
   mem.clock = createClock(memberId);
   mem.meta.rereadV = REREAD_VERSION; // a new state reads everything anyway
   recentWriteBack.clear();
+  // Another team's groups say nothing about this one's accounts.
+  groupsByKey = null; factsByKey = null; groupsIndex = null; groupsSnapJson = null; localTouched.clear();
+  groupsDirty = true;
 }
 
 async function setMembership(value) {
@@ -1955,6 +2136,7 @@ export function initTeamSync() {
       membershipLoaded = true;
     }
     if (membershipLoaded && !membership) return;
+    if ("teamGroupPins" in changes) pinsExist = Object.keys(changes.teamGroupPins.newValue || {}).length > 0;
     if (membership && GROUP_INPUT_KEYS.some((k) => k in changes)) markGroupsDirty();
     let any = false;
     for (const key of Object.keys(changes)) {
@@ -1999,6 +2181,7 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_UNASSIGN": return reply(unassignAccount(message.key));
     case "TEAM_ASSIGN_MANY": return reply(assignAccounts(message.keys, { to: message.to || null }));
     case "TEAM_UNASSIGN_MANY": return reply(unassignAccounts(message.keys));
+    case "TEAM_RELEASE_VOID": return reply(releaseVoided(message.items, { into: message.into || null }));
     case "TEAM_ASSIGN_DISMISS": return reply(dismissAssignNotice(message.key));
     case "TEAM_UNASSIGN_ALL": return reply(unassignAllOf(message.member));
     case "TEAM_REMOVE_MEMBER": return reply(removeMember(message.member));

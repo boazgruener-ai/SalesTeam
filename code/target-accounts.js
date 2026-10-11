@@ -136,7 +136,8 @@ import {
 import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
-import { sizeEmployeesOf } from "./team-groups.js";
+import { changeAccountGroups } from "./team-groups-ui.js";
+import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const emptyStateEl = document.getElementById("empty-state");
@@ -1856,6 +1857,9 @@ function renderBulkBar(scope) {
     for (const id of ["accounts-bulk-assign-btn", "accounts-bulk-release-btn"]) document.getElementById(id).hidden = !teamAccounts.inTeam();
     // 1.2.2.7 (Boaz): the Team Lead (and the deputy) assigns many accounts to a member at once.
     document.getElementById("accounts-bulk-assign-to-btn").hidden = !teamAccounts.inTeam() || !teamAccounts.hasLeadRights();
+    // Step 4 (R2.6): many accounts onto a named-accounts group at once - only when the team has one.
+    const groupBtns = !teamAccounts.inTeam() || !teamAccounts.hasLeadRights() || !teamAccounts.hasNamedGroups();
+    for (const id of ["accounts-bulk-group-add-btn", "accounts-bulk-group-remove-btn"]) document.getElementById(id).hidden = groupBtns;
   }
   if (!extendEl) return;
 
@@ -1985,6 +1989,12 @@ document.getElementById("accounts-bulk-assign-to-btn").addEventListener("click",
     already: keys.filter((k) => teamAccounts.entry(k)?.a === to).length });
   clearSelection("accounts");
 });
+for (const [id, mode] of [["accounts-bulk-group-add-btn", "add"], ["accounts-bulk-group-remove-btn", "remove"]]) {
+  document.getElementById(id).addEventListener("click", async () => {
+    const keys = [...selectionSet("accounts")];
+    if (keys.length && await changeAccountGroups(keys, mode)) clearSelection("accounts");
+  });
+}
 document.getElementById("contacts-bulk-edit-btn").addEventListener("click", () => openBulkEditDialog("contacts"));
 document.getElementById("accounts-bulk-clear-btn").addEventListener("click", () => clearSelection("accounts"));
 document.getElementById("contacts-bulk-clear-btn").addEventListener("click", () => clearSelection("contacts"));
@@ -2355,6 +2365,7 @@ function accountMenuItems(companyKey, company, { onDetailPage = false } = {}) {
       ? [{ label: "Relationship…", onClick: () => openRelationshipDialog(companyKey, company, { onDetailPage }) }]
       : []),
     ...teamAssignMenuItems(companyKey, { onDetailPage }),
+    ...teamGroupMenuItems(companyKey),
     ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, onClick: () => removeAccount(companyKey, company.company, { onDetailPage }) }] : []),
   ]);
 }
@@ -2430,6 +2441,17 @@ function teamAssignMenuItems(companyKey, { onDetailPage = false } = {}) {
   }
   if (admin) items.push({ label: e?.a ? "Reassign to…" : "Assign to…", onClick: () => teamReassign(companyKey).then(done) });
   return items;
+}
+
+// 1.2.3 advanced mode step 4 (R2.6): the Team Lead puts an account on a named-accounts group, or takes it off one.
+// Offered only where it would do something - no named group to add to, or the account on none: no item.
+function teamGroupMenuItems(companyKey) {
+  if (!teamAccounts.inTeam() || !teamAccounts.hasLeadRights()) return [];
+  const { on, off } = teamAccounts.namedGroups(companyKey);
+  return [
+    ...(off.length ? [{ label: "Add to group…", onClick: () => changeAccountGroups([companyKey], "add") }] : []),
+    ...(on.length ? [{ label: "Remove from group…", onClick: () => changeAccountGroups([companyKey], "remove") }] : []),
+  ];
 }
 
 // Team Lead: pick the member an account goes to.
@@ -6885,6 +6907,32 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
   if (accountEditMode) {
     overviewEl.appendChild(buildEditForm(ACCOUNT_EDIT_FIELDS, effectiveCompany, async (formValues, newStatus) => {
       const { overrides, changedLabels } = diffEditFormValues(ACCOUNT_EDIT_FIELDS, company, accountOverrides, formValues);
+      // 1.2.2.35 (Boaz, 2026-10-11): the Team Lead defined the groups - a member's edit may not move an account out of
+      // one. Nothing is saved; the member asks the Team Lead. (What research finds on an assigned account is still held
+      // for the Team Lead's Decisions - team-sync.js holdMoves.)
+      const info = accountPriorityInfo(company);
+      const factsOf = (row) => ({ ...groupFacts(row, { buckets: SIZE_PRIORITY_BUCKETS }), priority: info.priority || null, relationship: info.relationship || [] });
+      const edited = { ...effectiveCompany };
+      for (const f of ["globalHqCountry", "targetCountryRelationship", "companyType", "industry"]) if (f in formValues) edited[f] = formValues[f];
+      const leaving = teamAccounts.groupsLeftBy(companyKey, factsOf(effectiveCompany), factsOf(edited));
+      if (leaving.length) {
+        await askConfirm(`Not saved: this change would move "${company.company}" out of the group${leaving.length === 1 ? "" : "s"} ${leaving.join(", ")}.
+
+` +
+          "Only the Team Lead moves an account to another group. If the account belongs elsewhere, ask the Team Lead to make this change.",
+          { okLabel: "OK", cancelLabel: null });
+        return;
+      }
+      // The Team Lead's (and deputy's) own edit applies at once - after a warning, in case it was not meant.
+      if (teamAccounts.hasLeadRights()) {
+        const move = teamAccounts.groupChange(companyKey, factsOf(effectiveCompany), factsOf(edited));
+        if (move.left.length && !(await askConfirm(
+          `This change moves "${company.company}" out of the group${move.left.length === 1 ? "" : "s"} ${move.left.join(", ")}. It will be in: ${move.into}.` +
+          (move.loses ? `
+
+${move.loses} has no access there: the account becomes unassigned, and ${move.loses} no longer sees it.` : ""),
+          { okLabel: "Save and move it", cancelLabel: "Cancel" }))) return;
+      }
       // `base` = the values the form opened with, so only the fields edited here are written - a web research
       // that filled another field while the form was open is kept (extras-merge.js).
       await saveTargetAccountExtra(companyKey, { overrides }, { base: { overrides: accountOverrides } });

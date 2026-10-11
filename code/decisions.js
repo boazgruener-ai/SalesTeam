@@ -16,6 +16,7 @@ const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
   "companyExclusions", "companyExclusionsLifted", "companyRelationships", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
   "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Lead's join proposals
+  "teamGroupPins", "teamGroups", // 1.2.3 advanced mode step 4: the Team Lead's group moves
 ]);
 
 const CHOICES = {
@@ -40,6 +41,7 @@ const KIND_PLURAL = {
   import_finding: ["import difference", "import differences"],
   revenue_units: ["revenue without its unit", "revenues without their unit"],
   join_proposal: ["join proposal", "join proposals"],
+  group_move: ["group move", "group moves"],
 };
 
 // D16: a revenue without its unit. "Correct it" only with a unit that fits; "Keep" for a stored value, "Don't use it"
@@ -205,6 +207,20 @@ function bodyFor(item) {
       <strong>${p.current ? `Keep with ${esc(p.current)}` : "Leave unassigned"}</strong>: nothing changes. Either way the
       contacts and leads ${esc(p.byName)} contacted keep that status, so nobody approaches the same person twice.</p>`;
   }
+  if (item.kind === "group_move") {
+    const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
+    return `
+      <p>New data for this account${p.reason ? ` (<strong>${esc(p.reason)}</strong>)` : ""} puts it in other groups.
+      It is assigned to <strong>${esc(p.assignee)}</strong>, so it was not moved${p.by || when ? ` <span class="note">(found${p.by ? ` on ${esc(p.by)}${p.by === "you" ? "r" : "'s"} PC` : ""}${when ? `, ${esc(when)}` : ""})</span>` : ""}.</p>
+      <table class="compare">
+        <tr><th>Now in</th><td>${esc(p.from)}</td></tr>
+        <tr><th>Would move to</th><td>${esc(p.to)}</td></tr>
+      </table>
+      <p class="note"><strong>Move it</strong>: the account goes to ${esc(p.to)}. ${p.keeps
+        ? `${esc(p.assignee)} has access there too and keeps the account.`
+        : `${esc(p.assignee)} has no access there: the account becomes unassigned, and ${esc(p.assignee)} no longer sees it.`}
+      Until then it stays in ${esc(p.from)}. If the new data is wrong, correct it on the account - this card then goes by itself.</p>`;
+  }
   if (item.kind === "finding") {
     return `
       <p>Web research found a different <strong>${esc(p.label)}</strong>, and the automatic resolve could not settle
@@ -254,6 +270,7 @@ function bodyFor(item) {
 
 function similarLabel(item, n) {
   const p = item.payload || {};
+  if (item.kind === "group_move") return `Also for the other ${n} group move${n === 1 ? "" : "s"}`;
   if (item.kind === "join_proposal") return `Also for ${esc(p.byName)}'s other ${n} join proposal${n === 1 ? "" : "s"}`;
   if (item.kind === "finding") return `Also for the other ${n} ${esc(p.label)} finding${n === 1 ? "" : "s"}`;
   if (item.kind === "import_finding") return `Also for the other ${n} ${esc(p.label)} import difference${n === 1 ? "" : "s"}`;

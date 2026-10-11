@@ -119,11 +119,13 @@ export function teamLogEntries(records, state, normalize, priors = null) {
       continue;
     }
     const op = r.op === "touch" ? "touch" : r.op;
-    const g = `${m}|${op}|${s.kind}|${s.key ?? ""}|${s.ref ?? ""}|${op === "assign" || op === "unassign" ? r.member || "" : ""}`;
+    const g = `${m}|${op}|${s.kind}|${s.key ?? ""}|${s.ref ?? ""}|${op === "assign" || op === "unassign" ? r.member || "" : ""}|${op === "unassign" && r.why === "groups" ? `g:${r.into || ""}` : ""}`;
     let entry = groups.get(g);
     if (!entry) {
       entry = { at, m, op, kind: s.kind, key: s.key, ref: s.ref, label: null, fields: [], rows: 0, before: {}, after: {} };
       if (op === "assign" || op === "unassign") entry.to = r.member || m;
+      // Step 4 (design 8.3): released because a group change left the assignee without access.
+      if (op === "unassign" && r.why === "groups") { entry.why = "groups"; entry.into = r.into || null; }
       if (s.kind === "lead") entry.label = leadLabel(state, s.ref);
       if (s.kind === "team") entry.to = r.f?.member || r.f?.was || null;
       groups.set(g, entry);
@@ -229,7 +231,9 @@ export function teamLogText(entry, name, who) {
   }
   switch (entry.op) {
     case "assign": return entry.to === entry.m ? `assigned ${what} to themselves` : `assigned ${what} to ${who(entry.to)}`;
-    case "unassign": return entry.to === entry.m ? `released ${what}` : `released ${what} from ${who(entry.to)}`;
+    case "unassign":
+      if (entry.why === "groups") return `released ${what} from ${who(entry.to)} (${entry.into ? `moved to ${entry.into} - ` : ""}no longer in their groups)`;
+      return entry.to === entry.m ? `released ${what}` : `released ${what} from ${who(entry.to)}`;
     case "delete": return `deleted ${entry.kind === "setting" ? "the setting " : ""}${what}${part}`;
     case "touch": return `logged outreach on ${what}${part}`;
     case "remove_member": return `removed ${who(entry.to)} from the team`;

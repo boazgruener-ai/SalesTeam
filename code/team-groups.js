@@ -197,6 +197,40 @@ export function groupsOf(key, facts, index, pins = null) {
   return out.length ? out : [OTHER_GROUP];
 }
 
+// Step 4 (design 8.2): a pin holds an ASSIGNED account in its old groups. It counts only while the account is still
+// assigned to the member it was written for - released or reassigned, the account lands in its computed groups at
+// once, on every PC, whether or not the pin row has been removed yet. assignments: { key: member }.
+export function livePins(pins, assignments) {
+  const out = {};
+  for (const [key, pin] of Object.entries(pins || {})) {
+    if (!pin || !Array.isArray(pin.groups) || !pin.groups.length) continue;
+    const a = assignments?.[key];
+    if (a && (!pin.for || pin.for === a)) out[key] = pin;
+  }
+  return out;
+}
+
+export const sameGroups = (a, b) => [...(a || [])].sort().join("|") === [...(b || [])].sort().join("|");
+
+// What decides which accounts a group holds (not its name or members): a change here is the Team Lead's own edit
+// and applies at once (8.1) - only a change of an account's DATA can be held by a pin.
+export function groupDefsKey(groups) {
+  return JSON.stringify(Object.keys(groups || {}).filter((id) => isLiveGroup(id, groups[id])).sort().map((id) => {
+    const g = groups[id];
+    return [id, g.kind, g.kind === "named" ? [...(g.accounts || [])].sort() : GROUP_FILTER_FIELDS.map((f) => [...(g.filter?.[f] || [])].map(String).sort())];
+  }));
+}
+
+// "size L → XXL · country Switzerland → Germany": the facts a filter can look at, before and after.
+const FACT_WORDS = { region: "region", country: "country", size: "size", scope: "local / global", industry: "industry",
+  companyType: "company type", priority: "priority", relationship: "relationship" };
+export function factsDiffText(before, after) {
+  if (!before || !after) return "";
+  const show = (v) => (Array.isArray(v) ? (v.length ? [...v].sort().join(" + ") : "none") : v == null || v === "" ? "unknown" : String(v));
+  return GROUP_FILTER_FIELDS.filter((f) => show(before[f]) !== show(after[f]))
+    .map((f) => `${FACT_WORDS[f]} ${show(before[f])} → ${show(after[f])}`).join(" · ");
+}
+
 // leads: { lead, deputy } (teamLeadOf). The Team Lead and the deputy see everything.
 export function mayAccess(member, groupIds, index, leads) {
   if (!member) return false;
@@ -219,7 +253,10 @@ export function voidAssignments(assignments, groupsByKey, index, leads) {
   const out = [];
   for (const key of Object.keys(assignments || {}).sort()) {
     const member = assignments[key];
-    if (member && !mayAccess(member, groupsByKey?.[key] || [OTHER_GROUP], index, leads)) out.push({ key, member });
+    // A current member only (every one of them is in index.ofMember - in Other when in no group): the accounts of
+    // someone who left stay assigned until the Team Lead releases or reassigns them (R6.4).
+    if (!member || (!index.ofMember?.[member] && member !== leads?.lead && member !== leads?.deputy)) continue;
+    if (!mayAccess(member, groupsByKey?.[key] || [OTHER_GROUP], index, leads)) out.push({ key, member });
   }
   return out;
 }

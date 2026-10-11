@@ -693,6 +693,92 @@ def main():
     check("groups: the summary carries each account's groups (unknown country -> Other)",
           (st.get("groupsOn"), st.get("g")), (True, {"acme ag": ["g-ch"], "beta sa": ["other"], "gamma ag": ["other"]}))
     check("groups: the Team Lead in no group is in Other (D9)", st.get("myGroups"), ["other"])
+    # 1.2.3 step 4 (design 8.2, 8.3): group changes. Eli is in Swiss only; Dora is Team Lead.
+    def set_views(acme, beta):
+        v = json.dumps([{"key": "acme ag", "company": "Acme AG", "globalHqCountry": acme, "globalEmployees": 6000},
+                        {"key": "beta sa", "company": "Beta SA", "globalHqCountry": beta, "globalEmployees": 300},
+                        {"key": "gamma ag", "globalHqCountry": None}])
+        for m in (dora, eli):
+            m.e("VIEWS = %s" % v)
+
+    def research(m, key, country, folder):
+        """New data for one account, written on m's PC (what research, the pipeline or an edit does)."""
+        m.e("FOLDER = %s;" % json.dumps(folder))
+        extras = m.local("targetAccountExtras") or {}
+        extras[key] = dict(extras.get(key) or {}, overrides=dict((extras.get(key) or {}).get("overrides") or {}, globalHqCountry=country))
+        m.set_local({"targetAccountExtras": extras})
+        m.advance(1500)
+        m.advance(3000)
+        return json.loads(m.e("JSON.stringify(FOLDER)"))  # a release is sent at once
+
+    def both(folder):
+        for m in (dora, eli, dora, eli):
+            r, folder = m.sync(folder)
+        for m in (dora, eli):
+            m.e("markGroupsDirty(0)")
+            m.advance(3000)
+        return folder
+
+    summ = lambda m: m.local("teamAccountStates") or {}
+    owner = lambda m, key: ((summ(m).get("accounts") or {}).get(key) or {}).get("a")
+    kept = {k: owner(dora, k) for k in ("acme ag", "beta sa")}  # put back at the end, for the tests further down
+    set_views("Switzerland", "France")
+    r, folder = dora.call("unassignAccount('beta sa')", folder)
+    r, folder = dora.call("assignAccount('acme ag', { to: '%s' })" % eli_id, folder)
+    folder = both(folder)
+    check("pin: Acme is Eli's, in Swiss, on both PCs", [(owner(m, "acme ag"), summ(m)["g"].get("acme ag")) for m in (dora, eli)], [(eli_id, ["g-ch"])] * 2)
+    # Research on Eli's PC moves his own account out of his group: pinned, not moved.
+    set_views("Germany", "France")
+    folder = research(eli, "acme ag", "Germany", folder)
+    pin = (eli.local("teamGroupPins") or {}).get("acme ag") or {}
+    check("pin: research on an assigned account pins it to its old groups",
+          (pin.get("groups"), pin.get("proposed"), pin.get("for"), pin.get("by"), pin.get("reason")), (["g-ch"], ["other"], eli_id, eli_id, "country Switzerland → Germany"))
+    check("pin: Eli keeps the account, still in Swiss", (owner(eli, "acme ag"), summ(eli)["g"].get("acme ag")), (eli_id, ["g-ch"]))
+    folder = both(folder)
+    check("pin: the Team Lead's PC holds it in Swiss too", (owner(dora, "acme ag"), summ(dora)["g"].get("acme ag"), "acme ag" in (dora.local("teamGroupPins") or {})), (eli_id, ["g-ch"], True))
+    # The Team Lead answers "Move it" (team-proposals.js applyGroupMove): the release, then the pin goes.
+    r, folder = dora.call("releaseVoided([{ key: 'acme ag', member: '%s', into: 'Other' }])" % eli_id, folder)
+    check("move it: the Team Lead's release goes through", (r.get("ok"), r.get("count")), (True, 1))
+    dora.set_local({"teamGroupPins": {k: v for k, v in (dora.local("teamGroupPins") or {}).items() if k != "acme ag"}})
+    folder = both(folder)
+    check("move it: Acme is in Other and unassigned on both PCs", [(owner(m, "acme ag"), summ(m)["g"].get("acme ag")) for m in (dora, eli)], [(None, ["other"])] * 2)
+    check("move it: Eli no longer sees it", "g-ch" in summ(eli).get("myGroups", []) and "other" not in summ(eli).get("myGroups", []), True)
+    told = [n["text"] for n in (eli.local("teamNotices") or []) if n.get("kind") == "group" and "no longer in your groups" in n.get("text", "")]
+    check("move it: Eli is told why", (len(told), "moved to Other - it is no longer in your groups" in (told or [""])[0]), (1, True))
+    r, folder = eli.call("releaseVoided([{ key: 'beta sa', member: '%s' }])" % dora_id, folder)
+    check("release: only the Team Lead may write one", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    # An unassigned account moves at once, whoever's PC found the data.
+    set_views("Germany", "Switzerland")
+    folder = research(eli, "beta sa", "Switzerland", folder)
+    check("unassigned: research moves it at once, no pin", (summ(eli)["g"].get("beta sa"), "beta sa" in (eli.local("teamGroupPins") or {})), (["g-ch"], False))
+    folder = both(folder)
+    # D6: taken out of the group, Eli's assignment there is void on every PC - nothing has to be written for that.
+    r, folder = dora.call("assignAccount('beta sa', { to: '%s' })" % eli_id, folder)
+    folder = both(folder)
+    check("void: Beta is Eli's", [owner(m, "beta sa") for m in (dora, eli)], [eli_id, eli_id])
+    swiss = lambda members: {"teamGroups": {"g-ch": {"name": "Swiss", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": members}}}
+    dora.set_local(swiss([]))
+    folder = both(folder)
+    check("void: out of the group, the assignment no longer shows - on both PCs", [owner(m, "beta sa") for m in (dora, eli)], [None, None])
+    rd, folder = dora.call("teamWorkGate().then(function (g) { return g.offLimits('beta sa'); })", folder)
+    check("void: and keeps nobody out", rd, None)
+    dora.set_local(swiss([eli_id]))
+    folder = both(folder)
+    check("void: back in the group (nothing was released), it shows again", [owner(m, "beta sa") for m in (dora, eli)], [eli_id, eli_id])
+    # The Team Lead's own change applies at once: the assignee left without access is released, with the reason.
+    set_views("Germany", "France")
+    folder = research(dora, "beta sa", "France", folder)
+    folder = both(folder)
+    check("lead's change: no pin, Beta in Other, released", ("beta sa" in (dora.local("teamGroupPins") or {}), summ(dora)["g"].get("beta sa"), owner(dora, "beta sa"), owner(eli, "beta sa")), (False, ["other"], None, None))
+    r, folder = dora.call("assignmentCounts()", folder)
+    check("lead's change: the release is a real one (not only void)", r.get("counts", {}).get(eli_id), None)
+    lines = [x for x in (eli.local("teamLog") or []) if x.get("why") == "groups"]
+    check("log: the releases say why", (len(lines) >= 2, lines[-1].get("into") if lines else None), (True, "Other"))
+    for key, was in kept.items():
+        if was:
+            r, folder = dora.call("assignAccount('%s', { to: '%s' })" % (key, was), folder)
+    folder = both(folder)
+
     # Back to basic mode for the rest of the test: the group is deleted (marked).
     dora.set_local({"teamGroups": {"g-ch": {"name": "Swiss", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id], "deleted": True}}})
     r, folder = dora.sync(folder)

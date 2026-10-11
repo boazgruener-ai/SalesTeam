@@ -2,14 +2,18 @@
 //   renderTeamGroups(ctx)          - the table (Team Lead and deputy edit; members see it read-only, their groups marked)
 //   editMemberGroups(member, ctx)  - the members table's ⋮ > Groups…: tick one member's groups
 //   openTeamMenu(anchor, items)    - the ⋮ popup both tables use (one look, one behaviour)
+//   changeAccountGroups(keys, mode) - step 4: Add to group… / Remove from group… on Target Accounts (row, page, bulk)
+// Step 4 (design 8.3): a save that leaves an assignee without access says so first, by name ("Anna 2, Luc 1"), and
+// then releases those accounts through the sync layer (TEAM_RELEASE_VOID) - so the log says why.
 // Groups live in chrome.storage.local.teamGroups (one row per group); the sync layer sends them and the merge counts a
 // group record only from the Team Lead or the deputy (design 4.2). Every count and the editor's preview come from the
 // same pure functions the background uses (team-groups.js), so what this page says is what every PC computes.
-import { askConfirm } from "./confirm-dialog.js";
+import { askConfirm, askChoice, showNotice } from "./confirm-dialog.js";
 import { getAccountReadiness, SIZE_PRIORITY_BUCKETS } from "./storage.js";
 import { CONTINENT_LABELS } from "./geo-regions.js";
 import {
   groupIndex, groupsOf, groupFacts, groupCounts, voidAssignments, groupProblem, matchesFilter, OTHER_GROUP, GROUP_FILTER_FIELDS,
+  livePins, sameGroups,
 } from "./team-groups.js";
 
 const GROUPS_KEY = "teamGroups";
@@ -108,10 +112,12 @@ async function loadGroupInputs() {
 // ctx: { team: [member ids], names: { id: name }, leads: { lead, deputy }, me, canEdit }.
 function buildModel(groups, pins, summary, accounts, ctx) {
   const index = groupIndex(groups, ctx.team);
-  const byKey = {};
-  for (const a of accounts) byKey[a.key] = groupsOf(a.key, a.facts, index, pins);
   const all = {};
   for (const [k, e] of Object.entries(summary?.accounts || {})) if (e?.a) all[k] = e.a;
+  // Step 4: a pin counts only while the account is still assigned to the member it was written for.
+  const held = livePins(pins, all);
+  const byKey = {};
+  for (const a of accounts) byKey[a.key] = groupsOf(a.key, a.facts, index, held);
   // D6: an assignment whose assignee has no access any more counts as unassigned.
   const voided = new Set(voidAssignments(all, byKey, index, ctx.leads).map((v) => v.key));
   const assignments = {};
@@ -242,6 +248,26 @@ async function writeGroups(mutate) {
   const next = structuredClone(cur);
   mutate(next);
   await chrome.storage.local.set({ [GROUPS_KEY]: next });
+}
+
+// "Anna 2, Luc 1" - whose assignments a change makes void (voidAssignments: [{ key, member }]).
+function loseNames(lose, ctx) {
+  const per = {};
+  for (const v of lose) per[v.member] = (per[v.member] || 0) + 1;
+  return Object.entries(per).sort((a, b) => b[1] - a[1]).map(([m, n]) => `${ctx.names[m] || "a colleague"} ${n}`).join(", ");
+}
+const loseSentence = (lose, ctx) => `${plural(lose.length, "account")} lose${lose.length === 1 ? "s its" : " their"} assignee, who has no access any more (${loseNames(lose, ctx)}). ` +
+  `${lose.length === 1 ? "It becomes" : "They become"} unassigned, and ${lose.length === 1 ? "the member is" : "the members are"} told.`;
+
+// After the save: the explicit releases (design 8.3). `into` only where the account itself moved.
+async function releaseVoided(lose, before, after, groups) {
+  if (!lose.length) return;
+  const nameOf = (id) => (id === OTHER_GROUP ? "Other" : groups[id]?.name || id);
+  const items = lose.map(({ key, member }) => {
+    const now = after.byKey[key] || [OTHER_GROUP];
+    return { key, member, ...(sameGroups(before.byKey[key], now) ? {} : { into: now.map(nameOf).join(", ") }) };
+  });
+  try { await chrome.runtime.sendMessage({ type: "TEAM_RELEASE_VOID", items }); } catch { /* still void on every PC (D6) */ }
 }
 
 const newGroupId = () => `g-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
@@ -487,6 +513,15 @@ async function openEditor(groupId, { copyFrom = null } = {}) {
     if (why) { problem.textContent = why; return; }
     const firstGroup = !before.index.on;
     const now = new Date().toISOString();
+    // Step 4 (design 8.3): the count before saving - "moves 14 accounts; 3 of them lose their assignee (Anna 2, Luc 1)".
+    const nextGroups = { ...groups, [id]: g };
+    const after = buildModel(nextGroups, pins, summary, accounts, ctx);
+    const lose = voidAssignments(before.assignments, after.byKey, after.index, ctx.leads);
+    if (lose.length) {
+      const moved = accounts.filter((a) => !sameGroups(before.byKey[a.key], after.byKey[a.key])).length;
+      const ok = await askConfirm(`${moved ? `Saving this group moves ${plural(moved, "account")}.\n\n` : ""}${loseSentence(lose, ctx)}`, { okLabel: "Save", cancelLabel: "Cancel" });
+      if (!ok) return;
+    }
     save.disabled = true;
     try {
       await writeGroups((all) => { all[id] = { ...g, createdAt: existing?.createdAt || now, updatedAt: now }; });
@@ -495,6 +530,7 @@ async function openEditor(groupId, { copyFrom = null } = {}) {
       save.disabled = false;
       return;
     }
+    await releaseVoided(lose, before, after, nextGroups);
     done();
     await renderTeamGroups(ctx, { force: true });
     if (firstGroup) {
@@ -528,15 +564,16 @@ async function deleteGroup(groupId) {
   const inIt = accounts.filter((a) => (before.byKey[a.key] || []).includes(groupId));
   const toOther = inIt.filter((a) => (after.byKey[a.key] || []).join() === OTHER_GROUP).length;
   const movers = (before.index.members[groupId] || []).filter((m) => (before.index.ofMember[m] || []).filter((x) => x !== groupId && x !== OTHER_GROUP).length === 0);
-  const lose = voidAssignments(before.assignments, after.byKey, after.index, ctx.leads).length;
+  const lose = voidAssignments(before.assignments, after.byKey, after.index, ctx.leads);
   const lastOne = before.index.live.length === 1;
   const text = `Delete the group "${g.name}"?\n\n` +
     `${g.name} has ${plural(inIt.length, "account")}: ${inIt.length - toOther} stay in their other groups, ${toOther} go to Other.` +
     (movers.length ? ` Members of ${g.name} who are in no other group move to Other: ${namesOf(movers, ctx).join(", ")}.` : "") +
-    (lose ? `\n\n${plural(lose, "account")} lose${lose === 1 ? "s" : ""} ${lose === 1 ? "its" : "their"} assignee (no access any more).` : "") +
+    (lose.length ? `\n\n${loseSentence(lose, ctx)}` : "") +
     (lastOne ? "\n\nIt is the last group: the team is back to everyone seeing every account." : "");
   if (!(await askConfirm(text, { okLabel: "Delete the group", cancelLabel: "Cancel", danger: true }))) return;
   await writeGroups((all) => { if (all[groupId]) all[groupId] = { ...all[groupId], deleted: true, updatedAt: new Date().toISOString() }; });
+  await releaseVoided(lose, before, after, groups);
   await renderTeamGroups(ctx, { force: true });
 }
 
@@ -546,7 +583,7 @@ async function deleteGroup(groupId) {
 
 export async function editMemberGroups(member, ctx) {
   if (!ctx?.canEdit) return;
-  const { groups } = await loadGroupInputs();
+  const { groups, pins, summary } = await loadGroupInputs();
   const index = groupIndex(groups, ctx.team);
   const name = namesOf([member], ctx)[0];
   const own = new Set((index.live || []).filter((g) => (g.members || []).includes(member)).map((g) => g.id));
@@ -583,8 +620,7 @@ export async function editMemberGroups(member, ctx) {
   save.addEventListener("click", async () => {
     const want = new Set(ticks.filter((t) => t.checked).map((t) => t.value));
     const now = new Date().toISOString();
-    save.disabled = true;
-    await writeGroups((all) => {
+    const mutate = (all) => {
       for (const g of index.live) {
         const row = all[g.id];
         if (!row) continue;
@@ -597,10 +633,82 @@ export async function editMemberGroups(member, ctx) {
       if (inOther !== want.has(OTHER_GROUP)) {
         all[OTHER_GROUP] = { ...other, members: inOther ? other.members.filter((m) => m !== member) : [...(other.members || []), member] };
       }
-    });
+    };
+    // Step 4 (design 8.3): taken out of a group, the member loses the accounts assigned to them there.
+    const accounts = await loadAccounts();
+    const before = buildModel(groups, pins, summary, accounts, ctx);
+    const nextGroups = structuredClone(groups);
+    mutate(nextGroups);
+    const after = buildModel(nextGroups, pins, summary, accounts, ctx);
+    const lose = voidAssignments(before.assignments, after.byKey, after.index, ctx.leads);
+    if (lose.length && !(await askConfirm(loseSentence(lose, ctx), { okLabel: "Save", cancelLabel: "Cancel" }))) return;
+    save.disabled = true;
+    await writeGroups(mutate);
+    await releaseVoided(lose, before, after, nextGroups);
     done();
     await renderTeamGroups(ctx, { force: true });
   });
   document.body.append(dlg);
   dlg.showModal();
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Step 4 (design 8.1, R2.6): Add to group… / Remove from group… - Target Accounts, the account ⋮ (row and page) and
+// the bulk bar. Team Lead and deputy only; only named-accounts groups are offered (a filter group has no hand
+// exceptions - its filter decides). The Team Lead's own change applies at once: a held move (pin) of these accounts
+// is settled by it.
+// ---------------------------------------------------------------------------------------------------
+
+// keys: company keys; mode: "add" | "remove". Returns true when something was changed.
+export async function changeAccountGroups(keys, mode) {
+  const { groups, pins, summary } = await loadGroupInputs();
+  if (!summary?.admin || !keys.length) return false;
+  const ctx = { team: Object.keys(summary.ofMember || {}), names: summary.names || {}, leads: { lead: summary.lead, deputy: summary.deputy }, me: summary.me, canEdit: true };
+  const index = groupIndex(groups, ctx.team);
+  const named = index.live.filter((g) => g.kind === "named").sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const onList = (g) => keys.filter((k) => (g.accounts || []).includes(k)).length;
+  const what = keys.length === 1 ? "this account" : `the ${keys.length} selected accounts`;
+  if (!named.length) {
+    showNotice("There is no named-accounts group yet. Create one in SalesTeam Settings → Team (+ New group, kind: Named accounts).");
+    return false;
+  }
+  const choices = named.map((g) => {
+    const n = onList(g);
+    const work = mode === "add" ? keys.length - n : n;
+    const label = keys.length === 1 ? g.name : `${g.name}\n(${work} of ${keys.length})`;
+    return { value: g.id, label, work };
+  }).filter((c) => c.work > 0);
+  if (!choices.length) {
+    showNotice(mode === "add"
+      ? `${keys.length === 1 ? "This account is" : "The selected accounts are"} already on every named-accounts list.`
+      : `${keys.length === 1 ? "This account is" : "None of the selected accounts is"} on a named-accounts list. A filter group follows the account's data - its filter is changed in SalesTeam Settings → Team.`);
+    return false;
+  }
+  const id = await askChoice(mode === "add" ? `Add ${what} to the group:` : `Remove ${what} from the group:`, choices);
+  if (!id) return false;
+  const g = groups[id];
+  const work = keys.filter((k) => (g.accounts || []).includes(k) !== (mode === "add"));
+  const mutate = (all) => {
+    const row = all[id];
+    if (!row) return;
+    const list = new Set(row.accounts || []);
+    for (const k of work) { if (mode === "add") list.add(k); else list.delete(k); }
+    all[id] = { ...row, accounts: [...list].sort(), updatedAt: new Date().toISOString() };
+  };
+  const accounts = await loadAccounts();
+  const before = buildModel(groups, pins, summary, accounts, ctx);
+  const nextGroups = structuredClone(groups);
+  mutate(nextGroups);
+  const nextPins = { ...pins };
+  for (const k of work) delete nextPins[k];
+  const after = buildModel(nextGroups, nextPins, summary, accounts, ctx);
+  const lose = voidAssignments(before.assignments, after.byKey, after.index, ctx.leads);
+  if (lose.length && !(await askConfirm(loseSentence(lose, ctx), { okLabel: mode === "add" ? "Add" : "Remove", cancelLabel: "Cancel" }))) return false;
+  await writeGroups(mutate);
+  if (work.some((k) => pins[k])) await chrome.storage.local.set({ [PINS_KEY]: nextPins });
+  await releaseVoided(lose, before, after, nextGroups);
+  const toOther = mode === "remove" ? work.filter((k) => (after.byKey[k] || []).join() === OTHER_GROUP).length : 0;
+  showNotice(`${plural(work.length, "account")} ${mode === "add" ? `added to ${g.name}` : `removed from ${g.name}`}.` +
+    (toOther ? ` ${toOther === work.length ? (toOther === 1 ? "It is" : "They are") : `${toOther} of them are`} in no other group now (Other).` : ""));
+  return true;
 }

@@ -2,7 +2,7 @@ import { geoUrnForCountry } from "./geo-urn-map.js";
 import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
 import { leadRightsOf, mayImportFor, canSeeAccount } from "./team-groups.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum, withWholeEmployees, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
-import { joinProposalItems, applyJoinProposal } from "./team-proposals.js";
+import { joinProposalItems, applyJoinProposal, groupMoveItems, applyGroupMove } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, sizeBucketKey } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
@@ -6239,7 +6239,14 @@ function buildDecisionQueueShared(views) {
 
 export async function getDecisionQueue() {
   // Team use step 6 (R6.7): the Team Lead's join proposals come first - a colleague is waiting on them.
-  const [built, proposals] = await Promise.all([buildDecisionQueueShared(), joinProposalItems().catch(() => [])]);
+  // 1.2.3 advanced mode step 4 (R5.2): then the group moves - an assigned account new data would move to other groups.
+  const [built, proposals] = await Promise.all([
+    buildDecisionQueueShared(),
+    Promise.all([
+      joinProposalItems().catch(() => []),
+      groupMoveItems(() => getAccountViews({ persistDerived: false }), SIZE_PRIORITY_BUCKETS).catch(() => []),
+    ]).then((lists) => lists.flat()),
+  ]);
   // 1.2.3 step 2 (design 6.2): a member is not asked about an account that is in none of their groups.
   const team = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
   const items = built.items.filter((i) => !i.accountKey || canSeeAccount(team.teamMembership, team.teamAccountStates, i.accountKey));
@@ -6263,8 +6270,8 @@ async function resetPipelineForUnlocked(key) {
 //   finding: "web" | "current"
 // Returns a short line saying what was done, for the page and the Activity Log.
 export async function applyDecision(item, choice) {
-  if (item.kind === "join_proposal") {
-    const done = await applyJoinProposal(item, choice);
+  if (item.kind === "join_proposal" || item.kind === "group_move") {
+    const done = item.kind === "group_move" ? await applyGroupMove(item, choice) : await applyJoinProposal(item, choice);
     appendActivityLog({ actor: "user", action: "decision", label: `Decision: ${done}`, relatedCompanyKey: item.accountKey, newValue: { kind: item.kind, choice } }).catch(() => {});
     return done;
   }

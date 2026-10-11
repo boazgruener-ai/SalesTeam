@@ -22,6 +22,7 @@ export const DECISION_KIND_LABELS = {
   import_finding: "Import difference",
   revenue_units: "Revenue without its unit",
   join_proposal: "Join proposal",
+  group_move: "Group move",
 };
 
 // Bumped when a pipeline rule changes in a way that makes earlier failed attempts worth retrying once
