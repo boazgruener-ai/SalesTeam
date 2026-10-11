@@ -1,5 +1,50 @@
 # SalesTeam — v1.2.3
 
+## Account groups and the Team Lead: each member works their own part of the list (builds 1.2.2.5-1.2.2.9, 1.2.2.24-1.2.2.39)
+
+- **Account groups** - the Team Lead can split the team's accounts into groups, for example by country, by size or as a
+  list of named accounts, and put members into them. Each member then sees and works only the accounts of their groups,
+  with their contacts and leads (posts); the Team Lead sees everything. A team without groups works exactly as before.
+- **Setting them up** - Settings > Team > Groups > **+ New group**. A **Filter** group takes every account that matches
+  what you tick (Region, Country, Size, Local / Global, Industry, Company type, Priority, Relationship), including
+  accounts found later. A **Named accounts** group is a list you tick. A preview shows which accounts match before you
+  save. An account that is in no group is in **Other**, and so is a member who is in no group.
+- **The Groups table** - each group with its members and how many accounts it has, how many are assigned, unassigned
+  and Ready. Click a count to open those accounts. Members see the table too, with their own groups marked.
+- **Group and Assigned** - two dropdowns above the Target Accounts, Target Contacts and Leads tables. **Group** switches
+  between your groups; **Assigned** offers Assigned or not / Assigned to me / Assigned to others / Unassigned. A new
+  **Groups** column shows each account's groups.
+- **Moving an account** - only the Team Lead moves an account to another group: **Add to group…** and **Remove from
+  group…** in the account menu and above the table, or by changing a group's filter. Before saving, SalesTeam says how
+  many accounts move and who loses an assigned account. A member who loses an account this way is told in the top bar.
+- **Research does not move an assigned account by itself** - when research finds, say, a new employee count that would
+  put an assigned account into another group, the figure is saved and the account stays where it is. The Team Lead
+  gets it under Decisions with **Move it**.
+- **Team Lead** - the Team Admin is now called Team Lead. There is one per team. The Team Lead can hand the role to a
+  colleague (**Make Team Lead…**), name a **deputy** with the same rights for the time away (**Make deputy…** / **End
+  deputy**), and **Close the team…** - everyone then keeps the data as their own copy.
+- **A Team Lead who is gone** - when the Team Lead's SalesTeam has not been seen in the team for 30 days, Settings >
+  Team offers **Take over as Team Lead…** to the deputy, or to every member when there is no deputy. Everyone is told,
+  and the former Team Lead becomes a Member who can be given the role back.
+- **Invitations** - joining a team needs an invitation. The Team Lead adds a colleague by name and e-mail (**Add
+  member…**); the colleague's SalesTeam shows the invitation in the top bar, and **Join Team** does the rest. Creating
+  and joining a team now each start with one step: choosing the team's folder.
+- **Automatic preparation in a team with groups** - each member's SalesTeam researches only the accounts of their
+  groups, on their own API key, and shares them with the group's other members. The Team Lead chooses under Settings >
+  Team > **My pipeline researches** between only the accounts no member can work on right now and all accounts. New
+  companies are looked for by the Team Lead's SalesTeam only.
+- **Leaving** - a member normally leaves by the Team Lead's **Remove from team…**; **Leave the team…** is now a small
+  link at the bottom of Settings > Team.
+- **Web research without LinkedIn** - the two switches under Settings > Automation are now independent: web research
+  can run by itself, without any LinkedIn work, and the other way round.
+- **Who changed what** - the team log describes group changes in words ("added Anna to EMEA"), and what a colleague's
+  SalesTeam did automatically reads as such ("SalesTeam on Annick's PC updated …").
+- **Fixed** - a change file that OneDrive damaged no longer stops a colleague's SalesTeam from receiving later changes:
+  the file is repaired by the computer that wrote it. Assigning several accounts at once is quick again. The Size column
+  and the groups now always agree on an account's size.
+- **Help** - new entries on account groups, on seeing only some of the team's accounts, on an account moving to
+  another group, and on which accounts your SalesTeam researches.
+
 ## Export and Import: one menu for CSV, HubSpot, Salesforce and Microsoft Dynamics (builds 1.2.2.10-1.2.2.23)
 
 - **One Import… and one Export…** - in the Target Accounts Dashboard and Target Contacts Dashboard menus. They replace
@@ -45,11 +90,11 @@
   Recruiters / staffing agencies and Other, and work as before.
 - **Moved for you** - on update, every customer and partner on your exclusion lists moves to the new lists. A pop-up
   says how many, which of them come back as accounts and how many of their leads (posts) are back in the Leads Dashboard
-  as New. The same happens after a restore and after a workbook import. In a team, the Team Admin's copy does the move.
+  as New. The same happens after a restore and after a workbook import. In a team, the Team Lead's copy does the move.
 - **The tag** - a purple Customer, Partner or Customer · Partner tag on the account page, the contact page, the Target
   Contacts list and the Leads Dashboard. On Target Accounts a new **Relationship** column, filtered from its header
   menu with **Any / Customer / Partner / None**, with the usual chip and Clear all.
-- **Relationship…** - in every account menu (no team, or the Team Admin): tick Customer and/or Partner / reseller and
+- **Relationship…** - in every account menu (no team, or the Team Lead): tick Customer and/or Partner / reseller and
   Save.
 - **A customer's priority is raised one level** - P3 becomes P2, P2 becomes P1 (P4 becomes P3, so it enters the
   scannable range), with "Raised one level: existing customer" in the priority reason. Everything that uses priority

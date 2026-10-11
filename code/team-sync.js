@@ -19,11 +19,11 @@ import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchV
 import {
   newState, applyChange, createClock, tick, observe, formatStamp, compactChanges, stampWall, priorOf, retractChanges,
   pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed, stampMember,
-  leadChain, setTeamCreator, isGatedRow, recordsBetween,
+  leadChain, setTeamCreator, isGatedRow, recordsBetween, memberActiveWithin,
 } from "./team-merge.js";
 import {
   groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, isLiveGroup, OTHER_GROUP,
-  mayAccess, workCandidates, livePins, sameGroups, groupDefsKey, factsDiffText,
+  mayAccess, workCandidates, livePins, sameGroups, groupDefsKey, factsDiffText, TAKEOVER_AFTER_MS,
 } from "./team-groups.js";
 import {
   claimIdFor, accountKeyOfChange, activeMembersOf, claimView, assignmentView, offLimitsFor, teamAccountSummary,
@@ -441,7 +441,17 @@ async function noteRoleChange(before, records) {
   if (!teamRecs.length) return;
   const by = memberName(stampMember(teamRecs[0].t));
   const texts = [];
-  if (after.lead === me && before.lead !== me) texts.push(`${by} made you Team Lead. You see every account and edit the groups.`);
+  // D13: a take-over is told to everyone - the Team Lead who was away, a member whose own take-over came second, and
+  // the rest of the team. (The PC that took over is told by its own Settings page.)
+  const tookOver = before.lead !== after.lead && teamRecs.some((r) => r.id === "takeover" && stampMember(r.t) === after.lead);
+  if (tookOver && after.lead !== me) {
+    const taker = memberName(after.lead);
+    const iTried = teamRecs.some((r) => r.id === "takeover" && stampMember(r.t) === me);
+    if (iTried) texts.push(`${taker} took over as Team Lead a few seconds before you. ${taker} is Team Lead; you are a Member.`);
+    else if (before.lead === me) texts.push(`${taker} took over as Team Lead, because your SalesTeam had not been seen in the team for 30 days. You are a Member now; ${taker} can make you Team Lead again.`);
+    else texts.push(`${taker} took over as Team Lead, because ${memberName(before.lead)} had not been seen in the team for 30 days.`);
+  } else if (tookOver) { /* this PC took over */ }
+  else if (after.lead === me && before.lead !== me) texts.push(`${by} made you Team Lead. You see every account and edit the groups.`);
   else if (before.lead === me && after.lead !== me) texts.push(`${memberName(after.lead)} is Team Lead now. You are a Member.`);
   if (after.deputy === me && before.deputy !== me) texts.push(`${by} made you deputy Team Lead: you have the Team Lead's rights until ${by} ends it.`);
   else if (before.deputy === me && after.deputy !== me && after.lead !== me) texts.push(`${by} ended your deputy role. You are a Member again.`);
@@ -724,7 +734,7 @@ async function seedShadow() {
 }
 
 // Step 5 (design 9, D7): "My pipeline researches" in Settings > Team, for the Team Lead and the deputy - a personal
-// setting, kept on this PC. "gaps" (default): only accounts no member can work right now. "all": every account.
+// setting, kept on this PC. "gaps" (default): only accounts no member can work on right now. "all": every account.
 export const LEAD_RESEARCH_KEY = "teamLeadResearch";
 async function leadResearchMode() {
   return (await chrome.storage.local.get(LEAD_RESEARCH_KEY))[LEAD_RESEARCH_KEY] === "all" ? "all" : "gaps";
@@ -1638,6 +1648,42 @@ function writeLeadRecord(id, member) {
   });
 }
 
+// D13: a Team Lead who is gone. When the Team Lead's SalesTeam has not been seen for 30 days - no heartbeat, no file,
+// no change record - the deputy may take over; without a deputy, any member. Otherwise a team whose Team Lead leaves
+// without a hand-over could never change its groups again. The merge judges the record by the same rule on every PC
+// (team-groups.js teamLeadOf: the earliest valid take-over wins), so this only decides whether to offer and write it.
+function takeOverOffer() {
+  const me = membership?.memberId;
+  const l = leadNow();
+  if (!me || !l.known || !l.lead || l.lead === me) return null;
+  if (mem.meta.hb[me]?.left || mem.meta.removed?.[me]) return null;
+  const now = Date.now();
+  const lastSeen = Math.max(mem.meta.hb[l.lead]?.at || 0, mem.meta.lastFileWall[l.lead] || 0);
+  if (!lastSeen || now - lastSeen < TAKEOVER_AFTER_MS) return null;
+  if (memberActiveWithin(mem.state, l.lead, now - TAKEOVER_AFTER_MS, now)) return null;
+  // With a deputy, only the deputy - the others are told whom to ask.
+  return { lead: l.lead, leadName: memberName(l.lead), lastSeen, can: !l.deputy || l.deputy === me, deputyName: l.deputy && l.deputy !== me ? memberName(l.deputy) : null };
+}
+
+export function takeOverAsTeamLead() {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    const me = membership.memberId;
+    if (isTeamLead()) return { ok: true, lead: leadNow() };
+    if (!(await connectedRoot()) || !inSyncNow()) return { ok: false, reason: "offline" };
+    const offer = takeOverOffer();
+    if (!offer) return { ok: false, reason: "lead_seen" };
+    if (!offer.can) return { ok: false, reason: "deputy_first" };
+    pushOwn({ t: tick(mem.clock, Date.now()), e: "team", id: "takeover", op: "set", f: { member: me, was: offer.lead } });
+    await save(["state", "outbox"]);
+    markGroupsDirty();
+    await publishSummary();
+    scheduleTick(0);
+    return { ok: isTeamLead(), lead: leadNow(), was: offer.leadName };
+  });
+}
+
 export function makeTeamLead(member) {
   if (!member) return Promise.resolve({ ok: false, reason: "not_member" });
   return writeLeadRecord("lead", member);
@@ -2130,6 +2176,7 @@ export async function getTeamSyncStatus() {
     member: true,
     me: membership,
     lead: leadNow(),
+    takeOver: takeOverOffer(),
     folder: folderState,
     outbox: mem.outbox.length,
     inflight: mem.inflight ? { n: mem.inflight.n, records: mem.inflight.changes.length } : null,
@@ -2213,6 +2260,7 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_REMOVE_MEMBER": return reply(removeMember(message.member));
     case "TEAM_ASSIGN_COUNTS": return reply(assignmentCounts());
     case "TEAM_MAKE_LEAD": return reply(makeTeamLead(message.member));
+    case "TEAM_TAKE_OVER": return reply(takeOverAsTeamLead());
     case "TEAM_SET_DEPUTY": return reply(setDeputy(message.member || null));
     case "TEAM_CLOSE": return reply(closeTeam());
     case "TEAM_INVITE": return reply(inviteMember({ name: message.name, email: message.email }));

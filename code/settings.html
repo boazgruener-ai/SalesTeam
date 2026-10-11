@@ -479,13 +479,20 @@
           <h4>My pipeline</h4>
           <label for="team-lead-research-select">My pipeline researches:</label>
           <select id="team-lead-research-select">
-            <option value="gaps">Only accounts no member can work right now</option>
+            <option value="gaps">Only accounts no member can work on right now</option>
             <option value="all">All accounts</option>
           </select>
           <p class="field-hint" id="team-lead-research-hint"></p>
           <div class="settings-buttons-row">
             <button type="button" id="team-lead-research-save" class="team-primary-btn" disabled>Save</button>
             <span class="field-hint" id="team-lead-research-status" role="status"></span>
+          </div>
+        </div>
+        <!-- D13: offered only when the Team Lead's SalesTeam has not been seen in the team for 30 days. -->
+        <div id="team-take-over" hidden>
+          <p class="field-hint" id="team-take-over-text"></p>
+          <div class="settings-buttons-row">
+            <button type="button" id="team-take-over-btn" class="team-primary-btn">Take over as Team Lead…</button>
           </div>
         </div>
         <div class="settings-buttons-row">

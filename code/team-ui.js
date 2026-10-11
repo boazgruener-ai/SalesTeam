@@ -776,6 +776,8 @@ async function onClose() {
 }
 
 const REFUSALS = {
+  lead_seen: "the Team Lead has been seen in the team in the last 30 days",
+  deputy_first: "the team has a deputy Team Lead, and only the deputy can take over",
   offline: "the team folder is not connected on this PC, or not in sync",
   not_lead: "only the Team Lead can do this",
   not_member: "that person is not a current member of the team",
@@ -859,6 +861,27 @@ function memberMenuItems(c, { isSelf, isLead, hasRights, leads, counts, gctx, cu
 }
 
 // Hand-over (design 3.3): the record is written and sent at once; this PC follows the new rule straight away.
+// D13: a Team Lead who is gone - the deputy, or without a deputy any member, takes over after 30 days.
+function paintTakeOver(offer) {
+  $("team-take-over").hidden = !offer;
+  if (!offer) return;
+  const since = `${offer.leadName}, the Team Lead, has not been seen in the team since ${timeText(offer.lastSeen)}.`;
+  $("team-take-over-btn").hidden = !offer.can;
+  $("team-take-over-text").textContent = offer.can
+    ? `${since} Until there is a Team Lead again, nobody can change the groups, the Setup or the members. You can take over.`
+    : `${since} ${offer.deputyName}, the deputy Team Lead, can take over (Settings > Team > Take over as Team Lead…).`;
+}
+async function onTakeOver() {
+  if (!(await askConfirm("Take over as Team Lead?\n\nYou become Team Lead: you see every account and change the groups, the Setup and the members. " +
+    "The Team Lead who is away becomes a Member; when they are back, you can make them Team Lead again (⋮ next to their name > Make Team Lead…). " +
+    "Everyone in the team is told.", { okLabel: "Take over as Team Lead", cancelLabel: "Cancel" }))) return;
+  try {
+    const r = await send({ type: "TEAM_TAKE_OVER" });
+    setText("team-member-status", r.ok ? `You are Team Lead now.${r.was ? ` ${r.was} is a Member.` : ""}` : `Not changed: ${REFUSALS[r.reason] || r.error || "try again in a moment"}.`, !r.ok);
+  } catch (err) { setText("team-member-status", err.message, true); }
+  renderTeamSettings();
+}
+
 async function onMakeLead(c, leads) {
   const deputyNote = leads.deputy && leads.deputy !== c.id ? " The deputy role ends with the hand-over." : "";
   if (!(await askConfirm(`Make ${c.name} Team Lead?\n\n${c.name} becomes Team Lead. You become a Member and see only the accounts of your groups. ` +
@@ -988,7 +1011,7 @@ let formerOpen = false; // Former members folded open - kept across the 5 s redr
 const LEAD_RESEARCH_KEY = "teamLeadResearch";
 const LEAD_RESEARCH_HINTS = {
   gaps: "Your colleagues' pipelines research the accounts of their groups, on their own API keys. Your pipeline researches the accounts " +
-    "assigned to you and the accounts nobody else can work right now: a group with no member online, and Other when no member is in it.",
+    "assigned to you and the accounts nobody else can work on right now: a group with no member online, and Other when no member is in it.",
   all: "Your pipeline takes an equal share of every group, alongside the group's online members. That is faster, but more of the research runs on your API key.",
 };
 let leadResearchSaved = "gaps";
@@ -1047,6 +1070,7 @@ export async function renderTeamSettings() {
     // Boaz 2026-10-08: the Team Lead does not leave the team they lead - they close it (D16), or hand over first.
     $("team-leave-line").hidden = m.memberId === leads.lead;
     $("team-close-btn").hidden = m.memberId !== leads.lead;
+    paintTakeOver(st?.takeOver || null);
     setText("team-member-who", `You are ${m.name} in the team "${m.teamName}" (${role}), since ${timeText(Date.parse(m.joinedAt))}.`);
     const connected = handle && permission === "granted";
     setText("team-member-folder",
@@ -1196,6 +1220,7 @@ export function initTeamSettings() {
   $("team-lead-research-save").addEventListener("click", onSaveLeadResearch);
   $("team-leave-btn").addEventListener("click", onLeave);
   $("team-close-btn").addEventListener("click", onClose);
+  $("team-take-over-btn").addEventListener("click", onTakeOver);
   $("team-repick-btn").addEventListener("click", onRepick);
   $("team-reconnect-btn").addEventListener("click", async () => {
     const p = await reconnect();

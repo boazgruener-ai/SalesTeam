@@ -1098,6 +1098,53 @@ def main():
     r, folder = lou.sync(folder)
     check("damaged file: Lou's own read moves on", lou.status()["measures"][-1].get("kind") != "repair", True)
 
+    # D13: a Team Lead who is gone. After 30 days without a sign of the Team Lead's SalesTeam the deputy may take over
+    # (nobody else while there is a deputy); every PC then reaches the same Team Lead, and everyone is told.
+    folder = {}
+    mia = Member("mia")
+    mia.set_local({"targetAccounts": {"acme ag": {"score": 1}}})
+    r, folder = mia.call("createTeam({ name: 'Mia', teamName: 'Take over' })", folder)
+    inv, folder = invite(mia, "Noa", folder)
+    noa = Member("noa", now_offset=5)
+    r, folder = noa.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    inv, folder = invite(mia, "Oli", folder)
+    oli = Member("oli", now_offset=9)
+    r, folder = oli.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    for m in (mia, noa, oli, mia, noa, oli):
+        r, folder = m.sync(folder)
+    mia_id, noa_id, oli_id = (m.status()["me"]["memberId"] for m in (mia, noa, oli))
+    r, folder = mia.call("setDeputy('%s')" % noa_id, folder)
+    for m in (mia, noa, oli):
+        r, folder = m.sync(folder)
+    check("take-over: not offered while the Team Lead is around", (noa.status().get("takeOver"), oli.status().get("takeOver")), (None, None))
+    r, folder = noa.call("takeOverAsTeamLead()", folder)
+    check("take-over: refused while the Team Lead is around", (r.get("ok"), r.get("reason")), (False, "lead_seen"))
+    for m in (noa, oli):
+        m.e("NOW += 31 * 24 * 3600 * 1000;")
+    for m in (noa, oli, noa, oli):
+        r, folder = m.sync(folder)
+    check("take-over: after 31 days the deputy is offered it", (noa.status().get("takeOver") or {}).get("can"), True)
+    check("take-over: a member is told the deputy can", ((oli.status().get("takeOver") or {}).get("can"), (oli.status().get("takeOver") or {}).get("deputyName")), (False, "Noa"))
+    r, folder = oli.call("takeOverAsTeamLead()", folder)
+    check("take-over: a member cannot while there is a deputy", (r.get("ok"), r.get("reason")), (False, "deputy_first"))
+    r, folder = noa.call("takeOverAsTeamLead()", folder)
+    check("take-over: the deputy takes over", (r.get("ok"), noa.status()["lead"].get("lead"), noa.status()["lead"].get("deputy")), (True, noa_id, None))
+    r, folder = noa.sync(folder)
+    r, folder = oli.sync(folder)
+    check("take-over: the member's PC sees the new Team Lead", (oli.status()["lead"].get("lead"), oli.status().get("takeOver")), (noa_id, None))
+    check("take-over: the member is told", any(n.get("kind") == "role" and n.get("text", "").startswith("Noa took over as Team Lead, because Mia") for n in oli.local("teamNotices") or []), True)
+    check("take-over: the team log says so", any(x.get("kind") == "team" and x.get("ref") == "takeover" for x in oli.local("teamLog") or []), True)
+    mia.e("NOW += 31 * 24 * 3600 * 1000 + 60000;")
+    r, folder = mia.sync(folder)
+    r, folder = mia.sync(folder)
+    check("take-over: the returning Team Lead is a Member", (mia.status()["lead"].get("lead"), mia.status()["admin"] if "admin" in mia.status() else False), (noa_id, False))
+    check("take-over: and is told why", any(n.get("kind") == "role" and "had not been seen in the team for 30 days. You are a Member now" in n.get("text", "") for n in mia.local("teamNotices") or []), True)
+    r, folder = noa.sync(folder)  # Noa's PC reads that Mia is back
+    back, folder = noa.call("makeTeamLead('%s')" % mia_id, folder)
+    r, folder = noa.sync(folder)
+    r, folder = mia.sync(folder)
+    check("take-over: the new Team Lead can hand the role back", (back.get("ok"), back.get("reason"), mia.status()["lead"].get("lead")), (True, None, mia_id))
+
     print()
     for f in _failures:
         print("FAIL  %s" % f)

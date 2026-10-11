@@ -2031,7 +2031,7 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 - **Top bar and Settings > Team** - reconnect, not connected, and “Not in sync” after 2 minutes of failed rounds (changes blocked, reading open); members table with role, online, assigned count, Sync now.
 - **Team log** - colleagues' changes with before and after; Activity Log filter Everything / Me / Automatic / Colleagues / Team.
 - **Not in 1.2.2** - advanced mode - admin-defined queues (territory, VIP, global) with members per queue and automatic assignment rules, replacing the Mine / Others filter (TEAM_USE_DESIGN.md section 11); a Microsoft Graph data layer (Option B) with real locks.
-- **Changed in 1.2.3 (test builds 1.2.2.5+)** - Team Admin is now Team Lead: one per team, decided by the team folder, with hand-over (Make Team Lead…), a deputy with the same rights (Make deputy…) and Close the team…. Joining needs an invitation: the Team Lead invites by name and e-mail (at Create or with Add member…), the members table shows Invited rows (⋮ Cancel invitation), an invitation is used once and gives the member's name, and one waiting for this person is announced in the top bar on every page (Join… opens it). Create and Join choose the team's folder itself (Chrome refuses the OneDrive folder when Windows keeps Desktop or Documents in it): Create makes a new folder inside OneDrive in Chrome's folder window, its name filling in the team name; Join chooses the shared team folder and keeps looking in it every 30 s until the invitation is there. A PC that lost its saved team state re-reads every file in the team folder and sends nothing until it has (1.2.2.9). Groups (advanced mode) and the full write-up get a section of their own when 1.2.3 is finished.
+- **Changed in 1.2.3 (test builds 1.2.2.5+)** - Team Admin is now Team Lead: one per team, decided by the team folder, with hand-over (Make Team Lead…), a deputy with the same rights (Make deputy…) and Close the team…. Joining needs an invitation: the Team Lead invites by name and e-mail (at Create or with Add member…), the members table shows Invited rows (⋮ Cancel invitation), an invitation is used once and gives the member's name, and one waiting for this person is announced in the top bar on every page (Join… opens it). Create and Join choose the team's folder itself (Chrome refuses the OneDrive folder when Windows keeps Desktop or Documents in it): Create makes a new folder inside OneDrive in Chrome's folder window, its name filling in the team name; Join chooses the shared team folder and keeps looking in it every 30 s until the invitation is there. A PC that lost its saved team state re-reads every file in the team folder and sends nothing until it has (1.2.2.9). Groups (advanced mode) are in section 6.26.
 
 ### 6.24 Exclusions and relationships (v1.2.3)
 
@@ -2087,6 +2087,57 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 - **Headcount is a whole number** - full-time equivalents from annual reports (941.2) are rounded wherever they come in - web findings, imports, hand edits (wholeEmployees) - and repairEmployeeDecimals rounds what was stored before, once, on update.
 - **One person, one entry per account** - pure, person-identity.js. samePerson: the same LinkedIn profile, or the same first and last name after dropping titles, initials, middle names and brackets, with umlauts written either way; namesakes with two different profiles stay two people. Used by the web research, the imports, the discovery merge and the account merge. Pairs already stored come to Decisions as “Same person?” - Merge / Keep both.
 - **Not in 1.2.3** - live connections to a CRM (API, sign-in, two-way sync); Leads and Opportunities; reading a CRM's customer or partner type into the relationship lists.
+
+### 6.26 Team advanced mode: Team Lead and account groups (v1.2.3)
+
+1.2.3 adds advanced mode to team use: the Team Lead splits the team’s accounts into groups, and each member sees and works only the accounts of their groups. A team without groups behaves exactly as in 1.2.2 (R9.1). The requirements (R1-R10) are in TEAM_ADVANCED_MODE_REQUIREMENTS.md; the design, its decisions (D1-D19) and each step as built in TEAM_ADVANCED_MODE_DESIGN.md. Invitations and choosing the team folder are described in 6.23.
+
+**Team Lead**
+
+- **One role, decided by the team folder** - the creator is the first Team Lead; after that each hand-over is a change record that counts only if its author was Team Lead at that stamp, so every PC walks the same records and reaches the same Team Lead (teamLeadOf, pure, team-groups.js). Every role check goes through isTeamLead(); the local membership.role is no longer used (D1).
+- **Deputy** - at most one member, with the Team Lead’s rights until the Team Lead ends it (members ⋮ Make deputy… / End deputy, D15). For absences; the hand-over (Make Team Lead…) is for a permanent change.
+- **Close the team…** - for the Team Lead only, in place of Leave the team (D16): every PC stops sharing, each person keeps the data as their own copy, all assignments end and the folder is marked closed. A team nobody else joined closes with a short confirmation. A member’s Leave the team… is a small link at the bottom of Settings > Team (1.2.2.38) - the normal way out is the Team Lead’s Remove from team….
+- **Take-over** - for a Team Lead who is gone (D13). When the Team Lead’s SalesTeam has not been seen in the team for 30 days - no heartbeat, no file, no change record - Settings > Team offers Take over as Team Lead… to the deputy, or to every member when there is no deputy; with a deputy the other members are told who can. The merge judges the take-over record by the same rule on every PC (teamLeadOf; the earliest valid one wins), the absent Team Lead becomes a Member and everyone is told in the top bar. The new Team Lead can hand the role back (takeOverAsTeamLead, TEAM_TAKE_OVER in team-sync.js).
+
+**Groups**
+
+- **Data** - one shared map, teamGroups, one row per group: name, description, kind (filter or named accounts), the filter or the account list, and its members. Other is a fixed row that holds only members. The merge ignores a group record whose author did not have the Team Lead’s rights at that stamp (applyChange, two passes) - the first role rule enforced in the merge itself (D2).
+- **Computed, never stored** - team-groups.js (pure: groupFacts, matchesFilter, groupsOf, membersOf, mayAccess) takes an account’s effective values and returns its group ids, the same on every PC. Filter fields: Region (six regions from the Global HQ country, geo-regions.js), Country, Size (the Setup bucket S-XXL from the global employee count; sizeEmployeesOf is shared with the Size column), Local / Global, Industry, Company type, effective Priority and Relationship. An unknown value never matches. An account in no group is in Other; a member in no group counts as in Other (D9). An account can be in several groups.
+- **Editor** - Settings > Team > Groups: + New group and the row ⋮ Edit… / Delete…. One multi-select per filter field, with values from what the accounts hold plus the Setup - no free typing; named accounts as a search box and a tick list; members as ticks. The preview is live (“Matches 42 accounts - 30 unassigned, 12 assigned”, who joins, who leaves, who loses an assignee). The kind is fixed once saved (D11), with “Copy its current accounts into a new named group…”. Nothing changes until Save. The first group shows a one-time notice that advanced mode is on.
+- **Groups table** - Group, Kind, Members, Accounts, Assigned, Unassigned, Ready. The Accounts, Unassigned and Ready counts open Target Accounts with the matching pickers (target-accounts.html?group=&owner=unassigned&ready=1). Warnings “no members” on a group and “nothing assigned” on a member. Members see the table read-only.
+- **Members table** - a row ⋮ for the Team Lead (Make Team Lead…, Make deputy… / End deputy, Groups…, Release all, Remove from team…) and a Groups column (D10).
+
+**Visibility**
+
+- **One rule** - an account is seen by the Team Lead, the deputy and the members of its groups (canSeeAccount, canSeeLead - pure). The background publishes it with the claim summary (teamAccountStates) and every page asks teamAccounts.canSee. Wired into Target Accounts (applyVisibleRows - lists, counts, pages and exports follow), Target Contacts, the Leads Dashboard, the side panel counts, the account and contact pages (“This account is not in your groups.”), Decisions, the Pipeline status chart and readiness map, and the LinkedIn badge.
+- **Leads without an account** - a lead (post) whose company is not a team account is seen by the Team Lead, the deputy and the member who scanned it (scannedBy; older leads by the author of their first stamp) - D12.
+- **A view filter, not secrecy** - every PC still holds all the team’s data, because the merge needs it and the folder is shared anyway (D3). CSV and CRM exports carry only what the member sees; the full backup carries everything. Help says so.
+- **Pickers** - a Group dropdown (member: All my groups and their own groups; Team Lead and deputy: All accounts, every group, Other; hidden for a member in a single group) and an Assigned dropdown (Assigned or not / Assigned to me / Assigned to others / Unassigned) on Target Accounts, Target Contacts and the Leads Dashboard, from one shared builder (team-accounts-ui.js groupPicker, ownerPicker), remembered per page (D14). In a team without groups Target Accounts keeps the Mine / Others / Unassigned / All buttons.
+- **Groups column and header** - a Groups column on Target Accounts, and on Target Contacts and the Leads Dashboard hidden by default; the account page shows its groups next to the title.
+
+**Group changes**
+
+- **By the Team Lead** - Add to group… / Remove from group… in the account ⋮ (list row and page) and as two buttons in the bulk bar - named groups only, offered only where they do something. Editing a filter, a list or a group’s members applies at once; before Save the confirmation counts the accounts that move and, by name, who loses an assignee (“Anna 2, Luc 1”).
+- **Lost access ends the assignment** - an assignment whose assignee has no access through the account’s current groups is void on every PC - computed in the published summary, not written, so it waits for nobody’s PC (D6). A former member’s accounts are left alone. The Team Lead’s PC also writes an explicit release (TEAM_RELEASE_VOID), which gives the log line and the assignee’s notice “… moved to VIP - it is no longer in your groups”.
+- **Hand edits** - only Global HQ country, Local / Global, company type and industry can move an account by hand. A member’s edit that would take an account out of a group is refused on Save (“Only the Team Lead moves an account to another group”); the Team Lead’s or deputy’s edit applies after a warning pop-up (Save and move it / Cancel).
+- **The pin** - when research or the pipeline finds data on an assigned account that would change its groups, the data is saved and the groups are held at their old value in teamGroupPins (team-sync.js holdMoves; written by the PC that made the change). The Groups column says “(move to VIP - waiting for the Team Lead’s decision)”, and the Team Lead gets a Decisions card (kind group_move) with one answer, Move it. The pin goes when the account is released or reassigned. An unassigned account moves at once (D5).
+
+**Pipeline and Discovery**
+
+- **Access first** - teamWorkGate checks access before everything else, in mayWork (pipeline, web lane) and offLimits (bulk research, reason groups). An account assigned to me stays mine whatever the share says.
+- **Candidates** - workCandidates (pure): the online members with access to the account, plus the Team Lead and the deputy when theirs is set to All accounts; when that list is empty, the online Team Lead and deputy share the gap. Rendezvous hashing is unchanged, so the shares stay disjoint, and members’ groups are researched on members’ API keys (R7.4).
+- **My pipeline researches** - Settings > Team, for the Team Lead and the deputy once the team has groups: “Only accounts no member can work on right now” (default) or “All accounts”, saved with Save (D7). A personal key, teamLeadResearch, published with the heartbeat so every PC builds the same candidate lists.
+- **Discovery** - in a team with groups only the Team Lead’s and the deputy’s pipeline looks for new companies (discoverForTargets returns team_lead_only, also at the wizard’s Finish) - D8. Web Discovery started by hand is not restricted.
+- **Independent Automation switches** - build 1.2.2.39, with or without a team: pipelineAutomation.enabled is the LinkedIn work only and webEnabled the web research. Web research alone runs the web jobs, Discovery and the web lane and never opens LinkedIn; the status line says “Web research only - the LinkedIn work is off”.
+
+**Notices, team log and robustness**
+
+- **Notices** - top-bar notices (teamNotices) for being added to or taken out of a group, for groups being set up, for an account lost to a group move and for an accepted invitation.
+- **Team log** - group changes in words (created, filter changed field by field, members added or removed, deleted), the Team Lead chain, and releases “(no longer in their groups)”. A colleague’s automatic bookkeeping reads “SalesTeam on Annick’s PC updated X: …” or “checked X - nothing new to record” (1.2.2.39).
+- **Damaged change files** - build 1.2.2.27, after OneDrive left five change files holding only zero bytes and a colleague’s reading stopped there for good: each PC re-checks 20 of its own files per read round (verifyOwnFiles), and one that stays unreadable for 60 s is rewritten from its own state with the original stamps (recordsBetween).
+- **Bulk assign** - build 1.2.2.32: assigning or releasing several accounts is one job, one save and one change file (TEAM_ASSIGN_MANY / TEAM_UNASSIGN_MANY).
+- **Tests** - test_pure_modules.py (996 checks: lead chain in any order, null facts, Other, pins, candidates) and test_team_sync.py (242 checks: hand-over, take-over after 30 days, a non-lead’s group record ignored, invitations, pinned move approved, disjoint shares per group, a zeroed file repaired).
+- **Not in 1.2.3** - a company-wide Admin role above the teams; sign-in with Microsoft; Setup and rules enforced in the merge (they keep the screen lock, D2); a reader skipping a damaged file whose writer never returns; “The team already has this company” on add, scan and import duplicates.
 
 ## 7. Non-functional requirements
 
@@ -3135,7 +3186,7 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
   key equals their record's normalized company name, so alias-keyed duplicates never enter the count.
 
 - **Future milestone (parked, 2026-09-19, NOT started): use by a whole sales team, not one salesperson.**
-  **Update: shipped in 1.2.2 as phase 1 + basic mode (section 6.23); advanced-mode queues remain open.**
+  **Update: shipped in 1.2.2 as phase 1 + basic mode (section 6.23); advanced mode (account groups) followed in 1.2.3 (section 6.26).**
 
   The trigger: providing SalesTeam to the members of the user's wife's sales team, several of whom work in the
   same region and possibly on the same accounts. Today it is single-user by design (all data in one browser's
@@ -3167,4 +3218,4 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.2.39**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.3**.

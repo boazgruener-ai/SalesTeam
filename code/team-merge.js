@@ -249,15 +249,19 @@ export function recordsBetween(state, author, lower = null, upper = null) {
 // The Team Lead and the gated (group) rows - 1.2.3
 // --------------------------------------------------------------------------
 
+// Did this member write any change record between the two times (by day)? The take-over rule (D13) asks it of the
+// Team Lead; the Take over button asks the same question before it writes anything.
+export function memberActiveWithin(state, member, from, to) {
+  ensureTeamParts(state);
+  const days = state.days[member] || {};
+  for (let d = Math.floor(from / MERGE_DAY_MS); d <= Math.floor(to / MERGE_DAY_MS); d++) if (days[d]) return true;
+  return false;
+}
+
 export function leadChain(state) {
   ensureTeamParts(state);
   const records = Object.entries(state.teamRecs).map(([t, r]) => ({ t, id: r.id, member: r.member }));
-  const activeWithin = (member, from, to) => {
-    const days = state.days[member] || {};
-    for (let d = Math.floor(from / MERGE_DAY_MS); d <= Math.floor(to / MERGE_DAY_MS); d++) if (days[d]) return true;
-    return false;
-  };
-  return teamLeadOf(state.creator, records, { activeWithin });
+  return teamLeadOf(state.creator, records, { activeWithin: (member, from, to) => memberActiveWithin(state, member, from, to) });
 }
 
 // The creator is read from the folder (admins/<member>.json). Returns true when it changed (the rows are rebuilt).
