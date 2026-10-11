@@ -19,7 +19,7 @@ import { extractRows, diffRows, staleFieldUnsets, projectRow, projectKey, patchV
 import {
   newState, applyChange, createClock, tick, observe, formatStamp, compactChanges, stampWall, priorOf, retractChanges,
   pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed, stampMember,
-  leadChain, setTeamCreator, isGatedRow,
+  leadChain, setTeamCreator, isGatedRow, recordsBetween,
 } from "./team-merge.js";
 import { groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, OTHER_GROUP } from "./team-groups.js";
 import {
@@ -570,11 +570,51 @@ async function readRound(root, me) {
     await recordTeamLog(logged, priors);
     measure({ kind: "read", files: update.files, bytes: update.bytes, records: records.length, rows, ms: Math.round(performance.now() - t0) });
     await save([]);
+    await verifyOwnFiles(root, me);
     if (update.files < MAX_FILES_PER_ROUND) {
       mem.meta.replaying = false; // caught up: from here on, what is read is news
       if (mem.meta.shadowLost) await seedShadow();
     }
   });
+}
+
+// 1.2.2.27: one of my own change files holds no readable content (zero bytes after a crash or an interrupted OneDrive
+// write - seen on Boaz's folder, 10 Oct). Colleagues read a member's files in order and wait at an unreadable one, so
+// everything I wrote after it never reaches them. Seen unreadable for REPAIR_AFTER_MS (not just being synced), the file
+// is written again from my own state: my records stamped between the readable files around it (team-merge.js
+// recordsBetween). The next damaged file, if any, is found by the next round.
+const REPAIR_AFTER_MS = 60000;
+const REPAIR_SCAN = 50;
+const VERIFY_PER_ROUND = 20;
+// My own files are checked a few per round, round and round (a file can be damaged long after it was written and read
+// back - so not by the read cursor, which has passed it). Stops at the first unreadable one until it is repaired.
+async function verifyOwnFiles(root, me) {
+  const meta = mem.meta;
+  const last = meta.lastWrittenN || 0;
+  let at = meta.verifyN || 0;
+  if (at >= last || at < (meta.snapN || 0)) at = meta.snapN || 0;
+  let n = null;
+  for (let i = 0; i < VERIFY_PER_ROUND && at < last; i++) {
+    const r = await readTeamJson(root, ["members", me, "changes"], `c-${at + 1}.json`);
+    if (r.status === "incomplete") { n = at + 1; break; }
+    at += 1; // readable, or folded into a snapshot
+  }
+  meta.verifyN = at;
+  if (!n) return;
+  if (!meta.damagedOwn || meta.damagedOwn.n !== n) { meta.damagedOwn = { n, since: Date.now() }; return; }
+  if (Date.now() - meta.damagedOwn.since < REPAIR_AFTER_MS) return;
+  const stampsOf = async (k) => {
+    const r = await readTeamJson(root, ["members", me, "changes"], `c-${k}.json`);
+    return r.status === "ok" ? (r.data.changes || []).map((c) => c && c.t).filter(Boolean).sort() : null;
+  };
+  let lower = null;
+  for (let k = n - 1; k >= 1 && k >= n - REPAIR_SCAN && !lower; k--) { const s = await stampsOf(k); if (s && s.length) lower = s[s.length - 1]; }
+  let upper = null;
+  for (let k = n + 1; k <= (meta.lastWrittenN || 0) && k <= n + REPAIR_SCAN && !upper; k++) { const s = await stampsOf(k); if (s && s.length) upper = s[0]; }
+  const changes = recordsBetween(mem.state, me, lower, upper);
+  await writeTeamJson(root, ["members", me, "changes"], `c-${n}.json`, { member: me, n, written: new Date().toISOString(), repaired: true, changes });
+  meta.damagedOwn = null;
+  measure({ kind: "repair", n, records: changes.length });
 }
 
 // Inside the queue, once a lost shadow's full re-read is done. Every row the team knows gets the team's value on this

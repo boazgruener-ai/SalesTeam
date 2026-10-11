@@ -216,6 +216,35 @@ function applyOp(state, ch, author) {
   }
 }
 
+// 1.2.2.27 (Boaz's folder, 10 Oct: five change files and a heartbeat written in the same minute held only zero
+// bytes - every colleague stopped reading that member at the first of them, for good). The author's own state still
+// knows what it wrote: every record of `author` stamped after `lower` and before `upper` (the stamps around the
+// damaged file; null = open), rebuilt with its original stamp - so applying it where it was already applied changes
+// nothing. A value overwritten since is not rebuilt; the later stamp has won everywhere anyway.
+export function recordsBetween(state, author, lower = null, upper = null) {
+  ensureTeamParts(state);
+  const inGap = (t) => Boolean(t) && stampMember(t) === author && (!lower || t > lower) && (!upper || t < upper);
+  const out = [];
+  for (const [e, byId] of Object.entries(state.entities || {})) {
+    for (const [id, rec] of Object.entries(byId)) {
+      if (isGatedRow(e, id)) continue; // from state.gated below, whole
+      const teamRec = e === "team" && TEAM_RECORD_IDS.includes(String(id)); // from state.teamRecs below
+      const sets = {};
+      if (!teamRec) for (const [field, cur] of Object.entries(rec.f || {})) if (cur && inGap(cur.t)) (sets[cur.t] || (sets[cur.t] = {}))[field] = cur.v;
+      for (const [t, f] of Object.entries(sets)) out.push({ t, e, id, op: "set", f });
+      if (inGap(rec.del)) out.push({ t: rec.del, e, id, op: "delete" });
+      for (const t of (rec.cl && rec.cl[author]) || []) if (inGap(t)) out.push({ t, e, id, op: "claim" });
+      if (rec.rl && inGap(rec.rl[author])) out.push({ t: rec.rl[author], e, id, op: "release" });
+      for (const [to, list] of Object.entries(rec.as || {})) for (const t of list) if (inGap(t)) out.push({ t, e, id, op: "assign", member: to });
+      for (const [from, t] of Object.entries(rec.ua || {})) if (inGap(t)) out.push({ t, e, id, op: "unassign", member: from });
+      for (const [t, tc] of Object.entries(rec.tc || {})) if (inGap(t)) out.push({ t, e, id, op: "touch", note: tc.note ?? null });
+    }
+  }
+  for (const byStamp of Object.values(state.gated || {})) for (const [t, ch] of Object.entries(byStamp)) if (inGap(t)) out.push(ch);
+  for (const [t, r] of Object.entries(state.teamRecs || {})) if (inGap(t)) out.push({ t, e: "team", id: r.id, op: "set", f: { member: r.member } });
+  return out.sort((a, b) => compareStamps(a.t, b.t));
+}
+
 // --------------------------------------------------------------------------
 // The Team Lead and the gated (group) rows - 1.2.3
 // --------------------------------------------------------------------------

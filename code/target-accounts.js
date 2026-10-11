@@ -3601,7 +3601,9 @@ let readinessRefreshTimer = null;
 let targetsCoverage = [];
 
 async function refreshReadiness() {
-  const rows = await getAccountReadiness();
+  // 1.2.2.28 (design 6): with account groups, the chart and the column cover the accounts this member sees - the
+  // Pipeline status chart said 568 companies next to four charts of the member's 162.
+  const rows = (await getAccountReadiness()).filter(({ view }) => teamAccounts.canSee(view.key));
   readinessByCompanyId = new Map(rows.map(({ view, assessment }) => [view.companyId, assessment]));
   targetsCoverage = await getTargetsStatus({ readiness: rows }).then(coverageLines).catch(() => []);
 }
@@ -3883,7 +3885,7 @@ async function renderLinkedinResolveStatus() {
   // by construction, so alias-keyed duplicates (and their stale data)
   // never enter the count at all.
   const entries = Object.entries(targetAccounts)
-    .filter(([key, v]) => key === normalizeCompanyName(v.company))
+    .filter(([key, v]) => key === normalizeCompanyName(v.company) && teamAccounts.canSee(key))
     .map(([, v]) => v);
   if (entries.length === 0) {
     linkedinResolveStatusEl.hidden = true;
@@ -7938,6 +7940,7 @@ async function init() {
     if (`${workbook.companies.length}/${workbook.contacts.length}` !== before) {
       renderAccountsStats();
       renderContactsStats();
+      scheduleReadinessRefresh();
     }
     const open = parseHash();
     const onPage = !accountViewEl.hidden || !contactViewEl.hidden || !noAccessViewEl.hidden;

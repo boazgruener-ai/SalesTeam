@@ -911,6 +911,32 @@ def main():
     check("lost shadow: Lou keeps Acme 5 and gets Beta", ((lou.local("targetAccounts") or {}).get("acme ag", {}).get("score"),
           (lou.local("targetAccounts") or {}).get("beta ag", {}).get("score")), (5, 2))
 
+    # 1.2.2.27: one of Lou's change files holds only zero bytes (Boaz's folder, 10 Oct). Kim waits at it and gets
+    # nothing Lou wrote afterwards - until Lou's own PC rebuilds the file from what it knows.
+    lou_id = lou.status()["me"]["memberId"]
+    ta = lou.local("targetAccounts"); ta["acme ag"]["score"] = 6; lou.set_local({"targetAccounts": ta})
+    r, folder = lou.sync(folder)
+    damaged = "members/%s/changes/c-%d.json" % (lou_id, lou.status()["lastWrittenN"])
+    original = json.loads(folder[damaged])["changes"]
+    folder[damaged] = "\x00" * len(folder[damaged])
+    ta = lou.local("targetAccounts"); ta["beta ag"]["score"] = 9; lou.set_local({"targetAccounts": ta})
+    r, folder = lou.sync(folder)
+    r, folder = kim.sync(folder)
+    tk = kim.local("targetAccounts") or {}
+    check("damaged file: Kim waits at it - neither that change nor the later one arrives",
+          (tk.get("acme ag", {}).get("score"), tk.get("beta ag", {}).get("score")), (5, 2))
+    # Found on the next pass over its own files, rebuilt once it has been unreadable for a minute (timer rounds).
+    lou.e("FOLDER = %s;" % json.dumps(folder))
+    lou.advance(120000)
+    folder = json.loads(lou.e("JSON.stringify(FOLDER)"))
+    repaired = json.loads(folder[damaged])
+    check("damaged file: Lou's PC writes it again with the same records", (repaired.get("repaired"), repaired["changes"]), (True, original))
+    r, folder = kim.sync(folder)
+    tk = kim.local("targetAccounts") or {}
+    check("damaged file: Kim now has both changes", (tk.get("acme ag", {}).get("score"), tk.get("beta ag", {}).get("score")), (6, 9))
+    r, folder = lou.sync(folder)
+    check("damaged file: Lou's own read moves on", lou.status()["measures"][-1].get("kind") != "repair", True)
+
     print()
     for f in _failures:
         print("FAIL  %s" % f)
