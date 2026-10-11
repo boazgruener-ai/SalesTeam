@@ -70,6 +70,7 @@ import {
   getScanTargetCompanyIds,
   getAccountReadiness,
 } from "./storage.js";
+import { hideImportForMembers } from "./import-gate.js";
 import { MIN_READY_TO_SCAN } from "./readiness.js";
 import { readyEtaMinutes, measuredMinutesPerReady, READY_GOAL_KEY, localDay } from "./pipeline-plan.js";
 import { getPipelineAutomation } from "./pipeline-automation.js";
@@ -806,12 +807,12 @@ document.getElementById("open-decisions-btn").addEventListener("click", () => sh
 initDecisionsDot();
 
 openTargetAccountsBtn.addEventListener("click", () => showEmbeddedPage("target-accounts.html", "Target Accounts Dashboard"));
-document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
-document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import", "Target Accounts Dashboard"));
+document.getElementById("nav-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export", "Target Accounts Dashboard"));
+document.getElementById("nav-import-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import&what=contacts", "Target Contacts Dashboard"));
+document.getElementById("nav-export-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export&what=contacts", "Target Contacts Dashboard"));
+// 1.2.3 (Export & Import design 6): Import and Restore are the Team Lead's in a team - not shown to members.
+hideImportForMembers();
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
 document.getElementById("nav-web-discovery-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-discovery", "Target Accounts Dashboard"));
@@ -1197,8 +1198,6 @@ function persistNegativeTopics() {
 const NEGATIVE_TOPIC_SOURCE_LABELS = {
   competitors: "Filter out competitors, listed in the main settings",
   recruiters: "Filter out recruiting companies, listed in the main settings",
-  customers: "Filter out existing customers, listed in the main settings",
-  partners: "Filter out existing partners, listed in the main settings",
   others: "Filter out other excluded companies, listed in the main settings",
 };
 
@@ -1837,11 +1836,11 @@ async function confirmReadyGate() {
   if (ready >= MIN_READY_TO_SCAN) return true;
   const auto = await getPipelineAutomation();
   const more = total === 0 ? " Import your target accounts, or run Discovery, first."
-    : auto.enabled ? " SalesTeam is preparing more automatically while Chrome is open."
+    : auto.enabled || auto.webEnabled ? " SalesTeam is preparing more automatically while Chrome is open."
     : " Automatic preparation can get them ready: Settings > Automation.";
   if (ready === 0) {
     const have = total === 0 ? "You have no target accounts yet." : "None of your accounts is Ready yet.";
-    await askConfirm(`${have} The Scanner needs at least one Ready account to start.${more}`, { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(`${have} The Scanner needs at least one Ready account to start.${more}`, { okLabel: "OK", cancelLabel: null });
     return false;
   }
   // 1.2.1 step 4 (design 7.3): the progress, and - while the pipeline is preparing them - the time left, from
@@ -1882,7 +1881,7 @@ scanBtn.addEventListener("click", async () => {
   if (!(await confirmReadyGate())) return;
   const sameJob = {
     message: "You already have a scanner running (searching LinkedIn for posts and jobs).\n\n" +
-      "Press Close to let it continue, or press OK to stop it and start a new scan.",
+      "Let it continue, or stop it and start a new scan?",
     stop: () => chrome.storage.local.set({ scanAbortRequested: true }),
   };
   showScanStarting(true);
@@ -2112,8 +2111,7 @@ navCollapseBtn.addEventListener("click", () => {
 });
 
 // Keeps the Author title filter and the wizard-list-backed Negative Topics
-// (Competitor Blocklist/Recruiting Companies/Existing Customers/Existing
-// Partners) in sync if the Setup wizard's underlying lists are edited on
+// (Competitor Blocklist/Recruiting Companies/Other Excluded Companies) in sync if the Setup wizard's underlying lists are edited on
 // another tab while this side panel stays open - getNegativeTopics() itself
 // already recomputes fresh on every call (so a scan always uses the current
 // lists regardless), this just keeps what's ON SCREEN here from going

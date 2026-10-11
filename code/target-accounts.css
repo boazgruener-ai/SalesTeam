@@ -1833,6 +1833,20 @@ thead .actions-col {
 .imported-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: #2e9e5b; vertical-align: middle; cursor: help; }
 
 /* Merge duplicate accounts dialog */
+/* 1.2.3: Customer / Partner tag (account page, lists, Leads Dashboard) and the Relationship dialog */
+.relationship-tag { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600; color: #4a148c; background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 8px; padding: 0 6px; white-space: nowrap; vertical-align: middle; }
+#account-title-row .relationship-tag { font-size: 12px; padding: 1px 8px; margin-left: 0; }
+.col-filter-choices { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; font-size: 13px; }
+.col-filter-choice { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+#relationship-dialog { border: none; border-radius: 10px; padding: 20px 24px; width: 440px; max-width: 90vw; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); }
+#relationship-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+#relationship-dialog h3 { margin: 0 0 10px; color: var(--ink); font-size: 16px; }
+#relationship-dialog p { font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0 0 12px; }
+#relationship-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#relationship-dialog-save-btn { background: var(--blue); color: white; }
+#relationship-dialog-save-btn:disabled { opacity: 0.45; cursor: default; }
+#relationship-dialog-cancel-btn { background: #f0f0f0; color: var(--ink); }
+
 #merge-accounts-dialog {
   border: none;
   border-radius: 10px;
@@ -1891,6 +1905,14 @@ thead .actions-col {
 
 /* Import Research Workbook dialog - helpers for people who do not have a workbook yet */
 .import-help-heading { margin: 16px 0 6px; font-size: 13px; color: var(--ink); }
+/* 1.2.3 one Import… / Export… dialog: the format and "what" choices */
+.io-choice { border: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.io-choice legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+.io-choice label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.export-folder-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#export-folder-name { flex: 1; min-width: 200px; padding: 6px 8px; font-size: 13px; font-weight: 600; border: 1px solid var(--border);
+  border-radius: 4px; background: var(--gray-light); color: var(--ink); }
+.export-folder-hint { margin: 4px 0 0; font-size: 12px; color: var(--gray); }
 .import-help-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
 .import-help-buttons button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; }
 .import-columns-details { margin-top: 8px; font-size: 12px; }
@@ -2210,3 +2232,39 @@ body {
   z-index: 4;
   box-shadow: inset 0 -2px 0 var(--border), -6px 0 6px -6px rgba(0, 0, 0, 0.2);
 }
+
+
+/* Column order by drag and drop (Boaz 2026-10-08, column-order.js) */
+th.th-draggable { cursor: grab; }
+th.th-dragging { opacity: .45; }
+th.th-drop-before { box-shadow: inset 3px 0 0 #1155cc !important; }
+th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc !important; }
+
+/* Boaz 2026-10-08: the tick boxes stay at the left edge while the table scrolls right (as the ⋮ column stays right). */
+#companies-table th.select-cell,
+#companies-table td.select-cell,
+#contacts-table th.select-cell,
+#contacts-table td.select-cell {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 2;
+  box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.2);
+}
+#companies-table thead th.select-cell,
+#contacts-table thead th.select-cell {
+  z-index: 4;
+  box-shadow: inset 0 -2px 0 var(--border), 6px 0 6px -6px rgba(0, 0, 0, 0.2);
+}
+.company-row:hover td.select-cell,
+.company-row.expanded td.select-cell {
+  background: var(--blue-light);
+}
+
+/* 1.2.3 step 2 (design 7): the Group dropdown above a table. */
+.team-group-picker[hidden] { display: none; }
+.team-group-picker { border: 1px solid var(--border, #ccc); border-radius: 6px; background: #fff; color: #333; padding: 4px 8px; font-size: 12px; margin-right: 8px; vertical-align: middle; max-width: 220px; }
+
+/* 1.2.3 step 3 (R6.3): the account's groups next to its title. */
+.team-groups-tag[hidden] { display: none; }
+.team-groups-tag { font-size: 12px; color: #555; background: #eef1f6; border-radius: 10px; padding: 2px 10px; margin-left: 8px; white-space: nowrap; }

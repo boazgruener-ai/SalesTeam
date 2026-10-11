@@ -124,7 +124,8 @@ export function mountChecklist(container, items, opts = {}) {
     state.forEach((item, index) => {
       const box = node("input", { type: "checkbox" });
       box.checked = !!item.checked;
-      box.addEventListener("change", () => { item.checked = box.checked; row.classList.toggle("priority-item-unchecked", !box.checked); });
+      // 1.2.3: a tick also calls onChange - before, ticking a proposal did not reach the step (design 2.6).
+      box.addEventListener("change", () => { item.checked = box.checked; row.classList.toggle("priority-item-unchecked", !box.checked); changed(); });
       const text = node("input", { type: "text", className: "proposal-checklist-text" });
       text.value = item.text;
       text.addEventListener("input", () => { item.text = text.value; });

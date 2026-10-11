@@ -14,8 +14,9 @@ import { DECISION_TAKEN_KEY } from "./decisions-dot.js";
 
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
-  "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
-  "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Admin's join proposals
+  "companyExclusions", "companyExclusionsLifted", "companyRelationships", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
+  "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Lead's join proposals
+  "teamGroupPins", "teamGroups", // 1.2.3 advanced mode step 4: the Team Lead's group moves
 ]);
 
 const CHOICES = {
@@ -23,8 +24,10 @@ const CHOICES = {
   id_taken: [["same", "Same company"], ["different", "Different company"]],
   name_match: [["same", "Same company"], ["different", "Different company"]],
   duplicate: [["merge", "Merge"], ["separate", "Keep both"]],
+  contact_duplicate: [["merge", "Merge"], ["separate", "Keep both"]],
   lacking_evidence: [["keep", "Keep"], ["remove", "Remove"]],
   finding: [["web", "Use web finding"], ["current", "Keep current"]],
+  import_finding: [["import", "Use import"], ["current", "Keep current"]],
 };
 
 const KIND_PLURAL = {
@@ -32,13 +35,34 @@ const KIND_PLURAL = {
   id_taken: ["LinkedIn company already used", "LinkedIn companies already used"],
   name_match: ["possible same company", "possible same companies"],
   duplicate: ["possible duplicate", "possible duplicates"],
+  contact_duplicate: ["person entered twice", "people entered twice"],
   lacking_evidence: ["account lacking evidence", "accounts lacking evidence"],
   finding: ["web finding", "web findings"],
+  import_finding: ["import difference", "import differences"],
+  revenue_units: ["revenue without its unit", "revenues without their unit"],
   join_proposal: ["join proposal", "join proposals"],
+  group_move: ["group move", "group moves"],
 };
 
+// D16: a revenue without its unit. "Correct it" only with a unit that fits; "Keep" for a stored value, "Don't use it"
+// for a web finding or an import; "Remove account" only for an account below the targeting minimum.
+function unitsChoices(p) {
+  const out = [];
+  if (p.suggested) out.push(["correct", "Correct it"]);
+  out.push(["keep", p.origin === "current" ? "Keep" : "Don't use it"]);
+  if (p.outOfScope) out.push(["remove", "Remove account"]);
+  return out;
+}
+
 // A join proposal's two answers depend on the account (who has it now) - the item carries them (team-proposals.js).
-const choicesOf = (item) => item.choices || CHOICES[item.kind];
+const choicesOf = (item) => item.choices || (item.kind === "revenue_units" ? unitsChoices(item.payload || {}) : CHOICES[item.kind]);
+
+const UNIT_WORDS = { 1000: "thousand", 1000000: "million", 1000000000: "billion" };
+function money(n, currency) {
+  if (n === null || n === undefined) return "empty";
+  const v = Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 100) / 100;
+  return `${v.toLocaleString("en-US")}${currency ? ` ${currency}` : ""}`;
+}
 
 let items = [];
 let skipped = [];      // ids skipped while this page is open, in the order they were skipped
@@ -141,6 +165,24 @@ function bodyFor(item) {
       <p class="note"><strong>Merge</strong> keeps the first and moves the others' contacts, initiatives, sources and
       Post leads over; this cannot be undone. <strong>Keep both</strong>: they are never proposed again.</p>`;
   }
+  if (item.kind === "contact_duplicate") {
+    const members = p.members || [];
+    const cell = (fn) => members.map((m) => `<td>${fn(m)}</td>`).join("");
+    const profile = (m) => (m.linkedin && /linkedin\.com\/in\//i.test(m.linkedin) ? link(m.linkedin, "LinkedIn profile") : (m.linkedin ? `${esc(m.linkedin)} <span class="note">(not a LinkedIn profile)</span>` : "none"));
+    return `
+      <p>The same person seems to be in <strong>${esc(item.company)}</strong> twice, written differently - a title such
+      as "Dr.", a middle name or initial, or ö written as oe.</p>
+      <table class="compare">
+        <tr><th></th>${cell((m) => `<strong>${esc(m.fullName)}</strong>${m === members[0] ? " <span class=\"note\">(kept on Merge)</span>" : ""}`)}</tr>
+        <tr><th>Job title</th>${cell((m) => esc(show(m.jobTitle)))}</tr>
+        <tr><th>LinkedIn</th>${cell(profile)}</tr>
+        <tr><th>E-mail</th>${cell((m) => esc(show(m.email)))}</tr>
+        <tr><th>Found by</th>${cell((m) => esc(m.source === "Web" ? "web research" : m.source === "Discovered" ? "LinkedIn search" : "research / import"))}</tr>
+      </table>
+      <p class="note"><strong>Merge</strong> keeps the first and adds what only the second has (LinkedIn profile, e-mail,
+      phone, status, chats); the second is removed. <strong>Keep both</strong>: two people who share a name - never
+      proposed again.</p>`;
+  }
   if (item.kind === "lacking_evidence") {
     return `
       <p>${esc(p.text)}</p>
@@ -165,6 +207,20 @@ function bodyFor(item) {
       <strong>${p.current ? `Keep with ${esc(p.current)}` : "Leave unassigned"}</strong>: nothing changes. Either way the
       contacts and leads ${esc(p.byName)} contacted keep that status, so nobody approaches the same person twice.</p>`;
   }
+  if (item.kind === "group_move") {
+    const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short" }) : "";
+    return `
+      <p>New data for this account${p.reason ? ` (<strong>${esc(p.reason)}</strong>)` : ""} puts it in other groups.
+      It is assigned to <strong>${esc(p.assignee)}</strong>, so it was not moved${p.by || when ? ` <span class="note">(found${p.by ? ` on ${esc(p.by)}${p.by === "you" ? "r" : "'s"} PC` : ""}${when ? `, ${esc(when)}` : ""})</span>` : ""}.</p>
+      <table class="compare">
+        <tr><th>Now in</th><td>${esc(p.from)}</td></tr>
+        <tr><th>Would move to</th><td>${esc(p.to)}</td></tr>
+      </table>
+      <p class="note"><strong>Move it</strong>: the account goes to ${esc(p.to)}. ${p.keeps
+        ? `${esc(p.assignee)} has access there too and keeps the account.`
+        : `${esc(p.assignee)} has no access there: the account becomes unassigned, and ${esc(p.assignee)} no longer sees it.`}
+      Until then it stays in ${esc(p.from)}. If the new data is wrong, correct it on the account - this card then goes by itself.</p>`;
+  }
   if (item.kind === "finding") {
     return `
       <p>Web research found a different <strong>${esc(p.label)}</strong>, and the automatic resolve could not settle
@@ -175,13 +231,51 @@ function bodyFor(item) {
       </table>
       <p class="note">The account's Review findings dialog shows the research and its sources in full.</p>`;
   }
+  if (item.kind === "revenue_units") {
+    const where = { current: "This account's", web: "A web finding's", import: "An import's" }[p.origin] || "This";
+    const word = UNIT_WORDS[p.factor];
+    const basis = p.basis === "employees"
+      ? `${esc(show(p.employeesUsed))} employees`
+      : `${esc(show(p.employeesUsed))} employees - the targeting minimum (the smallest size band ticked in Setup), used because the account shows fewer or none`;
+    const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "";
+    return `
+      <p>${where} <strong>${esc(p.label)}</strong> is <strong>${esc(money(p.value, p.currency))}</strong>${word
+        ? ` - it looks written in ${esc(word)}s: <strong>${esc(show(p.value))} ${esc(word)}${p.currency ? ` ${esc(p.currency)}` : ""}</strong>?`
+        : p.credibleSmall ? " - believable for a company this small, but it is below your targeting." : " - too small for a company in scope, and no unit makes it fit."}</p>
+      <table class="compare">
+        ${p.origin === "import" ? `<tr><th>Current</th><td>${esc(show(p.current))}</td></tr>` : ""}
+        <tr><th>${p.origin === "web" ? "Web finding" : p.origin === "import" ? "Import" : "Current"}</th><td>${esc(money(p.value, p.currency))}${p.file ? ` <span class="note">(${esc(p.file)}${when ? `, ${esc(when)}` : ""})</span>` : ""}</td></tr>
+        ${p.suggested ? `<tr><th>Corrected</th><td>${esc(money(p.suggested, p.currency))}</td></tr>` : ""}
+      </table>
+      <p class="note">Measured against ${basis}, that is ${esc(money(p.perEmployee, ""))} per employee a year (in the default currency);
+      a company in scope earns at least 10,000. Web answers sometimes lose "million" or "billion".
+      ${p.suggested ? "<strong>Correct it</strong> stores the corrected amount like an edit of your own. " : ""}${p.origin === "current"
+        ? "<strong>Keep</strong> leaves it as it is and does not ask again."
+        : "<strong>Don't use it</strong> leaves the field as it is."}${p.outOfScope
+        ? " <strong>Remove account</strong> hides it everywhere (it has fewer employees than your targeting); nothing is permanently erased." : ""}</p>`;
+  }
+  if (item.kind === "import_finding") {
+    const when = p.at ? new Date(p.at).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "";
+    return `
+      <p>An import has a different <strong>${esc(p.label)}</strong>, more than the import tolerance apart, and the
+      automatic rules could not settle it because it could change a priority.</p>
+      <table class="compare">
+        <tr><th>Current</th><td>${esc(show(p.current))}</td></tr>
+        <tr><th>Import</th><td>${esc(show(p.imported))}${p.currency ? ` ${esc(p.currency)}` : ""}${p.file ? ` <span class="note">(${esc(p.file)}${when ? `, ${esc(when)}` : ""})</span>` : ""}</td></tr>
+      </table>
+      ${p.why ? `<p class="note">${esc(p.why.charAt(0).toUpperCase() + p.why.slice(1))}.</p>` : ""}`;
+  }
   return "";
 }
 
 function similarLabel(item, n) {
   const p = item.payload || {};
+  if (item.kind === "group_move") return `Also for the other ${n} group move${n === 1 ? "" : "s"}`;
   if (item.kind === "join_proposal") return `Also for ${esc(p.byName)}'s other ${n} join proposal${n === 1 ? "" : "s"}`;
   if (item.kind === "finding") return `Also for the other ${n} ${esc(p.label)} finding${n === 1 ? "" : "s"}`;
+  if (item.kind === "import_finding") return `Also for the other ${n} ${esc(p.label)} import difference${n === 1 ? "" : "s"}`;
+  if (item.kind === "contact_duplicate") return `Also for the other ${n} ${n === 1 ? "person" : "people"} entered twice`;
+  if (item.kind === "revenue_units") return `Also for the other ${n} revenue${n === 1 ? "" : "s"} that look written in ${esc(UNIT_WORDS[p.factor] || "")}s`;
   if (item.kind === "lacking_evidence") {
     const cause = p.reason === "empty_page" ? "with an empty LinkedIn page" : "with no LinkedIn company found";
     return `Also for the other ${n} account${n === 1 ? "" : "s"} ${cause}`;
@@ -210,12 +304,16 @@ function render() {
   $("decision-similar-checkbox").checked = false;
   $("decision-similar-text").innerHTML = others.length ? similarLabel(item, others.length) : "";
 
-  const [[aVal, aLabel], [bVal, bLabel]] = choicesOf(item);
-  $("decision-choice-a").textContent = aLabel;
-  $("decision-choice-a").dataset.choice = aVal;
-  $("decision-choice-b").textContent = bLabel;
-  $("decision-choice-b").dataset.choice = bVal;
-  $("decision-choice-b").classList.toggle("danger", item.kind === "lacking_evidence");
+  // Two answers for most kinds, one to three for a revenue without its unit (D16).
+  const choices = choicesOf(item);
+  ["a", "b", "c"].forEach((slot, i) => {
+    const btn = $(`decision-choice-${slot}`);
+    btn.hidden = !choices[i];
+    if (!choices[i]) return;
+    btn.textContent = choices[i][1];
+    btn.dataset.choice = choices[i][0];
+  });
+  $("decision-choice-b").classList.toggle("danger", item.kind === "lacking_evidence" || choices[1]?.[0] === "remove");
   $("decision-skip").hidden = list.length < 2;
   $("decision-status").textContent = "";
 }
@@ -234,7 +332,7 @@ async function load() {
 
 function setBusy(on) {
   busy = on;
-  for (const id of ["decision-choice-a", "decision-choice-b", "decision-skip"]) $(id).disabled = on;
+  for (const id of ["decision-choice-a", "decision-choice-b", "decision-choice-c", "decision-skip"]) $(id).disabled = on;
 }
 
 async function decide(choice) {
@@ -281,6 +379,14 @@ async function decide(choice) {
 
 $("decision-choice-a").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
 $("decision-choice-b").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
+$("decision-choice-c").addEventListener("click", (e) => decide(e.currentTarget.dataset.choice));
+// 1.2.2.13 (Boaz): a way out without answering anything. Decisions is shown inside the page whose menu opened it;
+// that page closes it (the same message Change Settings' "Back to menu" sends). Opened on its own, it goes back.
+$("decision-cancel").addEventListener("click", () => {
+  if (window.parent !== window) window.parent.postMessage({ type: "salesteam-close-embedded" }, location.origin);
+  else history.back();
+});
+
 $("decision-skip").addEventListener("click", () => {
   if (busy || !currentId) return;
   skipped = [...skipped.filter((id) => id !== currentId), currentId];

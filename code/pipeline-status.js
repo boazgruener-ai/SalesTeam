@@ -115,7 +115,7 @@ async function render(state) {
     const fresh = (await chrome.storage.local.get(PIPELINE_STATE_KEY))[PIPELINE_STATE_KEY];
     if (fresh && !fresh.acknowledged) {
       await chrome.storage.local.set({ [PIPELINE_STATE_KEY]: { ...fresh, acknowledged: true } });
-      await askConfirm(pipelineResultText(fresh), { okLabel: "OK", cancelLabel: "Close" });
+      await askConfirm(pipelineResultText(fresh), { okLabel: "OK", cancelLabel: null });
     }
     announcing = false;
   }
@@ -129,7 +129,8 @@ async function render(state) {
 // kicks, the page makes sure one from the last 12 hours exists (the same rule as before a scan).
 // Resolves with the background's answer ({ started, reason }), or null when automation is off.
 export async function kickPipelineFromPage(source) {
-  if (!(await getPipelineAutomation()).enabled) return null;
+  const auto = await getPipelineAutomation();
+  if (!auto.enabled && !auto.webEnabled) return null;
   await runAutoBackupIfDue({ force: true }).catch(() => {});
   return chrome.runtime.sendMessage({ type: "PIPELINE_KICK", source }).catch(() => null);
 }
@@ -142,7 +143,7 @@ export async function kickAndExplain(source) {
     ? "Automatic preparation is on and has started. It works in a small LinkedIn window of its own; the bar at " +
       "the top of the page shows which account it is on, with Pause."
     : `Automatic preparation is on, but it cannot start right now.\n\n${await pipelineStatusLine()}`;
-  await askConfirm(text, { okLabel: "OK", cancelLabel: "Close" });
+  await askConfirm(text, { okLabel: "OK", cancelLabel: null });
 }
 
 // U5: existing users are asked once, on the first SalesTeam page they open after updating. New users are
@@ -208,13 +209,18 @@ export async function pipelineStatusLine() {
     const what = state.auto ? "Preparing accounts" : "Pipeline run in progress";
     return state.current ? `${what} · working on ${state.current}` : what;
   }
-  if (!auto.enabled) return "Automatic preparation is off. You can turn it on in Settings > Automation.";
+  if (!auto.enabled && !auto.webEnabled) return "Automatic preparation is off. You can turn it on in Settings > Automation.";
   if (auto.pausedDay === localDay()) return "Automatic preparation is paused for today. Resume it in Settings > Automation.";
   const running = await getRunningBatch();
   if (running && !running.pipeline) {
     return /^Scanner/.test(running.label) ? "Paused while you scan" : `Paused while this runs: ${running.label}`;
   }
   if ((store[PIPELINE_HOLD_KEY] || 0) > Date.now()) return "Paused while you start a job of your own";
+  // 1.2.2.39 (Boaz): the two switches are independent. With only web research on, nothing about LinkedIn applies.
+  if (!auto.enabled) {
+    if (await discoveryRunning()) return "Researching new target accounts on the web.";
+    return `Web research only - the LinkedIn work is off (Settings > Automation) · ${await webSideText()}`;
+  }
   // 1.2.0.32: LinkedIn work found the login wall - the one thing the user has to do.
   const loggedOutAt = store[LINKEDIN_LOGGED_OUT_KEY];
   if (linkedinLoggedOutRecently(loggedOutAt)) {
@@ -233,17 +239,17 @@ export async function pipelineStatusLine() {
 }
 
 // Build step 5 (W6, R12.7.3): the web research line, under the pie and in Settings > Automation. A zero
-// or used-up budget is stated, not hidden. Empty while automatic preparation itself is off - the line
-// above already says so, and web research runs only inside it.
+// or used-up budget is stated, not hidden. Empty while both switches are off - the line above already says so.
+// 1.2.2.39: web research runs with or without the LinkedIn work.
 function usd(n) {
   return `US$${(Number(n) || 0).toFixed(2).replace(/\.00$/, "")}`;
 }
 
 export async function webStatusLine() {
   const auto = await getPipelineAutomation();
-  if (!auto.enabled) return "";
+  if (!auto.enabled && !auto.webEnabled) return "";
   const w = await webBudgetState();
-  const without = "Accounts will still be made ready from LinkedIn, but without web details.";
+  const without = auto.enabled ? "Accounts will still be made ready from LinkedIn, but without web details." : "";
   switch (w.reason) {
     case "off": return `Web research is off. ${without} You can turn it on in Settings > Automation.`;
     case "no_key": return `Web research is paused: there is no Anthropic API key. ${without} Add a key in Settings > API key to continue.`;

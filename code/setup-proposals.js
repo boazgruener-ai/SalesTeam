@@ -21,7 +21,9 @@ export const PROPOSAL_STEP_KEYS = {
   "value-add-offers": ["resources"],
   icp: ["idealCustomer", "customerIndustries"],
   contacts: ["buyerTitles"],
-  exclusions: ["competitors", "customers", "partners"],
+  // 1.2.3: competitors on "Companies to exclude", customers and partners on their own step (design 9.4)
+  exclusions: ["competitors"],
+  relationships: ["customers", "partners"],
 };
 
 const MAX_TITLES = 10;
@@ -437,9 +439,15 @@ export function buildSetupProposals(raw, ctx, only) {
     const m = mapContacts(r.buyerTitles);
     out.contacts = { exactTitles: m.exactTitles, keywords: m.keywords, seniority: m.seniority, sources: uniqueSources(m.sources), found: m.exactTitles.length > 0 };
   }
-  if (want("exclusions")) {
+  if (want("exclusions") || want("relationships")) {
+    // One pass over all three lists, so a company is proposed once even when the research named it twice.
     const m = mapExclusions(r, c);
-    out.exclusions = { items: m.items, sources: uniqueSources(m.sources), found: m.items.length > 0 };
+    const part = (cats) => {
+      const items = m.items.filter((e) => cats.includes(e.category));
+      return { items, sources: uniqueSources(items.map((e) => e.sourceUrl).filter(Boolean)), found: items.length > 0 };
+    };
+    if (want("exclusions")) out.exclusions = part(["competitor"]);
+    if (want("relationships")) out.relationships = part(["customer", "partner"]);
   }
   return out;
 }

@@ -46,7 +46,17 @@ import {
   exportLeads,
   importSettings,
   importLeads,
+  getRelationshipMatcher,
 } from "./storage.js";
+import { hideImportForMembers } from "./import-gate.js";
+import { relationshipOf } from "./company-identity.js";
+import { relationshipTagText } from "./relationships.js";
+
+// 1.2.3 (R2.4): the Customers and partners lists, for the tag in the Company column. Reloaded when they change.
+let relationshipMatcher = null;
+async function loadRelationshipMatcher() {
+  relationshipMatcher = await getRelationshipMatcher().catch(() => null);
+}
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import {
@@ -65,6 +75,7 @@ import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, r
 import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
 import { initDecisionsDot } from "./decisions-dot.js";
 import { teamAccounts } from "./team-accounts-ui.js";
+import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const STATUS_COLORS = {
   New: "#0a66c2",
@@ -163,12 +174,12 @@ if (new URLSearchParams(location.search).has("embedded")) {
 }
 
 document.getElementById("open-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html", "Target Accounts Dashboard"));
-document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
-document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import", "Target Accounts Dashboard"));
+document.getElementById("nav-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export", "Target Accounts Dashboard"));
+document.getElementById("nav-import-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import&what=contacts", "Target Contacts Dashboard"));
+document.getElementById("nav-export-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export&what=contacts", "Target Contacts Dashboard"));
+// 1.2.3 (Export & Import design 6): Import and Restore are the Team Lead's in a team - not shown to members.
+hideImportForMembers();
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
 document.getElementById("nav-web-discovery-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-discovery", "Target Accounts Dashboard"));
@@ -400,8 +411,16 @@ async function loadSettings() {
 
 async function loadLeads() {
   const [resultsMap, scanStartedAt] = await Promise.all([getResults(), getLastScanStartedAt()]);
-  allLeads = sortResultsByRelevance(resultsMap);
+  everyLead = sortResultsByRelevance(resultsMap);
+  applyVisibleLeads();
   lastScanStartedAt = scanStartedAt;
+}
+
+// 1.2.3 step 2 (design 6.2): with account groups, a member's dashboard holds only the leads of accounts in their
+// groups, and their own scanned leads of companies that are no account yet (D12). Run again when the groups change.
+let everyLead = [];
+function applyVisibleLeads() {
+  allLeads = teamAccounts.groupsOn() ? everyLead.filter((l) => teamAccounts.canSeeLead(l)) : everyLead;
 }
 
 async function loadTargetContacts() {
@@ -727,6 +746,15 @@ function companyCell(td, lead) {
   // 1.2.2 step 5b (R6.5): whose account the lead's company is.
   const badge = lead.company ? teamAccounts.badge(normalizeCompanyName(lead.company)) : null;
   if (badge) td.appendChild(badge);
+  // 1.2.3 (R2.4): Customer / Partner - leads from customers' and partners' people are kept.
+  const text = lead.company ? relationshipTagText(relationshipOf(relationshipMatcher, { name: lead.company })) : "";
+  if (text) {
+    const tag = document.createElement("span");
+    tag.className = "relationship-tag";
+    tag.textContent = text;
+    tag.title = "On your Customers and partners list (Setup)";
+    td.appendChild(tag);
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -980,6 +1008,11 @@ function buildLeadActionsMenu(lead) {
 // any overlap while actively scrolling covers much less area; "actions"
 // itself shrunk the most (150 -> 48) since it only ever needs to fit one
 // button, not a full data column's worth of width.
+function leadGroupNames(lead) {
+  const key = lead.company ? normalizeCompanyName(lead.company) : "";
+  return (teamAccounts.isAccount(key) && teamAccounts.groupNames(key)) || "";
+}
+
 const COLUMNS = [
   // Shown by default, in this order (reordered 2026-09-19, reported directly). Columns without
   // `visible: true` start hidden and are one click away via the Columns button.
@@ -999,6 +1032,9 @@ const COLUMNS = [
   { id: "matchedTopics", label: "Matched Topic", visible: true, width: 130, getSortValue: leadMatchedTopicNames, getFilterText: leadMatchedTopicNames, render: matchedTopicsCell },
   { id: "matchedKeywords", label: "Matched Keywords", visible: true, width: 150, getSortValue: leadMatchedKeywords, getFilterText: leadMatchedKeywords, render: matchedKeywordsCell },
   // Hidden by default
+  // 1.2.3 step 3 (R6.3): the groups of the lead's account, in a team with groups.
+  { id: "teamGroups", label: "Groups", width: 130, getSortValue: leadGroupNames, getFilterText: leadGroupNames,
+    render: (td, l) => { td.textContent = leadGroupNames(l); } },
   { id: "firstScanned", label: "First Scanned", width: 130, getSortValue: (l) => l.firstSeenAt || 0, getFilterText: (l) => formatDateTime(l.firstSeenAt),
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
   { id: "location", label: "Location", width: 130, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
@@ -1036,8 +1072,11 @@ let hiddenColumns = new Set();
 // A hidden column's own filter/sort (if it had one set before being hidden)
 // stays in effect - this only controls what's rendered, not what's applied
 // to applyFilterSortSearch, which still iterates every column in COLUMNS.
+// Boaz 2026-10-08: drag a column title to move the column (column-order.js, as on Target Accounts).
+const COLUMN_ORDER_STORAGE_KEY = "salesteam-dashboard-column-order-v1";
+
 function visibleColumns() {
-  return COLUMNS.filter((c) => !hiddenColumns.has(c.id));
+  return orderedColumns(COLUMNS, COLUMN_ORDER_STORAGE_KEY).filter((c) => !hiddenColumns.has(c.id));
 }
 
 function loadPageSize() {
@@ -1092,6 +1131,14 @@ function loadHiddenColumns() {
   } catch {
     hiddenColumns = new Set(COLUMNS.filter((c) => !c.visible).map((c) => c.id));
   }
+  // 1.2.3 step 3: Groups is new and starts hidden - also for someone whose saved choice predates the column.
+  try {
+    if (!localStorage.getItem("salesteam-leads-groups-column-v1")) {
+      localStorage.setItem("salesteam-leads-groups-column-v1", "1");
+      hiddenColumns.add("teamGroups");
+      localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify([...hiddenColumns]));
+    }
+  } catch { /* best-effort only */ }
 }
 
 // Column filters/sort/search/status - persisted together as one blob since
@@ -1257,8 +1304,17 @@ function sortLeadsDefault(leads) {
     || leadDate(b) - leadDate(a));
 }
 
+// 1.2.3 step 2 (design 7): the Group dropdown - the same builder as on Target Accounts and Target Contacts.
+const leadGroupPicker = teamAccounts.groupPicker(document.getElementById("team-group-picker"),
+  "salesteam-team-group-leads", () => renderTableFromScratch());
+
+// Step 3: the Assigned dropdown - who the lead's account is assigned to.
+const leadOwnerPicker = teamAccounts.ownerPicker(document.getElementById("team-owner-picker"),
+  "salesteam-team-owner-filter-leads", () => renderTableFromScratch());
+
 function applyFilterSortSearch() {
-  let leads = allLeads.slice();
+  let leads = allLeads.filter((l) => leadGroupPicker.matchesLead(l)
+    && leadOwnerPicker.matches(l.company ? normalizeCompanyName(l.company) : ""));
 
   if (statusFilter !== "all") {
     leads = leads.filter((l) => (l.status || "New") === statusFilter);
@@ -1449,8 +1505,9 @@ function toggleColumnsPanel() {
   const anchorRect = columnsBtn.getBoundingClientRect();
   const popup = document.createElement("div");
   popup.className = "col-menu-popup columns-panel";
+  popup.append(resetOrderItem(COLUMN_ORDER_STORAGE_KEY, closeColumnMenu, () => renderTable()), document.createElement("hr"));
 
-  for (const column of COLUMNS) {
+  for (const column of orderedColumns(COLUMNS, COLUMN_ORDER_STORAGE_KEY)) {
     const row = document.createElement("label");
     row.className = "columns-panel-row";
     const checkbox = document.createElement("input");
@@ -1526,6 +1583,7 @@ function renderTableHead() {
   for (const column of visibleColumns()) {
     const th = document.createElement("th");
     th.className = "resizable-th";
+    makeColumnDraggable(th, column, COLUMNS, COLUMN_ORDER_STORAGE_KEY, () => renderTable(), { noDragFrom: ".col-resize-handle" });
 
     const label = document.createElement("span");
     label.className = "th-label";
@@ -1739,6 +1797,8 @@ function buildGroupSummaryRow(group) {
 }
 
 function renderTable() {
+  leadGroupPicker.paint();
+  leadOwnerPicker.paint();
   renderColgroup();
   renderTableHead();
   syncStatusFilterSelect();
@@ -2182,10 +2242,12 @@ async function sendCannedMentorPrompt(text) {
   quickBtns.forEach((btn) => { btn.disabled = true; });
   try {
     const settings = await currentSettings();
+    // 1.2.3 (R5.2): the mentor is told when the lead's company is an existing customer / partner.
+    const leadRelationship = relationshipOf(await getRelationshipMatcher().catch(() => null), { name: currentDetailLead.company });
     await runAgentTurn(text, {
       history: mentorHistory,
       apiKey,
-      buildSystemPrompt: () => buildLeadScopedMentorPrompt(currentDetailLead, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }),
+      buildSystemPrompt: () => buildLeadScopedMentorPrompt({ ...currentDetailLead, relationship: leadRelationship }, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }),
       tools: currentDetailLead.type === "job" ? [] : [DRAFT_MESSAGE_TOOL],
       executeTool: async (name, input2) => {
         if (name === "draft_message") {
@@ -2325,7 +2387,9 @@ prioritizeUnscoredBtn.addEventListener("click", async () => {
     prioritizeStatusEl.textContent = "Nothing to do - every \"New\" lead already has a priority.";
     return;
   }
-  if (!(await askConfirm(`Score ${toScore.length} unscored "New" lead${toScore.length === 1 ? "" : "s"}?\n\nThis sets their priority. Leads that match a Target Account are set directly; the rest are scored by the Sales Mentor, which uses your Anthropic API key (a small cost). No LinkedIn activity is used.`))) return;
+  // Boaz (1.2.2.8 test): each Advanced tool is its own pop-up - "Advanced tools → <tool>", what it does, Run.
+  if (!(await askConfirm(`Sets the priority of ${toScore.length} unscored "New" lead${toScore.length === 1 ? "" : "s"}. Leads that match a Target Account are set directly; the rest are scored by the Sales Mentor on your Anthropic API key (a small cost).`,
+    { title: "Advanced tools → Prioritize Unscored Leads", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   if (!(await confirmIfCostly("leadScoring", toScore.length, "Scoring these leads", askConfirm))) return;
   prioritizeUnscoredBtn.disabled = true;
   prioritizeStatusEl.textContent = `Prioritizing ${toScore.length} lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor…`;
@@ -2405,9 +2469,8 @@ rescoreAllBtn.addEventListener("click", async () => {
     rescoreAllStatusEl.textContent = "Nothing to do - no \"New\" leads are eligible (manually-set priorities are left alone).";
     return;
   }
-  if (!(await askConfirm(`Re-score ${toScore.length} "New" lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor? This overwrites their current AI-assigned priority (manually-set priorities are skipped).`))) {
-    return;
-  }
+  if (!(await askConfirm(`Re-scores ${toScore.length} "New" lead${toScore.length === 1 ? "" : "s"} with the Sales Mentor and replaces their AI priority. Priorities you set by hand are kept. Uses your Anthropic API key (a small cost).`,
+    { title: "Advanced tools → Re-score All Priorities", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   if (!(await confirmIfCostly("leadScoring", toScore.length, "Re-scoring these leads", askConfirm))) return;
   rescoreAllBtn.disabled = true;
   const oldPriorities = new Map(toScore.map((l) => [l.key, l.priority || null]));
@@ -2464,7 +2527,8 @@ extractCompaniesBtn.addEventListener("click", async () => {
     extractCompaniesStatusEl.textContent = "Nothing to do - every lead already has a company.";
     return;
   }
-  if (!(await askConfirm(`Find the company for ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"}?\n\nThe AI reads each lead's headline and fills in an empty Company field. Existing companies are not changed. This uses your Anthropic API key (a small cost); no LinkedIn activity is used.`))) return;
+  if (!(await askConfirm(`Fills in the empty Company field of ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"} from their LinkedIn headline. Companies already set are not changed. Uses your Anthropic API key (a small cost).`,
+    { title: "Advanced tools → Extract Companies", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   if (!(await confirmIfCostly("companyExtraction", toExtract.length, "Finding these companies", askConfirm))) return;
   extractCompaniesBtn.disabled = true;
   extractCompaniesStatusEl.textContent = `Extracting companies for ${toExtract.length} lead${toExtract.length === 1 ? "" : "s"}…`;
@@ -2508,7 +2572,8 @@ extractCompaniesProfilesBtn.addEventListener("click", async () => {
     extractCompaniesProfilesStatusEl.textContent = "Nothing to do - no lead is missing a company or location with a profile URL to visit.";
     return;
   }
-  if (!(await askConfirm(profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length)))) return;
+  if (!(await askConfirm(profileVisitConfirmText(uniqueProfileCount(toVisit), toVisit.length),
+    { title: "Advanced tools → Extract Companies & Locations from Profiles", okLabel: "Run", cancelLabel: "Cancel" }))) return;
 
   extractCompaniesProfilesBtn.disabled = true;
   try {
@@ -2560,7 +2625,8 @@ applyLocationFilterBtn.addEventListener("click", async () => {
     applyLocationFilterStatusEl.textContent = "Nothing to do - there are no leads yet.";
     return;
   }
-  if (!(await askConfirm(`Check all ${total} lead${total === 1 ? "" : "s"} against your Location Filter now?\n\nLeads outside your target locations are marked Irrelevant (hidden and not counted); leads that now match are restored to New. Nothing is deleted. No LinkedIn activity is used.`))) return;
+  if (!(await askConfirm(`Checks all ${total} lead${total === 1 ? "" : "s"} against your Location Filter. Leads outside your target locations are marked Irrelevant; leads that match again go back to New. Nothing is deleted.`,
+    { title: "Advanced tools → Apply Location Filter", okLabel: "Run", cancelLabel: "Cancel" }))) return;
   applyLocationFilterBtn.disabled = true;
   applyLocationFilterStatusEl.textContent = `Checking ${total} lead${total === 1 ? "" : "s"} against the Location Filter…`;
   try {
@@ -2883,6 +2949,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.targetAccountsWorkbook) {
     loadTargetContacts().then(renderTable);
   }
+  if (changes.companyRelationships || changes.companyExclusions) loadRelationshipMatcher().then(renderTable);
   // Templates saved elsewhere (another tab, the onboarding wizard): refresh the saved copy. Unsaved edits here
   // live in templateEdits, so a re-render keeps them.
   if (changes.messageTemplates) {
@@ -2953,9 +3020,13 @@ function runActionFromHash() {
 
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+  await loadRelationshipMatcher();
   await teamAccounts.ready();
   // Assignments arrive from the team in the background: repaint the badges and the open lead's notice.
   teamAccounts.onChange(() => {
+    const before = allLeads.length;
+    applyVisibleLeads();
+    if (allLeads.length !== before) renderAllPieCharts();
     renderTable();
     if (currentDetailLead && !document.getElementById("detail-view").hidden) paintTeamNotice(currentDetailLead);
   });

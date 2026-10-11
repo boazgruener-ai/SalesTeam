@@ -11,7 +11,7 @@
 //     data/<category>.json the raw stored data, grouped by category, for restoring
 import { createZip, readZip, bytesToText } from "./backup-zip.js";
 import { workbookCsvFiles, leadsToCsv } from "./csv-export.js";
-import { withAccountWriteLock } from "./storage.js";
+import { withAccountWriteLock, migrateCompanyRelationshipsIfNeeded } from "./storage.js";
 
 // Never written to a backup file: the API key (a backup is plain text - re-enter it after a reinstall),
 // this feature's own bookkeeping, transient scan state, and a re-derivable cache. teamMembership (1.2.2) belongs with
@@ -39,7 +39,7 @@ export const BACKUP_CATEGORIES = [
   {
     id: "wizard", label: "Setup wizard configuration",
     detail: "Target universe, target contacts, exclusions, prioritization rules and guidelines, languages, your profile and company website, wizard progress.",
-    keys: ["targetUniverseConfig", "targetContactProfile", "companyExclusions", "companyExclusionsMigrated", "companyExclusionsLifted", "companyAliases",
+    keys: ["targetUniverseConfig", "targetContactProfile", "companyExclusions", "companyExclusionsMigrated", "companyExclusionsLifted", "companyRelationships", "companyAliases",
       "postPrioritizationRules", "prioritizationRuleOverrides", "accountPriorityGuidelines", "organizationTypeEligibility",
       "keywordSearchLanguages", "userProfile", "companyWebsite", "onboardingCompletedAt", "onboardingProgressStepIndex",
       "targetAccountScoreThreshold", "jobRulesMinConfidence"],
@@ -243,4 +243,7 @@ export async function restoreFullBackup(parsed, selected) {
       await withAccountWriteLock(() => chrome.storage.local.set(data));
     }
   }
+  // 1.2.3 (R3.5): a backup from before 1.2.3 still has its customers / partners on the exclusion list - moved the
+  // same way as on the update. Idempotent: a newer backup has nothing to move.
+  await migrateCompanyRelationshipsIfNeeded({ trigger: "restore" }).catch(() => null);
 }

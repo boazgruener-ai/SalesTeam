@@ -2,8 +2,9 @@
 //   Export: two CSV files (companies, contacts) whose column names are HubSpot's own property labels, so HubSpot's
 //           import tool maps them automatically. SalesTeam-only values go in extra columns ("SalesTeam ...") that
 //           HubSpot offers to create as new properties.
-//   Import: a CSV exported from HubSpot (companies or contacts). Only ADDS what SalesTeam does not have yet - it
-//           never replaces or deletes anything.
+//   Import: a CSV exported from HubSpot (companies or contacts), read into workbook rows here; since 1.2.3 it goes
+//           through the one import path (import-merge.js): adds what is new, fills empty fields, never removes.
+//           Which file it is: csv-import.js detectImportFile.
 import { toCsv } from "./csv-export.js";
 import { normalizeCompanyName } from "./storage.js";
 
@@ -50,14 +51,6 @@ function toNumber(text) {
   return Number.isFinite(n) && String(text).match(/\d/) ? n : null;
 }
 
-// "companies" or "contacts", judged from the header row.
-export function detectHubspotFile(headers) {
-  const h = headers.map((x) => x.toLowerCase());
-  if (h.includes("first name") || h.includes("last name") || h.includes("email")) return "contacts";
-  if (h.includes("company name") || h.includes("company domain name") || h.includes("name")) return "companies";
-  return null;
-}
-
 let counter = 0;
 function slugId(prefix, text) {
   counter++;
@@ -80,6 +73,8 @@ export function hubspotCompanyRows(records) {
       globalHqCity: pick(r, ["city"]) || null,
       globalHqCountry: pick(r, ["country/region", "country"]) || null,
       linkedinLink: pick(r, ["linkedin company page", "linkedin url", "linkedin"]) || null,
+      // 1.2.3: also the website, so an account HubSpot knows by its domain is matched, not added twice.
+      website: domain ? (domain.startsWith("http") ? domain : `https://${domain}`) : null,
       primarySourceUrl: domain ? (domain.startsWith("http") ? domain : `https://${domain}`) : null,
       researchStatus: "Imported from HubSpot",
       source: "HubSpot",

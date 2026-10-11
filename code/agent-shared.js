@@ -4,7 +4,9 @@
 // panel) can reuse exactly the same logic instead of a second, drifting copy.
 // Every tool here reads chrome.storage.local fresh on each call - there is no
 // module-level cache - so it's safe to call from any page.
-import { getResults, updateResultDraft, computeCompanyDeterministicPreScore, bucketCompanyScore } from "./storage.js";
+import { getResults, updateResultDraft, computeCompanyDeterministicPreScore, bucketCompanyScore, getRelationshipMatcher } from "./storage.js";
+import { relationshipOf } from "./company-identity.js";
+import { relationshipPromptLine } from "./relationships.js";
 import { sortResultsByRelevance } from "./ranking.js";
 import { recordApiUsage, estimateCostUsd } from "./api-usage.js";
 import { LANE_MAX_PEOPLE } from "./pipeline-plan.js";
@@ -233,13 +235,15 @@ export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContex
     : `Lead: ${lead.author || "Unknown"}\nHeadline: ${lead.headline || "n/a"}\nTheir post: "${lead.snippet || ""}"\n` +
       `Connection status: ${lead.connectionDegree ? lead.connectionDegree + "-degree connection" : "not yet connected"}\n` +
       `Matched on: ${(lead.matchedTopics || []).map((t) => t.topicName).join(", ")}`;
+  // 1.2.3 (R5.2): the lead's company is an existing customer / partner (lead.relationship, set by the caller).
+  const relLine = relationshipPromptLine(lead.relationship, lead.company, "the salesperson's company");
 
   return (
     `You are acting as a sales mentor to a salesperson, discussing ONE specific lead they're looking at right ` +
     `now. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
-    `\nThe lead being discussed:\n${leadBlock}\n\n` +
+    `\nThe lead being discussed:\n${leadBlock}\n${relLine ? relLine + "\n" : ""}\n` +
     "Answer questions about this specific lead directly using the details above - never invent facts beyond " +
     "what's given. When asked to draft or write a message for this lead, use the draft_message tool (with " +
     `this lead's key: "${lead.key}") rather than writing one yourself directly, so it goes through the same ` +
@@ -300,6 +304,8 @@ function accountOverviewBlock(company) {
     company.aiInvestmentGlobal || company.aiInvestmentSwitzerland
       ? `Investment: ${[company.aiInvestmentGlobal, company.aiInvestmentSwitzerland].filter(Boolean).join(" / ")}`
       : null,
+    // 1.2.3 (R5.2): an existing customer / partner is not a cold prospect.
+    relationshipPromptLine(company.relationship, company.company, "the salesperson's company") || null,
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -462,7 +468,10 @@ export function pickDefaultTemplateId(result, messageTemplates) {
 }
 
 function buildDraftPrompt(result, template, { valueAddOffers, companyContext, userProfile, outputLanguage }) {
-  const context = `Name: ${result.author}\nHeadline: ${result.headline || "n/a"}\nTheir post: "${result.snippet || ""}"`;
+  // 1.2.3 (R5.2): an opener to an existing customer / partner is not a cold introduction.
+  const relLine = relationshipPromptLine(result.relationship, result.company, "the salesperson's company");
+  const context = `Name: ${result.author}\nHeadline: ${result.headline || "n/a"}\nTheir post: "${result.snippet || ""}"` +
+    (relLine ? `\n${relLine}` : "");
   const topicNames = result.matchedTopics.map((t) => t.topicName).join(", ");
   const connectionLine = `Connection status: ${
     result.connectionDegree ? result.connectionDegree + "-degree connection" : "not yet connected"
@@ -496,6 +505,15 @@ ${languageInstruction(outputLanguage)}`;
 // the Dashboard) and the Sales Mentor agent's draft_message tool, so all
 // three go through the exact same prompt and persistence logic. Throws on
 // failure; callers decide how to surface that.
+// 1.2.3 (R5.2): the lead with its company's relationship (customer / partner), looked up when the caller has not.
+async function withLeadRelationship(lead) {
+  if (!lead || lead.relationship || !lead.company) return lead;
+  try {
+    const rel = relationshipOf(await getRelationshipMatcher(), { name: lead.company });
+    return rel.length ? { ...lead, relationship: rel } : lead;
+  } catch { return lead; }
+}
+
 export async function generateDraft(result, templateId, settings) {
   const apiKey = sanitizeApiKey(settings.apiKey || "");
   if (!apiKey) throw new Error("No Anthropic API key configured - add one in the Advisors page's AI Settings.");
@@ -514,7 +532,7 @@ export async function generateDraft(result, templateId, settings) {
     body: JSON.stringify({
       model: DRAFT_MODEL,
       max_tokens: 300,
-      messages: [{ role: "user", content: buildDraftPrompt(result, template, settings) }],
+      messages: [{ role: "user", content: buildDraftPrompt(await withLeadRelationship(result), template, settings) }],
     }),
   }, 45000);
 
@@ -1247,6 +1265,9 @@ export async function analyzePostSearch(leads, topics, negativeTopics, stats, se
 export async function toolListLeads({ only_not_yet_drafted } = {}) {
   const resultsMap = await getResults();
   const sorted = sortResultsByRelevance(resultsMap);
+  const relMatcher = await getRelationshipMatcher().catch(() => null);
+  // 1.2.3 (R5.2): "customer" / "partner" when the lead's company is one - only present when it is.
+  const rel = (r) => { const x = relationshipOf(relMatcher, { name: r.company }); return x.length ? { relationship: x } : {}; };
   return sorted
     .filter((r) => r.status !== "Irrelevant")
     .filter((r) => r.type === "job" || !only_not_yet_drafted || !r.draftMessage)
@@ -1261,6 +1282,7 @@ export async function toolListLeads({ only_not_yet_drafted } = {}) {
             matchedTopics: r.matchedTopics.map((t) => t.topicName),
             status: r.status || "New",
             hasIndividualContact: false,
+            ...rel(r),
           }
         : {
             key: r.key,
@@ -1275,6 +1297,7 @@ export async function toolListLeads({ only_not_yet_drafted } = {}) {
             status: r.status || "New",
             hasDraft: Boolean(r.draftMessage),
             hasIndividualContact: true,
+            ...rel(r),
           }
     );
 }

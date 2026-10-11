@@ -402,6 +402,45 @@ function parseGenericSheetRows(sheetXml, sharedStrings) {
   return entries;
 }
 
+// A plain table in the first sheet of any .xlsx - what Dynamics 365's "Export to Excel" saves (EXPORT_IMPORT_DESIGN.md
+// 8a, D12). Same shape as hubspot.js parseCsv: the header row's titles as written, and one record per row keyed by them.
+export async function parseFirstSheetRecords(arrayBuffer) {
+  const zip = ZipReader.fromArrayBuffer(arrayBuffer);
+  const workbookXml = await zip.readText("xl/workbook.xml");
+  const relsXml = await zip.readText("xl/_rels/workbook.xml.rels");
+  const first = tag(parseXml(workbookXml), "sheet")[0];
+  const sheetPath = first && resolveSheetPath(workbookXml, relsXml, first.getAttribute("name"));
+  if (!sheetPath) throw new Error("this workbook has no sheet");
+  const sharedStrings = zip.has("xl/sharedStrings.xml")
+    ? parseSharedStrings(await zip.readText("xl/sharedStrings.xml"))
+    : [];
+  const rows = Array.from(tag(parseXml(await zip.readText(sheetPath)), "row"));
+  const cells = (row) => Array.from(row.getElementsByTagNameNS(SML_NS, "c"))
+    .map((c) => [columnLetters(c.getAttribute("r")), cellValue(c, sharedStrings)])
+    .filter(([col, value]) => col && value != null && String(value).trim() !== "");
+  const titleByCol = {};
+  const headers = [];
+  for (const [col, value] of rows.length ? cells(rows[0]) : []) {
+    const title = String(value).trim();
+    if (headers.includes(title)) continue; // a repeated title: the first column of that name is read
+    titleByCol[col] = title;
+    headers.push(title);
+  }
+  const records = [];
+  for (const row of rows.slice(1)) {
+    const record = {};
+    for (const [col, value] of cells(row)) if (titleByCol[col]) record[titleByCol[col]] = String(value);
+    if (Object.keys(record).length) records.push(record);
+  }
+  // Dynamics writes the column titles in the organisation's language and keeps each column's field name in a very
+  // hidden sheet "hiddenSheet", cell A1 (seen in real exports of a German organisation, 2026-10-10) - handed on as
+  // it is, for crm-files.js withDynamicsFieldNames.
+  const hiddenPath = resolveSheetPath(workbookXml, relsXml, "hiddenSheet");
+  const hiddenCell = hiddenPath && zip.has(hiddenPath) ? tag(parseXml(await zip.readText(hiddenPath)), "c")[0] : null;
+  const fieldKey = hiddenCell ? String(cellValue(hiddenCell, sharedStrings) ?? "") : "";
+  return { headers, records, fieldKey };
+}
+
 // The workbook's relational sheets, each referencing Companies via
 // Company_ID (camelCased to companyId) - see PRD 6.12. Sheets not listed
 // here (README, Dashboard, Scoring_Model, Lookup_Lists, Prospect_List) are

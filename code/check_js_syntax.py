@@ -110,6 +110,26 @@ def check(path, parser):
             problems.append((lines[1], 'duplicate top-level declaration "%s" (also on line %s)'
                              % (name, ", ".join(str(n) for n in lines[:-1]))))
 
+    # The same inside every block: two `const x` (or let / class / function) in one { } are a SyntaxError that
+    # stops the whole module just like a top-level duplicate. 1.2.2.8 shipped `const current` twice in one
+    # function of team-ui.js and every page with the Team code went blank while this script said "parses cleanly".
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.named_children)
+        if node.type != "statement_block":
+            continue
+        seen = defaultdict(list)
+        for child in node.named_children:
+            if child.type not in ("lexical_declaration", "class_declaration", "function_declaration"):
+                continue
+            for name in declared_names(child, source):
+                seen[name].append(child.start_point[0] + 1)
+        for name, lines in sorted(seen.items()):
+            if len(lines) > 1:
+                problems.append((lines[1], 'duplicate declaration "%s" in one block (also on line %s)'
+                                 % (name, ", ".join(str(n) for n in lines[:-1]))))
+
     return sorted(problems)
 
 

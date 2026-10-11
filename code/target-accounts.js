@@ -18,12 +18,17 @@ import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
 import { askConfirm, askChoice, mirrorStatusToPopup, showNotice } from "./confirm-dialog.js";
 import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { applyOnboardingNavState } from "./settings-nav-state.js";
+import { importSummaryText } from "./import-merge.js";
+import { hideImportForMembers } from "./import-gate.js";
 import {
   getTargetAccountsWorkbook,
   getTargetAccountsMeta,
   getTargetAccounts,
   importTargetAccounts,
-  importTargetAccountsWorkbook,
+  mergeImportIntoWorkbook,
+  previewWorkbookImport,
+  mayImport,
+  IMPORT_REFUSED,
   exportTargetAccountsBackup,
   importTargetAccountsBackup,
   getTargetAccountsMissingLinkedinId,
@@ -59,7 +64,6 @@ import {
   getPendingDiscoveredMergePreview,
   mergeDiscoveredIntoWorkbook,
   mergeTargetAccounts,
-  addHubspotRowsToWorkbook,
   addWebResearchInitiatives,
   getKeptSeparatePairs,
   addKeptSeparatePairs,
@@ -92,21 +96,28 @@ import {
   importSettings,
   importLeads,
   getAccountReadiness, getTargetsStatus,
+  takeRelationshipsMigrationNotice, relationshipsMovedText, getRelationshipMatcher, accountPriorityFor,
+  setAccountRelationship, parseLinkedinCompanySlug,
+  revenueUnitsContext, withoutUnitlessRevenue,
 } from "./storage.js";
+import { RAISED_REASON, relationshipTagText } from "./relationships.js";
 import { READINESS_STATES, READINESS_LABELS, FIELD_LABELS, describeMissing, countReadiness } from "./readiness.js";
 import { coverageLines } from "./pipeline-plan.js";
-import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBeforeRestore } from "./backup-restore.js";
+import { chooseRestoreSections, extractBackupPart, startAutoBackup, safetyCopyBefore } from "./backup-restore.js";
+import { EXPORT_FOLDER_KEY, getStoredFolder, pickExportFolder, folderPermission, requestFolderPermission, writeToFolder, folderPickerSupported } from "./backup-folder.js";
 import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
-import { DEFAULT_EXCHANGE_RATES } from "./value-normalize.js";
-import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
+import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
+import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES, sizeBucketKey } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine } from "./pipeline-status.js";
-import { parseCsv, detectHubspotFile, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
-import { parseFullTargetAccountsWorkbook } from "./xlsx-lite.js";
+import { parseCsv, hubspotCompanyRows, hubspotContactRows, buildHubspotFiles } from "./hubspot.js";
+import { buildCrmFiles, crmAccountRows, crmContactRows, withDynamicsFieldNames, CRM_NAMES, CRM_SHORT_NAMES } from "./crm-files.js";
+import { detectImportFile, describeImportFile, salesteamCsvRows, applyFileCurrency, fileNeedsCurrency, currencyPlausibility } from "./csv-import.js";
+import { parseFullTargetAccountsWorkbook, parseFirstSheetRecords } from "./xlsx-lite.js";
 import { resolveConfirmText, runCompanyIdResolution } from "./company-resolve-extraction.js";
 import { runContactDiscoveryForExistingCompanies } from "./contact-discovery-extraction.js";
 import { sizeFetchConfirmText, runCompanySizeFetch } from "./company-size-extraction.js";
@@ -125,6 +136,9 @@ import {
 import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
+import { changeAccountGroups } from "./team-groups-ui.js";
+import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
+import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const emptyStateEl = document.getElementById("empty-state");
 const controlsEl = document.getElementById("explorer-controls");
@@ -135,11 +149,11 @@ const resultCountEl = document.getElementById("result-count");
 const colgroupEl = document.getElementById("companies-colgroup");
 const theadEl = document.getElementById("companies-thead");
 const tbodyEl = document.getElementById("companies-tbody");
-const importTargetAccountsPageBtn = document.getElementById("import-target-accounts-page-btn");
+const importTargetAccountsPageBtn = document.getElementById("import-page-btn");
 const importTargetAccountsPageFileInput = document.getElementById("import-target-accounts-page-file-input");
 const targetAccountsPageIoStatusEl = document.getElementById("target-accounts-page-io-status");
 // Import / restore progress and results appear as a pop-up, not only as a line of text on the page.
-mirrorStatusToPopup(["target-accounts-page-io-status", "account-web-research-status", "hubspot-import-status"]);
+mirrorStatusToPopup(["target-accounts-page-io-status", "account-web-research-status"]);
 const resolveCompanyIdsBtn = document.getElementById("resolve-company-ids-btn");
 const stopResolveCompanyIdsBtn = document.getElementById("stop-resolve-company-ids-btn");
 const resolveCompanyIdsLimitInput = document.getElementById("resolve-company-ids-limit-input");
@@ -512,6 +526,11 @@ navCollapseBtn.addEventListener("click", () => {
 const listViewEl = document.getElementById("list-view");
 const accountViewEl = document.getElementById("account-view");
 const contactViewEl = document.getElementById("contact-view");
+const noAccessViewEl = document.getElementById("no-access-view");
+document.getElementById("no-access-back-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  location.hash = "";
+});
 // Team use 1.2.2 step 4: claims on the account and contact pages (a contact's claim is its account's).
 const accountClaimGuard = createClaimGuard({
   viewEl: accountViewEl,
@@ -557,6 +576,12 @@ const contactsTableWrapEl = document.getElementById("contacts-table-wrap");
 let workbook = { companies: [], contacts: [], aiInitiatives: [], aiInvestment: [], sources: [] };
 let allLeads = []; // getResults() as an array - flags/last-communication/posts-by-contact all need this
 let accountExtras = {}; // getTargetAccountExtras() - due-dates drive the list view's flag column
+let relationshipMatcher = null; // 1.2.3: getRelationshipMatcher(), loaded with the workbook
+
+// 1.2.3 (R5.4): an account's priority as shown and used - a customer's raised one level unless set by hand.
+function accountPriorityInfo(company) {
+  return accountPriorityFor(company, accountExtras[normalizeCompanyName(company.company)], relationshipMatcher);
+}
 let contactExtras = {}; // getTargetContactExtras() - same, for the Target Contacts Dashboard's flag column
 let sortField = "salesTeamPriorityScore";
 let sortDirection = "desc";
@@ -698,6 +723,15 @@ const COMPANY_COLUMNS = [
   // applyCompanyPrioritizationResults). Distinct from the imported workbook's own
   // conclusion (aiPriority* / priorityRationale, labelled "Imported ..." below).
   { id: "salesTeamPriority", label: "Priority", visible: true, pill: true },
+  // 1.2.3 (R2.4, D5): Customer / Partner, computed from the Customers and partners lists - a choice filter, not text.
+  {
+    id: "relationship", label: "Relationship", visible: true,
+    filterOptions: [["customer", "Customer"], ["partner", "Partner"], ["none", "None"]],
+    filterMatch: (company, choice) => {
+      const rel = accountPriorityInfo(company).relationship;
+      return choice === "none" ? rel.length === 0 : rel.includes(choice);
+    },
+  },
   { id: "salesTeamPriorityScore", label: "Priority Score", visible: true, numeric: true },
   { id: "salesTeamPriorityReason", label: "Priority Reason", visible: true, longText: true },
   // Not a stored field - computed live from every lead matched to this company by
@@ -712,6 +746,11 @@ const COMPANY_COLUMNS = [
   // is unusable across hundreds of rows. Filter this column on "review" to list them.
   { id: "webFindings", label: "Web Findings", visible: true },
   { id: "linkedinLink", label: "LinkedIn Link", visible: true, link: true },
+  // 1.2.2.7 (Boaz): the Setup size bucket (S-XXL) of the employee count - the one group filters and size priority use.
+  { id: "sizeBucket", label: "Size", visible: true },
+  // 1.2.2.7: the account's groups in a team with groups (computed by the background, team-groups.js) - filter the
+  // column to list one group until the Group picker (design 7, step 3).
+  { id: "teamGroups", label: "Groups", visible: true },
   // Schema 1.1 (V1.32 research prompt): Target_Country_Relationship = "Local company" / "Global company" (where the
   // group is headquartered relative to the project's home market). Older workbooks have no such column - the value then
   // falls back to Company_Type, which in the first workbook (V66) carried that same classification.
@@ -896,8 +935,13 @@ function saveHiddenColumns() {
 }
 
 function visibleColumns() {
-  return COMPANY_COLUMNS.filter((c) => !hiddenColumns.has(c.id));
+  return orderedColumns(COMPANY_COLUMNS, COLUMN_ORDER_STORAGE_KEY).filter((c) => !hiddenColumns.has(c.id));
 }
+
+// Column order (Boaz 2026-10-08): drag a column title to move the column - column-order.js, shared with the Leads
+// Dashboard.
+const COLUMN_ORDER_STORAGE_KEY = "salesteam-target-accounts-column-order-v1";
+const CONTACT_COLUMN_ORDER_STORAGE_KEY = "salesteam-target-contacts-column-order-v1";
 
 // Always leaves at least one column visible - hiding every column would
 // leave a table with an unrecoverable, empty-looking header.
@@ -1032,6 +1076,16 @@ function rawValue(company, column) {
     const key = contactKeyFor(company.company, company.fullName);
     return effectiveStatus(leadStatusBucket(findLeadsForContact(company, allLeads)), contactExtras[key]?.manualStatus);
   }
+  // The effective values (edits and applied research included) and the same reading as a group's Size (team-groups.js).
+  if (column.id === "sizeBucket") {
+    if (company.fullName != null) return null;
+    const overrides = accountExtras[normalizeCompanyName(company.company)]?.overrides || {};
+    return sizeBucketKey(sizeEmployeesOf({ ...company, ...overrides }), SIZE_PRIORITY_BUCKETS);
+  }
+  // A contact shows its account's groups (step 3; hidden by default on Target Contacts).
+  if (column.id === "teamGroups") return teamAccounts.groupNames(normalizeCompanyName(company.company));
+  if (company.fullName == null && column.id === "salesTeamPriority") return accountPriorityInfo(company).priority;
+  if (column.id === "relationship") return company.fullName == null ? (relationshipTagText(accountPriorityInfo(company).relationship) || null) : null;
   // A contact row always has fullName, a company row never does - reused
   // below to pick the right extras store without a second parameter.
   const overrides = (company.fullName != null
@@ -1061,6 +1115,38 @@ function rawValue(company, column) {
 // rawValue() runs for every cell of every row and cannot await, so the currency settings are
 // cached here and refreshed by loadWorkbook() rather than read per comparison.
 let moneySettings = { targetCurrency: DEFAULT_EXCHANGE_RATES.base, rates: DEFAULT_EXCHANGE_RATES };
+
+// 1.2.3 one currency (D13): a revenue cell shows the amount in the default currency (Change Settings > Advanced >
+// Revenue & Currency); the stored amount and its currency stay as found and are named in the tooltip, so changing the
+// default currency later loses nothing. Sorting, filters and every export use this shown amount (D14). A local revenue
+// without a currency of its own is in the global one, as in the web-findings comparison.
+// -> { amount, currency, converted, original, originalCurrency } or null when the cell is empty or not a number.
+function shownMoney(company, column) {
+  const value = rawValue(company, column);
+  if (value == null || value === "") return null;
+  const overrides = accountExtras[normalizeCompanyName(company.company)]?.overrides || {};
+  const own = (field) => (Object.prototype.hasOwnProperty.call(overrides, field) ? overrides[field] : company[field]);
+  const currency = own(column.currencyField) || own("revenueCurrency") || null;
+  const m = normalizeMoney(value, currency, moneySettings.targetCurrency, moneySettings.rates);
+  if (m.amount === null) return null;
+  const amount = Math.abs(m.amount) >= 1000 ? Math.round(m.amount) : Math.round(m.amount * 100) / 100;
+  return { amount, currency: m.currency, converted: m.converted, original: parseLooseNumber(value), originalCurrency: m.converted ? String(currency).toUpperCase() : null };
+}
+
+function shownMoneyText(money) {
+  return money ? `${formatNumber(money.amount)} ${money.currency || ""}`.trim() : "—";
+}
+
+function shownMoneyOrigin(money) {
+  return money && money.converted ? `from ${formatNumber(money.original)} ${money.originalCurrency}` : "";
+}
+
+// The account page: "1,250,000 USD (from 1,000,000 CHF)" - there is no tooltip there.
+function overviewMoney(company, id) {
+  const money = shownMoney(company, COMPANY_COLUMNS.find((c) => c.id === id));
+  if (!money) return null;
+  return shownMoneyOrigin(money) ? `${shownMoneyText(money)} (${shownMoneyOrigin(money)})` : shownMoneyText(money);
+}
 
 let seniorityLevelConfig = [];
 function effectiveContactSeniority(contact) {
@@ -1107,12 +1193,14 @@ function sortValue(company, column) {
     const m = typeof ev === "string" ? ev.replace(/,/g, "").match(/\d+/) : null;
     return m ? Number(m[0]) : null;
   }
+  if (company.fullName == null && column.currencyField) return shownMoney(company, column)?.amount ?? null;
   const v = column.id === "companyType" ? localizeTypeWording(rawValue(company, column)) : rawValue(company, column);
   if (column.numeric || column.date) return typeof v === "number" ? v : (v == null || v === "" ? null : parseFloat(v));
   return v == null ? "" : String(v).toLowerCase();
 }
 
 function filterText(company, column) {
+  if (company.fullName == null && column.currencyField) return String(shownMoney(company, column)?.amount ?? "");
   const v = column.id === "companyType" ? localizeTypeWording(rawValue(company, column)) : rawValue(company, column);
   return v == null ? "" : String(v).toLowerCase();
 }
@@ -1125,6 +1213,11 @@ function matchesGlobalSearch(company, query) {
 
 function matchesColumnFilters(company) {
   for (const [colId, filter] of Object.entries(columnFilters)) {
+    if (filter && filter.choice) {
+      const column = COMPANY_COLUMNS.find((c) => c.id === colId);
+      if (column && column.filterMatch && !column.filterMatch(company, filter.choice)) return false;
+      continue;
+    }
     if (!filter || !filter.text) continue;
     const column = COMPANY_COLUMNS.find((c) => c.id === colId);
     if (!column) continue;
@@ -1138,7 +1231,8 @@ function sortedFilteredCompanies() {
   const query = searchInputEl.value.trim().toLowerCase();
   const sortCol = COMPANY_COLUMNS.find((c) => c.id === sortField);
   const filtered = workbook.companies.filter((c) => matchesGlobalSearch(c, query) && matchesColumnFilters(c)
-    && teamAccounts.ownerFilter(normalizeCompanyName(c.company), teamOwnerFilter));
+    && accountOwnerPicker.matches(normalizeCompanyName(c.company))
+    && accountGroupPicker.matches(normalizeCompanyName(c.company)));
   if (sortCol) {
     filtered.sort((a, b) => {
       const va = sortValue(a, sortCol);
@@ -1172,6 +1266,11 @@ function appendImportedDot(td) {
 
 function renderCellContent(td, company, column) {
   const value = column.id === "companyType" ? localizeTypeWording(rawValue(company, column)) : rawValue(company, column);
+
+  if (column.id === "relationship") {
+    if (value) td.appendChild(relationshipTagNode(accountPriorityInfo(company).relationship));
+    return;
+  }
 
   if (company.fullName != null && column.id === "seniority") {
     td.textContent = value || "—";
@@ -1264,9 +1363,12 @@ function renderCellContent(td, company, column) {
   let text;
   if (column.date) text = formatExcelDate(value);
   else if (column.percent) text = value == null || value === "" ? "—" : `${Math.round(value * 100)}%`;
-  else if (column.numeric) {
+  else if (column.currencyField && value != null && value !== "") {
+    const money = shownMoney(company, column);
+    text = money ? shownMoneyText(money) : formatValue(value);
+    if (shownMoneyOrigin(money)) td.title = shownMoneyOrigin(money);
+  } else if (column.numeric) {
     text = formatNumber(value);
-    if (column.currencyField && value != null && value !== "") text = `${text} ${company[column.currencyField] || ""}`.trim();
   } else {
     text = formatValue(value);
   }
@@ -1508,6 +1610,43 @@ function toggleColumnMenu(column, anchorEl) {
   });
   popup.append(ascBtn, descBtn, document.createElement("hr"));
 
+  // A column with fixed values (Relationship - D5): radio buttons, applied on click; "Any" clears the filter.
+  if (column.filterOptions) {
+    const current = columnFilters[column.id]?.choice || "";
+    const group = document.createElement("div");
+    group.className = "col-filter-choices";
+    for (const [value, label] of [["", "Any"], ...column.filterOptions]) {
+      const row = document.createElement("label");
+      row.className = "col-filter-choice";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `col-filter-${column.id}`;
+      radio.checked = value === current;
+      radio.addEventListener("change", () => {
+        if (value) columnFilters[column.id] = { choice: value }; else delete columnFilters[column.id];
+        currentPage = 1;
+        saveFilterSortState();
+        closeColumnMenu();
+        renderTable();
+      });
+      row.append(radio, document.createTextNode(` ${label}`));
+      group.appendChild(row);
+    }
+    popup.append(group, document.createElement("hr"));
+    const hideChoiceBtn = document.createElement("button");
+    hideChoiceBtn.className = "col-menu-item";
+    hideChoiceBtn.title = `Hide the ${column.label} column - bring it back from the Columns button`;
+    hideChoiceBtn.textContent = "Hide This Column";
+    hideChoiceBtn.addEventListener("click", () => { closeColumnMenu(); setColumnHidden(column.id, true); });
+    popup.appendChild(hideChoiceBtn);
+    document.body.appendChild(popup);
+    const w = popup.offsetWidth;
+    popup.style.left = `${Math.max(8, Math.min(anchorRect.right - w, window.innerWidth - w - 8))}px`;
+    popup.style.top = `${anchorRect.bottom + 2}px`;
+    setTimeout(() => document.addEventListener("click", onDocumentClickCloseMenu, { once: true }), 0);
+    return;
+  }
+
   const filterInput = document.createElement("input");
   filterInput.type = "text";
   filterInput.className = "col-filter-input";
@@ -1582,7 +1721,8 @@ function toggleColumnsPanel() {
   const popup = document.createElement("div");
   popup.className = "col-menu-popup columns-panel";
 
-  for (const column of COMPANY_COLUMNS) {
+  popup.append(resetOrderItem(COLUMN_ORDER_STORAGE_KEY, closeColumnMenu, () => renderTable()), document.createElement("hr"));
+  for (const column of orderedColumns(COMPANY_COLUMNS, COLUMN_ORDER_STORAGE_KEY)) {
     const row = document.createElement("label");
     row.className = "columns-panel-row";
     const checkbox = document.createElement("input");
@@ -1715,6 +1855,11 @@ function renderBulkBar(scope) {
   countEl.textContent = `${n} ${noun(n)} selected`;
   if (scope === "accounts") {
     for (const id of ["accounts-bulk-assign-btn", "accounts-bulk-release-btn"]) document.getElementById(id).hidden = !teamAccounts.inTeam();
+    // 1.2.2.7 (Boaz): the Team Lead (and the deputy) assigns many accounts to a member at once.
+    document.getElementById("accounts-bulk-assign-to-btn").hidden = !teamAccounts.inTeam() || !teamAccounts.hasLeadRights();
+    // Step 4 (R2.6): many accounts onto a named-accounts group at once - only when the team has one.
+    const groupBtns = !teamAccounts.inTeam() || !teamAccounts.hasLeadRights() || !teamAccounts.hasNamedGroups();
+    for (const id of ["accounts-bulk-group-add-btn", "accounts-bulk-group-remove-btn"]) document.getElementById(id).hidden = groupBtns;
   }
   if (!extendEl) return;
 
@@ -1818,6 +1963,36 @@ for (const [id, type] of [["accounts-bulk-assign-btn", "TEAM_ASSIGN"], ["account
     if (!work.length) { showNotice(type === "TEAM_ASSIGN" ? "Nothing to do - every selected account is already assigned to you." : "Nothing to do - none of the selected accounts is assigned."); return; }
     await teamAssignKeys(work, type);
     clearSelection("accounts");
+  });
+}
+document.getElementById("accounts-bulk-assign-to-btn").addEventListener("click", async () => {
+  const keys = [...selectionSet("accounts")];
+  if (!keys.length) return;
+  let st = null;
+  try { st = await chrome.runtime.sendMessage({ type: "TEAM_SYNC_STATUS" }); } catch { /* handled below */ }
+  if (!st?.member) { showNotice("The team status could not be read - try again in a moment.", { error: true }); return; }
+  // Current members only; each with how many of the selected accounts they may work (their groups, D10).
+  const members = [{ id: st.me.memberId, name: `${st.me.name} (you)` }, ...(st.members || []).filter((m) => !m.left && !m.removed)];
+  const choices = members.map((m) => {
+    // Boaz 2026-10-08: "x of y" counts only what would really be assigned - with access, and not theirs already.
+    const ok = keys.filter((k) => teamAccounts.mayAccess(m.id, k) && teamAccounts.entry(k)?.a !== m.id).length;
+    return { value: m.id, label: ok === keys.length ? m.name : `${m.name}\n(${ok} of ${keys.length})`, ok, name: m.name.replace(/ \(you\)$/, "") };
+  }).filter((c) => c.ok > 0);
+  if (!choices.length) { showNotice("Nobody has access to these accounts - add a member to their groups first (Settings > Team).", { error: true }); return; }
+  const to = await askChoice(`Assign the ${keys.length} selected account${keys.length === 1 ? "" : "s"} to:`, choices);
+  if (!to) return;
+  const work = keys.filter((k) => teamAccounts.mayAccess(to, k) && teamAccounts.entry(k)?.a !== to);
+  const noAccess = keys.filter((k) => !teamAccounts.mayAccess(to, k));
+  if (!work.length) { showNotice(`Nothing to do - the selected accounts ${noAccess.length ? "they may work are " : "are "}already assigned to them.`); return; }
+  showNotice(`Assigning ${work.length} account${work.length === 1 ? "" : "s"}…`, { working: true });
+  await teamAssignKeys(work, "TEAM_ASSIGN", { to, toName: choices.find((c) => c.value === to)?.name, noAccess,
+    already: keys.filter((k) => teamAccounts.entry(k)?.a === to).length });
+  clearSelection("accounts");
+});
+for (const [id, mode] of [["accounts-bulk-group-add-btn", "add"], ["accounts-bulk-group-remove-btn", "remove"]]) {
+  document.getElementById(id).addEventListener("click", async () => {
+    const keys = [...selectionSet("accounts")];
+    if (keys.length && await changeAccountGroups(keys, mode)) clearSelection("accounts");
   });
 }
 document.getElementById("contacts-bulk-edit-btn").addEventListener("click", () => openBulkEditDialog("contacts"));
@@ -1926,6 +2101,7 @@ function renderTableHead() {
   tr.appendChild(flagTh);
   for (const column of visibleColumns()) {
     const th = document.createElement("th");
+    makeColumnDraggable(th, column, COMPANY_COLUMNS, COLUMN_ORDER_STORAGE_KEY, () => renderTable());
 
     const label = document.createElement("span");
     label.className = "th-label";
@@ -1945,7 +2121,7 @@ function renderTableHead() {
       arrow.textContent = sortDirection === "asc" ? " ▲" : " ▼";
       th.appendChild(arrow);
     }
-    if (columnFilters[column.id]?.text) {
+    if (columnFilters[column.id]?.text || columnFilters[column.id]?.choice) {
       th.classList.add("col-filtered");
       const dot = document.createElement("span");
       dot.className = "filter-active-dot";
@@ -2051,6 +2227,11 @@ function tableFilterChips(searchEl, filters, columns) {
   if (searchEl.value.trim()) chips.push({ label: `Search: "${searchEl.value.trim()}"`, clear: () => { searchEl.value = ""; } });
   for (const column of columns) {
     const f = filters[column.id];
+    if (f?.choice) {
+      const option = (column.filterOptions || []).find(([v]) => v === f.choice);
+      chips.push({ label: `${column.label}: ${option ? option[1] : f.choice}`, clear: () => { filters[column.id] = null; } });
+      continue;
+    }
     if (!f?.text) continue;
     chips.push({
       label: `${column.label}: ${f.exclude ? "not " : ""}"${f.text}"`,
@@ -2127,7 +2308,27 @@ function onContactFiltersChanged() {
 // Team use 1.2.2 step 5 (TEAM_USE_DESIGN.md 7): badges, the owner filter, off-limits row actions, bulk assign
 // --------------------------------------------------------------------------
 const TEAM_OWNER_FILTER_STORAGE_KEY = "salesteam-team-owner-filter"; // per browser profile = per member
-let teamOwnerFilter = (() => { try { return localStorage.getItem(TEAM_OWNER_FILTER_STORAGE_KEY) || "all"; } catch { return "all"; } })();
+
+// 1.2.3 (R2.4): the Customer / Partner tag, or null when the company is neither.
+function relationshipTagNode(relationship) {
+  const text = relationshipTagText(relationship);
+  if (!text) return null;
+  const tag = document.createElement("span");
+  tag.className = "relationship-tag";
+  tag.textContent = text;
+  tag.title = "On your Customers and partners list (Setup) - a normal account, fully researched";
+  return tag;
+}
+
+function companyRowFor(companyName) {
+  const key = normalizeCompanyName(companyName || "");
+  return workbook.companies.find((c) => normalizeCompanyName(c.company) === key) || { company: companyName };
+}
+
+function appendRelationshipTag(el, companyName) {
+  const tag = relationshipTagNode(accountPriorityInfo(companyRowFor(companyName)).relationship);
+  if (tag) el.appendChild(tag);
+}
 
 function appendTeamBadge(td, companyKey) {
   const badge = teamAccounts.badge(companyKey);
@@ -2159,9 +2360,54 @@ function accountMenuItems(companyKey, company, { onDetailPage = false } = {}) {
       ? [{ label: `Review web findings (${openFindingCount})…`, change: true, onClick: () => openWebFindingsReview(companyKey, { onSaved: afterSave }) }]
       : []),
     { label: "Merge…", change: true, onClick: () => openMergeAccountsDialog(companyKey) },
+    // 1.2.3 (R2.5): who may change the Customers / Partners lists - no team, or the Team Lead (like Setup).
+    ...(!teamAccounts.inTeam() || teamAccounts.hasLeadRights()
+      ? [{ label: "Relationship…", onClick: () => openRelationshipDialog(companyKey, company, { onDetailPage }) }]
+      : []),
     ...teamAssignMenuItems(companyKey, { onDetailPage }),
+    ...teamGroupMenuItems(companyKey),
     ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, onClick: () => removeAccount(companyKey, company.company, { onDetailPage }) }] : []),
   ]);
+}
+
+// 1.2.3 design 8.3: tick Customer / Partner for one account; explicit Save. Writes the Customers and partners lists.
+async function openRelationshipDialog(companyKey, company, { onDetailPage = false } = {}) {
+  const dialog = document.getElementById("relationship-dialog");
+  const ov = accountExtras[companyKey]?.overrides || {};
+  const ident = {
+    slug: parseLinkedinCompanySlug(ov.linkedinLink || company.linkedinLink || ""),
+    name: company.company,
+    website: ov.website || company.website || null,
+  };
+  const current = accountPriorityInfo(company).relationship;
+  document.getElementById("relationship-dialog-name").textContent = company.company;
+  const customerBox = document.getElementById("relationship-dialog-customer");
+  const partnerBox = document.getElementById("relationship-dialog-partner");
+  const saveBtn = document.getElementById("relationship-dialog-save-btn");
+  customerBox.checked = current.includes("customer");
+  partnerBox.checked = current.includes("partner");
+  const dirty = () => customerBox.checked !== current.includes("customer") || partnerBox.checked !== current.includes("partner");
+  saveBtn.disabled = true;
+  customerBox.onchange = partnerBox.onchange = () => { saveBtn.disabled = !dirty(); };
+  document.getElementById("relationship-dialog-cancel-btn").onclick = () => dialog.close();
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    const result = await setAccountRelationship(ident, { customer: customerBox.checked, partner: partnerBox.checked });
+    dialog.close();
+    const names = { customer: "Customer", partner: "Partner" };
+    const parts = [
+      ...result.added.map((c) => `${names[c]} added`),
+      ...Object.entries(result.removed).map(([c, n]) => `${names[c]} removed${n > 1 ? ` (${n} entries matched this company)` : ""}`),
+    ];
+    appendActivityLog({
+      actor: "user", action: "account_relationship_changed", label: `"${company.company}": ${parts.join(", ")}`,
+      newValue: { customer: customerBox.checked, partner: partnerBox.checked }, relatedCompanyKey: companyKey,
+    }).catch(() => {});
+    await loadWorkbook();
+    if (onDetailPage) await renderAccountView(companyKey); else rerenderForScope("accounts");
+    if (Object.values(result.removed).some((n) => n > 1)) showNotice(`${company.company}: ${parts.join(", ")}.`);
+  };
+  dialog.showModal();
 }
 
 function contactMenuItems(contactKey, contact, { onDetailPage = false } = {}) {
@@ -2177,13 +2423,13 @@ function contactMenuItems(contactKey, contact, { onDetailPage = false } = {}) {
   ]);
 }
 
-// Assign to me / Release, and for the Team Admin Reassign… - in the menus only; the line under the account's title
+// Assign to me / Release, and for the Team Lead Reassign… - in the menus only; the line under the account's title
 // just says who has it.
 function teamAssignMenuItems(companyKey, { onDetailPage = false } = {}) {
   if (!teamAccounts.inTeam()) return [];
   const e = teamAccounts.entry(companyKey);
   const mine = Boolean(e?.a) && e.a === teamAccounts.me();
-  const admin = teamAccounts.isAdmin();
+  const admin = teamAccounts.hasLeadRights();
   const done = () => { if (onDetailPage) accountClaimGuard.refresh(); };
   const run = (type) => teamAssignKeys([companyKey], type).then(done);
   const items = [];
@@ -2197,14 +2443,28 @@ function teamAssignMenuItems(companyKey, { onDetailPage = false } = {}) {
   return items;
 }
 
-// Team Admin: pick the member an account goes to.
+// 1.2.3 advanced mode step 4 (R2.6): the Team Lead puts an account on a named-accounts group, or takes it off one.
+// Offered only where it would do something - no named group to add to, or the account on none: no item.
+function teamGroupMenuItems(companyKey) {
+  if (!teamAccounts.inTeam() || !teamAccounts.hasLeadRights()) return [];
+  const { on, off } = teamAccounts.namedGroups(companyKey);
+  return [
+    ...(off.length ? [{ label: "Add to group…", onClick: () => changeAccountGroups([companyKey], "add") }] : []),
+    ...(on.length ? [{ label: "Remove from group…", onClick: () => changeAccountGroups([companyKey], "remove") }] : []),
+  ];
+}
+
+// Team Lead: pick the member an account goes to.
 async function teamReassign(companyKey) {
   let st = null;
   try { st = await chrome.runtime.sendMessage({ type: "TEAM_SYNC_STATUS" }); } catch { /* handled below */ }
   if (!st?.member) { showNotice("The team status could not be read - try again in a moment.", { error: true }); return; }
   const current = teamAccounts.entry(companyKey)?.a || null;
-  const choices = [{ value: st.me.memberId, label: `${st.me.name} (you)` }, ...(st.members || []).map((m) => ({ value: m.id, label: m.name }))]
-    .filter((c) => c.value !== current);
+  // 1.2.3 step 1 (D10): current members only (not those who left or were removed), and only those with access.
+  const choices = [{ value: st.me.memberId, label: `${st.me.name} (you)` },
+    ...(st.members || []).filter((m) => !m.left && !m.removed).map((m) => ({ value: m.id, label: m.name }))]
+    .filter((c) => c.value !== current && teamAccounts.mayAccess(c.value, companyKey));
+  if (!choices.length) { showNotice("Nobody else has access to this account - add a member to one of its groups first (Settings > Team).", { error: true }); return; }
   const to = await askChoice("Assign this account to:", choices);
   if (!to) return;
   let r = null;
@@ -2214,24 +2474,36 @@ async function teamReassign(companyKey) {
 
 const TEAM_REFUSAL_TEXT = {
   offline: "the team folder is not connected on this PC", not_in_sync: "not in sync with the team",
-  held: "a colleague is updating it", assigned: "a colleague already has it", not_admin: "only the Team Admin can release a colleague's account",
+  held: "a colleague is updating it", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
 };
 
 // Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
-async function teamAssignKeys(keys, type) {
+async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess = [], already = 0 } = {}) {
   let done = 0;
   const refused = {};
+  // 1.2.2.32: all of them in one message - one by one, each account cost a save of the whole team state and a folder round.
+  let many = null;
+  try { many = await chrome.runtime.sendMessage({ type: `${type}_MANY`, keys, ...(to ? { to } : {}) }); } catch { /* counted as refused */ }
+  const byKey = new Map((many?.results || []).map((r) => [r.key, r]));
   for (const key of keys) {
-    let r = null;
-    try { r = await chrome.runtime.sendMessage({ type, key }); } catch { /* counted as refused */ }
+    const r = byKey.get(key);
     if (r && r.ok !== false) done++;
     else { const why = r?.reason || "offline"; refused[why] = (refused[why] || 0) + 1; }
   }
-  const verb = type === "TEAM_ASSIGN" ? "assigned to you" : "released";
-  const skipped = Object.entries(refused).map(([why, n]) => `${n} not (${TEAM_REFUSAL_TEXT[why] || why})`).join(", ");
-  if (keys.length > 1 || skipped) {
-    showNotice(`${done} account${done === 1 ? "" : "s"} ${verb}${skipped ? `; ${skipped}` : ""}.`, { error: done === 0 });
+  const verb = type === "TEAM_ASSIGN" ? (to ? `assigned to ${toName || "them"}` : "assigned to you") : "released";
+  // Boaz 2026-10-08: "1 not (not in a group of theirs)" read awkwardly - one sentence per reason, and the accounts
+  // the member has no access to by name, with their groups.
+  const plural = (n) => `${n} account${n === 1 ? "" : "s"}`;
+  const lines = [`${plural(done)} ${verb}.`];
+  if (already) lines.push(`${plural(already)} ${already === 1 ? "was" : "were"} already assigned to ${toName || "them"}.`);
+  if (noAccess.length) {
+    const names = new Map(rawWorkbook.companies.map((c) => [normalizeCompanyName(c.company), c.company]));
+    const listed = noAccess.slice(0, 6).map((k) => `${names.get(k) || k} (${teamAccounts.groupNames(k) || "no group"})`).join(", ");
+    lines.push(`${plural(noAccess.length)} not assigned - ${toName || "they"} is not in ${noAccess.length === 1 ? "its group" : "their groups"}: ${listed}${noAccess.length > 6 ? ", …" : ""}. ` +
+      "Add them to that group in Settings > Team first.");
   }
+  for (const [why, n] of Object.entries(refused)) lines.push(`${plural(n)} not ${type === "TEAM_ASSIGN" ? "assigned" : "released"} - ${TEAM_REFUSAL_TEXT[why] || why}.`);
+  if (keys.length > 1 || lines.length > 1 || to) showNotice(lines.join("\n"), { error: done === 0 });
   appendActivityLog({ actor: "user", action: type === "TEAM_ASSIGN" ? "team_assigned" : "team_released", label: `${done} account${done === 1 ? "" : "s"} ${verb}` });
 }
 
@@ -2395,19 +2667,33 @@ document.getElementById("removed-restore-btn").addEventListener("click", async (
   }
 });
 
+// 1.2.3 step 2 (design 7): the Group dropdown of each list - one shared builder, the choice remembered per list.
+const accountGroupPicker = teamAccounts.groupPicker(document.getElementById("team-group-picker"),
+  "salesteam-team-group-accounts", () => onAccountFiltersChanged());
+const contactGroupPicker = teamAccounts.groupPicker(document.getElementById("contacts-team-group-picker"),
+  "salesteam-team-group-contacts", () => onContactFiltersChanged());
+
+// Step 3 (design 7): the Assigned choice. One value behind the buttons (a team without groups, as in 1.2.2) and the
+// dropdown that takes their place once the team has groups; Target Contacts has the dropdown, with its own choice.
+const accountOwnerPicker = teamAccounts.ownerPicker(document.getElementById("team-owner-picker"),
+  TEAM_OWNER_FILTER_STORAGE_KEY, () => onAccountFiltersChanged(), { onlyWithGroups: true });
+const contactOwnerPicker = teamAccounts.ownerPicker(document.getElementById("contacts-team-owner-picker"),
+  "salesteam-team-owner-filter-contacts", () => onContactFiltersChanged());
+
 function paintTeamOwnerFilter() {
+  accountGroupPicker.paint();
+  accountOwnerPicker.paint();
   const removedBtn = document.getElementById("removed-btn");
   if (removedBtn) removedBtn.hidden = !teamAccounts.canRemove();
   const el = document.getElementById("team-owner-filter");
   if (!el) return;
-  el.hidden = !teamAccounts.inTeam();
-  for (const b of el.querySelectorAll("button")) b.classList.toggle("active", b.dataset.owner === teamOwnerFilter);
+  el.hidden = !teamAccounts.inTeam() || teamAccounts.groupsOn();
+  for (const b of el.querySelectorAll("button")) b.classList.toggle("active", b.dataset.owner === accountOwnerPicker.value());
 }
 document.getElementById("team-owner-filter")?.addEventListener("click", (event) => {
   const b = event.target.closest("button[data-owner]");
   if (!b) return;
-  teamOwnerFilter = b.dataset.owner;
-  try { localStorage.setItem(TEAM_OWNER_FILTER_STORAGE_KEY, teamOwnerFilter); } catch { /* remembered for this visit only */ }
+  accountOwnerPicker.set(b.dataset.owner);
   paintTeamOwnerFilter();
   onAccountFiltersChanged();
 });
@@ -2418,7 +2704,7 @@ function renderTable() {
   const accountChips = tableFilterChips(searchInputEl, columnFilters, COMPANY_COLUMNS);
   renderFilterChipsBar(document.getElementById("accounts-active-filters-bar"), accountChips, onAccountFiltersChanged,
     () => clearTableFilters(searchInputEl, columnFilters));
-  const ownerNote = teamAccounts.inTeam() && teamOwnerFilter !== "all" ? ` (${{ mine: "assigned to you", others: "assigned to colleagues", unassigned: "unassigned" }[teamOwnerFilter] || "all"} only)` : "";
+  const ownerNote = teamAccounts.inTeam() && accountOwnerPicker.value() !== "all" ? ` (${{ mine: "assigned to you", others: "assigned to colleagues", unassigned: "unassigned" }[accountOwnerPicker.value()] || "all"} only)` : "";
   resultCountEl.textContent = `${companies.length} of ${workbook.companies.length} companies${ownerNote}`;
   const cols = visibleColumns();
 
@@ -2517,6 +2803,7 @@ const CONTACT_LIST_COLUMNS = [
   { id: "publicBusinessPhone", label: "Business Phone", visible: true },
 
   // --- Hidden by default, one click away via the Columns button ---
+  { id: "teamGroups", label: "Groups" },
   { id: "aiRelevance", label: "Relevance", longText: true },
   { id: "seniorityPriority", label: "Seniority Priority", numeric: true },
   { id: "swissBased", label: "Local" },
@@ -2549,6 +2836,14 @@ function loadContactHiddenColumns() {
   } catch {
     contactHiddenColumns = new Set(defaultHidden);
   }
+  // Step 3: Groups is new and starts hidden here - also for someone whose saved choice predates the column.
+  try {
+    if (!localStorage.getItem("salesteam-target-contacts-groups-column-v1")) {
+      localStorage.setItem("salesteam-target-contacts-groups-column-v1", "1");
+      contactHiddenColumns.add("teamGroups");
+      saveContactHiddenColumns();
+    }
+  } catch { /* best-effort only */ }
 }
 
 function saveContactHiddenColumns() {
@@ -2560,7 +2855,7 @@ function saveContactHiddenColumns() {
 }
 
 function visibleContactColumns() {
-  return CONTACT_LIST_COLUMNS.filter((c) => !contactHiddenColumns.has(c.id));
+  return orderedColumns(CONTACT_LIST_COLUMNS, CONTACT_COLUMN_ORDER_STORAGE_KEY).filter((c) => !contactHiddenColumns.has(c.id));
 }
 
 function setContactColumnHidden(columnId, hidden) {
@@ -2642,7 +2937,9 @@ function sortContactsDefault(contacts) {
 function sortedFilteredContacts() {
   const query = contactsSearchInputEl.value.trim().toLowerCase();
   const sortCol = CONTACT_LIST_COLUMNS.find((c) => c.id === contactSortField);
-  const filtered = workbook.contacts.filter((c) => matchesContactGlobalSearch(c, query) && matchesContactColumnFilters(c));
+  const filtered = workbook.contacts.filter((c) => matchesContactGlobalSearch(c, query) && matchesContactColumnFilters(c)
+    && contactOwnerPicker.matches(normalizeCompanyName(c.company))
+    && contactGroupPicker.matches(normalizeCompanyName(c.company)));
   if (contactSortField === "default") return sortContactsDefault(filtered);
   if (sortCol) {
     filtered.sort((a, b) => {
@@ -2773,7 +3070,8 @@ function toggleContactColumnsPanel() {
   const popup = document.createElement("div");
   popup.className = "col-menu-popup columns-panel";
 
-  for (const column of CONTACT_LIST_COLUMNS) {
+  popup.append(resetOrderItem(CONTACT_COLUMN_ORDER_STORAGE_KEY, closeColumnMenu, () => renderContactsTable()), document.createElement("hr"));
+  for (const column of orderedColumns(CONTACT_LIST_COLUMNS, CONTACT_COLUMN_ORDER_STORAGE_KEY)) {
     const row = document.createElement("label");
     row.className = "columns-panel-row";
     const checkbox = document.createElement("input");
@@ -2824,6 +3122,7 @@ function renderContactsTableHead() {
   tr.appendChild(flagTh);
   for (const column of visibleContactColumns()) {
     const th = document.createElement("th");
+    makeColumnDraggable(th, column, CONTACT_LIST_COLUMNS, CONTACT_COLUMN_ORDER_STORAGE_KEY, () => renderContactsTable());
     const label = document.createElement("span");
     label.className = "th-label";
     label.textContent = column.label;
@@ -2877,6 +3176,8 @@ function hasUnreviewedPostForContact(contact) {
 }
 
 function renderContactsTable() {
+  contactGroupPicker.paint();
+  contactOwnerPicker.paint();
   const contacts = sortedFilteredContacts();
   const contactChips = tableFilterChips(contactsSearchInputEl, contactColumnFilters, CONTACT_LIST_COLUMNS);
   renderFilterChipsBar(document.getElementById("contacts-active-filters-bar"), contactChips, onContactFiltersChanged,
@@ -2928,7 +3229,7 @@ function renderContactsTable() {
     for (const column of cols) {
       const td = document.createElement("td");
       renderCellContent(td, contact, column);
-      if (column.id === "company") appendTeamBadge(td, contactCompanyKey);
+      if (column.id === "company") { appendTeamBadge(td, contactCompanyKey); appendRelationshipTag(td, contact.company); }
       tr.appendChild(td);
     }
 
@@ -3343,7 +3644,9 @@ let readinessRefreshTimer = null;
 let targetsCoverage = [];
 
 async function refreshReadiness() {
-  const rows = await getAccountReadiness();
+  // 1.2.2.28 (design 6): with account groups, the chart and the column cover the accounts this member sees - the
+  // Pipeline status chart said 568 companies next to four charts of the member's 162.
+  const rows = (await getAccountReadiness()).filter(({ view }) => teamAccounts.canSee(view.key));
   readinessByCompanyId = new Map(rows.map(({ view, assessment }) => [view.companyId, assessment]));
   targetsCoverage = await getTargetsStatus({ readiness: rows }).then(coverageLines).catch(() => []);
 }
@@ -3463,6 +3766,7 @@ function isContactDeleted(contact) {
   return isAccountDeleted(normalizeCompanyName(contact.company));
 }
 
+let emptyStateDefault = null; // the "nothing imported yet" text and its Import… button, put back when it applies again
 let lastExcludedCompanyKeys = new Set(); // loadWorkbook's exclusion result, reused by refreshAfterExtrasChange
 
 // After a change that only touches account / contact extras (remove, restore, bulk edit - 1.2.1.9): re-read the two
@@ -3474,18 +3778,35 @@ async function refreshAfterExtrasChange() {
   const [extras, cExtras] = await Promise.all([getTargetAccountExtras(), getTargetContactExtras()]);
   accountExtras = extras;
   contactExtras = cExtras;
-  const kept = (c) => !lastExcludedCompanyKeys.has(normalizeCompanyName(c.company));
-  workbook = {
-    ...workbook,
-    companies: rawWorkbook.companies.filter((c) => !isAccountDeleted(normalizeCompanyName(c.company)) && kept(c)),
-    contacts: rawWorkbook.contacts.filter((c) => !isContactDeleted(c) && kept(c)),
-  };
+  applyVisibleRows();
   renderTable();
   renderAccountsStats();
   renderContactsTable();
   renderContactsStats();
   scheduleReadinessRefresh();
 }
+// The rows the lists, counts, pages and exports work on: not removed, not excluded, and - 1.2.3 step 2 (design 6) -
+// in one of this member's groups. Run again when the groups change (teamAccounts.onChange).
+function applyVisibleRows() {
+  const kept = (c) => {
+    const key = normalizeCompanyName(c.company);
+    return !lastExcludedCompanyKeys.has(key) && teamAccounts.canSee(key);
+  };
+  workbook = {
+    ...workbook,
+    companies: rawWorkbook.companies.filter((c) => !isAccountDeleted(normalizeCompanyName(c.company)) && kept(c)),
+    contacts: rawWorkbook.contacts.filter((c) => !isContactDeleted(c) && kept(c)),
+  };
+}
+
+// An account or contact page opened by link or history for an account that is in none of my groups.
+function hiddenByGroups(view, key) {
+  if (!teamAccounts.groupsOn()) return false;
+  if (view === "account") return !teamAccounts.canSee(key);
+  const c = rawWorkbook.contacts.find((x) => contactKeyFor(x.company, x.fullName) === key);
+  return Boolean(c) && !teamAccounts.canSee(normalizeCompanyName(c.company));
+}
+
 async function loadWorkbook() {
   // Before the read, not after: copies any linkedinLink the resolver stored in the lightweight
   // targetAccounts map into the workbook row that has none (2026-09-22). The two are separate storage
@@ -3511,20 +3832,21 @@ async function loadWorkbook() {
   // actually dropped from storage, so nothing is lost if either source
   // later stops flagging it.
   const exclusionMatcher = await getExclusionMatcher();
+  relationshipMatcher = await getRelationshipMatcher();
   const excludedCompanyKeys = new Set(
     wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionMatcher)).map((c) => normalizeCompanyName(c.company))
   );
   lastExcludedCompanyKeys = excludedCompanyKeys;
-  workbook = {
-    ...wb,
-    companies: wb.companies.filter((c) =>
-      !isAccountDeleted(normalizeCompanyName(c.company)) && !excludedCompanyKeys.has(normalizeCompanyName(c.company))
-    ),
-    contacts: wb.contacts.filter((c) => !isContactDeleted(c) && !excludedCompanyKeys.has(normalizeCompanyName(c.company))),
-  };
+  workbook = { ...wb };
+  applyVisibleRows();
   const hasData = workbook.companies.length > 0;
   const hasContacts = workbook.contacts.length > 0;
   emptyStateEl.hidden = hasData;
+  // Step 3: a member whose groups hold no account yet is not told to import (that is the Team Lead's).
+  const noneInGroups = !hasData && teamAccounts.groupsOn() && rawWorkbook.companies.length > 0;
+  if (emptyStateDefault === null) emptyStateDefault = [...emptyStateEl.childNodes];
+  if (noneInGroups) emptyStateEl.textContent = "There are no accounts in your groups yet. The Team Lead decides which accounts each group holds (SalesTeam Settings → Team shows your groups).";
+  else if (!emptyStateEl.contains(emptyStateDefault[0])) emptyStateEl.replaceChildren(...emptyStateDefault);
   controlsEl.hidden = !hasData;
   tableWrapEl.hidden = !hasData;
   paginationTopEl.hidden = !hasData;
@@ -3612,7 +3934,7 @@ async function renderLinkedinResolveStatus() {
   // by construction, so alias-keyed duplicates (and their stale data)
   // never enter the count at all.
   const entries = Object.entries(targetAccounts)
-    .filter(([key, v]) => key === normalizeCompanyName(v.company))
+    .filter(([key, v]) => key === normalizeCompanyName(v.company) && teamAccounts.canSee(key))
     .map(([, v]) => v);
   if (entries.length === 0) {
     linkedinResolveStatusEl.hidden = true;
@@ -3862,16 +4184,55 @@ mergeDiscoveredBtn.addEventListener("click", async () => {
 // that took a workbook OR a backup was unclear): a research workbook (.xlsx) or a backup (.zip / .json).
 let importPickerMode = "research";
 
-function openImportDialog() {
-  renderImportColumnsHelp();
-  document.getElementById("import-help-status").textContent = "";
-  document.getElementById("import-accounts-dialog").showModal();
+// 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format. The research workbook keeps its own file
+// picker and help (prompt, template, mandatory columns); a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export is read by
+// csv-import.js / hubspot.js / crm-files.js. All of them then go through runPlannedImport below.
+const IMPORT_TITLES = { workbook: "Import Research Workbook", salesteam: "Import SalesTeam CSV", hubspot: "Import HubSpot Export", salesforce: "Import Salesforce Export", dynamics: "Import Microsoft Dynamics Export" };
+const IMPORT_FORMAT_NOTES = {
+  workbook: "Only for research done outside SalesTeam: the Excel workbook the SalesTeam research prompt produces in ChatGPT or another AI assistant, or one you filled in yourself from the template. SalesTeam researches accounts itself, so you normally do not need this.",
+  salesteam: "An accounts or contacts file saved with Export… (CSV - SalesTeam's own columns), for example after editing it in Excel. The computed columns (Priority, Status, Readiness …) are worked out again, not read back.",
+  hubspot: "In HubSpot, export your companies and/or your contacts as CSV files. Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
+  salesforce: "In Salesforce, export your accounts and/or your contacts as CSV files (a report saved as CSV, or Data Loader). Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
+  dynamics: "In Dynamics 365 Sales, open your accounts or your contacts and choose Export to Excel - the Excel file (.xlsx) is read as it is; a CSV file works too. Accounts are matched by LinkedIn page, website or name, contacts by LinkedIn profile, e-mail or name.",
+};
+
+function selectedImportFormat() {
+  return document.querySelector('input[name="import-format"]:checked')?.value || "salesteam";
 }
 
-document.getElementById("empty-import-btn").addEventListener("click", openImportDialog);
-document.getElementById("restore-target-accounts-page-btn").addEventListener("click", () => {
-  document.getElementById("restore-accounts-dialog").showModal();
-});
+// Accounts, contacts or both (Boaz, 1.2.2.13 test: the Import asked no such question, unlike Export). A workbook holds
+// both sheets already, so the question is only for the CSV formats. "Both" = the two files chosen together in one
+// picker and imported as ONE run: one summary, one safety copy, contacts linked to the accounts of the same import.
+function selectedImportWhat() {
+  return document.querySelector('input[name="import-what"]:checked')?.value || "accounts";
+}
+
+function refreshImportDialog() {
+  const format = selectedImportFormat();
+  document.getElementById("import-format-note").textContent = IMPORT_FORMAT_NOTES[format];
+  document.getElementById("import-workbook-help").hidden = format !== "workbook";
+  document.getElementById("import-what-field").hidden = format === "workbook";
+  document.getElementById("import-choose-btn").textContent = format !== "workbook" && selectedImportWhat() === "both" ? "Choose the two files…" : "Choose file…";
+}
+for (const radio of document.querySelectorAll('input[name="import-what"]')) radio.addEventListener("change", refreshImportDialog);
+for (const radio of document.querySelectorAll('input[name="import-format"]')) radio.addEventListener("change", refreshImportDialog);
+
+// what: "contacts" when opened from the Target Contacts menu; otherwise Accounts. The file type stays as last chosen.
+async function openImportDialog(format = null, what = null) {
+  if (!(await mayImport())) return;
+  for (const [name, value] of [["import-format", format], ["import-what", what || "accounts"]]) {
+    if (!value) continue;
+    const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (what === "contacts") showView("contactsList");
+  renderImportColumnsHelp();
+  document.getElementById("import-help-status").textContent = "";
+  refreshImportDialog();
+  document.getElementById("import-dialog").showModal();
+}
+
+document.getElementById("empty-import-btn").addEventListener("click", () => openImportDialog());
 document.getElementById("restore-accounts-choose-btn").addEventListener("click", () => {
   document.getElementById("restore-accounts-dialog").close();
   importPickerMode = "restore";
@@ -3942,16 +4303,22 @@ document.getElementById("import-download-template-btn").addEventListener("click"
   }
 });
 
-document.getElementById("import-accounts-choose-btn").addEventListener("click", () => {
-  document.getElementById("import-accounts-dialog").close();
+document.getElementById("import-choose-btn").addEventListener("click", () => {
+  document.getElementById("import-dialog").close();
+  if (selectedImportFormat() !== "workbook") {
+    const input = document.getElementById("import-csv-file-input");
+    // Dynamics' everyday export is "Export to Excel" (design 8a, D12).
+    input.accept = selectedImportFormat() === "dynamics" ? ".xlsx,.csv,text/csv" : ".csv,text/csv";
+    input.multiple = selectedImportWhat() === "both";
+    input.click();
+    return;
+  }
   importPickerMode = "research";
   importTargetAccountsPageFileInput.accept = ".xlsx";
   importTargetAccountsPageFileInput.click();
 });
 
-importTargetAccountsPageBtn.addEventListener("click", () => {
-  openImportDialog();
-});
+importTargetAccountsPageBtn.addEventListener("click", () => openImportDialog());
 
 // EXPERIMENTAL (v0.29.25, see PRD 6.16): resolves each Target Account
 // company's LinkedIn numeric company ID, needed for a future feature that
@@ -4280,14 +4647,16 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
   const file = importTargetAccountsPageFileInput.files[0];
   importTargetAccountsPageFileInput.value = "";
   if (!file) return;
+  // 1.2.3 (design 6): in a team only the Team Lead imports and restores - an old tab or a stale menu stops here.
+  if (!(await mayImport())) { targetAccountsPageIoStatusEl.textContent = IMPORT_REFUSED; return; }
   const lowerName = file.name.toLowerCase();
   const isBackupFile = lowerName.endsWith(".zip") || lowerName.endsWith(".json");
   if (importPickerMode === "research" && isBackupFile) {
-    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is a backup file, not a research workbook. Use "Restore Accounts & Contacts from Backup…" to load it.`;
+    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is a backup file, not a research workbook. Use Settings > Restore to load it.`;
     return;
   }
   if (importPickerMode === "restore" && !isBackupFile) {
-    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is not a backup file (.zip or .json). Use "Import Research Workbook…" for an Excel workbook.`;
+    targetAccountsPageIoStatusEl.textContent = `"${file.name}" is not a backup file (.zip or .json). Use "Import…" for an Excel workbook or a CSV file.`;
     return;
   }
   targetAccountsPageIoStatusEl.textContent = `${importPickerMode === "restore" ? "Reading" : "Importing"} ${file.name}…`;
@@ -4317,7 +4686,7 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
       const sections = await chooseRestoreSections("full", limited);
       if (!sections) { targetAccountsPageIoStatusEl.textContent = "Restore cancelled."; return; }
       targetAccountsPageIoStatusEl.textContent = "Saving a safety copy of your current data first…";
-      if (!(await safetyCopyBeforeRestore())) { targetAccountsPageIoStatusEl.textContent = "Restore cancelled."; return; }
+      if (!(await safetyCopyBefore("before-restore"))) { targetAccountsPageIoStatusEl.textContent = "Restore cancelled."; return; }
       const prevMeta = await getTargetAccountsMeta();
       await restoreFullBackup(parsed, sections);
       await loadWorkbook();
@@ -4398,63 +4767,219 @@ importTargetAccountsPageFileInput.addEventListener("change", async () => {
   }
 
   const prevMeta = await getTargetAccountsMeta();
-  const { count } = await importTargetAccounts(list, file.name);
-  // Exclusion backfill (added 2026-09-17, the user's own proposal) - runs
-  // right after the workbook itself is stored, so backfillCompanyExclusionsFromWorkbook
-  // reads the same Excluded/Exclusion_List data this import just brought
-  // in. Additive only (see its own comment in storage.js) - never touches
-  // an existing entry, so it's safe to run on every import, not just the
-  // first one.
-  let backfill = null;
-  if (fullWorkbook) {
-    // Same aliases attached to `list` above, carried onto the richer
-    // Explorer workbook rows too (storage.js's computeDiscoveredMergeDiff
-    // matches a newly-discovered company by name against these same rows -
-    // without this, a discovered card whose displayed name only matches a
-    // known ALIAS, not the row's own primary company name, would wrongly
-    // be treated as a brand-new company instead of the existing account).
-    for (const c of fullWorkbook.companies || []) {
-      if (c.companyId && aliasesByCompanyId.has(c.companyId)) {
-        c.aliases = [...aliasesByCompanyId.get(c.companyId)];
-      }
-    }
-    await importTargetAccountsWorkbook(fullWorkbook);
-    backfill = await backfillCompanyExclusionsFromWorkbook(fullWorkbook);
+  if (!fullWorkbook) {
+    // An old .json list backup (restore only): that one still puts the list back as it was.
+    const { count } = await importTargetAccounts(list, file.name);
+    await loadWorkbook();
+    targetAccountsPageIoStatusEl.textContent = `${count} companies restored from file ${file.name} at ${formatImportStamp(Date.now())}`;
+    appendActivityLog({ actor: "user", action: "target_accounts_imported", label: `Restored Target Accounts list (${count} companies)`, prevValue: prevMeta.count, newValue: count });
+    return;
   }
+  // 1.2.3 (EXPORT_IMPORT_REQUIREMENTS.md R2): the workbook import only adds and fills - nothing stored is replaced
+  // or removed. Same aliases attached to `list` above, carried onto the workbook rows so an account the file names
+  // by an alias is matched, not added twice.
+  for (const c of fullWorkbook.companies || []) {
+    if (c.companyId && aliasesByCompanyId.has(c.companyId)) {
+      c.aliases = [...aliasesByCompanyId.get(c.companyId)];
+    }
+  }
+  // D15: a workbook row with revenue but no currency is not read in a guessed one either.
+  let parsed = fullWorkbook;
+  if (fileNeedsCurrency(fullWorkbook)) {
+    const currency = await askFileCurrency(fullWorkbook, file.name, IMPORT_TITLES.workbook || "Import");
+    if (!currency) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+    parsed = applyFileCurrency(fullWorkbook, currency);
+  }
+  await runPlannedImport({ parsed, fileName: file.name, format: "workbook", legacyList: list, prevCount: prevMeta.count });
+});
+
+// The one import path every format shares (design 3.4-3.6): the check-first summary, the safety copy, the
+// add-and-fill write, then priorities, the Activity Log and one pop-up with the same counts. `legacyList` adds the
+// legacy targetAccounts map entries (lead matching) for companies that are new to it.
+async function runPlannedImport({ parsed, fileName, format, legacyList, prevCount = null }) {
+  const title = IMPORT_TITLES[format] || "Import";
+  // 1.2.3 step 1 (design 3.4, D5): check first - what the import will do, in plain words, before anything is written.
+  const preview = await previewWorkbookImport(parsed, { fileName });
+  const checkLines = [
+    ...preview.newCompanyNames.slice(0, 200).map((n) => `New account: ${n}`),
+    ...(preview.newCompanyNames.length > 200 ? [`… and ${preview.newCompanyNames.length - 200} more new accounts`] : []),
+    ...preview.decisions.map((d) => `For Decisions: ${d.company} - ${d.label}: current ${d.current}, in the file ${d.imported}`),
+    ...preview.detailLines,
+  ];
+  const go = await askConfirm(
+    `${fileName}\n\n${capitalize(importSummaryText(preview.counts))}.\n\n` +
+    "Nothing you have is replaced or removed. A safety copy of your current data is saved first.",
+    { title, okLabel: "Import", details: checkLines.length ? { summary: "Details", lines: checkLines } : null },
+  );
+  if (!go) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+  targetAccountsPageIoStatusEl.textContent = "Saving a safety copy of your current data first…";
+  if (!(await safetyCopyBefore("before-import"))) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+  targetAccountsPageIoStatusEl.textContent = `Importing ${fileName}…`;
+  let counts;
+  let plan;
+  try {
+    ({ counts, plan } = await mergeImportIntoWorkbook(parsed, { fileName, format }));
+  } catch (err) {
+    targetAccountsPageIoStatusEl.textContent = `Import failed - ${err.message}`;
+    await askConfirm(`Import failed - ${err.message}`, { title, cancelLabel: null });
+    return;
+  }
+  if (legacyList && legacyList.length) await importTargetAccounts(legacyList, fileName, { merge: true });
+  // Exclusions only for the companies this import added (Q4); customer / partner rows become relationships as before.
+  // Only the research workbook has an Exclusion_List sheet and Excluded / Relationship columns.
+  const backfill = format === "workbook"
+    ? await backfillCompanyExclusionsFromWorkbook(parsed, {
+      hideOnlyNames: new Set(plan.newCompanyNames.map((n) => normalizeCompanyName(n))),
+    }).catch(() => null)
+    : null;
   await loadWorkbook();
   const backfillNote = backfill && backfill.addedCount > 0
-    ? ` - ${backfill.addedCount} excluded compan${backfill.addedCount === 1 ? "y" : "ies"} added to your own exclusion lists (Setup wizard)`
+    ? ` - ${backfill.addedCount} new compan${backfill.addedCount === 1 ? "y" : "ies"} put on your exclusion lists, as the file marks them`
     : "";
-  // 29th round of direct feedback (2026-09-19): "shouldn't it also mention
-  // [the new contacts]? XXX contacts read or something like that?" -
-  // "plus full Explorer data (Contacts, Initiatives, etc.)" named the
-  // sheets but never said how much was actually in them. Real counts,
-  // omitting a sheet entirely when this workbook doesn't have one (e.g. an
-  // older export with no Initiatives sheet) rather than showing "0" for
-  // something that was never expected to be there.
-  const explorerCounts = fullWorkbook
-    ? [
-        [fullWorkbook.contacts?.length, "contact"],
-        [fullWorkbook.aiInitiatives?.length, "initiative"],
-        [fullWorkbook.aiInvestment?.length, "investment record"],
-        [fullWorkbook.sources?.length, "source"],
-      ]
-        .filter(([n]) => n > 0)
-        .map(([n, label]) => `${n} ${label}${n === 1 ? "" : "s"}`)
-        .join(", ")
-    : "";
-  const explorerNote = explorerCounts ? ` plus ${explorerCounts}` : "";
   // fill the Priority columns right away (see autoPrioritizeNewCompanies) - a failure here never fails the import
   const autoPriority = await autoPrioritizeNewCompanies().catch(() => ({ applied: 0, summary: "" }));
   const priorityNote = autoPriority.applied > 0 ? ` - priorities calculated for ${autoPriority.applied} (${autoPriority.summary})` : "";
-  targetAccountsPageIoStatusEl.textContent = `${count} companies${explorerNote} imported from file ${file.name} at ${formatImportStamp(Date.now())}${backfillNote}${priorityNote}`;
+  const summary = importSummaryText(counts) || "nothing new";
+  const decisionsNote = counts.decisions > 0
+    ? ` ${counts.decisions === 1 ? "One difference is" : `${counts.decisions} differences are`} waiting in Decisions.` : "";
+  targetAccountsPageIoStatusEl.textContent = `${fileName} imported at ${formatImportStamp(Date.now())}: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`;
   appendActivityLog({
     actor: "user",
-    action: "target_accounts_imported",
-    label: `Imported Target Accounts list (${count} companies${explorerNote})${backfillNote}`,
-    prevValue: prevMeta.count,
-    newValue: count,
+    action: "import_done",
+    format,
+    file: fileName,
+    counts,
+    label: `${title}: ${fileName}: ${summary}${backfillNote}`,
+    prevValue: prevCount,
+    newValue: counts,
   });
+  // R6.3: one pop-up, one OK - the same counts as the check.
+  await askConfirm(`${fileName} imported: ${summary}${backfillNote}${priorityNote}.${decisionsNote}`, { title, cancelLabel: null });
+}
+
+function capitalize(text) { return text ? text[0].toUpperCase() + text.slice(1) : text; }
+
+// Accounts first in the name, as in the plan (contacts are matched to the accounts of the same import).
+function fileNameOf(byKind) {
+  return [byKind.accounts, byKind.contacts].filter(Boolean).join(" + ");
+}
+
+// D15 case 3: "Revenue in this file is in: [choose…]" - nothing pre-selected, Continue stays disabled until a currency
+// is chosen. With the choice, the file's figures are checked against what the same accounts already hold; when they
+// look like another currency (CHF figures read as USD) the dialog says so before anything is imported.
+// -> the chosen code, or null for Cancel.
+function askFileCurrency(parsed, fileName, title) {
+  const dialog = document.getElementById("import-currency-dialog");
+  const select = document.getElementById("import-currency");
+  const warning = document.getElementById("import-currency-warning");
+  const goBtn = document.getElementById("import-currency-go-btn");
+  document.getElementById("import-currency-title").textContent = title;
+  document.getElementById("import-currency-file").textContent = fileName;
+  select.replaceChildren(new Option("choose…", ""), ...SUPPORTED_CURRENCIES.map((code) => new Option(code, code)));
+  select.value = "";
+  warning.textContent = "";
+  warning.hidden = true;
+  goBtn.disabled = true;
+  const pairs = [];
+  for (const row of parsed.companies || []) {
+    const stored = workbook.companies.find((c) => normalizeCompanyName(c.company) === normalizeCompanyName(row.company));
+    if (!stored) continue;
+    for (const column of COMPANY_COLUMNS.filter((c) => c.currencyField)) {
+      if (row[column.id] == null || row[column.currencyField]) continue;
+      const money = shownMoney(stored, column);
+      if (money) pairs.push({ file: row[column.id], stored: money.amount, storedCurrency: money.currency });
+    }
+  }
+  select.onchange = () => {
+    goBtn.disabled = !select.value;
+    const check = select.value ? currencyPlausibility(pairs, select.value, moneySettings) : null;
+    warning.textContent = check
+      ? `These figures look like ${check.likely}, not ${select.value} - compared with the revenue of ${check.pairs} accounts you already have. Check the currency before you continue.`
+      : "";
+    warning.hidden = !check;
+  };
+  return new Promise((resolve) => {
+    let chosen = null;
+    goBtn.onclick = () => { chosen = select.value || null; dialog.close(); };
+    document.getElementById("import-currency-cancel-btn").onclick = () => dialog.close();
+    dialog.onclose = () => resolve(chosen);
+    dialog.showModal();
+    select.focus();
+  });
+}
+
+// A SalesTeam CSV, a HubSpot, a Salesforce or a Dynamics export (design 3.1): read into workbook rows, then the same path as the workbook.
+document.getElementById("import-csv-file-input").addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  event.target.value = "";
+  if (files.length === 0) return;
+  if (!(await mayImport())) { targetAccountsPageIoStatusEl.textContent = IMPORT_REFUSED; return; }
+  const chosen = selectedImportFormat();
+  const what = selectedImportWhat();
+  const title = IMPORT_TITLES[chosen];
+  const formatName = CRM_NAMES[chosen] || (chosen === "hubspot" ? "HubSpot" : "SalesTeam");
+  const say = (text) => askConfirm(text, { title, cancelLabel: null });
+  if (what === "both" && files.length !== 2) {
+    await say(`For "Both", choose the accounts file and the contacts file together (hold Ctrl and click both) - ${files.length === 1 ? "only one file was chosen" : `${files.length} files were chosen`}.`);
+    return;
+  }
+  const parsed = { companies: [], contacts: [] };
+  const byKind = {};
+  try {
+    for (const file of files) {
+      const { headers, records } = /\.xlsx$/i.test(file.name) ? withDynamicsFieldNames(await parseFirstSheetRecords(await file.arrayBuffer())) : parseCsv(await file.text());
+      const detected = detectImportFile(headers, chosen);
+      const looks = describeImportFile(detected);
+      if (!detected || detected.format !== chosen) {
+        const expected = chosen === "hubspot"
+          ? "a HubSpot companies or contacts export (it needs a \"Company name\" column, or \"First Name\" / \"Last Name\" / \"Email\" columns)"
+          : chosen === "salesforce"
+            ? "a Salesforce accounts or contacts export (it needs an \"Account Name\" column, plus \"First Name\" / \"Last Name\" for contacts)"
+            : chosen === "dynamics"
+              ? "a Dynamics accounts or contacts export (it needs an \"Account Name\" column for accounts, or \"Full Name\" and \"Company Name\" columns for contacts)"
+            : "a file SalesTeam exported (Export… > CSV - SalesTeam's own columns)";
+        await say(`"${file.name}" does not look like ${expected}.` +
+          (looks ? `\n\nIt looks like ${looks} - choose that under "File type" in the Import window and try again.` : ""));
+        return;
+      }
+      if (what !== "both" && detected.kind !== what) {
+        await say(`"${file.name}" is ${looks}, not ${what === "accounts" ? "an accounts" : "a contacts"} file - choose "${detected.kind === "accounts" ? "Accounts" : "Contacts"}" (or "Both") under "Accounts or contacts?" in the Import window and try again.`);
+        return;
+      }
+      if (byKind[detected.kind]) {
+        await say(`"${byKind[detected.kind]}" and "${file.name}" are both ${detected.kind} files. For "Both", choose one ${formatName} accounts file and one contacts file.`);
+        return;
+      }
+      byKind[detected.kind] = file.name;
+      const rows = detected.format === "hubspot"
+        ? (detected.kind === "accounts" ? hubspotCompanyRows(records) : hubspotContactRows(records))
+        : CRM_NAMES[detected.format]
+          ? (detected.kind === "accounts" ? crmAccountRows(detected.format, records) : crmContactRows(detected.format, records))
+          : salesteamCsvRows(records, detected.kind);
+      if (rows.length === 0) {
+        await say(`No usable ${detected.kind} rows were found in "${file.name}".`);
+        return;
+      }
+      parsed[detected.kind === "accounts" ? "companies" : "contacts"].push(...rows);
+    }
+  } catch (err) {
+    await say(`Import failed - the file could not be read (${err.message}).`);
+    return;
+  }
+  // D15: a file that says nothing about its currency is never read in a guessed one - the Team Lead chooses.
+  let withCurrency = parsed;
+  if (fileNeedsCurrency(parsed)) {
+    const currency = await askFileCurrency(parsed, fileNameOf(byKind), title);
+    if (!currency) { targetAccountsPageIoStatusEl.textContent = "Import cancelled."; return; }
+    withCurrency = applyFileCurrency(parsed, currency);
+  }
+  const legacyList = withCurrency.companies.map((c) => ({
+    company: c.company, industry: c.industry || null, researchStatus: c.researchStatus || null,
+    officialName: c.zefixOfficialName || null, alternativeName: c.alternativeCompanyName || null,
+    linkedinLink: c.linkedinLink || null, aliases: [],
+  }));
+  const fileName = fileNameOf(byKind);
+  await runPlannedImport({ parsed: withCurrency, fileName, format: chosen, legacyList });
 });
 
 // ---- Account/Contact views (PRD 6.19) ----
@@ -4758,7 +5283,8 @@ function diffEditFormValues(fields, importedRow, existingOverrides, formValues) 
     }
     const raw = formValues[f.key];
     const trimmed = typeof raw === "string" ? raw.trim() : raw;
-    const normalized = f.type === "number" ? (trimmed === "" ? null : Number(trimmed)) : (trimmed === "" ? null : trimmed);
+    const typed = f.type === "number" ? (trimmed === "" ? null : Number(trimmed)) : (trimmed === "" ? null : trimmed);
+    const normalized = HEADCOUNT_FIELDS.includes(f.key) ? wholeEmployees(typed) : typed; // 941.2 typed -> 941
     const importedValue = importedRow[f.key] ?? null;
     const prevEffective = wasOverridden ? existingOverrides[f.key] : importedValue;
     if (normalized === importedValue) {
@@ -5325,8 +5851,13 @@ async function refreshSettingsCache() {
   currentSettingsCache = { mentorPersona, companyContext, idealCustomerProfile, customerPersona, userProfile, outputLanguage };
 }
 
+// 1.2.3 (R5.2): with the account's relationship, which the AI prompts are told about.
+function withRelationship(row) {
+  return row && row.company ? { ...row, relationship: accountPriorityInfo(row).relationship } : row;
+}
+
 function currentAccountCompanyRow() {
-  return workbook.companies.find((c) => normalizeCompanyName(c.company) === currentAccountKey) || {};
+  return withRelationship(workbook.companies.find((c) => normalizeCompanyName(c.company) === currentAccountKey)) || {};
 }
 
 function currentContactRow() {
@@ -5335,7 +5866,7 @@ function currentContactRow() {
 
 function currentContactAccountRow() {
   const contact = currentContactRow();
-  return workbook.companies.find((c) => normalizeCompanyName(c.company) === normalizeCompanyName(contact.company));
+  return withRelationship(workbook.companies.find((c) => normalizeCompanyName(c.company) === normalizeCompanyName(contact.company)));
 }
 
 // ---- Account view ----
@@ -5419,6 +5950,7 @@ async function computeAutoArbitration() {
   const settings = await getWebFindingsArbitration();
   const config = await getTargetUniverseConfig();
   const locationTier = (country) => resolveLocationPriority(country, config.locationPriorities);
+  const unitsCtx = await revenueUnitsContext();
   const contactCounts = new Map();
   for (const c of workbook.contacts) {
     if (!c.companyId) continue;
@@ -5447,7 +5979,8 @@ async function computeAutoArbitration() {
       if (findingValuesMatch(overrides[f.key], found)) tookHere++;
     }
     if (tookHere > 0) { autofilled += tookHere; autofilledAccounts++; }
-    const proposals = annotatedProposals(company, extra);
+    // D16: a revenue that lost its unit is never settled by a rule - it waits in Decisions.
+    const proposals = withoutUnitlessRevenue(annotatedProposals(company, extra), company, extra.overrides, data, unitsCtx);
     if (proposals.length === 0) continue;
     const ctx = arbitrationCtxFor(company, extra, { buckets: SIZE_PRIORITY_BUCKETS, locationTier, contactCounts });
     const { decisions, patch } = arbitrateAccount({ proposals, extra, ctx, settings, data });
@@ -5781,7 +6314,7 @@ document.getElementById("account-web-research-btn").addEventListener("click", as
     `Search the public web for "${company.company}"?\n\nThe search runs on Anthropic's servers with your own API key: several web searches plus the AI's reading of them, which costs a small amount. It can take up to a minute (at most 4 minutes) and you can press Stop at any time to keep what was found so far. No LinkedIn activity is used. The result is saved on this account with its sources, and any initiatives found are added to its Initiatives list.`,
     { okLabel: "Search the web", cancelLabel: "Cancel" }))) return;
   if (webResearchRunning.size >= WEB_RESEARCH_MAX_PARALLEL) {
-    await askConfirm(`${webResearchRunning.size} researches are already running. Please wait for one to finish before starting another.`, { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(`${webResearchRunning.size} researches are already running. Please wait for one to finish before starting another.`, { okLabel: "OK", cancelLabel: null });
     return;
   }
   const controller = new AbortController();
@@ -5841,7 +6374,7 @@ const BULK_TOPICS = {
 };
 
 function bulkAccountPriority(company) {
-  const p = accountExtras[normalizeCompanyName(company.company)]?.overrides?.salesTeamPriority || company.salesTeamPriority;
+  const p = accountPriorityInfo(company).priority;
   return ["P1", "P2", "P3", "P4", "P5"].includes(p) ? p : "none";
 }
 
@@ -6015,7 +6548,7 @@ document.getElementById("bulk-research-start-btn").addEventListener("click", asy
     { okLabel: "Start", cancelLabel: "Cancel" }))) return;
   const reply = await chrome.runtime.sendMessage({ type: "BULK_WEB_RESEARCH_START", items, budget, autofill: document.getElementById("bulk-autofill").checked }).catch((err) => ({ ok: false, error: err.message }));
   if (!reply?.ok) {
-    await askConfirm(reply?.error || "The web research could not be started.", { okLabel: "OK", cancelLabel: "Close" });
+    await askConfirm(reply?.error || "The web research could not be started.", { okLabel: "OK", cancelLabel: null });
     return;
   }
   document.getElementById("bulk-research-dialog").close();
@@ -6341,6 +6874,18 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
   if (startInEdit) accountEditMode = true;
   const company = currentAccountCompanyRow();
   document.getElementById("account-title").textContent = company.company || "(unknown company)";
+  {
+    // 1.2.3 (R2.4): the tag between the title and the ⋮.
+    const tagEl = document.getElementById("account-relationship-tag");
+    const text = relationshipTagText(accountPriorityInfo(company).relationship);
+    tagEl.textContent = text;
+    tagEl.hidden = !text;
+    // Step 3 (R6.3): the account's groups next to it, "EMEA · VIP" - only in a team with groups.
+    const groupsEl = document.getElementById("account-groups-tag");
+    const groupsText = teamAccounts.groupNames(companyKey, " · ");
+    groupsEl.textContent = groupsText || "";
+    groupsEl.hidden = !groupsText;
+  }
 
   const companyLeads = allLeads.filter((l) => normalizeCompanyName(l.company) === companyKey);
   const accountOverrides = accountExtras[companyKey]?.overrides || {};
@@ -6362,6 +6907,32 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
   if (accountEditMode) {
     overviewEl.appendChild(buildEditForm(ACCOUNT_EDIT_FIELDS, effectiveCompany, async (formValues, newStatus) => {
       const { overrides, changedLabels } = diffEditFormValues(ACCOUNT_EDIT_FIELDS, company, accountOverrides, formValues);
+      // 1.2.2.35 (Boaz, 2026-10-11): the Team Lead defined the groups - a member's edit may not move an account out of
+      // one. Nothing is saved; the member asks the Team Lead. (What research finds on an assigned account is still held
+      // for the Team Lead's Decisions - team-sync.js holdMoves.)
+      const info = accountPriorityInfo(company);
+      const factsOf = (row) => ({ ...groupFacts(row, { buckets: SIZE_PRIORITY_BUCKETS }), priority: info.priority || null, relationship: info.relationship || [] });
+      const edited = { ...effectiveCompany };
+      for (const f of ["globalHqCountry", "targetCountryRelationship", "companyType", "industry"]) if (f in formValues) edited[f] = formValues[f];
+      const leaving = teamAccounts.groupsLeftBy(companyKey, factsOf(effectiveCompany), factsOf(edited));
+      if (leaving.length) {
+        await askConfirm(`Not saved: this change would move "${company.company}" out of the group${leaving.length === 1 ? "" : "s"} ${leaving.join(", ")}.
+
+` +
+          "Only the Team Lead moves an account to another group. If the account belongs elsewhere, ask the Team Lead to make this change.",
+          { okLabel: "OK", cancelLabel: null });
+        return;
+      }
+      // The Team Lead's (and deputy's) own edit applies at once - after a warning, in case it was not meant.
+      if (teamAccounts.hasLeadRights()) {
+        const move = teamAccounts.groupChange(companyKey, factsOf(effectiveCompany), factsOf(edited));
+        if (move.left.length && !(await askConfirm(
+          `This change moves "${company.company}" out of the group${move.left.length === 1 ? "" : "s"} ${move.left.join(", ")}. It will be in: ${move.into}.` +
+          (move.loses ? `
+
+${move.loses} has no access there: the account becomes unassigned, and ${move.loses} no longer sees it.` : ""),
+          { okLabel: "Save and move it", cancelLabel: "Cancel" }))) return;
+      }
       // `base` = the values the form opened with, so only the fields edited here are written - a web research
       // that filled another field while the form was open is kept (extras-merge.js).
       await saveTargetAccountExtra(companyKey, { overrides }, { base: { overrides: accountOverrides } });
@@ -6409,9 +6980,12 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
       {
         label: "SalesTeam Priority",
         node: salesTeamPriorityFieldNode(
-          company.salesTeamPriority,
+          // 1.2.3 (R5.4): a customer's automatic priority is shown raised, with the reason line.
+          accountPriorityInfo(company).raised ? accountPriorityInfo(company).priority : company.salesTeamPriority,
           company.salesTeamPriorityScore,
-          company.salesTeamPriorityReason,
+          accountPriorityInfo(company).raised
+            ? [company.salesTeamPriorityReason, RAISED_REASON].filter(Boolean).join("\n")
+            : company.salesTeamPriorityReason,
           accountOverrides.salesTeamPriority || null,
           accountOverrides.salesTeamPriorityReason || null,
           async (newPriority, newReason) => {
@@ -6450,8 +7024,8 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
       { label: "Address", value: effectiveCompany.zefixAddress },
       { label: "Employees (Global)", value: formatNumber(effectiveCompany.globalEmployees) },
       { label: "Employees (Local)", value: formatNumber(effectiveCompany.swissEmployees) },
-      { label: "Revenue (Global)", value: effectiveCompany.globalRevenue ? `${formatNumber(effectiveCompany.globalRevenue)} ${effectiveCompany.revenueCurrency || ""}`.trim() : null },
-      { label: "Revenue (Local)", value: effectiveCompany.swissRevenue ? `${formatNumber(effectiveCompany.swissRevenue)} ${effectiveCompany.swissRevenueCurrency || ""}`.trim() : null },
+      { label: "Revenue (Global)", value: overviewMoney(company, "globalRevenue") },
+      { label: "Revenue (Local)", value: overviewMoney(company, "swissRevenue") },
       { label: "Priority", value: company.aiPriority ? `${company.aiPriority}${company.aiPriorityScore ? ` (${Math.round(company.aiPriorityScore)}/100)` : ""}` : null },
       { label: "Evidence Coverage", value: company.evidenceCoverage != null ? `${Math.round(company.evidenceCoverage * 100)}%` : null },
       { label: "Local / Global", value: effectiveCompany.targetCountryRelationship || localizeTypeWording(effectiveCompany.companyType) },
@@ -6548,7 +7122,13 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
         }),
       },
       { label: "Title", value: effectiveContact.jobTitle },
-      { label: "Company", value: effectiveContact.company },
+      { label: "Company", node: (() => {
+        // 1.2.3 (R2.4): the account's Customer / Partner tag beside the company name.
+        const span = document.createElement("span");
+        span.textContent = effectiveContact.company || "—";
+        appendRelationshipTag(span, effectiveContact.company);
+        return span;
+      })() },
       { label: "Function", value: effectiveContact.function },
       { label: "Seniority", value: effectiveContact.seniority },
       { label: "LinkedIn", value: effectiveContact.lastVerified2, link: true },
@@ -6644,6 +7224,7 @@ function showView(view) {
   contactsListViewEl.hidden = view !== "contactsList";
   accountViewEl.hidden = view !== "account";
   contactViewEl.hidden = view !== "contact";
+  noAccessViewEl.hidden = view !== "noAccess";
   if (isListLike) showListTab(view === "contactsList" ? "contacts" : "accounts");
   // Reported directly, 2026-09-19: viewing a Contact (list or a single
   // Contact's own detail page) kept showing "Target Accounts Dashboard" as
@@ -6665,7 +7246,13 @@ async function route() {
   const { view, key } = parseHash();
   if (view !== "account") accountClaimGuard.hide();
   if (view !== "contact") contactClaimGuard.hide();
-  if (view === "account" && key) {
+  if ((view === "account" || view === "contact") && key && hiddenByGroups(view, key)) {
+    accountClaimGuard.hide();
+    contactClaimGuard.hide();
+    document.getElementById("no-access-text").textContent =
+      view === "account" ? "This account is not in your groups." : "This contact's account is not in your groups.";
+    showView("noAccess");
+  } else if (view === "account" && key) {
     showView("account");
     const startInEdit = pendingAccountEditKey === key;
     pendingAccountEditKey = null;
@@ -6736,19 +7323,19 @@ document.getElementById("contact-back-link").addEventListener("click", (e) => {
 function tableCsv(columns, rows) {
   const headers = [];
   for (const column of columns) {
-    headers.push(column.label);
-    if (column.currencyField) headers.push(`${column.label} Currency`);
+    // D14: revenue in the default currency, named in the title - "Global Revenue (USD)", no "… Currency" column.
+    headers.push(column.currencyField ? `${column.label} (${moneySettings.targetCurrency})` : column.label);
   }
   const lines = rows.map((row) => {
     const cells = [];
     for (const column of columns) {
       let v = column.id === "companyType" ? localizeTypeWording(rawValue(row, column)) : rawValue(row, column);
+      if (column.currencyField && row.fullName == null && v != null && v !== "") v = shownMoney(row, column)?.amount ?? v;
       // A workbook date is an Excel day number (46276): written as a date (2026-09-10) Excel reads as one.
       if (column.date && typeof v === "number") v = new Date(Date.UTC(1899, 11, 30) + v * 86400000).toISOString().slice(0, 10);
       // Stored as 1-3; the table and the file both say what it means.
       if (column.id === "seniorityPriority" && v != null && v !== "") v = SENIORITY_PRIORITY_LABELS[v] || v;
       cells.push(v == null ? "" : v);
-      if (column.currencyField) cells.push(row[column.currencyField] || "");
     }
     return cells;
   });
@@ -6756,149 +7343,205 @@ function tableCsv(columns, rows) {
   return toCsv(compact.headers, compact.rows);
 }
 
-async function exportTableCsv(kind) {
+// Every row of a table in its sort order, with its search and column filters set aside for the moment.
+function allTableRowsSorted(kind) {
+  const accounts = kind === "accounts";
+  const search = accounts ? searchInputEl : contactsSearchInputEl;
+  const filters = accounts ? columnFilters : contactColumnFilters;
+  const savedSearch = search.value;
+  const savedFilters = { ...filters };
+  clearTableFilters(search, filters);
+  const rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+  search.value = savedSearch;
+  Object.assign(filters, savedFilters);
+  return rows;
+}
+
+// The rows an export takes from one table: what the table shows - and when a search or filter is on, the question
+// "all or only the filtered" (Boaz, 2026-10-02: a forgotten saved filter made the file look half empty). null = Cancel.
+async function chooseExportRows(kind) {
   const accounts = kind === "accounts";
   const all = accounts ? workbook.companies.length : workbook.contacts.length;
-  let rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
+  const rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
   const noun = (n) => (accounts ? `account${n === 1 ? "" : "s"}` : `contact${n === 1 ? "" : "s"}`);
-  if (all === 0) {
-    await askConfirm(`There are no ${noun(0)} to export yet.`, { okLabel: "OK", cancelLabel: "Close" });
-    return;
-  }
-  // A filter is on (Boaz, 2026-10-02: a forgotten saved filter made the file look half empty): always ask which.
+  if (all === 0) return [];
   const chips = tableFilterChips(accounts ? searchInputEl : contactsSearchInputEl,
     accounts ? columnFilters : contactColumnFilters, accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS);
-  if (chips.length > 0) {
-    const choices = [{ value: "all", label: `All ${all} ${noun(all)}` }];
-    if (rows.length > 0) choices.push({ value: "shown", label: `Only the ${rows.length} filtered` });
-    const scope = await askChoice(
-      `A filter is on, so the table shows ${rows.length} of ${all} ${noun(all)}:\n${chips.map((c) => `  - ${c.label}`).join("\n")}\n\n` +
-      "Which do you want to export?", choices);
-    if (!scope) return;
-    if (scope === "all") {
-      // Every row in the table's sort order: the filtered rows' order applied to all of them.
-      const savedSearch = (accounts ? searchInputEl : contactsSearchInputEl).value;
-      const savedFilters = accounts ? { ...columnFilters } : { ...contactColumnFilters };
-      clearTableFilters(accounts ? searchInputEl : contactsSearchInputEl, accounts ? columnFilters : contactColumnFilters);
-      rows = accounts ? sortedFilteredCompanies() : sortedFilteredContacts();
-      (accounts ? searchInputEl : contactsSearchInputEl).value = savedSearch;
-      Object.assign(accounts ? columnFilters : contactColumnFilters, savedFilters);
-    }
+  if (chips.length === 0) return rows;
+  const choices = [{ value: "all", label: `All ${all} ${noun(all)}` }];
+  if (rows.length > 0) choices.push({ value: "shown", label: `Only the ${rows.length} filtered` });
+  const scope = await askChoice(
+    `A filter is on, so the ${accounts ? "Target Accounts" : "Target Contacts"} table shows ${rows.length} of ${all} ${noun(all)}:\n` +
+    `${chips.map((c) => `  - ${c.label}`).join("\n")}\n\nWhich do you want to export?`, choices);
+  if (!scope) return null;
+  return scope === "all" ? allTableRowsSorted(kind) : rows;
+}
+
+// ---- Export… (1.2.3 Export & Import step 2, design 7.1) ----
+// One dialog for every export: Format (CSV with SalesTeam's own columns / HubSpot / Salesforce / Dynamics) -> What (accounts, contacts, both)
+// -> Export. "Both" takes the accounts the table shows and every contact of those accounts. A file holds the rows the
+// table shows (search and filters applied), so once advanced-mode visibility filters the table, exports follow it.
+const EXPORT_NOTES = {
+  csv: "One file per table, with every column under SalesTeam's own column names; it opens in Excel. If a search or filter is on, you are asked whether to export all rows or only the filtered ones.",
+  hubspot: "Files with HubSpot's own column names (in HubSpot: Import). Import the companies file first, then the contacts file - HubSpot links each contact to its company by name. Revenue is in your display currency. HubSpot's Industry field only accepts its own list of values; if yours are not recognised, skip that column in the mapping step.",
+  salesforce: "Files with Salesforce's own column names, so its Data Import Wizard maps every column by itself. Import the accounts file first, then the contacts file - each contact is linked to its account by Account Name. Type is Customer, Partner or Prospect; priority, LinkedIn page and SalesTeam's id go into Description.",
+  dynamics: "Files with Dynamics 365 Sales' own column names, so its Import Data wizard maps every column by itself. Import the accounts file first, then the contacts file - each contact is linked to its account by Company Name. Relationship Type is Customer, Partner or Prospect; industry, priority, LinkedIn page and SalesTeam's id go into Description.",
+};
+
+function selectedExportChoice(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value;
+}
+function refreshExportDialog() {
+  document.getElementById("export-note").textContent = EXPORT_NOTES[selectedExportChoice("export-format") || "csv"];
+}
+for (const radio of document.querySelectorAll('input[name="export-format"]')) radio.addEventListener("change", refreshExportDialog);
+
+// Opened from Target Contacts it starts on Contacts, from anywhere else on Accounts; the format stays as last chosen.
+// Where Export… saves: the folder chosen last time (remembered), else Downloads.
+async function refreshExportFolder() {
+  const handle = await getStoredFolder(EXPORT_FOLDER_KEY);
+  // Only the name: Chrome never gives an extension a folder's full path. Empty = nothing chosen yet (Downloads).
+  document.getElementById("export-folder-name").value = handle ? handle.name : "";
+  document.getElementById("export-folder-btn").hidden = !folderPickerSupported();
+}
+document.getElementById("export-folder-btn").addEventListener("click", async () => {
+  try {
+    if (await pickExportFolder()) await refreshExportFolder();
+  } catch (err) {
+    await askConfirm(`Couldn't use that folder (${err.message}). Exports go to your Downloads folder.`, { title: "Export", cancelLabel: null });
   }
-  const csv = tableCsv(accounts ? COMPANY_COLUMNS : CONTACT_LIST_COLUMNS, rows);
-  const filename = `SalesTeam-${accounts ? "accounts" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
-  appendActivityLog({ actor: "user", action: "csv_exported", label: `Exported ${rows.length} ${noun(rows.length)} to ${filename}` });
-  await askConfirm(`Saved ${rows.length} ${noun(rows.length)} to your Downloads folder as ${filename}. It opens in Excel.`, { okLabel: "OK", cancelLabel: "Close" });
-}
-
-document.getElementById("export-accounts-csv-page-btn").addEventListener("click", () => exportTableCsv("accounts"));
-document.getElementById("export-contacts-csv-page-btn").addEventListener("click", () => {
-  showView("contactsList");
-  exportTableCsv("contacts");
 });
 
-// ---- HubSpot export / import (by file) ----
-const HUBSPOT_SCOPE_RANK = { P1: 1, P2: 2, P3: 3 };
-
-function hubspotExportSelection() {
-  const scope = document.getElementById("hubspot-export-scope").value;
-  const maxRank = HUBSPOT_SCOPE_RANK[scope] || 99;
-  const companies = workbook.companies.filter((c) => {
-    if (maxRank === 99) return true;
-    const rank = Number(String(accountExtras[normalizeCompanyName(c.company)]?.overrides?.salesTeamPriority || c.salesTeamPriority || "P9").replace("P", ""));
-    return rank <= maxRank;
-  });
-  // "Export at most N companies" - applied before the contact set is derived, so the contacts that
-  // come along are exactly the ones belonging to the companies actually exported. The scope dropdown
-  // alone is too coarse to try HubSpot out: P1 on its own is already hundreds of accounts.
-  const matched = companies.length;
-  const cap = Number(document.getElementById("hubspot-export-max")?.value) || 0;
-  const capped = cap > 0 ? companies.slice(0, cap) : companies;
-  const ids = new Set(capped.map((c) => c.companyId));
-  const names = new Set(capped.map((c) => normalizeCompanyName(c.company)));
-  const contacts = workbook.contacts.filter((c) => (c.companyId && ids.has(c.companyId)) || names.has(normalizeCompanyName(c.company)));
-  return { companies: capped, contacts, matched, capApplied: capped.length < matched };
+// "2026-10-09_20h26" - local date and time, so two exports on one day never get Windows' " (1)"; the "h" because
+// "_2026" for 20:26 read like the year twice (1.2.2.13, Boaz). Backups use the same form (backup-restore.js).
+function exportStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}h${p(d.getMinutes())}`;
 }
 
-function refreshHubspotExportSummary() {
-  const { companies, contacts, matched, capApplied } = hubspotExportSelection();
-  document.getElementById("hubspot-export-summary").textContent =
-    `${companies.length} compan${companies.length === 1 ? "y" : "ies"}` +
-    `${capApplied ? ` (of ${matched} matching - limited by "at most")` : ""}` +
-    ` and ${contacts.length} contact${contacts.length === 1 ? "" : "s"} will be exported.`;
+// Writes the files into the remembered folder when Chrome still allows it, else to Downloads. -> where they went.
+async function saveExportFiles(files) {
+  const handle = await getStoredFolder(EXPORT_FOLDER_KEY);
+  if (handle && (await folderPermission(handle)) === "granted") {
+    try {
+      for (const f of files) await writeToFolder(handle, [], f.name, new Blob([f.csv], { type: "text/csv;charset=utf-8" }));
+      return `the folder "${handle.name}"`;
+    } catch { /* the folder was moved or deleted: Downloads instead, nothing lost */ }
+  }
+  for (const [i, f] of files.entries()) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 400)); // two downloads in a row: give the browser a moment between them
+    downloadBlob(new Blob([f.csv], { type: "text/csv;charset=utf-8" }), f.name);
+  }
+  return "your Downloads folder";
 }
-document.getElementById("hubspot-export-scope").addEventListener("change", refreshHubspotExportSummary);
-document.getElementById("hubspot-export-max").addEventListener("input", refreshHubspotExportSummary);
-document.getElementById("hubspot-export-page-btn").addEventListener("click", () => {
-  refreshHubspotExportSummary();
-  document.getElementById("hubspot-export-dialog").showModal();
-});
-document.getElementById("hubspot-import-page-btn").addEventListener("click", () => {
-  document.getElementById("hubspot-import-status").hidden = true;
-  document.getElementById("hubspot-import-dialog").showModal();
-});
 
-document.getElementById("hubspot-export-btn").addEventListener("click", async () => {
-  const { companies, contacts } = hubspotExportSelection();
-  if (companies.length === 0) {
-    await askConfirm("There are no accounts to export for this choice.", { okLabel: "OK", cancelLabel: "Close" });
+function openExportDialog({ format = null, what = null } = {}) {
+  for (const [name, value] of [["export-format", format], ["export-what", what || "accounts"]]) {
+    if (!value) continue;
+    const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (radio) radio.checked = true;
+  }
+  if (what === "contacts") showView("contactsList");
+  refreshExportDialog();
+  refreshExportFolder();
+  document.getElementById("export-dialog").showModal();
+}
+
+// The registry address's country for the Salesforce billing / Dynamics address (crm-files.js billingOf): the target country when
+// Setup names exactly one, else none.
+async function singleTargetCountry() {
+  const u = await getTargetUniverseConfig();
+  const list = u && u.locationMode !== "continent" ? [...new Set(u.countries || [])] : [];
+  return list.length === 1 ? list[0] : null;
+}
+
+async function runExport(format, what) {
+  let accountRows = null;
+  let contactRows = null;
+  if (what !== "contacts") {
+    accountRows = await chooseExportRows("accounts");
+    if (accountRows === null) return;
+  }
+  if (what === "contacts") {
+    contactRows = await chooseExportRows("contacts");
+    if (contactRows === null) return;
+  }
+  if (what === "both") {
+    const ids = new Set(accountRows.map((c) => c.companyId).filter(Boolean));
+    const keys = new Set(accountRows.map((c) => normalizeCompanyName(c.company)));
+    contactRows = allTableRowsSorted("contacts").filter((c) => (c.companyId && ids.has(c.companyId)) || keys.has(normalizeCompanyName(c.company)));
+  }
+  if ((accountRows ? accountRows.length : 0) + (contactRows ? contactRows.length : 0) === 0) {
+    await askConfirm("There is nothing to export for this choice.", { title: "Export", cancelLabel: null });
     return;
   }
-  const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
-  const statusOfContact = (c) => effectiveStatus(leadStatusBucket(findLeadsForContact(c, allLeads)), contactExtras[contactKeyFor(c.company, c.fullName)]?.manualStatus);
-  const files = buildHubspotFiles(companies, contacts, statusOfCompany, statusOfContact);
-  const stamp = new Date().toISOString().slice(0, 10);
-  downloadBlob(new Blob([files.companiesCsv], { type: "text/csv;charset=utf-8" }), `SalesTeam-HubSpot-companies-${stamp}.csv`);
-  await new Promise((r) => setTimeout(r, 400)); // two downloads in a row: give the browser a moment between them
-  downloadBlob(new Blob([files.contactsCsv], { type: "text/csv;charset=utf-8" }), `SalesTeam-HubSpot-contacts-${stamp}.csv`);
-  document.getElementById("hubspot-export-dialog").close();
-  appendActivityLog({ actor: "user", action: "hubspot_exported", label: `Exported ${files.companyCount} companies and ${files.contactCount} contacts to HubSpot files` });
-  await askConfirm(`Saved two files to your Downloads folder:\n\n${files.companyCount} companies: SalesTeam-HubSpot-companies-${stamp}.csv\n${files.contactCount} contacts: SalesTeam-HubSpot-contacts-${stamp}.csv\n\nIn HubSpot, import the companies file first, then the contacts file.`, { okLabel: "OK", cancelLabel: "Close" });
-});
-
-document.getElementById("hubspot-import-choose-btn").addEventListener("click", () => document.getElementById("hubspot-import-file-input").click());
-document.getElementById("hubspot-import-file-input").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  event.target.value = "";
-  if (!file) return;
-  const statusEl = document.getElementById("hubspot-import-status");
-  statusEl.hidden = false;
-  try {
-    const { headers, records } = parseCsv(await file.text());
-    const kind = detectHubspotFile(headers);
-    if (!kind || records.length === 0) {
-      statusEl.textContent = `Import failed - "${file.name}" does not look like a HubSpot companies or contacts export (it needs a "Company name" column, or "First Name"/"Last Name"/"Email" columns).`;
-      return;
-    }
-    const companyRows = kind === "companies" ? hubspotCompanyRows(records) : [];
-    const contactRows = kind === "contacts" ? hubspotContactRows(records) : [];
-    const found = kind === "companies" ? `${companyRows.length} companies` : `${contactRows.length} contacts`;
-    if (companyRows.length + contactRows.length === 0) {
-      statusEl.textContent = `Import failed - no usable ${kind} rows were found in "${file.name}".`;
-      return;
-    }
-    if (!(await askConfirm(`Add the ${found} in "${file.name}" to your Target Accounts?\n\nOnly ones SalesTeam does not have yet are added; nothing existing is changed or removed.`, { okLabel: "Add them", cancelLabel: "Cancel" }))) {
-      statusEl.textContent = "Import cancelled.";
-      return;
-    }
-    statusEl.textContent = `Importing ${file.name}…`;
-    const counts = await addHubspotRowsToWorkbook(companyRows, contactRows);
-    await loadWorkbook();
-    const priority = await autoPrioritizeNewCompanies().catch(() => ({ applied: 0 }));
-    const parts = [];
-    if (kind === "companies") parts.push(`${counts.companiesAdded} ${counts.companiesAdded === 1 ? "company" : "companies"} added, ${counts.companiesAlreadyHad} already in SalesTeam`);
-    else {
-      parts.push(`${counts.contactsAdded} ${counts.contactsAdded === 1 ? "contact" : "contacts"} added, ${counts.contactsAlreadyHad} already in SalesTeam`);
-      if (counts.companiesCreatedFromContacts > 0) parts.push(`${counts.companiesCreatedFromContacts} new ${counts.companiesCreatedFromContacts === 1 ? "company" : "companies"} created for contacts whose company was not in SalesTeam`);
-    }
-    if (priority.applied > 0) parts.push(`priorities calculated for ${priority.applied}`);
-    statusEl.textContent = `Done - ${parts.join("; ")}.`;
-    appendActivityLog({ actor: "user", action: "hubspot_imported", label: `Imported HubSpot ${kind} file "${file.name}": ${parts.join("; ")}` });
-  } catch (err) {
-    statusEl.textContent = `Import failed - ${err.message}`;
+  const stamp = exportStamp();
+  const files = [];
+  if (format === "hubspot") {
+    // The values the table shows - edits, LinkedIn and web research on top of the stored row (1.2.2.13 round-trip
+    // test: the raw rows went out, so Galenica's 7,971 came back as the old 4,511) - and revenue in the display
+    // currency, which is what Import reads a HubSpot file in unless told otherwise.
+    const companies = (accountRows || []).map((c) => {
+      const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
+      const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: accountPriorityInfo(c).priority }; // D4: exported as shown
+    });
+    contactRows = contactRows && contactRows.map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
+    const statusOfContact = (c) => effectiveStatus(leadStatusBucket(findLeadsForContact(c, allLeads)), contactExtras[contactKeyFor(c.company, c.fullName)]?.manualStatus);
+    const built = buildHubspotFiles(companies, contactRows || [], statusOfCompany, statusOfContact);
+    if (accountRows) files.push({ name: `SalesTeam-HubSpot-companies-${stamp}.csv`, csv: built.companiesCsv, text: `${built.companyCount} companies` });
+    if (contactRows) files.push({ name: `SalesTeam-HubSpot-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
+  } else if (CRM_NAMES[format]) {
+    // Salesforce or Dynamics. As HubSpot: the shown values, revenue in the default currency (D14), plus the relationship for Type (design 8, 8a).
+    const companies = (accountRows || []).map((c) => {
+      const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
+      const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
+      const info = accountPriorityInfo(c);
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: info.priority, relationship: info.relationship };
+    });
+    const contacts = (contactRows || []).map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    const built = buildCrmFiles(format, companies, contacts, { registryCountry: await singleTargetCountry() });
+    if (accountRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-accounts-${stamp}.csv`, csv: built.accountsCsv, text: `${built.accountCount} accounts` });
+    if (contactRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });
+  } else {
+    const n = (count, one) => `${count} ${one}${count === 1 ? "" : "s"}`;
+    if (accountRows) files.push({ name: `SalesTeam-accounts-${stamp}.csv`, csv: tableCsv(COMPANY_COLUMNS, accountRows), text: n(accountRows.length, "account") });
+    if (contactRows) files.push({ name: `SalesTeam-contacts-${stamp}.csv`, csv: tableCsv(CONTACT_LIST_COLUMNS, contactRows), text: n(contactRows.length, "contact") });
   }
+  const where = await saveExportFiles(files);
+  const list = files.map((f) => `${f.text}: ${f.name}`).join("\n");
+  appendActivityLog({
+    actor: "user", action: format === "csv" ? "csv_exported" : `${format}_exported`,
+    label: `Exported ${files.map((f) => f.text).join(" and ")} (${format === "hubspot" ? "HubSpot" : CRM_NAMES[format] || "CSV"})`,
+  });
+  // D14: HubSpot's import maps "Annual Revenue" by that exact title, so the currency is named here instead.
+  const currencyNote = format === "hubspot" && accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : "";
+  const hint = format === "hubspot"
+    ? `${currencyNote}${files.length > 1 ? "\n\nIn HubSpot, import the companies file first, then the contacts file." : ""}`
+    : format === "salesforce"
+      // design 8: Annual Revenue is a plain number (the wizard would not map "Annual Revenue (USD)"), so it is named here.
+      ? `${accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : ""}${files.length > 1 ? "\n\nIn Salesforce (Data Import Wizard), import the accounts file first, then the contacts file - each contact is linked to its account by Account Name." : ""}`
+      : format === "dynamics"
+        ? `${accountRows ? `\n\nAnnual Revenue is in ${moneySettings.targetCurrency}.` : ""}${files.length > 1 ? "\n\nIn Dynamics 365 Sales (Import from CSV), import the accounts file first, then the contacts file - each contact is linked to its account by Company Name." : ""}`
+      : "\n\nThey open in Excel.";
+  await askConfirm(`Saved ${files.length === 1 ? "one file" : `${files.length} files`} to ${where}:\n\n${list}${hint}`, { title: "Export", cancelLabel: null });
+}
+
+document.getElementById("export-go-btn").addEventListener("click", async () => {
+  const format = selectedExportChoice("export-format") || "csv";
+  const what = selectedExportChoice("export-what") || "accounts";
+  // After a browser restart Chrome asks again before writing into the folder - only possible from this click, so
+  // asked here, before the rows question (same lesson as the backups: asked after the work, Chrome refused).
+  const handle = await getStoredFolder(EXPORT_FOLDER_KEY);
+  if (handle && (await folderPermission(handle)) === "prompt") await requestFolderPermission(handle);
+  document.getElementById("export-dialog").close();
+  if (what === "contacts") showView("contactsList");
+  runExport(format, what);
 });
+document.getElementById("export-page-btn").addEventListener("click", () => openExportDialog());
+document.getElementById("export-contacts-page-btn").addEventListener("click", () => openExportDialog({ what: "contacts" }));
+document.getElementById("import-contacts-page-btn").addEventListener("click", () => openImportDialog(null, "contacts"));
 
 // ---- Merge duplicate accounts ----
 // A duplicate is the same real company entered twice - typically a ChatGPT-researched row and a LinkedIn-discovered one
@@ -7225,7 +7868,7 @@ async function removeAccount(companyKey, companyName, { onDetailPage = false } =
     label: `Removed Target Account "${companyName}" from the list`,
     newValue: { companyKey },
   });
-  showNotice(`"${companyName}" removed.${teamAccounts.inTeam() ? " The Team Admin can bring it back with Removed…." : " Removed… brings it back."}`);
+  showNotice(`"${companyName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back with Removed…." : " Removed… brings it back."}`);
 }
 
 async function removeContact(contactKey, fullName, { onDetailPage = false } = {}) {
@@ -7240,7 +7883,7 @@ async function removeContact(contactKey, fullName, { onDetailPage = false } = {}
     label: `Removed Target Contact "${fullName}" from the list`,
     newValue: { contactKey },
   });
-  showNotice(`"${fullName}" removed.${teamAccounts.inTeam() ? " The Team Admin can bring it back with Removed…." : " Removed… brings it back."}`);
+  showNotice(`"${fullName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back with Removed…." : " Removed… brings it back."}`);
 }
 
 // PRD 6.20 Phase 10 (2026-09-17) - the detail page's own kebab, replacing
@@ -7296,10 +7939,9 @@ for (const link of document.querySelectorAll('#app-nav a.nav-item[href^="#"]')) 
 // automatically on load. Same idea as Settings' own #setup-section/etc,
 // just for a dialog instead of a page section.
 const ACTION_DIALOG_IDS = {
-  "import-accounts": "import-accounts-dialog",
+  import: "import-dialog",
+  export: "export-dialog",
   "restore-accounts": "restore-accounts-dialog",
-  "export-hubspot": "hubspot-export-dialog",
-  "import-hubspot": "hubspot-import-dialog",
   resolve: "resolve-dialog",
   "fetch-size": "fetch-size-dialog",
   prioritize: "prioritize-companies-dialog",
@@ -7308,11 +7950,23 @@ const ACTION_DIALOG_IDS = {
   "web-lane": "web-lane-dialog",
   "web-discovery": "web-discovery-dialog",
 };
-function openActionFromHash() {
-  const action = new URLSearchParams(location.hash.slice(1)).get("action");
-  // The CSV exports have no dialog of their own (another page's menu opens them here).
-  if (action === "export-accounts-csv") { exportTableCsv("accounts"); return; }
-  if (action === "export-contacts-csv") { showView("contactsList"); exportTableCsv("contacts"); return; }
+// 1.2.3 step 2 (design 7.3): one Import… and one Export…. The old action names still open them, with their format
+// (and what) chosen - a link or an open tab from before keeps working.
+const ACTION_ALIASES = {
+  "import-accounts": ["import", { format: "workbook" }],
+  "import-hubspot": ["import", { format: "hubspot" }],
+  "export-hubspot": ["export", { format: "hubspot" }],
+  "export-accounts-csv": ["export", { format: "csv", what: "accounts" }],
+  "export-contacts-csv": ["export", { format: "csv", what: "contacts" }],
+};
+const IMPORT_ACTIONS = new Set(["import", "restore-accounts"]);
+async function openActionFromHash() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  let action = params.get("action");
+  let preset = { what: params.get("what") || null };
+  if (ACTION_ALIASES[action]) [action, preset] = ACTION_ALIASES[action];
+  // 1.2.3 (design 6): in a team only the Team Lead imports and restores - a member's link does nothing.
+  if (IMPORT_ACTIONS.has(action) && !(await mayImport())) return;
   const dialogId = ACTION_DIALOG_IDS[action];
   if (!dialogId) return;
   // 25th round of direct feedback (2026-09-19): "I even managed to get 2
@@ -7333,12 +7987,11 @@ function openActionFromHash() {
   // underneath the dialog (not the Accounts list), so closing it lands
   // the user somewhere that makes sense for what they clicked.
   if (action === "discover-contacts") showView("contactsList");
-  if (action === "export-hubspot") refreshHubspotExportSummary();
-  if (action === "import-hubspot") { document.getElementById("hubspot-import-status").hidden = true; }
+  if (action === "import") { openImportDialog(preset.format, preset.what); return; }
+  if (action === "export") { openExportDialog(preset); return; }
   if (action === "web-lane") { openWebLaneDialog(); return; }
   if (action === "web-discovery") { openWebDiscoveryDialog(); return; }
   if (action === "find-duplicates") { renderFindDuplicates().then(() => document.getElementById(dialogId).showModal()); return; }
-  if (action === "import-accounts") { renderImportColumnsHelp(); document.getElementById("import-help-status").textContent = ""; }
   document.getElementById(dialogId).showModal();
 }
 
@@ -7355,16 +8008,46 @@ async function init() {
   loadContactHiddenColumns();
   loadContactFilterSortState();
   await teamAccounts.ready();
+  hideImportForMembers(["import-page-btn", "import-contacts-page-btn",
+    "open-settings-restore-btn", "empty-import-btn"]);
   // Assignments and claims arrive from the team in the background: repaint the lists' badges and filter.
   // A list hidden behind an account page is marked stale and redrawn when it is shown again (route) - otherwise
   // "Back to Target Accounts" showed the badge from before (Nestlé still "Mine" after reassigning it, 1.2.1.9 test).
   teamAccounts.onChange(() => {
+    // Step 2: the groups (mine, or an account's) may have changed what I see.
+    const before = `${workbook.companies.length}/${workbook.contacts.length}`;
+    applyVisibleRows();
+    if (`${workbook.companies.length}/${workbook.contacts.length}` !== before) {
+      renderAccountsStats();
+      renderContactsStats();
+      scheduleReadinessRefresh();
+    }
+    const open = parseHash();
+    const onPage = !accountViewEl.hidden || !contactViewEl.hidden || !noAccessViewEl.hidden;
+    if (onPage && open.key && hiddenByGroups(open.view, open.key) === noAccessViewEl.hidden) route();
     if (!listViewEl.hidden) renderTable(); else teamListsStale.accounts = true;
     if (!contactsListViewEl.hidden) renderContactsTable(); else teamListsStale.contacts = true;
   });
+  // Step 3 (design 7): a count in Settings > Team > Groups opens the list on that group -
+  // target-accounts.html?group=<id>&owner=unassigned&ready=1. Taken once, then dropped from the address.
+  {
+    const q = new URLSearchParams(location.search);
+    if (q.has("group") || q.has("owner") || q.has("ready")) {
+      if (q.has("group")) accountGroupPicker.set(q.get("group"));
+      accountOwnerPicker.set(q.get("owner") || "all");
+      clearTableFilters(searchInputEl, columnFilters);
+      if (q.get("ready") === "1") columnFilters.readiness = { text: "Ready", exclude: false };
+      saveFilterSortState();
+      history.replaceState(null, "", location.pathname + location.hash);
+    }
+  }
   await loadWorkbook();
   await route();
   openActionFromHash();
+  // 1.2.3 (R3.2): once, after customers / partners left the exclusion list (update, restore or import).
+  takeRelationshipsMigrationNotice().then((n) => {
+    if (n) showNotice(relationshipsMovedText(n));
+  }).catch(() => {});
   initBatchStatus(onBulkStateChange);
   watchPipelineStatusLine(document.getElementById("pie-pipeline-status")); // build step 3, U3
   watchWebStatusLine(document.getElementById("pie-web-status")); // build step 5, W6

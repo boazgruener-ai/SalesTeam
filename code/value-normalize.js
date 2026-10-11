@@ -129,6 +129,32 @@ export function parseLooseNumber(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Headcount is a whole number. Annual reports of Swiss banks, hospitals and public bodies give full-time equivalents
+// with decimals (Swiss National Bank 941.2, Graubündner Kantonalbank 925.72), and Salesforce refused six such accounts
+// (live test 2026-10-10, Boaz: round before storing). Every way a headcount gets in rounds it: web findings
+// (web-research-apply.js), imports (import-merge.js), hand edits, and repairEmployeeDecimals for what was stored before.
+// A number or a plain numeric string with decimals -> rounded number; anything else (">5,000", "6,500+") unchanged.
+export const HEADCOUNT_FIELDS = ["globalEmployees", "swissEmployees"];
+
+export function wholeEmployees(value) {
+  if (typeof value === "number") return Number.isFinite(value) && !Number.isInteger(value) ? Math.round(value) : value;
+  if (typeof value !== "string" || !/^[\s\d.,'’]+$/.test(value)) return value;
+  const n = parseLooseNumber(value);
+  return n === null || Number.isInteger(n) ? value : Math.round(n);
+}
+
+// The same row, or a copy with its headcounts rounded when one had decimals.
+export function withWholeEmployees(row) {
+  if (!row) return row;
+  let out = row;
+  for (const f of HEADCOUNT_FIELDS) {
+    if (row[f] === undefined || row[f] === null) continue;
+    const v = wholeEmployees(row[f]);
+    if (v !== row[f]) { if (out === row) out = { ...row }; out[f] = v; }
+  }
+  return out;
+}
+
 // True when the raw value holds something, but nothing numeric can be got out of it - the case that
 // deserves a human ("not disclosed", a stray currency code). A blank is not a problem, just empty.
 export function isUnparseableNumber(raw) {
@@ -168,4 +194,65 @@ export function normalizeMoney(rawAmount, rawCurrency, target, rates) {
   const converted = convertCurrency(amount, currency, to, rates);
   if (converted === null) return { amount, currency, converted: false };
   return { amount: converted, currency: to, converted: true };
+}
+
+// ---- D16 (EXPORT_IMPORT_DESIGN.md 8b): a revenue written without its unit --------------------------------
+// The 1.2.2.13 HubSpot export showed seven accounts holding revenues such as 491.1 CHF (Cornèr Bank) or 5.92 CHF
+// (Lindt & Sprüngli Schweiz): web answers that lost "million"/"billion". The arbitration's units rule only fires on
+// a PAIR; a lone value filled into an empty field went in as it came. These two judge a value on its own.
+
+export const REVENUE_UNITS_MIN_PER_EMPLOYEE = 10000;
+const UNIT_FIT_LOW = 20000;
+const UNIT_FIT_HIGH = 2000000;
+export const REVENUE_UNIT_FACTORS = [1e3, 1e6, 1e9];
+
+// The targeting minimum: the low end of the smallest size band ticked in Setup (Boaz 2026-10-09: never a fixed
+// 200). sizeBuckets = targetUniverseConfig.sizeBuckets, bands = SIZE_PRIORITY_BUCKETS. Nothing ticked -> 0.
+export function targetingMinimum(sizeBuckets, bands) {
+  const ticked = (bands || []).filter((b) => sizeBuckets && sizeBuckets[b.key] && sizeBuckets[b.key].checked);
+  if (ticked.length === 0) return 0;
+  const min = Math.min(...ticked.map((b) => Number(b.min) || 0));
+  return min > 0 ? min : 0;
+}
+
+// -> null when the value is credible (or cannot be judged), else
+//    { amount, perEmployee, employeesUsed, basis: "employees" | "targeting", factor, suggested, outOfScope, credibleSmall }
+// value/currency: the stored revenue as written; employees: a REAL headcount or null; minimum: targetingMinimum();
+// money: { targetCurrency, rates } as everywhere else. The per-employee test runs in the default currency.
+//   - employees used = the larger of the real count and the minimum, so a missing or wrong count still judges;
+//     with minimum 0 (the 0-200 band ticked) only a real count is used, and without one nothing is judged;
+//   - below 10,000 per employee the value is impossible for a company in scope;
+//   - factor: the one of x1,000 / x1,000,000 / x1,000,000,000 that lands between 20,000 and 2,000,000 per employee;
+//   - outOfScope: the real count is below the minimum (the card offers Remove account); credibleSmall: and the
+//     value is credible for that real count (HT5 AG, 0 employees) - then no unit is suggested at all.
+export function revenueUnitsCheck(value, currency, employees, minimum, money) {
+  const raw = parseLooseNumber(value);
+  if (raw === null || raw <= 0) return null;
+  const real = parseLooseNumber(employees);
+  const realCount = real !== null && real >= 0 ? real : null;
+  const min = Number(minimum) > 0 ? Number(minimum) : 0;
+  const used = Math.max(realCount ?? 0, min);
+  if (used <= 0) return null;
+  const norm = normalizeMoney(raw, currency, money && money.targetCurrency, money && money.rates);
+  const amount = norm.amount === null ? raw : norm.amount;
+  const perEmployee = amount / used;
+  if (perEmployee >= REVENUE_UNITS_MIN_PER_EMPLOYEE) return null;
+  const outOfScope = realCount !== null && realCount < min;
+  const credibleSmall = outOfScope && (realCount === 0 || amount / realCount >= REVENUE_UNITS_MIN_PER_EMPLOYEE);
+  let factor = null;
+  if (!credibleSmall) {
+    for (const f of REVENUE_UNIT_FACTORS) {
+      const r = (perEmployee * f);
+      if (r >= UNIT_FIT_LOW && r <= UNIT_FIT_HIGH) { factor = f; break; }
+    }
+  }
+  return {
+    amount, perEmployee, employeesUsed: used, basis: realCount !== null && realCount >= min ? "employees" : "targeting",
+    factor, suggested: factor ? Math.round(raw * factor * 1e6) / 1e6 : null, outOfScope, credibleSmall,
+  };
+}
+
+// "million" / "billion" / "thousand" for a factor, for the card's question.
+export function revenueUnitWord(factor) {
+  return factor === 1e9 ? "billions" : factor === 1e6 ? "millions" : factor === 1e3 ? "thousands" : "";
 }

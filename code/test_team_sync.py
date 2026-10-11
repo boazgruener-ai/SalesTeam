@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-sync.js"]
+REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -87,6 +87,11 @@ var chrome = {
 
 // storage.js stub: one writer at a time is all the test needs.
 function withAccountWriteLock(fn) { return fn(); }
+// 1.2.3: the account views the group computation reads (VIEWS - set by a test), and storage.js's size buckets.
+var VIEWS = [];
+function getAccountViews() { return Promise.resolve(clone(VIEWS)); }
+var SIZE_PRIORITY_BUCKETS = [{ key: 'S', min: 0, max: 200 }, { key: 'M', min: 201, max: 500 }, { key: 'L', min: 501, max: 1000 },
+  { key: 'XL', min: 1001, max: 5000 }, { key: 'XXL', min: 5001, max: Infinity }];
 function normalizeCompanyName(n) { return String(n || '').toLowerCase().trim(); }
 function contactKeyFor(company, fullName) { var c = normalizeCompanyName(company), n = String(fullName || '').toLowerCase().trim(); return c && n ? c + '::' + n : null; }
 
@@ -151,6 +156,8 @@ def check(label, actual, expected):
 def strip_module(name):
     src = io.open(os.path.join(CODE_DIR, name), encoding="utf-8").read()
     src = IMPORT_RE.sub("", src)
+    # The read-round size can be made small, so a long history is read back over several rounds as on a real PC.
+    src = src.replace("const MAX_FILES_PER_ROUND = ", "let MAX_FILES_PER_ROUND = ")
     return re.sub(r"^export\s+(?=(const|let|var|function|class|async)\b)", "", src, flags=re.M)
 
 
@@ -223,12 +230,23 @@ def deep_sorted(v):
     if isinstance(v, dict):
         return {k: deep_sorted(v[k]) for k in sorted(v)}
     if isinstance(v, list):
-        return [deep_sorted(x) for x in v]
+        rows = [deep_sorted(x) for x in v]
+        # Workbook rows (dicts with an id) are compared as a set: a member who joins later gets the rows laid out
+        # in the team's order, not in the order they were added on one PC - the table sorts them anyway.
+        if rows and all(isinstance(x, dict) and any(k in x for k in ("companyId", "contactId", "initiativeId")) for x in rows):
+            rows.sort(key=lambda x: json.dumps(x, sort_keys=True))
+        return rows
     return v
 
 
 def same(a, b):
     return json.dumps(deep_sorted(a)) == json.dumps(deep_sorted(b))
+
+
+def invite(lead, name, folder, email=""):
+    """1.2.3 step 1b (D17): nobody joins without an invitation - the Team Lead writes one first."""
+    r, folder = lead.call("inviteMember({ name: %s, email: %s })" % (json.dumps(name), json.dumps(email)), folder)
+    return (r.get("invite") or {}).get("id"), folder
 
 
 def main():
@@ -270,7 +288,26 @@ def main():
         "anthropicApiKey": "sk-ben",
     })
     r, folder = ben.call("joinTeam({ name: 'Ben' })", folder)
+    check("invite: joining without an invitation is refused", ("no invitation" in (r.get("error") or ""), ben.local("teamMembership")), (True, None))
+    inv, folder = invite(ben, "Ben", folder)
+    check("invite: a non-member cannot invite", inv, None)
+    inv, folder = invite(anna, "Ben", folder, "ben@example.com")
+    check("invite: the Team Lead invites - invites/<id>.json, open", json.loads(folder["invites/%s.json" % inv])["status"], "open")
+    r, folder = ben.call("joinTeam({ name: 'Benjamin', inviteId: '%s' })" % inv, folder)
     check("join: ok", r.get("ok"), True)
+    check("invite: Ben joins with the invitation's name", (r.get("name"), ben.local("teamMembership")["name"]), ("Ben", "Ben"))
+    acc = json.loads(folder["invites/%s.json" % inv])
+    check("invite: written back as accepted by Ben", (acc["status"], acc["acceptedBy"]), ("accepted", r.get("memberId")))
+    bob = Member("bob", now_offset=9)
+    r2, folder = bob.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    check("invite: an invitation cannot be used twice", ("another PC" in (r2.get("error") or ""), bob.local("teamMembership")), (True, None))
+    inv2, folder = invite(anna, "Bob", folder)
+    r2, folder = anna.call("cancelInvite('%s')" % inv2, folder)
+    check("invite: cancelled", (r2.get("ok"), json.loads(folder["invites/%s.json" % inv2])["status"]), (True, "cancelled"))
+    r2, folder = bob.call("joinTeam({ inviteId: '%s' })" % inv2, folder)
+    check("invite: a cancelled invitation is refused", ("cancelled" in (r2.get("error") or ""), bob.local("teamMembership")), (True, None))
+    r2, folder = anna.call("cancelInvite('%s')" % inv, folder)
+    check("invite: an accepted invitation cannot be cancelled", (r2.get("ok"), r2.get("reason")), (False, "accepted"))
     check("join: Ben has the team's picture", same(picture(ben), {**picture(anna), "results": {
         "lead-1": {"author": "Ann", "status": "New"}, "lead-2": {"author": "Bob", "status": "New"}}}), True)
     check("join: Ben keeps his API key", ben.local("anthropicApiKey"), "sk-ben")
@@ -352,6 +389,30 @@ def main():
     check("join: Ben's setup counts as done (it came with the team)", bool(ben.local("onboardingCompletedAt")), True)
     check("status: Anna sees Ben as a member, not an admin", [m["admin"] for m in anna.status()["members"]], [False])
 
+    # 1.2.3 Export & Import step 1: the Team Lead's import (rows appended, importRun on every touched account) reaches
+    # Ben without deleting the account his web research found, and his team log shows it as ONE line.
+    wb = ben.local("targetAccountsWorkbook")
+    wb["companies"].append({"companyId": "W-1", "company": "Webfound AG", "source": "Web"})
+    ben.set_local({"targetAccountsWorkbook": wb})
+    r, folder = ben.sync(folder)
+    r, folder = anna.sync(folder)
+    run = {"id": "imp-9", "file": "research.xlsx", "at": 1, "by": "Anna", "summary": "1 new account, 1 empty field filled"}
+    wb = anna.local("targetAccountsWorkbook")
+    wb["companies"].append({"companyId": "C-9", "company": "Gamma AG", "source": "Workbook"})
+    wb["contacts"].append({"contactId": "P-9", "companyId": "C-9", "fullName": "Gil"})
+    ex = anna.local("targetAccountExtras") or {}
+    ex["gamma ag"] = {"importRun": run}
+    ex["acme ag"] = {**ex.get("acme ag", {}), "overrides": {"industry": "Banking"}, "importRun": run}
+    anna.set_local({"targetAccountsWorkbook": wb, "targetAccountExtras": ex})
+    r, folder = anna.sync(folder)
+    r, folder = ben.sync(folder)
+    names = sorted(c["company"] for c in ben.local("targetAccountsWorkbook")["companies"])
+    check("import: Ben gets the new account and keeps his web-found one", ("Gamma AG" in names, "Webfound AG" in names), (True, True))
+    check("import: Anna keeps Ben's web-found account too", "Webfound AG" in [c["company"] for c in anna.local("targetAccountsWorkbook")["companies"]], True)
+    lines = [x for x in ben.local("teamLog") or [] if x.get("kind") == "import"]
+    check("import: Ben's team log has one line for the import", [(x.get("ref"), sorted(x.get("accounts") or [])) for x in lines],
+          [("research.xlsx", ["acme ag", "gamma ag"])])
+
     # 9. Eight days later Anna compacts; a new member still gets the full picture.
     anna.e("NOW += 8 * 24 * 3600 * 1000; DB.meta.lastCompactDay = null; if (mem) mem.meta.lastCompactDay = null;")
     ta = anna.local("targetAccounts"); ta["beta sa"]["score"] = 41; anna.set_local({"targetAccounts": ta})
@@ -363,7 +424,12 @@ def main():
     check("compact: one snapshot written", len(snaps), 1)
     check("compact: only the newest change file is left", len(left), 1)
     cleo = Member("cleo", now_offset=8 * 24 * 3600 * 1000 + 20)
-    r, folder = cleo.call("joinTeam({ name: 'Cleo' })", folder)
+    r, folder = anna.sync(folder)
+    check("invite: Anna is told Ben joined", [n["text"].split(".")[0] for n in anna.local("teamNotices") or [] if n.get("kind") == "joined"], ["Ben joined the team"])
+    st = anna.status()
+    check("invite: status lists the invitations", sorted(i["status"] for i in st.get("invites", [])), ["accepted", "cancelled"])
+    inv, folder = invite(anna, "Cleo", folder)
+    r, folder = cleo.call("joinTeam({ inviteId: '%s' })" % inv, folder)
     r, folder = ben.sync(folder)
     check("compact: Cleo joining after compaction has the same picture as Anna",
           same({k: v for k, v in picture(cleo).items() if k != "results"}, {k: v for k, v in picture(anna).items() if k != "results"}), True)
@@ -386,9 +452,12 @@ def main():
             {"companyId": "c-1", "company": "Acme AG"}, {"companyId": "c-2", "company": "Beta SA"}], "contacts": []},
         "targetAccountExtras": {"acme ag": {"status": "New"}, "beta sa": {"status": "New"}},
     })
-    r, folder = dora.call("createTeam({ name: 'Dora', teamName: 'Claims' })", folder)
+    r, folder = dora.call("createTeam({ name: 'Dora', teamName: 'Claims', invites: [{ name: 'Eli', email: 'eli@example.com' }, { name: 'Fay' }, { name: '' }] })", folder)
+    check("create with invitations: two written, open", (r.get("invited"), sorted(json.loads(v)["name"] for p, v in folder.items() if p.startswith("invites/"))), (2, ["Eli", "Fay"]))
+    invited = {json.loads(v)["name"]: json.loads(v)["id"] for p, v in folder.items() if p.startswith("invites/")}
+    check("create: team.json names the creator", json.loads(folder["team.json"]).get("createdByName"), "Dora")
     eli = Member("eli")
-    r, folder = eli.call("joinTeam({ name: 'Eli' })", folder)
+    r, folder = eli.call("joinTeam({ inviteId: '%s' })" % invited["Eli"], folder)
     r, folder = dora.sync(folder)
     r, folder = eli.sync(folder)
     dora_id = dora.status()["me"]["memberId"]
@@ -480,6 +549,8 @@ def main():
     check("shares: the gate is connected", (rd.get("connected"), re_.get("connected")), (True, True))
     check("shares: every account goes to exactly one of them", all(a != b for a, b in zip(rd["may"], re_["may"])), True)
     check("shares: both get some", (sum(rd["may"]) > 5, sum(re_["may"]) > 5), (True, True))
+    r, folder = eli.call("teamWorkGate().then(function (g) { return g.discovery; })", folder)
+    check("shares: without groups every member's pipeline may run Discovery (1.2.3 step 5: unchanged)", r, True)
     r, folder = eli.call("claimAccount('beta sa', { kind: 'pipeline' })", folder)
     check("shares: Eli's pipeline may not claim Beta while Dora still holds it", (r.get("ok"), r.get("reason")), (False, "held"))
     r, folder = dora.call("releaseAccount('beta sa')", folder)
@@ -507,7 +578,7 @@ def main():
     r, folder = eli.call("assignAccount('acme ag')", folder)
     check("assign: Eli cannot take it", (r.get("ok"), r.get("reason")), (False, "assigned"))
     r, folder = eli.call("unassignAccount('acme ag')", folder)
-    check("assign: Eli cannot release Dora's account", (r.get("ok"), r.get("reason")), (False, "not_admin"))
+    check("assign: Eli cannot release Dora's account", (r.get("ok"), r.get("reason")), (False, "not_lead"))
     r, folder = eli.call("teamWorkGate().then(function (g) { return [g.mayWork('acme ag'), g.offLimits('acme ag')]; })", folder)
     check("assign: off-limits to Eli's pipeline and bulk research", (r[0], (r[1] or {}).get("reason"), (r[1] or {}).get("name")), (False, "assigned", "Dora"))
     summary = eli.local("teamAccountStates") or {}
@@ -546,7 +617,7 @@ def main():
     r, folder = eli.call("assignAccount('delta ag')", folder)
     r, folder = eli.call("assignAccount('epsilon ag')", folder)
     r, folder = eli.call("assignAccount('delta ag', { to: '%s' })" % dora_id, folder)
-    check("admin: a member cannot assign to someone else", (r.get("ok"), r.get("reason")), (False, "not_admin"))
+    check("admin: a member cannot assign to someone else", (r.get("ok"), r.get("reason")), (False, "not_lead"))
     r, folder = eli.sync(folder)
     r, folder = dora.sync(folder)
     r, folder = dora.call("assignAccount('delta ag', { to: '%s' })" % dora_id, folder)
@@ -564,7 +635,283 @@ def main():
     notices = sorted((n["key"], n["by"], n["to"]) for n in (eli.local("teamNotices") or []))
     check("notice: Eli is told which accounts the admin took (reassigned / released)",
           notices, [("delta ag", "Dora", "Dora"), ("epsilon ag", "Dora", None)])
-    check("notice: nothing for Dora - she did it herself", dora.local("teamNotices"), None)
+    # 1.2.2.32: several accounts in one job - one save, one change file.
+    r, folder = dora.sync(folder)
+    files_before = dora.status()["lastWrittenN"]
+    r, folder = dora.call("assignAccounts(['zeta ag', 'eta ag'], { to: '%s' })" % eli_id, folder)
+    check("assign many: both accounts in one answer", [(x["key"], x["ok"]) for x in r.get("results", [])], [("zeta ag", True), ("eta ag", True)])
+    r, folder = dora.sync(folder)
+    check("assign many: one change file for both", dora.status()["lastWrittenN"] - files_before, 1)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("getClaimStatus('eta ag')", folder)
+    check("assign many: Eli has Eta", (r.get("assignee") or {}).get("me"), True)
+    r, folder = dora.call("unassignAccounts(['zeta ag', 'eta ag', 'nobody ag'])", folder)
+    check("release many: both released, an unassigned one is fine", [x["ok"] for x in r.get("results", [])], [True, True, True])
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("getClaimStatus('eta ag')", folder)
+    check("release many: Eta is unassigned for Eli", r.get("assignee"), None)
+    check("notice: nothing for Dora - she did it herself (only 'Eli joined')", [x for x in dora.local("teamNotices") or [] if x.get("kind") != "joined"], [])
+
+    # 1.2.2.6 (Boaz: 13 assigned to him on Annick's PC, 0 on his own): a PC whose saved state is lost gets its own
+    # changes back from its own files in the folder.
+    r, folder = dora.call("assignmentCounts()", folder)
+    before = r.get("counts", {})
+    dora.e("DB.state = undefined; mem = null;")
+    r, folder = dora.sync(folder)
+    r, folder = dora.call("assignmentCounts()", folder)
+    check("lost state: Dora's own assignments come back from her files", (r.get("counts", {}), bool(before)), (before, True))
+    log_before = len(dora.local("teamLog") or [])
+    r, folder = dora.sync(folder)
+    check("lost state: reading my own files back adds no team-log lines", len(dora.local("teamLog") or []), log_before)
+
+    # 1.2.3 step 0 (TEAM_ADVANCED_MODE_DESIGN.md 3.1, 4.2): the Team Lead comes from the folder; only the Team Lead's
+    # group records count - on every PC.
+    r, folder = dora.call("Promise.resolve(publishSummary ? 1 : 0)", folder)
+    st = dora.local("teamAccountStates") or {}
+    check("lead: Dora (the creator) is Team Lead, read from the folder", (st.get("lead"), st.get("leadKnown"), st.get("admin")), (dora_id, True, True))
+    r, folder = eli.sync(folder)
+    st = eli.local("teamAccountStates") or {}
+    check("lead: Eli sees Dora as Team Lead, himself without the rights", (st.get("lead"), st.get("leadKnown"), st.get("admin")), (dora_id, True, False))
+    dora.e("VIEWS = %s" % json.dumps([
+        {"key": "acme ag", "globalHqCountry": "Switzerland", "globalEmployees": 6000},
+        {"key": "beta sa", "globalHqCountry": "France", "globalEmployees": 300},
+        {"key": "gamma ag", "globalHqCountry": None}]))
+    dora.set_local({"teamGroups": {"g-ch": {"name": "Swiss", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id]}}})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("groups: the Team Lead's group reaches Eli", ((eli.local("teamGroups") or {}).get("g-ch") or {}).get("name"), "Swiss")
+    group_notes = lambda m: [n["text"] for n in (m.local("teamNotices") or []) if n.get("kind") == "group"]
+    check("groups: Eli is told that groups were set up, and which are his", group_notes(eli), ["Dora set up account groups. You now see the accounts of your group: Swiss."])
+    check("groups: the Team Lead is told nothing", group_notes(dora), [])
+    eli.set_local({"teamGroups": {"g-ch": {"name": "Eli renamed it", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id]},
+                                  "g-eli": {"name": "Eli's own", "kind": "named", "accounts": [], "members": [eli_id]}}})
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    groups = dora.local("teamGroups") or {}
+    check("groups: a member's group changes are ignored on the Team Lead's PC", (groups.get("g-ch", {}).get("name"), "g-eli" in groups), ("Swiss", False))
+    dora.advance(2500)
+    st = dora.local("teamAccountStates") or {}
+    check("groups: the summary carries each account's groups (unknown country -> Other)",
+          (st.get("groupsOn"), st.get("g")), (True, {"acme ag": ["g-ch"], "beta sa": ["other"], "gamma ag": ["other"]}))
+    check("groups: the Team Lead in no group is in Other (D9)", st.get("myGroups"), ["other"])
+    # 1.2.3 step 4 (design 8.2, 8.3): group changes. Eli is in Swiss only; Dora is Team Lead.
+    def set_views(acme, beta):
+        v = json.dumps([{"key": "acme ag", "company": "Acme AG", "globalHqCountry": acme, "globalEmployees": 6000},
+                        {"key": "beta sa", "company": "Beta SA", "globalHqCountry": beta, "globalEmployees": 300},
+                        {"key": "gamma ag", "globalHqCountry": None}])
+        for m in (dora, eli):
+            m.e("VIEWS = %s" % v)
+
+    def research(m, key, country, folder):
+        """New data for one account, written on m's PC (what research, the pipeline or an edit does)."""
+        m.e("FOLDER = %s;" % json.dumps(folder))
+        extras = m.local("targetAccountExtras") or {}
+        extras[key] = dict(extras.get(key) or {}, overrides=dict((extras.get(key) or {}).get("overrides") or {}, globalHqCountry=country))
+        m.set_local({"targetAccountExtras": extras})
+        m.advance(1500)
+        m.advance(3000)
+        return json.loads(m.e("JSON.stringify(FOLDER)"))  # a release is sent at once
+
+    def both(folder):
+        for m in (dora, eli, dora, eli):
+            r, folder = m.sync(folder)
+        for m in (dora, eli):
+            m.e("markGroupsDirty(0)")
+            m.advance(3000)
+        return folder
+
+    summ = lambda m: m.local("teamAccountStates") or {}
+    owner = lambda m, key: ((summ(m).get("accounts") or {}).get(key) or {}).get("a")
+    kept = {k: owner(dora, k) for k in ("acme ag", "beta sa")}  # put back at the end, for the tests further down
+    set_views("Switzerland", "France")
+    r, folder = dora.call("unassignAccount('beta sa')", folder)
+    r, folder = dora.call("assignAccount('acme ag', { to: '%s' })" % eli_id, folder)
+    folder = both(folder)
+    check("pin: Acme is Eli's, in Swiss, on both PCs", [(owner(m, "acme ag"), summ(m)["g"].get("acme ag")) for m in (dora, eli)], [(eli_id, ["g-ch"])] * 2)
+    # Research on Eli's PC moves his own account out of his group: pinned, not moved.
+    set_views("Germany", "France")
+    folder = research(eli, "acme ag", "Germany", folder)
+    pin = (eli.local("teamGroupPins") or {}).get("acme ag") or {}
+    check("pin: research on an assigned account pins it to its old groups",
+          (pin.get("groups"), pin.get("proposed"), pin.get("for"), pin.get("by"), pin.get("reason")), (["g-ch"], ["other"], eli_id, eli_id, "country Switzerland → Germany"))
+    check("pin: Eli keeps the account, still in Swiss", (owner(eli, "acme ag"), summ(eli)["g"].get("acme ag")), (eli_id, ["g-ch"]))
+    folder = both(folder)
+    check("pin: the Team Lead's PC holds it in Swiss too", (owner(dora, "acme ag"), summ(dora)["g"].get("acme ag"), "acme ag" in (dora.local("teamGroupPins") or {})), (eli_id, ["g-ch"], True))
+    # The Team Lead answers "Move it" (team-proposals.js applyGroupMove): the release, then the pin goes.
+    r, folder = dora.call("releaseVoided([{ key: 'acme ag', member: '%s', into: 'Other' }])" % eli_id, folder)
+    check("move it: the Team Lead's release goes through", (r.get("ok"), r.get("count")), (True, 1))
+    dora.set_local({"teamGroupPins": {k: v for k, v in (dora.local("teamGroupPins") or {}).items() if k != "acme ag"}})
+    folder = both(folder)
+    check("move it: Acme is in Other and unassigned on both PCs", [(owner(m, "acme ag"), summ(m)["g"].get("acme ag")) for m in (dora, eli)], [(None, ["other"])] * 2)
+    check("move it: Eli no longer sees it", "g-ch" in summ(eli).get("myGroups", []) and "other" not in summ(eli).get("myGroups", []), True)
+    told = [n["text"] for n in (eli.local("teamNotices") or []) if n.get("kind") == "group" and "no longer in your groups" in n.get("text", "")]
+    check("move it: Eli is told why", (len(told), "moved to Other - it is no longer in your groups" in (told or [""])[0]), (1, True))
+    r, folder = eli.call("releaseVoided([{ key: 'beta sa', member: '%s' }])" % dora_id, folder)
+    check("release: only the Team Lead may write one", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    # An unassigned account moves at once, whoever's PC found the data.
+    set_views("Germany", "Switzerland")
+    folder = research(eli, "beta sa", "Switzerland", folder)
+    check("unassigned: research moves it at once, no pin", (summ(eli)["g"].get("beta sa"), "beta sa" in (eli.local("teamGroupPins") or {})), (["g-ch"], False))
+    folder = both(folder)
+    # D6: taken out of the group, Eli's assignment there is void on every PC - nothing has to be written for that.
+    r, folder = dora.call("assignAccount('beta sa', { to: '%s' })" % eli_id, folder)
+    folder = both(folder)
+    check("void: Beta is Eli's", [owner(m, "beta sa") for m in (dora, eli)], [eli_id, eli_id])
+    swiss = lambda members: {"teamGroups": {"g-ch": {"name": "Swiss", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": members}}}
+    dora.set_local(swiss([]))
+    folder = both(folder)
+    check("void: out of the group, the assignment no longer shows - on both PCs", [owner(m, "beta sa") for m in (dora, eli)], [None, None])
+    rd, folder = dora.call("teamWorkGate().then(function (g) { return g.offLimits('beta sa'); })", folder)
+    check("void: and keeps nobody out", rd, None)
+    dora.set_local(swiss([eli_id]))
+    folder = both(folder)
+    check("void: back in the group (nothing was released), it shows again", [owner(m, "beta sa") for m in (dora, eli)], [eli_id, eli_id])
+    # The Team Lead's own change applies at once: the assignee left without access is released, with the reason.
+    set_views("Germany", "France")
+    folder = research(dora, "beta sa", "France", folder)
+    folder = both(folder)
+    check("lead's change: no pin, Beta in Other, released", ("beta sa" in (dora.local("teamGroupPins") or {}), summ(dora)["g"].get("beta sa"), owner(dora, "beta sa"), owner(eli, "beta sa")), (False, ["other"], None, None))
+    r, folder = dora.call("assignmentCounts()", folder)
+    check("lead's change: the release is a real one (not only void)", r.get("counts", {}).get(eli_id), None)
+    lines = [x for x in (eli.local("teamLog") or []) if x.get("why") == "groups"]
+    check("log: the releases say why", (len(lines) >= 2, lines[-1].get("into") if lines else None), (True, "Other"))
+    for key, was in kept.items():
+        if was:
+            r, folder = dora.call("assignAccount('%s', { to: '%s' })" % (key, was), folder)
+    folder = both(folder)
+
+    # 1.2.3 step 5 (design 9, R7): the pipeline's shares with groups. Dora is Team Lead, Eli is in Swiss only.
+    sw = ["sw %d" % i for i in range(40)]
+    ot = ["ot %d" % i for i in range(40)]
+    views_before = dora.e("JSON.stringify(VIEWS)")
+    v5 = json.dumps(json.loads(views_before) + [{"key": k, "globalHqCountry": "Switzerland"} for k in sw] + [{"key": k, "globalHqCountry": "France"} for k in ot])
+    for m in (dora, eli):
+        m.e("VIEWS = %s" % v5)
+    folder = both(folder)
+
+    def shares(m, keys, folder):
+        return m.call("teamWorkGate().then(function (g) { return %s.map(function (k) { return g.mayWork(k); }); })" % json.dumps(keys), folder)
+
+    def shares_both(folder):
+        out = []
+        for m, keys in ((dora, sw), (eli, sw), (dora, ot), (eli, ot)):
+            r, folder = shares(m, keys, folder)
+            out.append(r)
+        return out, folder
+
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5: a group's accounts are worked by its member, not by the Team Lead", (sum(dsw), sum(esw)), (0, 40))
+    check("step 5: Other, with no member in it, goes to the Team Lead - never to a member without access", (sum(dot), sum(eot)), (40, 0))
+    r, folder = eli.call("teamWorkGate().then(function (g) { return [g.discovery, g.offLimits('ot 0'), g.offLimits('sw 0')]; })", folder)
+    check("step 5: a member's pipeline runs no Discovery; bulk research stays inside the groups", r, [False, {"reason": "groups"}, None])
+    r, folder = dora.call("teamWorkGate().then(function (g) { return g.discovery; })", folder)
+    check("step 5: the Team Lead's pipeline runs Discovery", r, True)
+    # "All accounts": published with the heartbeat, so both PCs build the same candidates.
+    dora.set_local({"teamLeadResearch": "all"})
+    folder = both(folder)
+    check("step 5: the choice travels with the heartbeat", json.loads(folder["members/%s/heartbeat.json" % dora_id]).get("research"), "all")
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5, All accounts: every account of the group goes to exactly one of them", all(a != b for a, b in zip(dsw, esw)), True)
+    check("step 5, All accounts: both get some", (sum(dsw) > 5, sum(esw) > 5), (True, True))
+    check("step 5, All accounts: Other is still the Team Lead's alone", (sum(dot), sum(eot)), (40, 0))
+    dora.set_local({"teamLeadResearch": "gaps"})
+    folder = both(folder)
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5: back to filling gaps", (sum(dsw), sum(esw)), (0, 40))
+    # Eli is not heard from for 11 minutes: his group has nobody online, so the Team Lead's pipeline covers it.
+    dora.e("FOLDER = %s;" % json.dumps(folder))
+    dora.advance(11 * 60000)
+    folder = json.loads(dora.e("JSON.stringify(FOLDER)"))
+    dsw, folder = shares(dora, sw, folder)
+    check("step 5: a group with nobody online goes to the Team Lead", sum(dsw), 40)
+    eli.e("FOLDER = %s;" % json.dumps(folder))
+    eli.advance(11 * 60000)
+    folder = json.loads(eli.e("JSON.stringify(FOLDER)"))
+    folder = both(folder)
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5: Eli is back, and his group is his again", (sum(dsw), sum(esw)), (0, 40))
+    for m in (dora, eli):
+        m.e("VIEWS = %s" % views_before)
+    folder = both(folder)
+
+    # Back to basic mode for the rest of the test: the group is deleted (marked).
+    dora.set_local({"teamGroups": {"g-ch": {"name": "Swiss", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id], "deleted": True}}})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    dora.advance(2500)
+    check("groups: deleted -> basic mode again", (dora.local("teamAccountStates") or {}).get("groupsOn"), None)
+
+    # 1.2.3 step 1 (design 3.3, 3.4): hand-over and deputy. Each PC reaches the same Team Lead; a group record counts
+    # only from whoever had the rights at its stamp.
+    merged_groups = lambda m: sorted(k[len("teamGroups:"):] for k in json.loads(m.e("JSON.stringify(Object.keys(mem.state.entities.setting || {}))")) if k.startswith("teamGroups:"))
+    with_group = lambda m, gid, name: dict(m.local("teamGroups") or {}, **{gid: {"name": name, "kind": "named", "accounts": ["acme ag"], "members": []}})
+    r, folder = eli.call("makeTeamLead('%s')" % dora_id, folder)
+    check("hand-over: a Member cannot hand over", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    r, folder = dora.call("makeTeamLead('%s')" % eli_id, folder)
+    check("hand-over: Dora makes Eli Team Lead", r.get("ok"), True)
+    st = dora.local("teamAccountStates") or {}
+    check("hand-over: Dora's PC follows at once (no rights any more)", (st.get("lead"), st.get("admin")), (eli_id, False))
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    st = eli.local("teamAccountStates") or {}
+    check("hand-over: Eli's PC sees Eli as Team Lead", (st.get("lead"), st.get("admin")), (eli_id, True))
+    check("hand-over: Eli is told in the top bar", any(n.get("kind") == "role" and n.get("text", "").startswith("Dora made you Team Lead") for n in eli.local("teamNotices") or []), True)
+    check("hand-over: Dora's team log says so", any(x.get("kind") == "team" and x.get("ref") == "lead" and x.get("to") == eli_id for x in dora.local("teamLog") or []), True)
+    r, folder = dora.call("makeTeamLead('%s')" % dora_id, folder)
+    check("hand-over: the former Team Lead cannot take it back", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    dora.set_local({"teamGroups": with_group(dora, "g-dora", "Dora after the hand-over")})
+    r, folder = dora.sync(folder)
+    eli.set_local({"teamGroups": with_group(eli, "g-eli2", "Eli as Team Lead")})
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    check("hand-over: the former Team Lead's group record is ignored on both PCs",
+          ("g-dora" in merged_groups(eli), "g-dora" in merged_groups(dora), "g-dora" in (eli.local("teamGroups") or {})), (False, False, False))
+    check("hand-over: the new Team Lead's group reaches Dora", ((dora.local("teamGroups") or {}).get("g-eli2") or {}).get("name"), "Eli as Team Lead")
+    # Deputy: Eli makes Dora deputy - her group records count; ended - they do not.
+    r, folder = dora.call("setDeputy('%s')" % dora_id, folder)
+    check("deputy: a Member cannot name a deputy", r.get("reason"), "not_lead")
+    r, folder = eli.call("setDeputy('%s')" % dora_id, folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    st = dora.local("teamAccountStates") or {}
+    check("deputy: Dora is deputy, with the rights", (st.get("deputy"), st.get("admin")), (dora_id, True))
+    check("deputy: Dora is told", any(n.get("kind") == "role" and "made you deputy" in n.get("text", "") for n in dora.local("teamNotices") or []), True)
+    r, folder = dora.call("setDeputy(null)", folder)
+    check("deputy: a deputy cannot end or name a deputy", r.get("reason"), "not_lead")
+    r, folder = dora.call("makeTeamLead('%s')" % dora_id, folder)
+    check("deputy: a deputy cannot make themselves Team Lead", r.get("reason"), "not_lead")
+    dora.set_local({"teamGroups": with_group(dora, "g-dep", "Dora as deputy")})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("deputy: the deputy's group reaches Eli", ((eli.local("teamGroups") or {}).get("g-dep") or {}).get("name"), "Dora as deputy")
+    r, folder = eli.call("setDeputy(null)", folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    st = dora.local("teamAccountStates") or {}
+    check("deputy: ended - Dora is a Member again", (st.get("deputy"), st.get("admin")), (None, False))
+    check("deputy: the team log names whose deputy role ended",
+          any(x.get("kind") == "team" and x.get("ref") == "deputy" and x.get("to") == dora_id and not (x.get("after") or {}).get("member") for x in dora.local("teamLog") or []), True)
+    dora.set_local({"teamGroups": with_group(dora, "g-late", "Dora after the deputy role")})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    check("deputy: after it ends, her group records are ignored again", "g-late" in merged_groups(eli), False)
+    check("deputy: what she wrote as deputy stays", "g-dep" in merged_groups(eli), True)
+    # Back to Dora as Team Lead for the rest of the test; the groups are deleted (marked) - basic mode again.
+    r, folder = eli.call("makeTeamLead('%s')" % dora_id, folder)
+    r, folder = eli.sync(folder)
+    r, folder = dora.sync(folder)
+    check("hand-over: and back to Dora", ((dora.local("teamAccountStates") or {}).get("lead"), (eli.local("teamAccountStates") or {}).get("lead")), (dora_id, dora_id))
+    gone = {k: dict(v, deleted=True) for k, v in (dora.local("teamGroups") or {}).items() if k != "other"}
+    dora.set_local({"teamGroups": gone})
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    dora.advance(2500)
+    check("hand-over: groups deleted again -> basic mode", (dora.local("teamAccountStates") or {}).get("groupsOn"), None)
+    dora.e("chrome.storage.local.remove('teamNotices')")
+    eli.e("chrome.storage.local.remove('teamNotices')")
+    dora.settle()
+    eli.settle()
 
     # F. Step 5b - the do-not-contact list is one row per entry (R6.8): two members adding at once both keep theirs.
     base = [{"slug": "adecco", "category": "recruiter"}]
@@ -594,11 +941,11 @@ def main():
         "targetAccountsWorkbook": {"companies": [{"companyId": "c-1", "company": "Gamma"}, {"companyId": "c-7", "company": "Delta"}], "contacts": []},
         "results": {"lead-f1": {"author": "Pia", "company": "Acme AG", "status": "Contacted"}, "lead-f2": {"author": "Max", "company": "Delta", "status": "New"}},
     })
-    r, folder = fay.call("previewJoin()", folder)
+    r, folder = fay.call("previewJoin({ inviteId: '%s' })" % invited["Fay"], folder)
     check("join preview: accounts only Fay has", sorted(a["key"] for a in r.get("localOnly", [])), ["delta", "gamma"])
     check("join preview: shared and worked on", [(a["key"], a["worked"]) for a in r.get("shared", [])], [("acme ag", ["1 lead contacted"])])
     check("join preview: Fay is not in the team yet", fay.local("teamMembership"), None)
-    r, folder = fay.call("joinTeam({ name: 'Fay', addKeys: ['gamma'] })", folder)
+    r, folder = fay.call("joinTeam({ addKeys: ['gamma'], inviteId: '%s' })" % invited["Fay"], folder)
     check("join with own data: ok, 1 brought (assigned to Fay), 1 proposal", (r.get("ok"), r.get("brought")), (True, {"accounts": 1, "proposals": 1, "assigned": 1}))
     r, folder = fay.sync(folder)
     fay_id = fay.status()["me"]["memberId"]
@@ -649,6 +996,154 @@ def main():
     check("remove member: Dora lists Eli as removed", [(bool(m.get("removed")), m["online"]) for m in st["members"] if m["id"] == eli_id], [(True, False)])
     r, folder = eli.sync(folder)
     check("remove member: Eli's own PC stops sharing", eli.local("teamMembership"), None)
+
+    # 1.2.3 step 1 (D16): the Team Lead closes the team. Hal (a member) stops sharing and is told; nobody can join again.
+    hal = Member("hal", now_offset=13)
+    inv, folder = invite(dora, "Hal", folder)
+    r, folder = hal.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    inv_open, folder = invite(dora, "Jo", folder)
+    r, folder = hal.sync(folder)
+    r, folder = dora.sync(folder)
+    r, folder = hal.call("closeTeam()", folder)
+    check("close: a Member cannot close the team", (r.get("ok"), r.get("reason")), (False, "not_lead"))
+    kept = picture(dora)
+    r, folder = dora.call("closeTeam()", folder)
+    check("close: the Team Lead closes it", (r.get("ok"), r.get("closed")), (True, True))
+    check("close: closed.json written, Dora's PC stops sharing", ("closed.json" in folder, dora.local("teamMembership")), (True, None))
+    check("close: open invitations are cancelled with it", json.loads(folder["invites/%s.json" % inv_open])["status"], "cancelled")
+    check("close: Dora keeps her data as it was", (same(picture(dora), kept), bool(kept["targetAccounts"])), (True, True))
+    r, folder = hal.sync(folder)
+    check("close: Hal's PC stops sharing by itself", (r.get("closed"), hal.local("teamMembership")), (True, None))
+    check("close: Hal is told who closed it", (hal.local("teamClosedNotice") or {}).get("by"), "Dora")
+    by_id = lambda pic: dict(pic, targetAccountsWorkbook=dict(pic["targetAccountsWorkbook"], companies=sorted(pic["targetAccountsWorkbook"]["companies"], key=lambda c: c["companyId"])))
+    check("close: Hal keeps the team's data as his own copy (row order aside)", same(by_id(picture(hal)), by_id(kept)), True)
+    ivy = Member("ivy", now_offset=15)
+    r, folder = ivy.call("previewJoin()", folder)
+    check("close: a closed team cannot be joined", "closed" in (r.get("error") or ""), True)
+    r, folder = ivy.call("joinTeam({ name: 'Ivy' })", folder)
+    check("close: ... not even directly", ("closed" in (r.get("error") or ""), ivy.local("teamMembership")), (True, None))
+
+    # 1.2.2.8 (Boaz's PC, 8 Oct): the saved team state is lost while the cursors survive. Every file is read again, so
+    # the colleague's hand-back is not lost and the Team Lead stays right; nothing is logged twice.
+    folder = {}
+    kim = Member("kim")
+    kim.set_local({"targetAccounts": {"acme ag": {"score": 1}}})
+    r, folder = kim.call("createTeam({ name: 'Kim', teamName: 'Lost state' })", folder)
+    inv, folder = invite(kim, "Lou", folder)
+    lou = Member("lou", now_offset=5)
+    r, folder = lou.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    kim_id, lou_id = kim.status()["me"]["memberId"], lou.status()["me"]["memberId"]
+    r, folder = kim.sync(folder)
+    r, folder = kim.call("makeTeamLead('%s')" % lou_id, folder)
+    r, folder = kim.sync(folder)
+    r, folder = lou.sync(folder)
+    r, folder = lou.call("makeTeamLead('%s')" % kim_id, folder)
+    check("lost state: Lou hands it back", r.get("ok"), True)
+    r, folder = lou.sync(folder)
+    r, folder = kim.sync(folder)
+    check("lost state: Kim is Team Lead before", kim.status()["lead"]["lead"], kim_id)
+    log_before = len([x for x in kim.local("teamLog") or [] if x.get("kind") == "team"])
+    kim.e("chrome.storage.local.remove('teamNotices')")
+    kim.e("delete DB.state; delete DB.shadow; mem = null; MAX_FILES_PER_ROUND = 1;")
+    for _ in range(8):
+        r, folder = kim.sync(folder)
+    kim.e("MAX_FILES_PER_ROUND = 300;")
+    check("lost state: Kim is still Team Lead after", kim.status()["lead"]["lead"], kim_id)
+    check("lost state: the re-read history says nothing in the top bar (1.2.2.8)", kim.local("teamNotices") or [], [])
+    check("lost state: the hand-overs are not logged twice", len([x for x in kim.local("teamLog") or [] if x.get("kind") == "team"]), log_before)
+
+    # 1.2.2.8 (Boaz's PC, 8 Oct: 7921 rows re-sent): a lost SHADOW must not send every local row out again. Lou edits
+    # Acme meanwhile; Kim's stale Acme must not overwrite it. Only Kim's row the team has never seen goes out.
+    r, folder = lou.sync(folder)
+    ta = lou.local("targetAccounts"); ta["acme ag"]["score"] = 5; lou.set_local({"targetAccounts": ta})
+    r, folder = lou.sync(folder)
+    sent_before = sum(len(f["changes"]) for f in files_of(kim_id))
+    kim.e("delete DB.state; delete DB.shadow; mem = null; MAX_FILES_PER_ROUND = 1;")
+    ta = kim.local("targetAccounts"); ta["beta ag"] = {"score": 2}; kim.set_local({"targetAccounts": ta})
+    for _ in range(8):
+        r, folder = kim.sync(folder)
+    kim.e("MAX_FILES_PER_ROUND = 300;")
+    sent = [c for f in files_of(kim_id) for c in f["changes"]][sent_before:]
+    check("lost shadow: Kim sends only the row the team never had", sorted({c.get("id") for c in sent}), ["ta:beta ag"])
+    check("lost shadow: Kim gets Lou's newer Acme", (kim.local("targetAccounts") or {}).get("acme ag", {}).get("score"), 5)
+    r, folder = kim.sync(folder)
+    check("lost shadow: nothing more goes out afterwards", len([c for f in files_of(kim_id) for c in f["changes"]]) - sent_before, len(sent))
+    r, folder = lou.sync(folder)
+    check("lost shadow: Lou keeps Acme 5 and gets Beta", ((lou.local("targetAccounts") or {}).get("acme ag", {}).get("score"),
+          (lou.local("targetAccounts") or {}).get("beta ag", {}).get("score")), (5, 2))
+
+    # 1.2.2.27: one of Lou's change files holds only zero bytes (Boaz's folder, 10 Oct). Kim waits at it and gets
+    # nothing Lou wrote afterwards - until Lou's own PC rebuilds the file from what it knows.
+    lou_id = lou.status()["me"]["memberId"]
+    ta = lou.local("targetAccounts"); ta["acme ag"]["score"] = 6; lou.set_local({"targetAccounts": ta})
+    r, folder = lou.sync(folder)
+    damaged = "members/%s/changes/c-%d.json" % (lou_id, lou.status()["lastWrittenN"])
+    original = json.loads(folder[damaged])["changes"]
+    folder[damaged] = "\x00" * len(folder[damaged])
+    ta = lou.local("targetAccounts"); ta["beta ag"]["score"] = 9; lou.set_local({"targetAccounts": ta})
+    r, folder = lou.sync(folder)
+    r, folder = kim.sync(folder)
+    tk = kim.local("targetAccounts") or {}
+    check("damaged file: Kim waits at it - neither that change nor the later one arrives",
+          (tk.get("acme ag", {}).get("score"), tk.get("beta ag", {}).get("score")), (5, 2))
+    # Found on the next pass over its own files, rebuilt once it has been unreadable for a minute (timer rounds).
+    lou.e("FOLDER = %s;" % json.dumps(folder))
+    lou.advance(120000)
+    folder = json.loads(lou.e("JSON.stringify(FOLDER)"))
+    repaired = json.loads(folder[damaged])
+    check("damaged file: Lou's PC writes it again with the same records", (repaired.get("repaired"), repaired["changes"]), (True, original))
+    r, folder = kim.sync(folder)
+    tk = kim.local("targetAccounts") or {}
+    check("damaged file: Kim now has both changes", (tk.get("acme ag", {}).get("score"), tk.get("beta ag", {}).get("score")), (6, 9))
+    r, folder = lou.sync(folder)
+    check("damaged file: Lou's own read moves on", lou.status()["measures"][-1].get("kind") != "repair", True)
+
+    # D13: a Team Lead who is gone. After 30 days without a sign of the Team Lead's SalesTeam the deputy may take over
+    # (nobody else while there is a deputy); every PC then reaches the same Team Lead, and everyone is told.
+    folder = {}
+    mia = Member("mia")
+    mia.set_local({"targetAccounts": {"acme ag": {"score": 1}}})
+    r, folder = mia.call("createTeam({ name: 'Mia', teamName: 'Take over' })", folder)
+    inv, folder = invite(mia, "Noa", folder)
+    noa = Member("noa", now_offset=5)
+    r, folder = noa.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    inv, folder = invite(mia, "Oli", folder)
+    oli = Member("oli", now_offset=9)
+    r, folder = oli.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    for m in (mia, noa, oli, mia, noa, oli):
+        r, folder = m.sync(folder)
+    mia_id, noa_id, oli_id = (m.status()["me"]["memberId"] for m in (mia, noa, oli))
+    r, folder = mia.call("setDeputy('%s')" % noa_id, folder)
+    for m in (mia, noa, oli):
+        r, folder = m.sync(folder)
+    check("take-over: not offered while the Team Lead is around", (noa.status().get("takeOver"), oli.status().get("takeOver")), (None, None))
+    r, folder = noa.call("takeOverAsTeamLead()", folder)
+    check("take-over: refused while the Team Lead is around", (r.get("ok"), r.get("reason")), (False, "lead_seen"))
+    for m in (noa, oli):
+        m.e("NOW += 31 * 24 * 3600 * 1000;")
+    for m in (noa, oli, noa, oli):
+        r, folder = m.sync(folder)
+    check("take-over: after 31 days the deputy is offered it", (noa.status().get("takeOver") or {}).get("can"), True)
+    check("take-over: a member is told the deputy can", ((oli.status().get("takeOver") or {}).get("can"), (oli.status().get("takeOver") or {}).get("deputyName")), (False, "Noa"))
+    r, folder = oli.call("takeOverAsTeamLead()", folder)
+    check("take-over: a member cannot while there is a deputy", (r.get("ok"), r.get("reason")), (False, "deputy_first"))
+    r, folder = noa.call("takeOverAsTeamLead()", folder)
+    check("take-over: the deputy takes over", (r.get("ok"), noa.status()["lead"].get("lead"), noa.status()["lead"].get("deputy")), (True, noa_id, None))
+    r, folder = noa.sync(folder)
+    r, folder = oli.sync(folder)
+    check("take-over: the member's PC sees the new Team Lead", (oli.status()["lead"].get("lead"), oli.status().get("takeOver")), (noa_id, None))
+    check("take-over: the member is told", any(n.get("kind") == "role" and n.get("text", "").startswith("Noa took over as Team Lead, because Mia") for n in oli.local("teamNotices") or []), True)
+    check("take-over: the team log says so", any(x.get("kind") == "team" and x.get("ref") == "takeover" for x in oli.local("teamLog") or []), True)
+    mia.e("NOW += 31 * 24 * 3600 * 1000 + 60000;")
+    r, folder = mia.sync(folder)
+    r, folder = mia.sync(folder)
+    check("take-over: the returning Team Lead is a Member", (mia.status()["lead"].get("lead"), mia.status()["admin"] if "admin" in mia.status() else False), (noa_id, False))
+    check("take-over: and is told why", any(n.get("kind") == "role" and "had not been seen in the team for 30 days. You are a Member now" in n.get("text", "") for n in mia.local("teamNotices") or []), True)
+    r, folder = noa.sync(folder)  # Noa's PC reads that Mia is back
+    back, folder = noa.call("makeTeamLead('%s')" % mia_id, folder)
+    r, folder = noa.sync(folder)
+    r, folder = mia.sync(folder)
+    check("take-over: the new Team Lead can hand the role back", (back.get("ok"), back.get("reason"), mia.status()["lead"].get("lead")), (True, None, mia_id))
 
     print()
     for f in _failures:

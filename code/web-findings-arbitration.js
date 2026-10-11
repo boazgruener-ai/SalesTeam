@@ -48,6 +48,9 @@ export const DEFAULT_ARBITRATION_SETTINGS = {
   rule6BucketChangeReview: true,
   rule7LocationTierReview: true,
   tolerancePct: 15,
+  // 1.2.3 (Export & Import R3.1): an imported value within this % of the current one is kept without a question,
+  // before any rule runs. Read by import-merge.js; the web research keeps tolerancePct above.
+  importTolerancePct: 10,
   sourcePreference: "existing",
   // A LinkedIn-fetched count (employeeCountText set) is the company's own self-declared size band:
   // reliable for BUCKETING even though it is not an exact headcount. When this is on, a bucket
@@ -588,7 +591,7 @@ function isLocalMarketCountry(v) {
 
 // "International company - Swiss subsidiary" is GLOBAL: the group is abroad, and that is exactly the
 // case this rule exists for, so global is tested first.
-function localOrGlobal(effective) {
+export function localOrGlobal(effective) {
   for (const raw of [effective?.targetCountryRelationship, effective?.companyType]) {
     const t = String(raw ?? "").toLowerCase();
     if (!t.trim()) continue;

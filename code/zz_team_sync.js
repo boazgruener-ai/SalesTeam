@@ -136,6 +136,21 @@ $("leave").addEventListener("click", async () => {
   refresh();
 });
 
+$("measure-groups").addEventListener("click", async () => {
+  show("groups-out", "Measuring…");
+  try {
+    const r = await send({ type: "TEAM_MEASURE_GROUPS" });
+    if (!r.ok) { show("groups-out", r); return; }
+    show("groups-out", [
+      `${r.accounts} accounts, ${r.groups} sample groups.`,
+      ...r.runs.map((x, i) => `Run ${i + 1}: reading the accounts ${x.views_ms} ms, working out the groups ${x.groups_ms} ms`),
+      "",
+      `Accounts per group: ${Object.entries(r.counts).map(([g, n]) => `${g} ${n}`).join(", ")}`,
+      r.lead ? `Team Lead: ${r.lead.lead || "-"}${r.lead.deputy ? `, deputy: ${r.lead.deputy}` : ""} (${r.lead.fromFolder ? "from the team folder" : "folder not read yet"})` : "Not in a team.",
+    ].join("\n"));
+  } catch (err) { show("groups-out", `Could not measure: ${err.message}`); }
+});
+
 $("keys").addEventListener("click", async () => {
   const all = await chrome.storage.local.get(null);
   const unclassified = Object.keys(all).filter((k) => classifyStorageKey(k) === "unclassified").sort();

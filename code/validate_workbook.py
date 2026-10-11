@@ -9,11 +9,12 @@ import openpyxl
 from sheet_contract import (SHEETS, EVIDENCE_STATUS_VALUES, PRIORITY_BASE, PRIORITY_EXTRA,
                             ALIAS_TYPES, EXCLUSION_REASONS, LEGACY_HEADERS)
 
-errors, warnings = [], []
+errors, warnings, notes = [], [], []
 
 
 def err(m): errors.append(m)
 def warn(m): warnings.append(m)
+def note(m): notes.append(m)
 
 
 def cell(v):
@@ -144,6 +145,10 @@ def main(path):
         er = cell(r.get("Exclusion_Reason"))
         if er and er not in EXCLUSION_REASONS:
             warn(f"Exclusion_List: reason '{er}' not in {EXCLUSION_REASONS}")
+    rel = [r for r in data.get("Exclusion_List", []) if cell(r.get("Exclusion_Reason")) in ("Customer", "Partner")]
+    if rel:
+        note(f"Exclusion_List: {len(rel)} Customer / Partner row(s) - SalesTeam 1.2.3+ keeps these as accounts "
+                     f"with a Relationship tag (not hidden), even when Excluded = Yes")
     excl_ids = {cell(r.get("Company_ID")) for r in data.get("Exclusion_List", [])}
     flagged = {cell(r.get("Company_ID")) for r in comp if cell(r.get("Excluded")) == "Yes"}
     if excl_ids != flagged:
@@ -158,6 +163,8 @@ def main(path):
     print("Rows: " + ", ".join(f"{s}={len(data.get(s, []))}" for s, _ in SHEETS))
     print(f"Companies with contacts {len(with_c & idset)}/{len(comp)} ({100*len(with_c & idset)//n}%), "
           f"initiatives {len(with_i & idset)}/{len(comp)}, aliases {len(with_a & idset)}/{len(comp)}")
+    for m in notes:
+        print("NOTE:", m)
     for w in warnings[:40]:
         print("WARNING:", w)
     if len(warnings) > 40:

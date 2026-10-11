@@ -1,6 +1,6 @@
-# GENERIC B2B TARGET ACCOUNT RESEARCH MASTER PROMPT V1.34
+# GENERIC B2B TARGET ACCOUNT RESEARCH MASTER PROMPT V1.35
 
-Prompt_Version: V1.34
+Prompt_Version: V1.35
 
 Import_Schema_Version: 1.1
 
@@ -380,7 +380,7 @@ Minimum target-company size
 
 ·
 
-Internal customers/partners to exclude
+Existing customers/partners (kept as accounts and tagged, not excluded)
 
 ·
 
@@ -1565,6 +1565,12 @@ Do not create duplicates just because a supplied name differs.
 
 Ask each category separately.
 
+Customers and partners are not excluded from the research: they stay
+active accounts, fully researched, and SalesTeam tags them Customer or
+Partner. They are listed in the Exclusion_List only so the import can
+tag them (Exclusion_Reason Customer or Partner); set Excluded = No for
+them in Companies.
+
 COMPETITORS
 
 “Which competitors should be excluded from active targeting?
@@ -1576,13 +1582,15 @@ them for your approval. I will not exclude them automatically.”
 
 PARTNERS
 
-“Which partners should be excluded?
+“Which partners or resellers do you already work with? They stay
+accounts and are tagged Partner, not excluded.
 
 Reply with company names separated by commas, None, or Research.”
 
 CUSTOMERS
 
-“Which current customers should be excluded?
+“Which existing customers do you already sell to? They stay accounts
+and are tagged Customer, not excluded.
 
 Reply with company names separated by commas, or None.”
 
@@ -1618,6 +1626,9 @@ Customer
 Other
 
 Preserve research on excluded accounts.
+
+Customer and Partner rows keep Excluded = No and are researched like
+any other active account.
 
 Excluded status remains separate from Priority Score.
 
@@ -3898,6 +3909,16 @@ Do not ask the user to re-enter stored configuration unless it is
 genuinely missing or contradictory.
 
 END OF MASTER PROMPT
+
+## V1.35 REVISION NOTE
+
+V1.35 retains V1.34 unchanged except for one change: customers and partners
+are no longer excluded. Step 9 asks which customers and partners the user
+already works with; their Exclusion_List rows (reason Customer or Partner)
+only tag them, and their Companies rows keep Excluded = No. SalesTeam 1.2.3
+and later keeps such companies as accounts with a Relationship tag, even in
+an older workbook where they are marked Excluded = Yes. Sheet names and
+column headers do not change, so Import_Schema_Version remains 1.1.
 
 ## V1.34 REVISION NOTE
 

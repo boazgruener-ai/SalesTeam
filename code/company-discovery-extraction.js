@@ -355,8 +355,9 @@ async function runCompanyDiscoveryPhaseImpl({ onProgress, shouldAbort, quiet = f
     getCompanyAliases(),
     getTargetAccountsWorkbook(),
   ]);
-  // Every category (competitor/recruiter/customer/partner/other, storage.js's
-  // unified companyExclusions) is excluded from Discovery outright, same
+  // Every exclusion category (competitor/recruiter/other, storage.js's
+  // companyExclusions - customers and partners are accounts since 1.2.3,
+  // so the matcher skips them) is excluded from Discovery outright, same
   // mechanics regardless of category - the category only matters for
   // *why*, shown elsewhere, not for whether a card gets skipped here.
   // Matches by LinkedIn slug, and since 1.2.1 also by company name or website domain (design 3.9).

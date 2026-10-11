@@ -11,7 +11,8 @@
 // to target-accounts.js instead (2026-09-16, reported directly: it belongs
 // next to the data it actually affects, not on a separate settings page).
 import { getApiUsage, sumDays, clearApiUsage, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
-import { askConfirm } from "./confirm-dialog.js";
+import { askConfirm, markSaved } from "./confirm-dialog.js";
+import { leadRightsOf } from "./team-groups.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine, kickPipelineFromPage, kickAndExplain } from "./pipeline-status.js";
 import {
@@ -46,6 +47,7 @@ import {
   getSetupResearch,
   saveSetupResearch,
 } from "./storage.js";
+import { hideImportForMembers, IMPORT_MENU_IDS } from "./import-gate.js";
 import { chooseRestoreSections, extractBackupPart, startAutoBackup } from "./backup-restore.js";
 import { sanitizeApiKey, SELLER_RESEARCH_ESTIMATE_USD } from "./agent-shared.js";
 import {
@@ -99,8 +101,7 @@ function mountCardSave(cardId, { current, stored, save, revert }) {
     saveBtn.disabled = true;
     await save(current());
     refresh();
-    note.textContent = "Saved ✓";
-    setTimeout(() => { if (note.textContent === "Saved ✓") note.textContent = ""; }, 2500);
+    markSaved(note);
   });
   cancelBtn.addEventListener("click", () => { revert(); refresh(); });
   refresh();
@@ -157,8 +158,7 @@ apiKeySaveBtn.addEventListener("click", async () => {
   // Deliberately never logs the actual key value - only that it changed.
   appendActivityLog({ actor: "user", action: "api_key_changed", label: value ? "Anthropic API key changed" : "Anthropic API key removed" });
   refreshApiKeyButtons();
-  apiKeyStatusEl.textContent = "Saved ✓";
-  setTimeout(() => { if (apiKeyStatusEl.textContent === "Saved ✓") apiKeyStatusEl.textContent = ""; }, 2500);
+  markSaved(apiKeyStatusEl);
 });
 apiKeyCancelBtn.addEventListener("click", () => {
   anthropicApiKeyInput.value = storedApiKey;
@@ -285,12 +285,12 @@ if (new URLSearchParams(location.search).has("embedded")) {
 }
 
 document.getElementById("open-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html", "Target Accounts Dashboard"));
-document.getElementById("nav-import-target-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-restore-accounts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=restore-accounts", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-hubspot", "Target Accounts Dashboard"));
-document.getElementById("nav-export-accounts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-accounts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-export-contacts-csv-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export-contacts-csv", "Target Accounts Dashboard"));
-document.getElementById("nav-hubspot-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import-hubspot", "Target Accounts Dashboard"));
+document.getElementById("nav-import-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import", "Target Accounts Dashboard"));
+document.getElementById("nav-export-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export", "Target Accounts Dashboard"));
+document.getElementById("nav-import-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=import&what=contacts", "Target Contacts Dashboard"));
+document.getElementById("nav-export-contacts-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=export&what=contacts", "Target Contacts Dashboard"));
+// 1.2.3 (Export & Import design 6): Import and Restore are the Team Lead's in a team - not shown to members.
+hideImportForMembers([...IMPORT_MENU_IDS, "nav-restore-section", "restore-section"]);
 document.getElementById("nav-find-duplicates-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=find-duplicates", "Target Accounts Dashboard"));
 document.getElementById("nav-web-lane-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-lane", "Target Accounts Dashboard"));
 document.getElementById("nav-web-discovery-btn").addEventListener("click", () => showEmbeddedPage("target-accounts.html#action=web-discovery", "Target Accounts Dashboard"));
@@ -493,7 +493,7 @@ document.getElementById("company-discovery-max-save-btn").addEventListener("clic
     return;
   }
   await saveTargetUniverseConfig({ ...(await getTargetUniverseConfig()), maxCompanies: value });
-  statusEl.textContent = "Saved ✓";
+  markSaved(statusEl);
 });
 
 document.getElementById("company-discovery-start-btn").addEventListener("click", async () => {
@@ -776,6 +776,15 @@ function routeSettings() {
     const navEl = document.getElementById(`nav-${id}`);
     if (navEl) navEl.classList.toggle("active", id === activeId);
   }
+  // Boaz (1.2.2.8 test): the heading names the page - "SalesTeam Settings → Automation" - and nothing generic sits
+  // under it: the LinkedIn touches and the seller-research offer belong to Automation only.
+  const navEl = document.getElementById(`nav-${activeId}`);
+  const label = navEl ? [...navEl.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join("").trim() : "";
+  const advanced = navEl?.closest("details")?.querySelector("summary")?.textContent.trim() === "Advanced tools";
+  document.getElementById("settings-title").textContent = !label ? "SalesTeam Settings"
+    : `${advanced ? "Advanced tools" : "SalesTeam Settings"} → ${label}`;
+  document.getElementById("linkedin-touch-stat").hidden = activeId !== "automation-section";
+  renderSellerResearchOffer();
 }
 
 window.addEventListener("hashchange", routeSettings);
@@ -784,10 +793,11 @@ window.addEventListener("hashchange", routeSettings);
 // "none"). Either way the action stays under User Profile > Open About you.
 async function renderSellerResearchOffer() {
   const offerEl = document.getElementById("seller-research-offer");
-  const [completedAt, research, team] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch(), chrome.storage.local.get("teamMembership")]);
-  // Team use (D3): the seller setup is the Team Admin's - a member is not offered to research it.
-  const member = team.teamMembership && team.teamMembership.role !== "admin";
-  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings) || Boolean(member);
+  const [completedAt, research, team] = await Promise.all([getOnboardingCompletedAt(), getSetupResearch(), chrome.storage.local.get(["teamMembership", "teamAccountStates"])]);
+  // Team use (D3): the seller setup is the Team Lead's - a member is not offered to research it.
+  const member = team.teamMembership && !leadRightsOf(team.teamMembership, team.teamAccountStates);
+  offerEl.hidden = !completedAt || research.status !== "none" || Boolean(research.declinedInSettings) || Boolean(member)
+    || currentSectionId() !== "automation-section" || location.hash.startsWith("#change-settings") || location.hash === "#wizard";
   document.getElementById("seller-research-offer-text").textContent =
     "SalesTeam can research your company's website and propose improvements to the setup " +
     `(about US$${SELLER_RESEARCH_ESTIMATE_USD.toFixed(2)}). The proposals are shown next to the current settings; ` +
@@ -1012,8 +1022,7 @@ billingWarningInput.addEventListener("input", () => {
 billingWarningSaveBtn.addEventListener("click", async () => {
   await saveCostWarningUsd(Number(billingWarningInput.value));
   await loadWarningLimit();
-  billingWarningStatus.textContent = "Saved ✓";
-  setTimeout(() => { if (billingWarningStatus.textContent === "Saved ✓") billingWarningStatus.textContent = ""; }, 2500);
+  markSaved(billingWarningStatus);
 });
 loadWarningLimit();
 initBatchStatus();
@@ -1054,13 +1063,13 @@ const automationSave = mountCardSave("automation-section", {
     }
     storedAutomation = v;
     if (v.enabled && before && !before.enabled) kickAndExplain("settings");
-    else if (v.enabled) kickPipelineFromPage("settings");
+    else if (v.enabled || v.webEnabled) kickPipelineFromPage("settings"); // 1.2.2.39: web research runs by itself too
   },
   revert: () => showAutomationValues(storedAutomation),
 });
 async function renderAutomationCard() {
   const a = await getPipelineAutomation();
-  automationResumeBtn.hidden = !(a.enabled && a.pausedDay === localDay());
+  automationResumeBtn.hidden = !((a.enabled || a.webEnabled) && a.pausedDay === localDay());
   const wasDirty = storedAutomation !== null && automationSave.isDirty();
   // W3: off means 0; the default is offered as soon as the box is ticked.
   storedAutomation = {

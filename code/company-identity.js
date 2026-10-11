@@ -41,11 +41,18 @@ export function webCompanyId(website, name) {
 // 1.2.1), and/or a company name and website domain (proposed by onboarding research, which never visits
 // LinkedIn for an exclusion). Built once per list, not per row. `lifted`: LinkedIn slugs the user took off
 // the list, which also overrides the research workbook's own Excluded flag (storage.js isCompanyRowExcluded).
-export function buildExclusionMatcher(exclusions, lifted) {
+//
+// 1.2.3 (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.2): customer / partner entries are NOT exclusions - they are skipped
+// here even when still on the list (an old backup, a team member before the Team Lead's copy has moved them), so
+// no exclusion check hides a customer. `kept`: a relationship matcher (buildRelationshipMatcher) - a company on it
+// is not hidden by the research workbook's own Excluded flag either (isCompanyRowExcluded), like a lifted slug.
+const RELATIONSHIP_CATEGORY_SET = new Set(["customer", "partner"]);
+
+function identitySets(entries) {
   const slugs = new Set();
   const names = new Set();
   const domains = new Set();
-  for (const e of exclusions || []) {
+  for (const e of entries || []) {
     if (!e) continue;
     if (e.slug) slugs.add(String(e.slug).toLowerCase());
     const n = normalizeCompanyName(e.name || "");
@@ -53,8 +60,34 @@ export function buildExclusionMatcher(exclusions, lifted) {
     const d = websiteDomain(e.domain || "");
     if (d) domains.add(d);
   }
+  return { slugs, names, domains };
+}
+
+export function buildExclusionMatcher(exclusions, lifted, kept = null) {
+  const { slugs, names, domains } = identitySets((exclusions || []).filter((e) => e && !RELATIONSHIP_CATEGORY_SET.has(e.category)));
   const liftedSlugs = new Set((lifted || []).filter(Boolean).map((s) => String(s).toLowerCase()));
-  return { slugs, names, domains, lifted: liftedSlugs };
+  return { slugs, names, domains, lifted: liftedSlugs, kept: kept || null };
+}
+
+// { customer: {slugs,names,domains}, partner: {...} } from the relationship list plus any customer / partner
+// entries still on the exclusion list (design 3.2) - so tags are right before the move has happened.
+export function buildRelationshipMatcher(relationships, legacyExclusions) {
+  const all = [...(relationships || []), ...(legacyExclusions || []).filter((e) => e && RELATIONSHIP_CATEGORY_SET.has(e.category))];
+  return {
+    customer: identitySets(all.filter((e) => e && e.category === "customer")),
+    partner: identitySets(all.filter((e) => e && e.category === "partner")),
+  };
+}
+
+// The categories a company matches: [], ["customer"], ["partner"] or ["customer", "partner"].
+export function relationshipOf(matcher, company = {}) {
+  if (!matcher) return [];
+  return ["customer", "partner"].filter((c) => matcher[c] && matchesExclusion(matcher[c], company));
+}
+
+// true when the relationship matcher names the company in any category.
+export function matchesRelationship(matcher, company = {}) {
+  return relationshipOf(matcher, company).length > 0;
 }
 
 // true when the matcher names this company by its LinkedIn slug, its normalised name or its website domain.
@@ -65,4 +98,46 @@ export function matchesExclusion(matcher, { slug, name, website } = {}) {
   if (n && matcher.names.has(n)) return true;
   const d = websiteDomain(website || "");
   return Boolean(d && matcher.domains.has(d));
+}
+
+// The LinkedIn company-page slug of a URL ("https://www.linkedin.com/company/acme-ag/" -> "acme-ag"), or null. Same
+// rule as storage.js parseLinkedinCompanySlug, here so the pure modules can use it.
+export function linkedinCompanySlug(url) {
+  if (!url) return null;
+  const match = String(url).trim().match(/linkedin\.com\/company\/([^/?#]+)/i);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
+// One row of a Setup company list (1.2.3 design 9.2): Company, LinkedIn page, Website - at least one of the three.
+// -> { entry: { name?, slug?, domain? } } or { error }. A LinkedIn link must be a company page; never guessed.
+export function parseCompanyListEntry({ name, linkedin, website } = {}) {
+  const n = String(name || "").trim();
+  const l = String(linkedin || "").trim();
+  const w = String(website || "").trim();
+  if (!n && !l && !w) return { error: "Enter the company's name, its LinkedIn page or its website." };
+  const entry = {};
+  if (n) entry.name = n;
+  if (l) {
+    const slug = linkedinCompanySlug(l);
+    if (!slug) return { error: "The LinkedIn link must be a company page (linkedin.com/company/...)." };
+    entry.slug = slug;
+  }
+  if (w) {
+    if (/linkedin\.com/i.test(w)) return { error: "Put the LinkedIn link in the LinkedIn page column, not as the website." };
+    const domain = websiteDomain(w);
+    if (!domain) return { error: "The website is not a web address (for example acme.ch)." };
+    entry.domain = domain;
+  }
+  return { entry };
+}
+
+// Same company? Two list entries (or an entry and a company) by slug, normalised name or domain.
+export function sameCompanyEntry(a, b) {
+  if (!a || !b) return false;
+  if (a.slug && b.slug && String(a.slug).toLowerCase() === String(b.slug).toLowerCase()) return true;
+  const na = normalizeCompanyName(a.name || "");
+  if (na && na === normalizeCompanyName(b.name || "")) return true;
+  const da = websiteDomain(a.domain || "");
+  return Boolean(da && da === websiteDomain(b.domain || ""));
 }

@@ -32,7 +32,46 @@ function subjectOf(state, r, normalize) {
     return { kind: r.e, key: null, ref: id };
   }
   if (r.e === "lead") return { kind: "lead", key: null, ref: id };
+  // 1.2.3: the Team Lead chain (team|lead, team|deputy, team|takeover).
+  if (r.e === "team") return { kind: "team", key: null, ref: id };
+  // 1.2.3 step 3 (design 11): an account group - its own readable lines, not "changed the setting teamGroups".
+  if (r.e === "setting" && id.startsWith("teamGroups:")) return { kind: "group", key: null, ref: id.slice("teamGroups:".length) };
   return { kind: "setting", key: null, ref: id.replace(/:.*$/, "") || id };
+}
+
+// A group's filter, before -> after, field by field: "size + XL, − S · country + Austria".
+const FILTER_FIELD_NAMES = {
+  region: "region", country: "country", size: "size", scope: "local / global", industry: "industry",
+  companyType: "company type", priority: "priority", relationship: "relationship",
+};
+export function filterDiffText(before, after) {
+  const parts = [];
+  for (const [field, label] of Object.entries(FILTER_FIELD_NAMES)) {
+    const a = Array.isArray(before?.[field]) ? before[field].map(String) : [];
+    const b = Array.isArray(after?.[field]) ? after[field].map(String) : [];
+    const bits = [...b.filter((v) => !a.includes(v)).map((v) => `+ ${v}`), ...a.filter((v) => !b.includes(v)).map((v) => `− ${v}`)];
+    if (bits.length) parts.push(`${label} ${bits.join(", ")}`);
+  }
+  return parts.join(" · ");
+}
+
+// What one record changes about a group, added up over the records of a line.
+function noteGroupChange(entry, r, prior, state) {
+  const g = entry.group || (entry.group = { name: null, created: false, deleted: false, kind: null, accounts: null, added: [], removed: [], filter: "", other: false });
+  const was = (f) => { const v = prior?.f?.[f]?.v; return v && typeof v === "object" && v.$unset ? undefined : v; };
+  const f = r.f || {};
+  const stored = state?.entities?.setting?.[String(r.id)]?.f;
+  g.name = entry.ref === "other" ? "Other" : (typeof f.name === "string" && f.name) || was("name") || stored?.name?.v || g.name || entry.ref;
+  if ("createdAt" in f && !was("createdAt")) { g.created = true; g.kind = f.kind || null; g.accounts = Array.isArray(f.accounts) ? f.accounts.length : null; }
+  if ("deleted" in f) g.deleted = f.deleted === true;
+  if ("members" in f) {
+    const a = Array.isArray(was("members")) ? was("members") : [];
+    const b = Array.isArray(f.members) ? f.members : [];
+    for (const m of b) if (!a.includes(m) && !g.added.includes(m)) g.added.push(m);
+    for (const m of a) if (!b.includes(m) && !g.removed.includes(m)) g.removed.push(m);
+  }
+  if ("filter" in f && !g.created) g.filter = filterDiffText(was("filter"), f.filter) || g.filter;
+  if (["name", "description", "accounts", "kind"].some((k) => k in f) && !g.created) g.other = true;
 }
 
 // A value as the log shows it: short text (an unset field -> null).
@@ -47,27 +86,55 @@ export function logValue(v) {
 // `normalize` is storage.js normalizeCompanyName. `priors` (optional): Map record -> team-merge.js priorOf(state, record)
 // taken BEFORE the record was applied - the previous values (live test 1.2.1.11: the Previous / New Value columns
 // were empty). before/after: { field: shown value }, the first previous and the last new value of each field.
+//
+// 1.2.3 Export & Import (design 3.6, D6): an import touches hundreds of accounts. Every account it touched carries
+// importRun {id, file, summary} on its extras record, so all of that member's records about those accounts in the
+// batch fold into ONE line: "imported research.xlsx: 12 new accounts, 41 empty fields filled".
 export function teamLogEntries(records, state, normalize, priors = null) {
   const groups = new Map();
+  const runs = new Map(); // `${member}|${account key}` -> importRun
+  for (const r of records || []) {
+    const run = r && r.op === "set" && r.f && r.f.importRun;
+    if (!run || typeof run !== "object" || !run.id) continue;
+    const s = subjectOf(state, r, normalize);
+    if (s.key) runs.set(`${stampMember(r.t)}|${s.key}`, run);
+  }
   for (const r of records || []) {
     if (!r || SKIPPED_OPS.has(r.op)) continue;
     const m = stampMember(r.t);
     const at = stampWall(r.t);
     if (!m || !at) continue;
     const s = subjectOf(state, r, normalize);
+    const run = r.op === "set" && s.key ? runs.get(`${m}|${s.key}`) : null;
+    if (run) {
+      const g = `${m}|import|${run.id}`;
+      let entry = groups.get(g);
+      if (!entry) {
+        entry = { at, m, op: "import", kind: "import", key: null, ref: run.file || null, run: run.id, label: run.summary || null, fields: [], rows: 0, before: {}, after: {}, accounts: [] };
+        groups.set(g, entry);
+      }
+      entry.at = Math.max(entry.at, at);
+      entry.rows += 1;
+      if (!entry.accounts.includes(s.key)) entry.accounts.push(s.key);
+      continue;
+    }
     const op = r.op === "touch" ? "touch" : r.op;
-    const g = `${m}|${op}|${s.kind}|${s.key ?? ""}|${s.ref ?? ""}|${op === "assign" || op === "unassign" ? r.member || "" : ""}`;
+    const g = `${m}|${op}|${s.kind}|${s.key ?? ""}|${s.ref ?? ""}|${op === "assign" || op === "unassign" ? r.member || "" : ""}|${op === "unassign" && r.why === "groups" ? `g:${r.into || ""}` : ""}`;
     let entry = groups.get(g);
     if (!entry) {
       entry = { at, m, op, kind: s.kind, key: s.key, ref: s.ref, label: null, fields: [], rows: 0, before: {}, after: {} };
       if (op === "assign" || op === "unassign") entry.to = r.member || m;
+      // Step 4 (design 8.3): released because a group change left the assignee without access.
+      if (op === "unassign" && r.why === "groups") { entry.why = "groups"; entry.into = r.into || null; }
       if (s.kind === "lead") entry.label = leadLabel(state, s.ref);
+      if (s.kind === "team") entry.to = r.f?.member || r.f?.was || null;
       groups.set(g, entry);
     }
     entry.at = Math.max(entry.at, at);
     entry.rows += 1;
     if (op === "set" && r.f && typeof r.f === "object") {
       const prior = priors?.get(r) || null;
+      if (s.kind === "group") noteGroupChange(entry, r, prior, state);
       for (const f of Object.keys(r.f)) {
         if (INTERNAL_FIELD(f)) continue;
         if (!entry.fields.includes(f)) {
@@ -86,8 +153,21 @@ export function teamLogEntries(records, state, normalize, priors = null) {
 // The stored log with new entries added: newest last, at most TEAM_LOG_KEPT, none older than TEAM_LOG_DAYS.
 export function appendTeamLog(log, entries, now) {
   const cutoff = now - TEAM_LOG_DAYS * 24 * 3600 * 1000;
-  return [...(Array.isArray(log) ? log : []), ...entries]
-    .filter((e) => e && e.at >= cutoff)
+  // 1.2.2.8: a record read a second time (the folder re-read after this PC's team state was lost) is logged once.
+  const seen = new Set();
+  const sig = (e) => JSON.stringify([e.at, e.m, e.op, e.kind, e.key, e.ref, e.fields, e.to]);
+  // 1.2.3: one import that reached this PC over several rounds stays one line (its accounts added up).
+  const kept = (Array.isArray(log) ? log : []).map((e) => (e && e.kind === "import" ? { ...e, accounts: [...(e.accounts || [])] } : e));
+  const fresh = [];
+  for (const e of entries) {
+    const same = e && e.kind === "import" && e.run ? kept.find((k) => k && k.kind === "import" && k.run === e.run && k.m === e.m) : null;
+    if (!same) { fresh.push(e); continue; }
+    same.at = Math.max(same.at, e.at);
+    same.rows = (same.rows || 0) + (e.rows || 0);
+    for (const a of e.accounts || []) if (!same.accounts.includes(a)) same.accounts.push(a);
+  }
+  return [...kept, ...fresh]
+    .filter((e) => e && e.at >= cutoff && !seen.has(sig(e)) && seen.add(sig(e)))
     .sort((a, b) => a.at - b.at)
     .slice(-TEAM_LOG_KEPT);
 }
@@ -114,11 +194,25 @@ export function shownFields(fields) {
   return all.filter((f) => !(/At$/.test(f) && all.includes(f.slice(0, -2))));
 }
 
+// 1.2.2.39 (Boaz: "Annick changed Georg Utz Group: Contact discovery attempted at" - she changed nothing, her
+// pipeline did): a change that carries the bookkeeping only SalesTeam's own automatic work writes (an "…AttemptedAt"
+// or "…ScoredAt" stamp, the pipeline record) is SalesTeam's, on that member's PC. Its line names what was found, not
+// the bookkeeping: "SalesTeam on Annick's PC updated Georg Utz Group: LinkedIn company id", or "… checked Swissgrid".
+const AUTO_MARK = (f) => /(Attempted|Scored)At$/.test(f) || f === "pipeline";
+const AUTO_BOOKKEEPING = (f) => AUTO_MARK(f) || f === "provenance";
+export function isAutomaticEntry(entry) {
+  return Boolean(entry) && entry.op === "set" && (entry.kind === "account" || entry.kind === "contact") && (entry.fields || []).some(AUTO_MARK);
+}
+// The fields such a line (and its value columns) shows.
+export function entryFields(entry) {
+  return isAutomaticEntry(entry) ? (entry.fields || []).filter((f) => !AUTO_BOOKKEEPING(f)) : entry.fields || [];
+}
+
 // One line for the Activity Log: "changed UBS: status, notes", "assigned UBS to Anna", ...
 // `name(key)`: the account's display name; `who(member)`: a member's name.
 export function teamLogText(entry, name, who) {
   const what = entry.key ? name(entry.key) : entry.kind === "lead" ? `the lead ${entry.label || entry.ref}` : entry.ref;
-  const shown = shownFields(entry.fields).map(fieldName);
+  const shown = shownFields(entryFields(entry)).map(fieldName);
   const fields = shown.length ? `: ${shown.slice(0, 8).join(", ")}${shown.length > 8 ? ` +${shown.length - 8}` : ""}` : "";
   const part = entry.kind === "contact" ? (entry.rows > 1 ? ` (${entry.rows} contacts)` : " (a contact)") : "";
   // The join proposals' own bookkeeping (team-join.js): said in words, not as a setting's fields.
@@ -126,15 +220,41 @@ export function teamLogText(entry, name, who) {
     const n = entry.rows > 1 ? `${entry.rows} join proposals` : "a join proposal";
     return entry.op === "delete" ? `settled ${n}` : `made ${n} (accounts they had worked on before joining)`;
   }
+  if (entry.kind === "import") {
+    const n = (entry.accounts || []).length;
+    return `imported ${entry.ref || "a file"}: ${entry.label || `${n} account${n === 1 ? "" : "s"}`}`;
+  }
+  if (entry.kind === "group") {
+    const g = entry.group || {};
+    const name = g.name || (entry.ref === "other" ? "Other" : entry.ref);
+    if (entry.op === "delete" || g.deleted) return `deleted the group ${name}`;
+    const names = (list) => list.map(who).join(", ");
+    const members = [g.added?.length ? `added ${names(g.added)} to ${name}` : "", g.removed?.length ? `removed ${names(g.removed)} from ${name}` : ""].filter(Boolean);
+    if (g.created) {
+      const how = g.kind === "named" ? `named${g.accounts != null ? `, ${g.accounts} account${g.accounts === 1 ? "" : "s"}` : ""}` : "by filter";
+      return [`created the group ${name} (${how})`, ...members].join("; ");
+    }
+    const parts = [g.filter ? `changed the filter of ${name}: ${g.filter}` : "", ...members].filter(Boolean);
+    if (parts.length) return parts.join("; ");
+    return `changed the group ${name}`;
+  }
+  if (entry.kind === "team") {
+    if (entry.ref === "lead") return `made ${who(entry.to)} Team Lead`;
+    if (entry.ref === "deputy") return entry.after?.member ? `made ${who(entry.to)} deputy Team Lead` : `ended ${entry.to ? `${who(entry.to)}'s` : "the"} deputy role`;
+    if (entry.ref === "takeover") return "took over as Team Lead";
+  }
   switch (entry.op) {
     case "assign": return entry.to === entry.m ? `assigned ${what} to themselves` : `assigned ${what} to ${who(entry.to)}`;
-    case "unassign": return entry.to === entry.m ? `released ${what}` : `released ${what} from ${who(entry.to)}`;
+    case "unassign":
+      if (entry.why === "groups") return `released ${what} from ${who(entry.to)} (${entry.into ? `moved to ${entry.into} - ` : ""}no longer in their groups)`;
+      return entry.to === entry.m ? `released ${what}` : `released ${what} from ${who(entry.to)}`;
     case "delete": return `deleted ${entry.kind === "setting" ? "the setting " : ""}${what}${part}`;
     case "touch": return `logged outreach on ${what}${part}`;
     case "remove_member": return `removed ${who(entry.to)} from the team`;
     default:
       if (entry.removed === true) return `removed ${what}${part}`;
       if (entry.removed === false && entry.fields.every((f) => f === "deletedAt" || f === "deletedBy")) return `restored ${what}${part}`;
+      if (isAutomaticEntry(entry)) return shown.length ? `updated ${what}${part}${fields}` : `checked ${what}${part} - nothing new to record`;
       return entry.kind === "setting" ? `changed the setting ${what}${fields}` : `changed ${what}${part}${fields}`;
   }
 }

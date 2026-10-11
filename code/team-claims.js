@@ -82,7 +82,7 @@ export function assignmentView(state, companyKey, ctx) {
 // Why this member may not change, research, scan or contact an account (R6.2), or null when it may.
 //   { reason: "assigned", member, sinceWall } - a colleague's account
 //   { reason: "held", member, sinceWall }     - a colleague is updating it right now (a claim)
-// Reading is never off-limits. The Team Admin is no exception: it can release or reassign, not work it.
+// Reading is never off-limits. The Team Lead is no exception: it can release or reassign, not work it.
 export function offLimitsFor(state, companyKey, ctx) {
   const a = assignmentView(state, companyKey, ctx);
   if (a.assignee && !a.mine) return { reason: "assigned", member: a.assignee.member, sinceWall: a.assignee.sinceWall };

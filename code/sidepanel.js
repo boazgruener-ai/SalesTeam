@@ -22,6 +22,7 @@ import {
   getOnboardingCompletedAt,
 } from "./storage.js";
 import { startAutoBackup } from "./backup-restore.js";
+import { canSeeAccount, canSeeLead } from "./team-groups.js";
 import { getLinkedinTouchStats, formatTouchRelease } from "./linkedin-touch-log.js";
 
 function openTab(page) {
@@ -75,7 +76,10 @@ async function computePipelineStats() {
       .filter((c) => isCompanyRowExcluded(c, exclusionMatcher))
       .map((c) => normalizeCompanyName(c.company))
   );
-  const isAccountDeleted = (key) => Boolean(accountExtras[key]?.deletedAt);
+  // 1.2.3 step 2 (design 6.2): with account groups a member's counts cover what they see on the pages.
+  const team = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const canSee = (key) => canSeeAccount(team.teamMembership, team.teamAccountStates, key);
+  const isAccountDeleted = (key) => Boolean(accountExtras[key]?.deletedAt) || !canSee(key);
 
   const accountCount = (workbook.companies || []).filter((c) => {
     if (!c.company) return false;
@@ -93,7 +97,8 @@ async function computePipelineStats() {
   for (const status of LEAD_STATUSES) leadsByStatus[status] = 0;
   // Leads the Negative Topics or Location Filter marked Irrelevant are not real leads for this user, so they are
   // left out of the counts (reported directly, 2026-09-21) and only mentioned as a filtered-out note.
-  const allLeads = Object.values(results);
+  const allLeads = Object.values(results).filter((l) =>
+    canSeeLead(team.teamMembership, team.teamAccountStates, l, l.company ? normalizeCompanyName(l.company) : ""));
   let irrelevantCount = 0;
   for (const lead of allLeads) {
     const status = lead.status || "New";

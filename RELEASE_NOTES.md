@@ -1,3 +1,125 @@
+# SalesTeam — v1.2.3
+
+## Account groups and the Team Lead: each member works their own part of the list (builds 1.2.2.5-1.2.2.9, 1.2.2.24-1.2.2.39)
+
+- **Account groups** - the Team Lead can split the team's accounts into groups, for example by country, by size or as a
+  list of named accounts, and put members into them. Each member then sees and works only the accounts of their groups,
+  with their contacts and leads (posts); the Team Lead sees everything. A team without groups works exactly as before.
+- **Setting them up** - Settings > Team > Groups > **+ New group**. A **Filter** group takes every account that matches
+  what you tick (Region, Country, Size, Local / Global, Industry, Company type, Priority, Relationship), including
+  accounts found later. A **Named accounts** group is a list you tick. A preview shows which accounts match before you
+  save. An account that is in no group is in **Other**, and so is a member who is in no group.
+- **The Groups table** - each group with its members and how many accounts it has, how many are assigned, unassigned
+  and Ready. Click a count to open those accounts. Members see the table too, with their own groups marked.
+- **Group and Assigned** - two dropdowns above the Target Accounts, Target Contacts and Leads tables. **Group** switches
+  between your groups; **Assigned** offers Assigned or not / Assigned to me / Assigned to others / Unassigned. A new
+  **Groups** column shows each account's groups.
+- **Moving an account** - only the Team Lead moves an account to another group: **Add to group…** and **Remove from
+  group…** in the account menu and above the table, or by changing a group's filter. Before saving, SalesTeam says how
+  many accounts move and who loses an assigned account. A member who loses an account this way is told in the top bar.
+- **Research does not move an assigned account by itself** - when research finds, say, a new employee count that would
+  put an assigned account into another group, the figure is saved and the account stays where it is. The Team Lead
+  gets it under Decisions with **Move it**.
+- **Team Lead** - the Team Admin is now called Team Lead. There is one per team. The Team Lead can hand the role to a
+  colleague (**Make Team Lead…**), name a **deputy** with the same rights for the time away (**Make deputy…** / **End
+  deputy**), and **Close the team…** - everyone then keeps the data as their own copy.
+- **A Team Lead who is gone** - when the Team Lead's SalesTeam has not been seen in the team for 30 days, Settings >
+  Team offers **Take over as Team Lead…** to the deputy, or to every member when there is no deputy. Everyone is told,
+  and the former Team Lead becomes a Member who can be given the role back.
+- **Invitations** - joining a team needs an invitation. The Team Lead adds a colleague by name and e-mail (**Add
+  member…**); the colleague's SalesTeam shows the invitation in the top bar, and **Join Team** does the rest. Creating
+  and joining a team now each start with one step: choosing the team's folder.
+- **Automatic preparation in a team with groups** - each member's SalesTeam researches only the accounts of their
+  groups, on their own API key, and shares them with the group's other members. The Team Lead chooses under Settings >
+  Team > **My pipeline researches** between only the accounts no member can work on right now and all accounts. New
+  companies are looked for by the Team Lead's SalesTeam only.
+- **Leaving** - a member normally leaves by the Team Lead's **Remove from team…**; **Leave the team…** is now a small
+  link at the bottom of Settings > Team.
+- **Web research without LinkedIn** - the two switches under Settings > Automation are now independent: web research
+  can run by itself, without any LinkedIn work, and the other way round.
+- **Who changed what** - the team log describes group changes in words ("added Anna to EMEA"), and what a colleague's
+  SalesTeam did automatically reads as such ("SalesTeam on Annick's PC updated …").
+- **Fixed** - a change file that OneDrive damaged no longer stops a colleague's SalesTeam from receiving later changes:
+  the file is repaired by the computer that wrote it. Assigning several accounts at once is quick again. The Size column
+  and the groups now always agree on an account's size.
+- **Help** - new entries on account groups, on seeing only some of the team's accounts, on an account moving to
+  another group, and on which accounts your SalesTeam researches.
+
+## Export and Import: one menu for CSV, HubSpot, Salesforce and Microsoft Dynamics (builds 1.2.2.10-1.2.2.23)
+
+- **One Import… and one Export…** - in the Target Accounts Dashboard and Target Contacts Dashboard menus. They replace
+  Import Research Workbook…, Import from HubSpot…, Export Accounts (CSV), Export Contacts (CSV) and Export to HubSpot….
+  Choose the file type, then accounts, contacts or both.
+- **An import only adds and fills in** - companies, contacts and initiatives you do not have are added and empty fields
+  are filled. Nothing you have is replaced or removed, whatever the file type. Before this, importing a research
+  workbook replaced the list and could drop accounts found on the web.
+- **You see it first** - before anything is saved, a summary says how many accounts and contacts are new, how many
+  fields will be filled and how many differences were found. A safety copy of your data is saved before the import.
+- **Differences** - where the file and an account disagree by more than 10%, the same rules as for web findings
+  decide. The ones that could change a priority come to Decisions as **Import difference**, with **Keep current** and
+  **Use import**. The 10% is in Change Settings > Advanced.
+- **SalesTeam CSV** - a file saved with Export… can be edited in Excel and imported again.
+- **Salesforce** - Export… writes an accounts file and a contacts file with Salesforce's own column names, so its Data
+  Import Wizard maps every column by itself. Import reads Salesforce account and contact exports. Checked with a real
+  Salesforce organisation.
+- **Microsoft Dynamics** - Export… writes an accounts file and a contacts file with the column names of Dynamics 365
+  Sales. Import reads the Excel file that Dynamics' **Export to Excel** saves, as it is, in any language - checked with
+  real files from a German Dynamics organisation - or a CSV file. The files SalesTeam exports have English column
+  names from Microsoft's documentation; importing them into a real Dynamics environment has not yet been checked.
+- **Export, then import: nothing to do** - importing a file you exported from SalesTeam reports nothing new, nothing
+  filled and no differences. A job title that a CRM file had to cut to its limit (100 characters for Dynamics, 128 for
+  Salesforce) no longer counts as a difference; your own, longer title always stays. **Details** in the import summary
+  now lists every filled field and every difference, with the current value and the file's value.
+- **One currency** - revenue is shown in your default currency everywhere (Change Settings > Advanced > Revenue &
+  Currency), and every export is in it. An import never guesses a file's currency: when the file does not say, Import
+  asks, and warns when the figures look like another currency.
+- **Revenue without its unit** - a revenue such as "491.1" that lost its "million" is no longer filled in. It comes to
+  Decisions with the likely unit: **Correct it** or **Keep**.
+- **Headcount as a whole number** - employee figures such as 941.2 (full-time equivalents from annual reports) are
+  rounded, in what is stored and in what comes in.
+- **The same person only once** - a person who was in an account twice (with and without "Dr.", with a middle name, with
+  "oe" for "ö") is recognised as one. Pairs already in your data come to Decisions as **Same person?** with **Merge** and
+  **Keep both**.
+- **In a team** - Import… and Restore are for the Team Lead and the deputy. Export… is for everyone.
+
+## Exclusions and relationships: customers and partners stay accounts (builds 1.2.2.1-1.2.2.4)
+
+- **Customers and partners are no longer excluded** - until now, a company on the Setup's customer or partner list was
+  hidden everywhere: not researched, no contacts, no leads (posts). Now they stay normal accounts - researched, their
+  contacts found and their leads (posts) kept - with a **Customer** or **Partner** tag. Exclusions are Competitors,
+  Recruiters / staffing agencies and Other, and work as before.
+- **Moved for you** - on update, every customer and partner on your exclusion lists moves to the new lists. A pop-up
+  says how many, which of them come back as accounts and how many of their leads (posts) are back in the Leads Dashboard
+  as New. The same happens after a restore and after a workbook import. In a team, the Team Lead's copy does the move.
+- **The tag** - a purple Customer, Partner or Customer · Partner tag on the account page, the contact page, the Target
+  Contacts list and the Leads Dashboard. On Target Accounts a new **Relationship** column, filtered from its header
+  menu with **Any / Customer / Partner / None**, with the usual chip and Clear all.
+- **Relationship…** - in every account menu (no team, or the Team Lead): tick Customer and/or Partner / reseller and
+  Save.
+- **A customer's priority is raised one level** - P3 becomes P2, P2 becomes P1 (P4 becomes P3, so it enters the
+  scannable range), with "Raised one level: existing customer" in the priority reason. Everything that uses priority
+  follows: the preparation order, Ready accounts, the pie, bulk edit and the CSV and HubSpot exports. A priority you set
+  by hand stays as set; a partner only is unchanged; taking the tag off brings the old priority back at once.
+- **The AI knows** - Sales Mentor, Customer Voice and every outreach draft are told when a company is an existing
+  customer or partner, so they build on the relationship rather than write a first-contact message.
+- **Setup: tables instead of text boxes** - **Companies to exclude** has three tables (Competitors, Recruiters / staffing
+  agencies, Other) and a new step, **Customers and partners**, has two (Customers, Partners / resellers). Each table
+  shows Company, LinkedIn page and Website, sorted A-Z, with a search box, a count and **+ Add**; each row's ⋮ has Edit,
+  Remove and, under **Move to**, the other four lists. A company that is both excluded and a customer or partner is
+  flagged red on both rows - the exclusion wins until you decide. Save on either step saves both. Research proposals
+  for competitors, customers and partners are ticked straight into the tables. A team member sees the tables read-only.
+- **Lead filters** - the Scanner's "Existing Customers" and "Existing Partners" filters are gone; leads (posts) they hid
+  are back as New.
+- **Workbook import** - an Exclusion_List row with reason Customer or Partner now tags the company instead of hiding it,
+  even when the workbook marks it Excluded = Yes. The research prompt (V1.35, under Import Research Workbook…) asks for
+  existing customers and partners instead of customers to exclude.
+- **Fixed** - ticking or unticking a research proposal in a Setup list now takes effect in that step at once (before,
+  the tick did not reach the step).
+- **Help** - new entries "How do I exclude a company?" and "How do I mark a company as an existing customer or
+  partner?".
+
+---
+
 # SalesTeam — v1.2.2
 
 ## Team use: one set of accounts for the whole sales team (builds 1.2.1.2-1.2.1.11)

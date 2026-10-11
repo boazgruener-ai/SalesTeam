@@ -39,17 +39,15 @@
       <details class="nav-group">
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
-        <button id="nav-import-target-accounts-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
-        <button id="nav-restore-accounts-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
-        <button id="nav-export-accounts-csv-btn" type="button" class="nav-item" title="Save the accounts the Target Accounts table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
-        <button id="nav-hubspot-export-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
-        <button id="nav-hubspot-import-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
+        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-export-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot can import">Export…</button>
       </details>
 
       <details class="nav-group">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
-        <button id="nav-export-contacts-csv-btn" type="button" class="nav-item" title="Save the contacts the Target Contacts table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
+        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-export-contacts-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot can import">Export…</button>
       </details>
 
       <details class="nav-group">
@@ -118,8 +116,8 @@
       <details class="nav-group nav-group-debug">
         <summary class="nav-group-label">Advanced tools</summary>
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
-        <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
-        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="1.2.1 test: find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts (new)…</button>
+        <button id="nav-web-lane-btn" type="button" class="nav-item" title="Research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web…</button>
+        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="Find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-target-accounts-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
@@ -140,11 +138,9 @@
     <main id="app-main">
       <div id="page-native-content">
       <div id="page-header-bar">
-        <h1>SalesTeam Settings</h1>
-        <p class="page-subtitle">
-          Shared by the Sales Mentor, Customer Voice, and the Dashboard's per-lead Draft Message — configure once
-          here. Any other general (non-lead-specific) settings added later will live on this page too.
-        </p>
+        <!-- Boaz (1.2.2.8 test): "SalesTeam Settings → <page>", nothing generic under it - the LinkedIn touches only on
+             Automation. -->
+        <h1 id="settings-title">SalesTeam Settings</h1>
         <p id="linkedin-touch-stat" class="field-hint" title="Every automated LinkedIn page visit this extension makes - scan searches, profile visits, company-ID resolution, People Search comparisons. Not your own manual browsing."></p>
       </div>
 
@@ -240,13 +236,8 @@
     </section>
 
     <section class="settings-card" id="discovery-queue-section">
-      <h3>Discovery Queue (debug - Phase 4 test harness)</h3>
-      <p class="field-hint">
-        Temporary test panel for the resumable Discovery scan queue (PRD 6.20 Phase 4) - Phase 5/6 (the
-        actual company/contact discovery scans) don't exist yet to drive this for real, so these buttons
-        simulate one loop iteration each, exercising the same state machine those phases will call into.
-        Remove or fold into real progress UI once Phase 5/6 ship.
-      </p>
+      <!-- Boaz (1.2.2.8 test): the heading "Advanced tools → <page>" names it; one plain sentence instead of build notes. -->
+      <p class="field-hint">The state of the Discovery scan queue, with buttons to step it by hand - for support.</p>
       <pre id="discovery-queue-state-display" class="debug-state-display"></pre>
       <div class="settings-buttons-row">
         <button type="button" id="discovery-queue-start-btn">Start (test)</button>
@@ -260,12 +251,8 @@
     </section>
 
     <section class="settings-card" id="company-discovery-section">
-      <h3>Company Discovery (debug - Phase 5 live test)</h3>
-      <p class="field-hint">
-        Temporary test panel for the real Company discovery scan (PRD 6.20 Phase 5) - runs a live LinkedIn
-        Company Search using your saved onboarding criteria, checkpointing into the Discovery Queue above.
-        Remove or fold into real progress UI once Phase 5 is fully wired into the main scan flow.
-      </p>
+      <p class="field-hint">Runs a LinkedIn company search with your Setup criteria and adds the companies found to the
+        Discovery Queue - for support.</p>
       <!-- 1.2.0.43 (Boaz): moved here from the Setup's Size step - only this panel and the Discovery Queue panel
            read it; building the list from the Setup uses "How big is your list". -->
       <div class="settings-buttons-row">
@@ -290,13 +277,8 @@
     </section>
 
     <section class="settings-card" id="contact-discovery-section">
-      <h3>Contact Discovery (debug - Phase 6 live test)</h3>
-      <p class="field-hint">
-        Temporary test panel for the real Contact discovery scan (PRD 6.20 Phase 6) - visits each Phase-5-
-        discovered company's own People tab with your saved Target Contacts profile, checkpointing into the
-        Discovery Queue above. Only runs when the queue is in "discovering_contacts" status (i.e. Phase 5 has
-        already run to completion). Remove or fold into real progress UI once Phase 6 is fully wired in.
-      </p>
+      <p class="field-hint">Visits each discovered company's People tab with your target-contact profile. It runs once
+        Company Discovery has finished - for support.</p>
       <p id="contact-discovery-status" class="field-hint"></p>
       <div class="settings-buttons-row">
         <button type="button" id="contact-discovery-run-btn">Run contact discovery</button>
@@ -387,75 +369,88 @@
          Wired by team-ui.js. -->
     <section class="settings-card" id="team-section">
       <h3>Team</h3>
+      <!-- 1.2.3 step 1b (TEAM_ADVANCED_MODE_DESIGN.md 10a, D17-D19): Join first; Create is for the Team Lead. -->
       <div id="team-solo">
         <p class="field-hint">
           Work as a team: colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder your
           team owns. Every member's SalesTeam reads and writes that folder - there is no SalesTeam server and no sign-in.
           Your API key, User Profile, drafts, scanner settings and LinkedIn limits stay personal.
         </p>
-        <p class="field-hint">One person creates the team (and becomes its Team Admin); the others join it.</p>
-        <div class="settings-buttons-row">
-          <button type="button" id="team-show-create-btn">Create a team…</button>
-          <button type="button" id="team-show-join-btn">Join a team…</button>
+        <div class="team-invited-box" id="team-solo-invited" hidden>
+          <span id="team-solo-invited-text"></span>
+          <button type="button" id="team-solo-invited-btn" class="team-primary-btn">Join</button>
         </div>
+        <div id="team-solo-join">
+          <p>To work in a team, your Team Lead invites you.</p>
+          <div class="settings-buttons-row">
+            <button type="button" id="team-show-join-btn" class="team-primary-btn">Join a team…</button>
+          </div>
+        </div>
+        <p class="field-hint team-create-line" id="team-solo-create">
+          Are you the Team Lead, setting up a team for your colleagues?
+          <button type="button" id="team-show-create-btn" class="team-link-btn">Create a team as Team Lead…</button>
+        </p>
       </div>
 
       <div id="team-create" hidden>
-        <h4>Create a team</h4>
-        <p class="field-hint">You become the Team Admin. Your accounts, contacts, leads (posts), Setup and rules become the team's
-          starting data. Everyone in the team sees the shared data, including who contacted whom.</p>
-        <ol class="team-steps">
-          <li>Open <b>File Explorer</b> and click <b>OneDrive</b> in the list on the left (with a work account it is called
-            "OneDrive - <i>your company</i>").</li>
-          <li>Right-click an empty spot, choose <b>New &gt; Folder</b> and name it, for example, <b>SalesTeam Team</b>. Leave it empty.</li>
-          <li>Right-click the new folder and choose <b>Always keep on this device</b> (on Windows 11 you may first need
-            <b>Show more options</b>).</li>
-          <li>Right-click the folder again, choose <b>Share</b>, type your colleagues' e-mail addresses, check that they
-            <b>can edit</b>, and click <b>Send</b>. You can also do this later.</li>
-          <li>Here: enter your name and the team's name below, click <b>Pick the team folder…</b> and choose the new folder.</li>
-          <li>If Chrome asks whether SalesTeam may view and edit the files in the folder, choose <b>Allow on every visit</b>.
-            ("Allow this time" works too, but then SalesTeam asks you to reconnect every time you open it again.)</li>
-          <li>Click <b>Back up and create the team</b>. SalesTeam first saves a full backup of your data, then copies it into
-            the folder. This can take a minute.</li>
-        </ol>
+        <!-- Boaz (1.2.2.8 test): as simple as possible - one folder button, no folder concepts; what to do after Create is
+             said in the dialog that follows it. -->
+        <p class="field-hint">You become the Team Lead. Your accounts, contacts, leads (posts), Setup and rules become the
+          team's starting data.</p>
+        <!-- Boaz (1.2.2.8 test): Chrome refuses OneDrive itself ("contains system files") - the team gets its own new
+             folder inside OneDrive, made right in Chrome's window. -->
+        <label>Team folder</label>
+        <div class="team-onedrive-row">
+          <span id="team-create-onedrive">Not chosen yet.</span>
+          <button type="button" id="team-create-onedrive-btn">Choose the team folder…</button>
+        </div>
+        <p class="field-hint" id="team-create-onedrive-hint">The team needs a new folder inside OneDrive. In the window that
+          opens: click <b>OneDrive</b> on the left, then <b>New folder</b>, type the team's name and press Enter. Then click
+          <b>Select Folder</b>, and <b>Allow on every visit</b> if Chrome asks.</p>
         <label for="team-create-name">Your name</label>
         <input type="text" id="team-create-name" placeholder="e.g. Jane Doe" />
         <label for="team-create-team">Team name</label>
         <input type="text" id="team-create-team" placeholder="e.g. Sales Switzerland" />
+        <label>Colleagues to invite</label>
+        <div id="team-create-invitees"></div>
         <div class="settings-buttons-row">
-          <button type="button" id="team-create-pick-btn">Pick the team folder…</button>
-          <button type="button" id="team-create-btn" class="team-primary-btn" disabled>Back up and create the team</button>
+          <button type="button" id="team-create-btn" class="team-primary-btn">Create the team…</button>
           <button type="button" class="team-cancel-btn">Cancel</button>
         </div>
         <p class="field-hint team-status" id="team-create-status" role="status"></p>
       </div>
 
       <div id="team-join" hidden>
-        <h4>Join a team</h4>
+        <!-- Boaz (1.2.2.8 test): the screen is for joining - heading, the invitation, what joining does, Join. The ways
+             round a team that is not found show only when none is, behind one link under the team selection. -->
+        <h4 id="team-join-title">Join a team</h4>
+        <!-- Boaz (1.2.2.8 test): each step says WHERE it happens. -->
+        <ol id="team-join-intro" class="team-steps">
+          <li><b>In the e-mail from your Team Lead:</b> click <b>Open</b>. The team's folder opens on the OneDrive website,
+            in your browser.</li>
+          <li><b>On the OneDrive website:</b> click <b>Add shortcut to My files</b> in the bar at the top. After a minute the
+            folder is on your PC too.</li>
+          <li><b>Back here in SalesTeam:</b> click <b>Choose your team's folder…</b> below. In the window that opens, click
+            <b>OneDrive</b> on the left, then your team's folder, then <b>Select Folder</b> - and <b>Allow on every visit</b>
+            if Chrome asks.</li>
+        </ol>
+        <div class="settings-buttons-row" id="team-find-row">
+          <button type="button" id="team-find-btn" class="team-primary-btn">Choose your team's folder…</button>
+          <button type="button" class="team-cancel-btn">Not now</button>
+        </div>
+        <div id="team-join-choose" hidden>
+          <label for="team-join-team" id="team-join-team-label">Team</label>
+          <select id="team-join-team"></select>
+          <div id="team-join-invites"></div>
+        </div>
         <div class="team-warning">
           Joining <b>replaces</b> the accounts, contacts, leads (posts), Setup and rules in this browser with the team's.
-          Accounts you have that the team does not are listed for you to tick: the ones you tick are added to the team,
-          assigned to you; the rest are removed here - they stay in the backup SalesTeam saves first.
-          Your API key, User Profile, drafts, Advisors chats, scanner settings, LinkedIn limits and Activity Log stay as they are.
-          Everyone in the team sees the shared data, including who contacted whom.
+          Accounts only you have are listed for you to tick: the ones you tick go into the team, assigned to you. A full
+          backup is saved first. Your API key, User Profile, drafts and Activity Log stay as they are.
         </div>
-        <ol class="team-steps">
-          <li>Open the e-mail in which your colleague shared the team folder and click <b>Open</b>. The folder opens in
-            OneDrive in your browser. (No e-mail? Open OneDrive in the browser and click <b>Shared</b> on the left.)</li>
-          <li>Click <b>Add shortcut to My files</b> (at the top, or under <b>…</b> next to the folder's name).</li>
-          <li>Open <b>File Explorer &gt; OneDrive</b>. After a minute the folder appears there. Right-click it and choose
-            <b>Always keep on this device</b>, then wait until its files show a green tick.</li>
-          <li>If the bar at the top of SalesTeam says it is preparing accounts ("working on …"), click <b>Pause for today</b> first.</li>
-          <li>Here: enter your name below, click <b>Pick the team folder…</b> and choose that folder.</li>
-          <li>If Chrome asks whether SalesTeam may view and edit the files in the folder, choose <b>Allow on every visit</b>.</li>
-          <li>Click <b>Back up and join the team</b>. SalesTeam first saves a full backup of your data, then loads the team's.</li>
-        </ol>
-        <label for="team-join-name">Your name</label>
-        <input type="text" id="team-join-name" placeholder="e.g. Jane Doe" />
-        <div class="settings-buttons-row">
-          <button type="button" id="team-join-pick-btn">Pick the team folder…</button>
-          <button type="button" id="team-join-btn" class="team-primary-btn" disabled>Back up and join the team</button>
-          <button type="button" class="team-cancel-btn">Cancel</button>
+        <div class="settings-buttons-row" id="team-join-row" hidden>
+          <button type="button" id="team-join-btn" class="team-primary-btn">Join</button>
+          <button type="button" class="team-cancel-btn">Not now</button>
         </div>
         <p class="field-hint team-status" id="team-join-status" role="status"></p>
       </div>
@@ -474,9 +469,39 @@
         <h4>Members</h4>
         <table id="team-members-table"></table>
         <div class="settings-buttons-row">
-          <button type="button" id="team-sync-now-btn">Sync now</button>
-          <button type="button" id="team-leave-btn" class="danger-btn">Leave the team…</button>
+          <button type="button" id="team-add-member-btn" hidden title="Invite colleagues by name and e-mail - they then accept in Settings > Team > Join a team">Add member…</button>
         </div>
+        <!-- 1.2.3 step 1 (TEAM_ADVANCED_MODE_DESIGN.md 10.2): wired by team-groups-ui.js. -->
+        <h4>Groups</h4>
+        <div id="team-groups"></div>
+        <!-- 1.2.3 step 5 (TEAM_ADVANCED_MODE_DESIGN.md 9, D7): for the Team Lead and the deputy, once the team has groups. -->
+        <div id="team-lead-research" hidden>
+          <h4>My pipeline</h4>
+          <label for="team-lead-research-select">My pipeline researches:</label>
+          <select id="team-lead-research-select">
+            <option value="gaps">Only accounts no member can work on right now</option>
+            <option value="all">All accounts</option>
+          </select>
+          <p class="field-hint" id="team-lead-research-hint"></p>
+          <div class="settings-buttons-row">
+            <button type="button" id="team-lead-research-save" class="team-primary-btn" disabled>Save</button>
+            <span class="field-hint" id="team-lead-research-status" role="status"></span>
+          </div>
+        </div>
+        <!-- D13: offered only when the Team Lead's SalesTeam has not been seen in the team for 30 days. -->
+        <div id="team-take-over" hidden>
+          <p class="field-hint" id="team-take-over-text"></p>
+          <div class="settings-buttons-row">
+            <button type="button" id="team-take-over-btn" class="team-primary-btn">Take over as Team Lead…</button>
+          </div>
+        </div>
+        <div class="settings-buttons-row">
+          <button type="button" id="team-close-btn" class="danger-btn" hidden>Close the team…</button>
+        </div>
+        <!-- 1.2.2.38 (Boaz): a member normally asks the Team Lead to remove them - leaving by oneself is a link, not a button. -->
+        <p class="field-hint team-create-line" id="team-leave-line">
+          <button type="button" id="team-leave-btn" class="team-link-btn">Leave the team…</button>
+        </p>
         <p class="field-hint team-status" id="team-member-status" role="status"></p>
       </div>
     </section>

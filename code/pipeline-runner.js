@@ -165,7 +165,9 @@ export async function kickPipeline(source) {
   try {
     await closeInterruptedRecord();
     const auto = await getPipelineAutomation();
-    if (!auto.enabled) return { started: false, reason: "off" };
+    // 1.2.2.39 (Boaz): the two switches are independent - `enabled` is the LinkedIn work, `webEnabled` web research.
+    // With only web research on, a run does the web jobs and never opens LinkedIn.
+    if (!auto.enabled && !auto.webEnabled) return { started: false, reason: "off" };
     const store = await chrome.storage.local.get([PIPELINE_HOLD_KEY, LAST_AUTO_BACKUP_KEY, LINKEDIN_LOGGED_OUT_KEY]);
     const [stats, runningBatch, web] = await Promise.all([getLinkedinTouchStats(), getRunningBatch(), webBudgetState()]);
     const now = Date.now();
@@ -173,10 +175,11 @@ export async function kickPipeline(source) {
     if (auto.pausedDay !== localDay(now) && !web.reason) await discoverForTargets(web, { now }).catch(() => {});
     let held = 0;
     let reason = autoRunBlocker({
-      enabled: auto.enabled, pausedDay: auto.pausedDay, today: localDay(now), holdUntil: store[PIPELINE_HOLD_KEY] || 0,
+      enabled: true, pausedDay: auto.pausedDay, today: localDay(now), holdUntil: store[PIPELINE_HOLD_KEY] || 0,
       runningBatch, lastBackupAt: store[LAST_AUTO_BACKUP_KEY] || 0, now, webPossible: !web.reason,
-      // Logged out a short while ago: LinkedIn counts as used up, so only web work may start a run.
-      touches24h: linkedinLoggedOutRecently(store[LINKEDIN_LOGGED_OUT_KEY], now) ? PIPELINE_TOUCH_CEILING : stats.last24h,
+      // Logged out a short while ago, or the LinkedIn work switched off: LinkedIn counts as used up, so only web
+      // work may start a run.
+      touches24h: !auto.enabled || linkedinLoggedOutRecently(store[LINKEDIN_LOGGED_OUT_KEY], now) ? PIPELINE_TOUCH_CEILING : stats.last24h,
     });
     if (!reason) {
       // W5: settling the web findings the rules can settle is local and free, so it happens on every
@@ -184,12 +187,12 @@ export async function kickPipeline(source) {
       await autoResolveWebFindings().catch(() => {});
       const { entries, counts } = await readinessNow();
       const loggedOut = linkedinLoggedOutRecently(store[LINKEDIN_LOGGED_OUT_KEY], now);
-      const opts = { linkedin: !loggedOut && stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason, ...(await planContext(counts)) };
+      const opts = { linkedin: auto.enabled && !loggedOut && stats.last24h < PIPELINE_TOUCH_CEILING, web: !web.reason, ...(await planContext(counts)) };
       if (rankCandidates(entries, now, TYPICAL_CONTACT_CHUNKS, opts).length === 0) {
         // 1.2.0.57 (Boaz, after Finish Setup): accounts the web lane is still researching are held back, and that
         // read as "All accounts processed for today" while 17 accounts still needed their LinkedIn page.
         held = entries.filter((e) => e.view && !e.view.deleted && !e.view.excluded && heldForWebLane(e.view, opts.webLaneHold, now)).length;
-        reason = held ? "web_lane" : opts.linkedin ? "nothing_left" : "budget";
+        reason = held ? "web_lane" : opts.linkedin || !auto.enabled ? "nothing_left" : "budget";
       }
     }
     if (reason) {
@@ -199,7 +202,9 @@ export async function kickPipeline(source) {
       }
       // 1.2.0.10 (Boaz, 2026-10-01): the LinkedIn visits are used up and the pipeline has no web research of its
       // own to do, but the web budget allows more - the web lane carries on (contacts, profiles, initiatives).
-      if (reason === "budget" && !web.reason && stats.last24h >= PIPELINE_TOUCH_CEILING && !isWebLaneRunning()) {
+      // 1.2.2.39: the same with the LinkedIn work switched off - web research is then all there is to do.
+      const linkedinDone = reason === "budget" ? stats.last24h >= PIPELINE_TOUCH_CEILING : reason === "nothing_left" && !auto.enabled;
+      if (linkedinDone && !web.reason && !isWebLaneRunning()) {
         const left = Math.max(0, (Number(web.monthlyUsd) || 0) - (Number(web.spentUsd) || 0));
         const lane = await startWebLane({ limit: AUTO_WEB_LANE_ACCOUNTS, budget: left, auto: true }).catch(() => null);
         if (lane && lane.ok) return { started: false, reason, webLane: true };
@@ -224,6 +229,9 @@ const webBudgetLeft = (web) => Math.max(0, (Number(web.monthlyUsd) || 0) - (Numb
 // the wizard's Finish - always runs when accounts are owed, and ends with the usual pop-up.
 async function discoverForTargets(web, { now = Date.now(), fromSetup = false } = {}) {
   if (isWebDiscoveryRunning()) return { started: false, reason: "running" };
+  // 1.2.3 (advanced-mode design 9, D8): in a team with account groups, Discovery is run by the Team Lead (or deputy).
+  const gate = await teamWorkGate().catch(() => null);
+  if (gate && !gate.discovery) return { started: false, reason: "team_lead_only" };
   const targets = await getCompletionTargets();
   const last = (await chrome.storage.local.get(AUTO_DISCOVERY_KEY))[AUTO_DISCOVERY_KEY] || null;
   if (!fromSetup && !discoveryMayRun(last, targets.accounts, now)) return { started: false, reason: "done_for_target" };
@@ -252,7 +260,7 @@ async function startLaneForTargets() {
   if (isWebLaneRunning()) return { started: false, reason: "running" };
   const auto = await getPipelineAutomation();
   const web = await webBudgetState();
-  if (!auto.enabled || auto.pausedDay === localDay() || web.reason) return { started: false, reason: web.reason || "off" };
+  if (auto.pausedDay === localDay() || web.reason) return { started: false, reason: web.reason || "off" };
   const targets = await getCompletionTargets();
   const lane = await startWebLane({ limit: targets.accounts, budget: webBudgetLeft(web), auto: true }).catch((err) => ({ ok: false, error: err.message }));
   return { started: Boolean(lane && lane.ok), error: lane && lane.error };
@@ -263,8 +271,8 @@ async function startLaneForTargets() {
 export async function startOnboardingBuild() {
   const auto = await getPipelineAutomation();
   const web = await webBudgetState();
-  let discovery = { started: false, reason: auto.enabled ? web.reason || null : "off" };
-  if (auto.enabled && !web.reason) discovery = await discoverForTargets(web, { fromSetup: true }).catch((err) => ({ started: false, error: err.message }));
+  let discovery = { started: false, reason: web.reason || null };
+  if (!web.reason) discovery = await discoverForTargets(web, { fromSetup: true }).catch((err) => ({ started: false, error: err.message }));
   const lane = discovery.started ? { started: false, reason: "after_discovery" } : await startLaneForTargets().catch((err) => ({ started: false, error: err.message }));
   const pipeline = await kickPipeline("setup_finished").catch(() => null);
   return { ok: true, discovery, lane, pipeline };
@@ -373,7 +381,9 @@ async function run(r) {
     while (!r.stopRequested && !r.pauseRequested && underLimit()) {
       // W1: the LinkedIn ceiling stops the LinkedIn jobs only; web research goes on within its budget.
       const loggedOutAt = (await chrome.storage.local.get(LINKEDIN_LOGGED_OUT_KEY))[LINKEDIN_LOGGED_OUT_KEY];
-      const linkedinOk = !linkedinLoggedOutRecently(loggedOutAt) && (await getLinkedinTouchStats()).last24h < PIPELINE_TOUCH_CEILING;
+      // 1.2.2.39: an automatic run visits LinkedIn only while "Keep my accounts ready automatically" is on.
+      const linkedinOn = !s.auto || (await getPipelineAutomation()).enabled;
+      const linkedinOk = linkedinOn && !linkedinLoggedOutRecently(loggedOutAt) && (await getLinkedinTouchStats()).last24h < PIPELINE_TOUCH_CEILING;
       const webOk = !(await webBudgetState()).reason;
       if (!linkedinOk && !webOk) { s.stoppedReason = "budget"; break; }
       const { cfg, entries, counts } = s.done === 0 ? first : await readinessNow();
@@ -390,7 +400,7 @@ async function run(r) {
       const next = ranked[0];
       // At the LinkedIn limit with web research allowed, an empty list means no account needs web research
       // now - not that the money ran out (first live run, 2026-09-28, read as "stopped at US$0.99").
-      if (!next) { s.stoppedReason = linkedinOk ? "nothing_left" : webOk ? "linkedin_limit_web_done" : "budget"; break; }
+      if (!next) { s.stoppedReason = linkedinOk || !linkedinOn ? "nothing_left" : webOk ? "linkedin_limit_web_done" : "budget"; break; }
 
       const needsLinkedin = next.jobs.some(isLinkedinJob);
       if (needsLinkedin && !worker) {

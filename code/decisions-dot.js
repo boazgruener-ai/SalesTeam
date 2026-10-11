@@ -7,8 +7,9 @@ import { getDecisionQueue } from "./storage.js";
 
 const WATCHED_KEYS = new Set([
   "targetAccountExtras", "targetAccounts", "targetAccountsWorkbook", "discoveredCompanies", "discoveredContacts",
-  "companyExclusions", "companyExclusionsLifted", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
-  "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Admin's join proposals
+  "companyExclusions", "companyExclusionsLifted", "companyRelationships", "keptSeparateAccountPairs", "discoveryNameDecisions", "targetContactExtras",
+  "teamJoinProposals", "teamAccountStates", // team use step 6: the Team Lead's join proposals
+  "teamGroupPins", "teamGroups", // 1.2.3 advanced mode step 4: the Team Lead's group moves
 ]);
 // Written by the Decisions page after the user's own choice (1.2.0.10): recount at once, not after the debounce -
 // the dot stayed red for 5-10 s beside "Nothing to do" (Boaz, 2026-10-01).
@@ -26,6 +27,8 @@ function ensureStyle() {
     .decisions-dot { display: inline-block; min-width: 8px; height: 8px; margin-left: 8px; border-radius: 50%;
       background: #d93025; vertical-align: middle; }
     .decisions-dot[hidden] { display: none; }
+    .decisions-count { margin-left: 4px; font-weight: 600; color: #d93025; }
+    .decisions-count[hidden] { display: none; }
   `;
   document.head.appendChild(style);
 }
@@ -35,16 +38,22 @@ export function initDecisionsDot(buttonId = "open-decisions-btn", onCount = null
   const btn = document.getElementById(buttonId);
   if (!btn) return;
   ensureStyle();
+  // 1.2.2.13 (Boaz): the dot alone did not say how much work there is - the number stands next to it: "Decisions (3)".
+  const countEl = document.createElement("span");
+  countEl.className = "decisions-count";
+  countEl.hidden = true;
   const dot = document.createElement("span");
   dot.className = "decisions-dot";
   dot.hidden = true;
-  btn.appendChild(dot);
+  btn.append(countEl, dot);
 
   let timer = null;
   const refresh = async () => {
     try {
       const { count } = await getDecisionQueue();
       dot.hidden = count === 0;
+      countEl.hidden = count === 0;
+      countEl.textContent = `(${count})`;
       dot.title = `${count} decision${count === 1 ? "" : "s"} waiting`;
       btn.title = count > 0
         ? `${count} decision${count === 1 ? "" : "s"} only you can make`

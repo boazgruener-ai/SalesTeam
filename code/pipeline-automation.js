@@ -27,7 +27,8 @@ export const WEB_CONSENT_TITLE = "Research accounts on the web";
 export const WEB_CONSENT_TEXT =
   "SalesTeam researches accounts on the web with your own Anthropic API key, within the monthly budget you set " +
   "here and never above it. It fills missing facts first, such as a headcount or the headquarters country, then " +
-  "researches your P1-P3 accounts in depth. What it cannot settle by itself waits for you in Decisions.";
+  "researches your P1-P3 accounts in depth. What it cannot settle by itself waits for you in Decisions. " +
+  "It runs with or without the LinkedIn work above.";
 export const DEFAULT_WEB_BUDGET_USD = 10;
 // { month: "YYYY-MM", usd, researches, blocked: { reason: "credit" | "limit", day, keyTail } | null }
 export const PIPELINE_WEB_SPEND_KEY = "pipelineWebSpend";

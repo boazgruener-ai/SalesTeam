@@ -54,17 +54,15 @@
       <details class="nav-group">
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
-        <button id="nav-import-target-accounts-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
-        <button id="nav-restore-accounts-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
-        <button id="nav-export-accounts-csv-btn" type="button" class="nav-item" title="Save the accounts the Target Accounts table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
-        <button id="nav-hubspot-export-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
-        <button id="nav-hubspot-import-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
+        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-export-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot can import">Export…</button>
       </details>
 
       <details class="nav-group">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
-        <button id="nav-export-contacts-csv-btn" type="button" class="nav-item" title="Save the contacts the Target Contacts table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
+        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-export-contacts-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot can import">Export…</button>
       </details>
 
       <!-- 11th round of direct feedback (2026-09-19): the Scoring/
@@ -136,8 +134,8 @@
       <details class="nav-group nav-group-debug">
         <summary class="nav-group-label">Advanced tools</summary>
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
-        <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
-        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="1.2.1 test: find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts (new)…</button>
+        <button id="nav-web-lane-btn" type="button" class="nav-item" title="Research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web…</button>
+        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="Find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-target-accounts-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
@@ -195,6 +193,8 @@
 
     <section id="controls-row">
       <input id="search-input" type="text" placeholder="Search by name, title, or content…" />
+      <select id="team-group-picker" class="team-group-picker" title="Show one account group at a time" hidden></select>
+      <select id="team-owner-picker" class="team-group-picker" title="Show accounts by who they are assigned to" hidden></select>
       <label class="control-label">
         Status:
         <select id="status-filter-select">

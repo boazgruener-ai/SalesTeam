@@ -9,7 +9,8 @@
 // consume everything captured here.
 import { rescoreDerivedPriorities } from "./auto-score.js";
 import { mountAdvancedSteps, persistAdvancedStep, discardAdvancedStep } from "./advanced-steps.js";
-import { askChoice } from "./confirm-dialog.js";
+import { askChoice, markSaved } from "./confirm-dialog.js";
+import { leadRightsOf } from "./team-groups.js";
 import {
   getPipelineAutomation, setPipelineAutomationEnabled, CONSENT_TITLE, CONSENT_TEXT,
   setWebResearchAutomation, WEB_CONSENT_TITLE, WEB_CONSENT_TEXT, DEFAULT_WEB_BUDGET_USD,
@@ -18,7 +19,8 @@ import {
   getTargetUniverseConfig, saveTargetUniverseConfig,
   getTargetContactProfile, saveTargetContactProfile,
   getAccountPriorityGuidelines, saveAccountPriorityGuidelines,
-  getCompanyExclusions, saveCompanyExclusions, EXCLUSION_CATEGORIES, EXCLUSION_CATEGORY_LABELS,
+  getCompanyExclusions, EXCLUSION_CATEGORIES,
+  getCompanyRelationships, saveCompanyLists, RELATIONSHIP_CATEGORIES,
   getCompanyAliases, saveCompanyAliases,
   getOrganizationTypeEligibility, saveOrganizationTypeEligibility,
   getKeywordSearchLanguages, saveKeywordSearchLanguages, CONFIRMED_KEYWORD_LANGUAGES,
@@ -62,7 +64,9 @@ import {
   buildSetupProposals, PROPOSAL_STEP_KEYS, stepsRebuiltBy, initiallyTicked, mergeChecklistWithLines, offerLine, sourceLabel,
 } from "./setup-proposals.js";
 import { renderProposalBanner, mountChecklist } from "./proposal-ui.js";
-import { normalizeCompanyName, websiteDomain, buildExclusionMatcher, matchesExclusion } from "./company-identity.js";
+import { normalizeCompanyName, websiteDomain, buildExclusionMatcher, matchesExclusion, sameCompanyEntry } from "./company-identity.js";
+import { mountCompanyListTable } from "./company-list-table.js";
+import { splitCompanyLists } from "./relationships.js";
 import { startAutoBackup } from "./backup-restore.js";
 import { mountLocationPicker } from "./location-picker.js";
 import { AI_FIELD_ALIASES } from "./xlsx-lite.js";
@@ -78,7 +82,7 @@ let teamMemberReadOnly = false;
 
 const ALL_STEPS = [
   "about", "location", "size", "industry", "priority", "leads-prioritization", "company-context", "value-add-offers",
-  "icp", "contacts", "initiative-stages", "included", "exclusions", "aliases", "targets", "findings", "revenue",
+  "icp", "contacts", "initiative-stages", "included", "exclusions", "relationships", "aliases", "targets", "findings", "revenue",
 ];
 // 1.2.0.51 (Boaz): technical steps a new user need not decide are not in the first Setup (their defaults apply);
 // Change Settings lists them last, under "Advanced". "findings" and "revenue" were two Settings cards until 1.2.1.10
@@ -95,6 +99,7 @@ const STEP_TITLES = {
   icp: "Ideal customer", contacts: "Target contacts",
   "initiative-stages": "Initiative stages", included: "Companies to include",
   exclusions: "Companies to exclude",
+  relationships: "Customers and partners",
   aliases: "Company aliases",
   targets: "How big is your list",
   findings: "How to handle research findings",
@@ -257,7 +262,7 @@ function updateNavBar(step, index) {
     // Save is on only with unsaved changes. A team member can change only About you (their name, key, language) - Save
     // is off everywhere else.
     paintDirty();
-    el("nav-save-btn").title = teamMemberReadOnly && step !== "about" ? "Only the Team Admin can change this setting" : "";
+    el("nav-save-btn").title = teamMemberReadOnly && step !== "about" ? "Only the Team Lead can change this setting" : "";
     // Change Settings ends at the last setting: there is no Setup complete step after it.
     el("nav-next-btn").hidden = settingsMode && index >= STEP_ORDER.length - 2;
     // Boaz, 2026-10-01: on the last step "Next" did not say that Finish Setup comes after it.
@@ -312,6 +317,7 @@ function showStep(index) {
   el("enter-research").hidden = true;
   el("step-progress").textContent = step === "finish" ? "" : `Step ${index + 1} of ${STEP_ORDER.length - 1}`;
   if (step === "about") renderAboutResearchBox();
+  if (step === "exclusions" || step === "relationships") renderCompanyTables();
   renderProposalForStep(step);
   if (step === "location") renderLocationPriorityRows();
   if (step === "included") renderIncludedParsedList();
@@ -468,8 +474,7 @@ el("nav-save-btn").addEventListener("click", async () => {
     return;
   }
   if ((step === "value-add-offers" || step === "contacts") && checklists[step]) renderProposalForStep(step);
-  status.textContent = "Saved ✓";
-  setTimeout(() => { if (status.textContent === "Saved ✓") status.textContent = ""; }, 2500);
+  markSaved(status);
 });
 
 // "Exit" (added 2026-09-16, reported directly: "if I just want to look at
@@ -1004,101 +1009,85 @@ function validateContactsStep() {
   return { valid: true };
 }
 
-// Config: which textarea feeds which category, in display order - the
-// single source of truth for the Exclusions step's validate/render/init
-// logic below, so adding a category later is a one-line change here.
-const EXCLUSION_CATEGORY_INPUTS = EXCLUSION_CATEGORIES.map((category) => ({
-  category,
-  inputId: `exclusions-${category}-input`,
-  listId: `exclusions-${category}-parsed-list`,
-}));
+// 1.2.3 (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 9): the five company lists are tables on two steps - "Companies to
+// exclude" (competitors, recruiters, other) and "Customers and partners". Both edit ONE draft, companyExclusions,
+// which holds all five categories; Save on either step writes both stored lists (saveCompanyLists sorts each entry
+// onto its list), so a Move to... between the steps can never be half-saved (D7).
+const LIST_LABELS = {
+  competitor: "Competitors", recruiter: "Recruiters / staffing agencies", other: "Other",
+  customer: "Customers", partner: "Partners / resellers",
+};
+const CHECKLIST_LABELS = { competitor: "Competitor", customer: "Customer", partner: "Partner / reseller" };
+const STEP_LISTS = { exclusions: ["competitor", "recruiter", "other"], relationships: ["customer", "partner"] };
+const LIST_HINTS = {
+  recruiter: "Pre-filled with well-known global agencies to save you the lookup; add your local ones and remove any that don't apply.",
+  other: "Anything else that doesn't fit the lists above.",
+};
+const companyTables = {};
 
-// 1.2.0.48 (Boaz): each category box is the full list of that category - one company per line, as its name, its
-// LinkedIn company page, or both ("Name - https://www.linkedin.com/company/x/"); a website instead of a LinkedIn page
-// is kept as the company's domain. The research's ticks write into the boxes as they change (syncExclusionTicks), so
-// what the boxes show is exactly what is saved.
-function parseExclusionLine(line) {
-  const t = String(line || "").trim();
-  if (!t) return null;
-  const m = t.match(/^(.*?)\s+-\s+(https?:\/\/\S+)$/);
-  let name = m ? m[1].trim() : "";
-  let url = m ? m[2] : "";
-  if (!m) {
-    if (/^https?:\/\//i.test(t) || /linkedin\.com\//i.test(t)) url = t;
-    else name = t;
-  }
-  if (!url) return { name };
-  const slug = parseLinkedinCompanySlug(url);
-  if (slug) return { name, slug };
-  if (/linkedin\.com/i.test(url)) return { name, bad: true, raw: t };
-  const domain = websiteDomain(url);
-  return domain ? { name, domain } : { name, bad: true, raw: t };
+// D2: a company on an exclusion list AND on Customers / Partners stays hidden - both rows say so.
+function companyListFlag(entry) {
+  const isRel = RELATIONSHIP_CATEGORIES.includes(entry.category);
+  const other = companyExclusions.find((e) => e && e !== entry
+    && RELATIONSHIP_CATEGORIES.includes(e.category) !== isRel && sameCompanyEntry(e, entry));
+  if (!other) return null;
+  return `Also on ${LIST_LABELS[other.category]} - it stays hidden while it is ${isRel ? "excluded" : "on this list"}.`;
 }
 
-function formatExclusionLine(e) {
-  const link = e.slug ? `https://www.linkedin.com/company/${e.slug}/` : e.domain ? `https://${e.domain}` : "";
-  return e.name && link ? `${e.name} - ${link}` : e.name || link;
-}
-
-function exclusionBoxEntries(inputId) {
-  return el(inputId).value.split("\n").map(parseExclusionLine).filter(Boolean);
-}
-
-// Ticked research proposals are in their category's box; unticked ones are not. Runs on every tick change.
-function syncExclusionTicks() {
-  const list = checklists.exclusions;
-  if (!list) return;
-  const changedBoxes = new Set();
-  for (const item of list.getItems()) {
-    const category = item.meta?.category || "other";
-    const box = EXCLUSION_CATEGORY_INPUTS.find((c) => c.category === category);
-    if (!box) continue;
-    const key = normalizeCompanyName(item.text);
-    const lines = el(box.inputId).value.split("\n").map((l) => l.trim()).filter(Boolean);
-    const isThis = (l) => normalizeCompanyName(parseExclusionLine(l)?.name || "") === key;
-    const present = lines.some(isThis);
-    if (item.checked && !present) {
-      lines.push(formatExclusionLine({ name: item.text, domain: item.meta?.domain }));
-    } else if (!item.checked && present) {
-      lines.splice(0, lines.length, ...lines.filter((l) => !isThis(l)));
-    } else {
-      continue;
+function renderCompanyTables() {
+  const lists = Object.entries(LIST_LABELS);
+  for (const cats of Object.values(STEP_LISTS)) {
+    for (const category of cats) {
+      const host = el(`company-list-${category}`);
+      if (!host) continue;
+      companyTables[category] = mountCompanyListTable(host, {
+        category, label: LIST_LABELS[category], hint: LIST_HINTS[category], lists, readOnly: teamMemberReadOnly,
+        store: { get: () => companyExclusions, set: (next) => { companyExclusions = next; } },
+        flagFor: companyListFlag,
+        onChange: () => { refreshCompanyTables(); markStepDirty(); },
+      });
     }
-    el(box.inputId).value = lines.join("\n");
-    changedBoxes.add(box);
   }
-  for (const { inputId, listId } of changedBoxes) renderExclusionParsedList(inputId, listId);
-  if (changedBoxes.size) markStepDirty();
 }
 
-function validateExclusionsStep() {
-  const byKey = new Map();
-  for (const e of companyExclusions) {
-    if (e.slug) byKey.set(`${e.category}|slug|${e.slug}`, e);
-    if (e.name) byKey.set(`${e.category}|name|${normalizeCompanyName(e.name)}`, e);
+function refreshCompanyTables() {
+  for (const t of Object.values(companyTables)) t.render();
+}
+
+// The research's ticks add their company to its table, unticking takes it off again. Runs on every tick change
+// (proposal-ui.js calls onChange on a tick since 1.2.3 - before, only Add and the rank arrows did).
+function syncProposalTicks(step) {
+  const list = checklists[step];
+  if (!list) return;
+  let changed = false;
+  for (const item of list.getItems()) {
+    const category = item.meta?.category || (step === "relationships" ? "customer" : "other");
+    const name = String(item.text || "").trim();
+    if (!name) continue;
+    const key = normalizeCompanyName(name);
+    const isThis = (e) => e && e.category === category && normalizeCompanyName(e.name || "") === key;
+    const present = companyExclusions.some(isThis);
+    if (item.checked && !present) {
+      const domain = item.meta?.domain || null;
+      const sourceUrl = item.meta?.sourceUrl || null;
+      companyExclusions = [...companyExclusions, {
+        category, name, ...(domain ? { domain } : {}),
+        ...(item.meta ? { source: "research", ...(sourceUrl ? { sourceUrl } : {}) } : { source: "user" }),
+      }];
+      changed = true;
+    } else if (!item.checked && present) {
+      companyExclusions = companyExclusions.filter((e) => !isThis(e));
+      changed = true;
+    }
   }
-  const proposedByKey = new Map((setupResearch.proposals?.exclusions?.items || [])
-    .map((item) => [`${item.category}|name|${normalizeCompanyName(item.name)}`, item]));
-  const fromBoxes = EXCLUSION_CATEGORY_INPUTS.flatMap(({ category, inputId }) =>
-    exclusionBoxEntries(inputId).filter((e) => !e.bad).map((e) => {
-      const nameKey = e.name ? `${category}|name|${normalizeCompanyName(e.name)}` : null;
-      const prev = (e.slug && byKey.get(`${category}|slug|${e.slug}`)) || (nameKey && byKey.get(nameKey)) || {};
-      const proposed = nameKey ? proposedByKey.get(nameKey) : null;
-      const entry = {
-        ...prev,
-        ...(proposed ? { source: "research", ...(proposed.sourceUrl ? { sourceUrl: proposed.sourceUrl } : {}) } : {}),
-        category,
-        name: e.name || prev.name || undefined,
-        slug: e.slug || (e.name && !e.domain ? prev.slug : undefined) || undefined,
-        domain: e.domain || prev.domain || proposed?.domain || undefined,
-      };
-      for (const k of Object.keys(entry)) if (entry[k] === undefined || entry[k] === null || entry[k] === "") delete entry[k];
-      return entry;
-    }));
-  // An entry of a category this step has no box for is carried untouched.
-  const known = new Set(EXCLUSION_CATEGORY_INPUTS.map((c) => c.category));
-  companyExclusions = [...fromBoxes, ...companyExclusions.filter((e) => !known.has(e.category))]
-    .filter((e) => e.slug || e.name || e.domain);
+  if (changed) { refreshCompanyTables(); markStepDirty(); }
+}
+
+function validateCompanyListsStep() {
+  if (Object.values(companyTables).some((t) => t.isEditing())) {
+    return { valid: false, error: "Finish the row you are editing first (OK or Cancel)." };
+  }
+  companyExclusions = companyExclusions.filter((e) => e && (e.slug || e.name || e.domain));
   return { valid: true };
 }
 
@@ -1269,7 +1258,7 @@ async function renderTargetsStep() {
   // Change Settings (Boaz, 2026-10-01): raising a target does nothing while the automation that builds the list is off.
   if (settingsMode) {
     const a = await getPipelineAutomation();
-    const off = !a.enabled ? "Automatic preparation is off" : !a.webEnabled ? "Automatic web research is off" : null;
+    const off = !a.enabled && !a.webEnabled ? "Automatic preparation is off" : !a.webEnabled ? "Automatic web research is off" : null;
     if (off) out.textContent += ` ${off} (Settings > Automation), so SalesTeam does not build the list towards these numbers until you turn it on.`;
   }
 }
@@ -1299,7 +1288,8 @@ const STEP_VALIDATORS = {
   contacts: validateContactsStep,
   "initiative-stages": validateInitiativeStagesStep,
   included: validateIncludedStep,
-  exclusions: validateExclusionsStep,
+  exclusions: validateCompanyListsStep,
+  relationships: validateCompanyListsStep,
   aliases: validateAliasesStep,
   targets: validateTargetsStep,
   // Every field checks itself as it is changed (advanced-steps.js).
@@ -1422,7 +1412,8 @@ async function persistStep(step) {
       await saveTargetContactProfile(targetContactProfile);
       break;
     case "exclusions":
-      await saveCompanyExclusions(companyExclusions);
+    case "relationships":
+      await saveCompanyLists({ exclusions: companyExclusions, relationships: [] });
       break;
     case "aliases":
       await saveCompanyAliases(companyAliases);
@@ -1599,7 +1590,7 @@ function renderSummaryInto(step, container) {
           const slugs = companyExclusions.filter((e) => e.category === category).map((e) => e.name || e.slug || e.domain).filter(Boolean);
           if (slugs.length) {
             appendPara(
-              container, `Excluding ${slugs.length} ${EXCLUSION_CATEGORY_LABELS[category].toLowerCase()}${slugs.length === 1 ? "" : "s"}: `,
+              container, `${LIST_LABELS[category]} excluded (${slugs.length}): `,
               { strong: slugs.join(", ") }, "."
             );
           }
@@ -1607,6 +1598,15 @@ function renderSummaryInto(step, container) {
       } else {
         appendPara(container, "No companies to exclude.");
       }
+      break;
+    }
+    case "relationships": {
+      const rels = companyExclusions.filter((e) => RELATIONSHIP_CATEGORIES.includes(e.category));
+      for (const category of RELATIONSHIP_CATEGORIES) {
+        const names = rels.filter((e) => e.category === category).map((e) => e.name || e.slug || e.domain).filter(Boolean);
+        if (names.length) appendPara(container, `${LIST_LABELS[category]} (${names.length}, kept as accounts): `, { strong: names.join(", ") }, ".");
+      }
+      if (!rels.length) appendPara(container, "No customers or partners named.");
       break;
     }
     case "initiative-stages": {
@@ -2024,24 +2024,6 @@ function parseAliasLines(rawValue) {
   return aliases;
 }
 
-function renderExclusionParsedList(inputId, listId) {
-  const listEl = el(listId);
-  listEl.innerHTML = "";
-  for (const e of exclusionBoxEntries(inputId)) {
-    const row = document.createElement("div");
-    row.className = e.bad ? "competitor-line-bad" : "competitor-line-ok";
-    if (e.bad) row.textContent = `✗ "${e.raw}" - a LinkedIn link must be a company page (linkedin.com/company/...)`;
-    else if (e.slug) row.textContent = `✓ ${e.name ? `${e.name} - ` : ""}LinkedIn page ${e.slug}`;
-    else if (e.domain) row.textContent = `✓ ${e.name ? `${e.name} - ` : ""}website ${e.domain}`;
-    else row.textContent = `✓ ${e.name} (matched by name; add its LinkedIn page for a surer match)`;
-    listEl.appendChild(row);
-  }
-}
-
-for (const { inputId, listId } of EXCLUSION_CATEGORY_INPUTS) {
-  el(inputId).addEventListener("input", () => renderExclusionParsedList(inputId, listId));
-}
-
 // ---------------------------------------------------------------------
 // Step 12: Company aliases - live per-line parse feedback, same idea as
 // the Exclusions step above but each line is a pair, not a single slug.
@@ -2137,13 +2119,13 @@ el("finish-btn").addEventListener("click", async () => {
   for (const box of el("finish-findings-rules").querySelectorAll("input[data-setting]")) findings[box.dataset.setting] = box.checked;
   await saveWebFindingsArbitration(findings);
   await setPipelineAutomationEnabled(el("finish-automation-checkbox").checked, "Setup wizard");
-  // W4: web research only with automatic preparation on, since it runs inside it.
-  const webOn = el("finish-automation-checkbox").checked && el("finish-web-checkbox").checked;
+  // 1.2.2.39 (Boaz): the two switches are independent - web research runs with or without the LinkedIn work.
+  const webOn = el("finish-web-checkbox").checked;
   await setWebResearchAutomation({ enabled: webOn, monthlyUsd: webOn ? Math.max(0, Number(el("finish-web-budget").value) || 0) : undefined }, "Setup wizard");
   await markOnboardingCompleted();
   // Design 3.11 (R3.4.1): Finish starts building the list - Web Discovery, then the web lane; the LinkedIn lane is
   // kicked. The background does it; the wizard never visits LinkedIn.
-  if (el("finish-automation-checkbox").checked) chrome.runtime.sendMessage({ type: "ONBOARDING_BUILD_START" }).catch(() => {});
+  if (el("finish-automation-checkbox").checked || webOn) chrome.runtime.sendMessage({ type: "ONBOARDING_BUILD_START" }).catch(() => {});
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
   setupJustFinished = true;
@@ -2165,7 +2147,7 @@ const checklists = {};
 let researchController = null;
 let researchSkipRequested = false;
 
-const RESEARCHED_STEPS_TEXT = "Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude";
+const RESEARCHED_STEPS_TEXT = "Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts, Companies to exclude and Customers and partners";
 const RESEARCH_AGAIN_COST_TEXT = "about US$0.10";
 
 const usd = (n) => `US$${(Number(n) || 0).toFixed(2)}`;
@@ -2227,54 +2209,6 @@ el("about-research-btn").addEventListener("click", async () => {
   el("about-api-key-wrap").hidden = true;
   await runSellerResearch();
 });
-
-// 1.2.1 step 7 (design 3.12, R4.6): the once-only offer, also at the top of Change Settings - this page covers the
-// Settings cards that carry the same box (1.2.0.36 showed it only there, so it went unseen). Same rule as settings.js:
-// a finished setup whose research never ran, and not declined.
-function renderSettingsResearchOffer() {
-  let box = el("settings-research-offer");
-  // Not for a team member (D3): the research proposes changes to the shared setup, which is the Team Admin's.
-  const show = completedBefore && setupResearch.status === "none" && !setupResearch.declinedInSettings && !teamMemberReadOnly;
-  if (!show) {
-    if (box) box.hidden = true;
-    return;
-  }
-  if (!box) {
-    box = document.createElement("div");
-    box.id = "settings-research-offer";
-    box.className = "wizard-note settings-research-offer";
-    const text = document.createElement("p");
-    text.innerHTML = "<strong>New:</strong> ";
-    text.append("SalesTeam can research your company's website and propose improvements to the setup " +
-      `(about ${usd(SELLER_RESEARCH_ESTIMATE_USD)}). The proposals are shown next to the current settings; nothing ` +
-      "changes unless you take one.");
-    const yes = document.createElement("button");
-    yes.type = "button";
-    yes.textContent = "Research";
-    yes.addEventListener("click", () => {
-      box.hidden = true;
-      showStep(STEP_ORDER.indexOf("about"));
-      el("about-research-btn").click();
-    });
-    const no = document.createElement("button");
-    no.type = "button";
-    no.textContent = "No thanks";
-    no.addEventListener("click", async () => {
-      box.hidden = true;
-      setupResearch = { ...setupResearch, declinedInSettings: Date.now() };
-      await saveSetupResearch(setupResearch);
-      try {
-        await appendActivityLog({ actor: "user", action: "setup_research", label: "Declined the setup research offered in Settings" });
-      } catch { /* the log is informational */ }
-    });
-    const row = document.createElement("div");
-    row.className = "settings-research-offer-buttons";
-    row.append(yes, no);
-    box.append(text, row);
-    el("wizard-nav-bar").after(box);
-  }
-  box.hidden = false;
-}
 
 // ---- The progress screen (design 3.6) ----
 
@@ -2384,8 +2318,9 @@ async function logSetupResearch(label) {
 // 1.2.0.53/.54 (Boaz: 7, then 5, then 4 offers; many competitors, then 1): what a run kept, so a change can be explained.
 function offersMeasure(proposals) {
   const p = proposals?.["value-add-offers"];
-  const x = proposals?.exclusions;
-  const count = (cat) => (x?.items || []).filter((e) => e.category === cat).length;
+  const x = proposals?.exclusions || proposals?.relationships;
+  const items = [...(proposals?.exclusions?.items || []), ...(proposals?.relationships?.items || [])];
+  const count = (cat) => items.filter((e) => e.category === cat).length;
   return (p ? `; offers: ${p.items?.length || 0} kept${p.dropped ? `, ${p.dropped} left out (no page on the website)` : ""}` : "") +
     (x ? `; exclusions: ${count("competitor")} competitors, ${count("customer")} customers, ${count("partner")} partners` : "");
 }
@@ -2609,6 +2544,10 @@ function proposalNotes(step, p) {
         "not searched, and a post from it that a keyword scan finds is marked Irrelevant.");
       if (p.items?.length) notes.push("Matched by name and website - no LinkedIn page is needed for these.");
       break;
+    case "relationships":
+      notes.push("A customer or partner stays a normal account - fully researched, its contacts found and its leads kept. " +
+        "A customer's priority is raised one level, and the AI is told it is not a cold prospect.");
+      break;
   }
   return notes;
 }
@@ -2675,23 +2614,30 @@ function mountStepChecklists(step, p, accepted) {
         })
         : null,
     };
-  } else if (step === "exclusions") {
+  } else if (step === "exclusions" || step === "relationships") {
     const keys = p.items.map(exclusionKey);
     const t = ticks(keys, companyExclusions.filter((e) => e.name).map(exclusionKey));
-    checklists[step] = mountChecklist(el("exclusions-checklist"),
+    const rel = step === "relationships";
+    checklists[step] = mountChecklist(el(`${step}-checklist`),
       p.items.map((item, i) => ({
         text: item.name, checked: t[i], sourceUrl: item.sourceUrl, meta: item,
-        label: `${EXCLUSION_CATEGORY_LABELS[item.category] || item.category}${item.domain ? ` · ${item.domain}` : ""}`,
+        label: `${CHECKLIST_LABELS[item.category] || item.category}${item.domain ? ` · ${item.domain}` : ""}`,
       })),
-      { title: "Found by the research - tick the ones to exclude (they appear in the boxes below)", addPlaceholder: "Add a company by name (excluded as Other)", onChange: syncExclusionTicks });
-    syncExclusionTicks();
+      {
+        title: rel
+          ? "Found by the research - tick your customers and partners (they appear in the tables below)"
+          : "Found by the research - tick the competitors to exclude (they appear in the table below)",
+        addPlaceholder: rel ? "Add a company by name (as a Customer)" : "Add a company by name (excluded as Other)",
+        onChange: () => syncProposalTicks(step),
+      });
+    syncProposalTicks(step);
   }
 }
 
 function renderProposalForStep(step) {
   const slot = el(`proposal-${step}`);
   if (!slot) return;
-  let p = setupResearch.proposals?.[step];
+  let p = stepProposal(step);
   // About you shows a proposal only when it would change something: the website's language.
   if (step === "about" && !(p && p.found && p.outputLanguage !== el("about-language-select").value)) p = undefined;
   const accepted = !!setupResearch.accepted?.[step];
@@ -2722,6 +2668,18 @@ function renderProposalForStep(step) {
     onResearchAgain: step === "about" ? null : (hint) => researchStepAgain(step, hint),
     againCostText: RESEARCH_AGAIN_COST_TEXT,
   });
+}
+
+// 1.2.3: competitors are proposed on "Companies to exclude", customers and partners on their own step. A research
+// stored before 1.2.3 has them all in one "exclusions" proposal - split here.
+function stepProposal(step) {
+  const all = setupResearch.proposals || {};
+  if ((step !== "exclusions" && step !== "relationships") || all.relationships) return all[step];
+  const x = all.exclusions;
+  if (!x) return undefined;
+  const cats = step === "exclusions" ? ["competitor"] : RELATIONSHIP_CATEGORIES;
+  const items = (x.items || []).filter((e) => cats.includes(e.category));
+  return { ...x, items, sources: [...new Set(items.map((e) => e.sourceUrl).filter(Boolean))], found: items.length > 0 };
 }
 
 // R4.4: re-runs only this step's part of the research, with the user's hint. The step's proposal is replaced; on a
@@ -2874,9 +2832,7 @@ async function init() {
   el("finish-web-checkbox").checked = automation.webEnabled;
   el("finish-web-budget").value = String(automation.webMonthlyUsd > 0 ? automation.webMonthlyUsd : DEFAULT_WEB_BUDGET_USD);
   const syncWebBox = () => {
-    const on = el("finish-automation-checkbox").checked;
-    el("finish-web-checkbox").disabled = !on;
-    el("finish-web-budget").disabled = !on || !el("finish-web-checkbox").checked;
+    el("finish-web-budget").disabled = !el("finish-web-checkbox").checked;
   };
   el("finish-automation-checkbox").addEventListener("change", syncWebBox);
   el("finish-web-checkbox").addEventListener("change", syncWebBox);
@@ -2899,7 +2855,10 @@ async function init() {
   // Recruiter defaults (well-known global agencies) are seeded once, inside
   // getCompanyExclusions itself (storage.js's migrateLegacyExclusionListsIfNeeded) -
   // this step just reads back whatever that returns, same as every other field.
-  companyExclusions = await getCompanyExclusions();
+  {
+    const split = splitCompanyLists(await getCompanyExclusions(), await getCompanyRelationships());
+    companyExclusions = [...split.exclusions, ...split.relationships];
+  }
   organizationTypeEligibility = await getOrganizationTypeEligibility();
   keywordSearchLanguages = await getKeywordSearchLanguages();
 
@@ -3015,10 +2974,7 @@ async function init() {
   el("contacts-title-keywords-input").value = targetContactProfile.titleKeywords.join("\n");
   el("contacts-max-per-account-input").value = targetContactProfile.maxContactsPerAccount ?? 10;
   renderSeniorityLevelPriorityRows(targetContactProfile.seniorityLevels || []);
-  for (const { category, inputId, listId } of EXCLUSION_CATEGORY_INPUTS) {
-    el(inputId).value = companyExclusions.filter((e) => e.category === category).map(formatExclusionLine).filter(Boolean).join("\n");
-    renderExclusionParsedList(inputId, listId);
-  }
+  renderCompanyTables();
   companyAliases = await getCompanyAliases();
   el("aliases-input").value = companyAliases
     .map((a) => `https://www.linkedin.com/company/${a.aliasSlug}/ -> https://www.linkedin.com/company/${a.canonicalSlug}/`)
@@ -3046,15 +3002,17 @@ async function init() {
   if (settingsMode) {
     await mountAdvancedSteps({ onDirty: markStepDirty });
     document.body.classList.add("settings-mode");
-    el("page-title-text").textContent = "Change Settings";
-    el("page-subtitle-setup").hidden = true;
-    el("page-subtitle-change").hidden = false;
-    el("linkedin-use-note").hidden = true; // the note belongs to the first-time setup, not to Change Settings
-    el("change-back-to-menu-link").hidden = false;
     const askedStep = new URLSearchParams(location.search).get("step");
+    // Boaz (1.2.2.8 test): the heading names the page - Revenue & Currency and the research-findings rules are Advanced
+    // tools pages - and nothing generic sits under it. The seller-research offer lives on Settings > Automation only.
+    const advanced = { revenue: "Revenue & Currency", findings: "How to handle research findings" }[askedStep];
+    el("page-title-text").textContent = advanced ? `Advanced tools → ${advanced}` : "SalesTeam Settings → Change Settings";
+    el("page-subtitle-setup").hidden = true;
+    el("page-subtitle-change").hidden = Boolean(advanced);
+    el("linkedin-use-note").hidden = true; // the note belongs to the first-time setup, not to Change Settings
+    el("change-back-to-menu-link").hidden = Boolean(advanced);
     if (askedStep && STEP_TITLES[askedStep]) showStep(STEP_ORDER.indexOf(askedStep));
     else showSettingsHome();
-    renderSettingsResearchOffer();
     // Settings' once-only offer (design 3.12): About you opens with the research started. The button's own checks
     // apply - with no company website or API key it says what is missing instead.
     if (askedStep === "about" && new URLSearchParams(location.search).get("research") === "1") el("about-research-btn").click();
@@ -3073,20 +3031,19 @@ async function init() {
 
 // The page stays hidden until init() has chosen what to show, so the default first step never flashes on screen
 // (reported 2026-09-21: Change Settings briefly showed a setup step before its own list).
-// Team use 1.2.2 step 5 (D3): the setup is shared with the whole team and changed by the Team Admin only. A member
+// Team use 1.2.2 step 5 (D3): the setup is shared with the whole team and changed by the Team Lead only. A member
 // sees it read-only; only their own name, API key and language (About you) stay editable.
 async function applyTeamMemberReadOnly() {
-  const membership = (await chrome.storage.local.get("teamMembership")).teamMembership;
-  if (!membership || membership.role === "admin") return;
+  const got = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const membership = got.teamMembership;
+  if (!membership || leadRightsOf(membership, got.teamAccountStates)) return;
   teamMemberReadOnly = true;
   document.body.classList.add("team-member-readonly");
-  const offer = document.getElementById("settings-research-offer");
-  if (offer) offer.hidden = true;
   const save = document.getElementById("nav-save-btn");
-  if (save && STEP_ORDER[currentStepIndex] !== "about") { save.disabled = true; save.title = "Only the Team Admin can change this setting"; }
+  if (save && STEP_ORDER[currentStepIndex] !== "about") { save.disabled = true; save.title = "Only the Team Lead can change this setting"; }
   const note = document.getElementById("team-member-setup-note");
   note.textContent = `You are a member of the team "${membership.teamName}". This setup is shared with the whole team and only the ` +
-    "Team Admin can change it - you can look at every step here, but changes are not possible. Your own name, Anthropic API key and " +
+    "Team Lead can change it - you can look at every step here, but changes are not possible. Your own name, Anthropic API key and " +
     "language (About you) are yours to change.";
   note.hidden = false;
   // Pointer clicks are off by CSS; this catches the keyboard.
@@ -3104,6 +3061,8 @@ async function applyTeamMemberReadOnly() {
     const e = document.getElementById(id);
     if (e) e.classList.add("team-member-own");
   }
+  // 1.2.3 (R4.7): the company tables may already be drawn - again, without + Add and ⋮.
+  renderCompanyTables();
 }
 
 applyTeamMemberReadOnly().catch(() => {});

@@ -13,7 +13,6 @@
        <dialog>/showModal() pattern, explicitly-labeled buttons instead. -->
   <dialog id="merge-discovered-dialog">
     <h3>Add Discovery results to your Target Accounts?</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
     <p>
       This adds the companies/contacts below to your Target Accounts list - click a company to check it on
       LinkedIn first if you want. A company already on your list won't be duplicated; it's just left as is.
@@ -46,17 +45,14 @@
   </dialog>
 
   <dialog id="web-lane-dialog">
-    <h3>Research accounts on the web (new)</h3>
+    <!-- Boaz (1.2.2.8 test): "Advanced tools → <tool>", and only what this tool does - no version history. -->
+    <h3>Advanced tools → Research accounts on the web</h3>
     <p>
-      The new web research of SalesTeam 1.2.1. Each account is asked <strong>only for what it still lacks</strong>: HQ,
-      employees, industry (if your setup weighs it), initiatives, named senior people and a short summary. It reads the
-      company's own pages and reports first and searches only for the rest. People it finds are added as contacts, with
-      their LinkedIn profile when a web search lists one - no LinkedIn page is visited.
+      Fills in what each account still lacks - HQ, employees, industry, initiatives, senior people and a short summary -
+      from the company's own pages and web searches. People found are added as contacts; no LinkedIn page is visited.
     </p>
-    <p>
-      Publicly traded companies go first, then by priority. It runs in the background, beside the automatic LinkedIn work,
-      and costs money on your own Anthropic API key. When it finishes, it reports the cost and time per account.
-    </p>
+    <p>Listed companies go first, then by priority. It costs money on your Anthropic API key; the report at the end shows
+      the cost per account.</p>
     <p id="web-lane-candidates" class="page-subtitle"></p>
     <p><label>Accounts to research: <input type="number" id="web-lane-limit" min="1" max="500" value="20" style="width:5em"></label></p>
     <p><label>Stop when the cost reaches US$ <input type="number" id="web-lane-budget" min="0" step="0.5" value="5" style="width:5em"></label></p>
@@ -73,23 +69,14 @@
   </dialog>
 
   <dialog id="web-discovery-dialog">
-    <h3>Find new accounts (new)</h3>
+    <h3>Advanced tools → Find new accounts</h3>
     <p>
-      The new account discovery of SalesTeam 1.2.1, using the countries, sizes and industries of your Setup wizard.
-      It looks for <strong>listing pages on the web</strong> (rankings, directories, industry lists), reads them, and adds
-      the best companies as accounts marked <strong>Web</strong>. Companies you already have, removed or excluded are left
-      out. The automatic LinkedIn work then looks each new account up on LinkedIn.
+      Finds companies that match your Setup (countries, sizes, industries) on web listing pages and adds them as accounts
+      marked <strong>Web</strong>. Companies you already have, removed or excluded are skipped.
     </p>
-    <p>
-      <strong>Optional - LinkedIn:</strong> tick the box below to also search LinkedIn for about a fifth of the target. LinkedIn's
-      free company search mostly finds <strong>local branches of international groups</strong> (e.g. "... Switzerland"),
-      which listing pages tend to miss. It runs in a small separate window, counts against your daily LinkedIn limit,
-      and the automatic LinkedIn work steps aside meanwhile.
-    </p>
-    <p>
-      The web search costs money on your own Anthropic API key. When it finishes, it reports what was found and what it
-      cost. Stop adds nothing from the web; the cost limit adds what was found by then.
-    </p>
+    <p><strong>LinkedIn (optional):</strong> also searches LinkedIn for local branches of international groups, which
+      listings tend to miss. It counts against your daily LinkedIn limit.</p>
+    <p>It costs money on your Anthropic API key. Stop adds nothing; reaching the cost limit adds what was found by then.</p>
     <p id="web-discovery-setup" class="page-subtitle"></p>
     <p><label>New accounts to find: <input type="number" id="web-discovery-target" min="1" max="300" value="10" style="width:5em"></label>
       <span class="page-subtitle">(it looks for 15% more, since some will lack evidence)</span></p>
@@ -110,13 +97,11 @@
   </dialog>
 
   <dialog id="find-duplicates-dialog">
-    <h3>Find &amp; Merge Duplicates</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
+    <h3>Advanced tools → Find &amp; Merge Duplicates</h3>
     <p id="find-duplicates-intro">
-      The same company sometimes appears twice - for example once from your research file and once from LinkedIn
-      Discovery. Each proposal below lists accounts that look like the same company (same name or same LinkedIn
-      page). Pick the one to keep and press Merge - its contacts, initiatives, sources and Post leads move over. If
-      they are really different companies, press Keep separate and they will not be proposed again.
+      Accounts that look like the same company (same name or same LinkedIn page). Pick the one to keep and press Merge -
+      its contacts, initiatives, sources and leads move over. Different companies: press Keep separate and they are not
+      proposed again.
     </p>
     <div id="find-duplicates-list"></div>
     <p id="find-duplicates-status" class="page-subtitle" role="status"></p>
@@ -124,6 +109,24 @@
     <div class="merge-discovered-dialog-actions">
       <button type="button" id="find-duplicates-merge-all-btn">Merge all</button>
       <button type="button" id="find-duplicates-close-btn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="relationship-dialog">
+    <h3>Relationship</h3>
+    <p>
+      <strong id="relationship-dialog-name"></strong> stays a normal account either way - fully researched, its
+      contacts found and its leads kept. A customer's priority is raised one level.
+    </p>
+    <fieldset class="merge-accounts-keep">
+      <legend>This company is:</legend>
+      <label><input type="checkbox" id="relationship-dialog-customer" /> An existing customer</label>
+      <label><input type="checkbox" id="relationship-dialog-partner" /> A partner / reseller</label>
+    </fieldset>
+    <p class="field-hint">Saved on the Customers and partners lists in Setup.</p>
+    <div class="dialog-actions">
+      <button type="button" id="relationship-dialog-cancel-btn">Cancel</button>
+      <button type="button" id="relationship-dialog-save-btn">Save</button>
     </div>
   </dialog>
 
@@ -188,20 +191,18 @@
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <a href="#" id="tab-accounts" class="nav-item active">Target Accounts</a>
-        <button id="import-target-accounts-page-btn" type="button" class="nav-item" title="Load the research workbook (.xlsx) made with the SalesTeam research prompt, or filled in from the template. Replaces the accounts, contacts and initiatives currently loaded.">Import Research Workbook…</button>
-        <button id="restore-target-accounts-page-btn" type="button" class="nav-item" title="Bring back accounts, contacts and initiatives from a SalesTeam backup file (.zip, or an older .json). You choose what to restore.">Restore Accounts &amp; Contacts from Backup…</button>
+        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="export-page-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
         <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
-        <button id="export-accounts-csv-page-btn" type="button" class="nav-item" title="Save the accounts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Accounts (CSV)</button>
-        <button id="hubspot-export-page-btn" type="button" class="nav-item" title="Save your companies and contacts as files HubSpot can import">Export to HubSpot…</button>
-        <button id="hubspot-import-page-btn" type="button" class="nav-item" title="Add companies and contacts from a HubSpot export file">Import from HubSpot…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
       </details>
 
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
-        <button id="export-contacts-csv-page-btn" type="button" class="nav-item" title="Save the contacts the table shows (search and filters applied) as a spreadsheet file, with every column">Export Contacts (CSV)</button>
+        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="export-contacts-page-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
       </details>
 
       <details class="nav-group">
@@ -277,8 +278,8 @@
         </div>
         <button id="nav-discover-contacts-btn" type="button" class="nav-item" title="Look up contacts at each existing Target Account company via its own LinkedIn People tab">Discover Contacts for Existing Companies…</button>
         <button id="nav-run-pipeline-btn" type="button" class="nav-item" title="Data pipeline (1.2, manual start): work through the accounts that most need it - re-check LinkedIn, read sizes, find known contacts' profiles, discover contacts">Run pipeline now…</button>
-        <button id="nav-web-lane-btn" type="button" class="nav-item" title="1.2.1 test: research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web (new)…</button>
-        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="1.2.1 test: find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts (new)…</button>
+        <button id="nav-web-lane-btn" type="button" class="nav-item" title="Research accounts on the web, asking each only for what it still lacks (reads the company's own pages, finds named people and their LinkedIn links from search results)">Research accounts on the web…</button>
+        <button id="nav-web-discovery-btn" type="button" class="nav-item" title="Find new target accounts that match your Setup wizard answers - listing pages on the web, optionally also LinkedIn for local branches of international groups">Find new accounts…</button>
         <button id="nav-find-duplicates-btn" type="button" class="nav-item" title="List accounts that look like the same company (same name or LinkedIn page) and merge them">Find &amp; Merge Duplicates…</button>
         <button id="nav-apply-location-filter-btn" type="button" class="nav-item" title="Re-check every existing lead against the Location Filter configured in the Setup wizard's Location step, right now, without a new scan">Apply Location Filter</button>
         <button id="nav-resolve-btn" type="button" class="nav-item" title="Experimental: look up each Target Account company by name on LinkedIn to resolve its numeric company ID">Resolve LinkedIn Company IDs…</button>
@@ -327,8 +328,8 @@
       <div id="list-view">
       <p id="empty-state" class="empty-state" hidden>
         No Target Accounts data imported yet.
-        <button id="empty-import-btn" type="button">Import Research Workbook…</button>
-        Choose your research workbook (.xlsx), or a Target Accounts backup you exported earlier.
+        <button id="empty-import-btn" type="button">Import…</button>
+        Choose your research workbook (.xlsx), a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export.
       </p>
 
       <section id="accounts-stats-section" hidden>
@@ -367,6 +368,9 @@
         <input id="search-input" type="text" placeholder="Search company or industry…" />
         <!-- 1.2.2 step 5 (R6.3): which accounts are shown - in one place (Boaz). The owner filter only in a team; a
              later step may turn it into a queue picker (account groups the admin assigns). -->
+        <!-- 1.2.3 step 2 (design 7): one account group at a time - only with groups, only the member's own groups. -->
+        <select id="team-group-picker" class="team-group-picker" title="Show one account group at a time" hidden></select>
+        <select id="team-owner-picker" class="team-group-picker" title="Show accounts by who they are assigned to" hidden></select>
         <span id="team-owner-filter" class="team-owner-filter" hidden>
           <button type="button" data-owner="mine" title="Accounts assigned to you">Mine</button>
           <button type="button" data-owner="others" title="Accounts assigned to a colleague">Others</button>
@@ -385,6 +389,9 @@
         <button id="accounts-bulk-edit-btn" type="button">Bulk edit…</button>
         <button id="accounts-bulk-assign-btn" type="button" hidden>Assign to me</button>
         <button id="accounts-bulk-release-btn" type="button" hidden>Release</button>
+        <button id="accounts-bulk-assign-to-btn" type="button" hidden title="Team Lead: assign the selected accounts to a member">Assign to…</button>
+        <button id="accounts-bulk-group-add-btn" type="button" hidden title="Team Lead: put the selected accounts on a named-accounts group">Add to group…</button>
+        <button id="accounts-bulk-group-remove-btn" type="button" hidden title="Team Lead: take the selected accounts off a named-accounts group">Remove from group…</button>
         <button id="accounts-bulk-extend" type="button" class="text-link-btn" hidden></button>
         <button id="accounts-bulk-clear-btn" type="button" class="text-link-btn">Clear selection</button>
       </div>
@@ -406,8 +413,8 @@
 
     <div id="contacts-list-view" hidden>
       <p id="contacts-empty-state" class="empty-state" hidden>
-        No Target Contacts imported yet - the Contacts sheet of the same workbook (Import Research Workbook
-        above) is currently empty.
+        No Target Contacts imported yet - the Contacts sheet of the same workbook (Import… on Target Accounts)
+        is currently empty.
       </p>
 
       <section id="contacts-stats-section" hidden>
@@ -419,6 +426,8 @@
 
       <div id="contacts-explorer-controls" hidden>
         <input id="contacts-search-input" type="text" placeholder="Search name, company, or title…" />
+        <select id="contacts-team-group-picker" class="team-group-picker" title="Show one account group at a time" hidden></select>
+        <select id="contacts-team-owner-picker" class="team-group-picker" title="Show accounts by who they are assigned to" hidden></select>
         <button id="contacts-columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="contacts-result-count"></span>
       </div>
@@ -447,10 +456,19 @@
       <div id="contacts-pagination-bottom" class="pagination-bar" hidden></div>
     </div>
 
+    <!-- 1.2.3 step 2: an account or contact opened by link that is in none of the member's groups - nothing else is shown. -->
+    <div id="no-access-view" hidden>
+      <a href="#" id="no-access-back-link">&larr; Back to Target Accounts</a>
+      <p id="no-access-text">This account is not in your groups.</p>
+    </div>
+
     <div id="account-view" hidden>
       <a href="#" id="account-back-link">&larr; Back to Target Accounts</a>
       <div id="account-title-row">
         <h2 id="account-title"></h2>
+        <span id="account-relationship-tag" class="relationship-tag" hidden></span>
+        <!-- 1.2.3 step 3 (R6.3): the account's groups, "EMEA · VIP". -->
+        <span id="account-groups-tag" class="team-groups-tag" title="The account groups this account is in" hidden></span>
         <button id="account-actions-btn" class="kebab-btn" type="button" title="Actions">&#8942;</button>
       </div>
       <div id="account-overview" class="entity-overview"></div>
@@ -584,7 +602,7 @@
        trigger buttons above; each still uses the exact same "Run"/limit-
        input/checkbox/status/Stop-button ids target-accounts.js already
        wires, just relocated here instead of an always-visible header row. -->
-  <!-- Opened from any page's menu (Import Research Workbook…) via #action=import-accounts. The file picker only opens from
+  <!-- Opened from any page's menu (Import…) via #action=import. The file picker only opens from
        a real click, so the dialog has its own button rather than trying to open the picker on arrival. -->
   <!-- Bulk edit (2026-09-22). One dialog for both tables - the Priority row is hidden for contacts,
        where priority is a company-level field. Every field defaults to "leave unchanged", so an
@@ -766,72 +784,100 @@
     </div>
   </dialog>
 
-  <dialog id="hubspot-export-dialog" class="action-dialog">
-    <h3>Export to HubSpot</h3>
-    <p class="page-subtitle">
-      Saves two files you can import into HubSpot (Contacts &rarr; Import): one for <strong>companies</strong> and one for
-      <strong>contacts</strong>. Import the companies file first, then the contacts file - HubSpot links each contact to its
-      company by name. The columns use HubSpot's own names, so HubSpot maps most of them for you; the "SalesTeam ..."
-      columns (priority, score, status) can be created as new HubSpot properties in the import's mapping step.
-    </p>
-    <label class="hubspot-field">Which accounts?
-      <select id="hubspot-export-scope">
-        <option value="all">All accounts</option>
-        <option value="P1">Priority P1 only</option>
-        <option value="P2">Priority P1 - P2</option>
-        <option value="P3">Priority P1 - P3</option>
-      </select>
-    </label>
-    <label class="hubspot-field">Export at most this many companies (leave empty for all)
-      <input type="number" id="hubspot-export-max" min="1" step="1" placeholder="all" style="width: 110px" />
-    </label>
-    <p id="hubspot-export-summary" class="page-subtitle" role="status"></p>
-    <p class="page-subtitle">Note: HubSpot's Industry field only accepts its own list of values; if your industry text is not recognized, skip that column in the mapping step.</p>
+  <!-- 1.2.3 Export & Import step 2 (EXPORT_IMPORT_DESIGN.md 7.1): one Export… for every format - it replaces
+       Export Accounts (CSV), Export Contacts (CSV) and Export to HubSpot…. Which rows: asked only when the table has a
+       search or a filter on (exportTableCsv's question). -->
+  <dialog id="export-dialog" class="action-dialog">
+    <h3>Export</h3>
+    <fieldset class="io-choice">
+      <legend>Format</legend>
+      <label><input type="radio" name="export-format" value="csv" checked /> CSV - SalesTeam's own columns (opens in Excel)</label>
+      <label><input type="radio" name="export-format" value="hubspot" /> HubSpot - files HubSpot can import</label>
+      <label><input type="radio" name="export-format" value="salesforce" /> Salesforce - files Salesforce's Data Import Wizard can import</label>
+      <label><input type="radio" name="export-format" value="dynamics" /> Microsoft Dynamics - files Dynamics 365 Sales can import</label>
+    </fieldset>
+    <fieldset class="io-choice">
+      <legend>Accounts or contacts?</legend>
+      <label><input type="radio" name="export-what" value="accounts" checked /> Accounts</label>
+      <label><input type="radio" name="export-what" value="contacts" /> Contacts</label>
+      <label><input type="radio" name="export-what" value="both" /> Both - accounts and their contacts, two files</label>
+    </fieldset>
+    <fieldset class="io-choice">
+      <legend>Save to</legend>
+      <div class="export-folder-row">
+        <input type="text" id="export-folder-name" readonly placeholder="No folder chosen yet - files go to Downloads" title="Chrome shows SalesTeam only the folder's name, not its full path. Choose folder… opens in this same folder." />
+        <button id="export-folder-btn" type="button" title="Choose the folder exports are saved in - remembered for next time">Choose folder…</button>
+      </div>
+      <p class="export-folder-hint">Chrome shows only the folder's name. Choose folder… opens in that folder, so you can see where it is.</p>
+    </fieldset>
+    <p id="export-note" class="page-subtitle"></p>
     <div class="action-dialog-actions">
-      <button id="hubspot-export-btn" type="button">Save the two files</button>
+      <button id="export-go-btn" type="button">Export</button>
       <button type="button" class="action-dialog-close-btn">Close</button>
     </div>
   </dialog>
 
-  <dialog id="hubspot-import-dialog" class="action-dialog">
-    <h3>Import from HubSpot</h3>
-    <p class="page-subtitle">
-      In HubSpot, export your <strong>companies</strong> and/or your <strong>contacts</strong> as a CSV file (Contacts or
-      Companies &rarr; Export), then choose the file here - one file at a time; do the companies first. SalesTeam
-      <strong>only adds</strong> what it does not have yet: companies are matched by name, contacts by name and company.
-      Nothing you already have is changed or removed.
-    </p>
+  <!-- 1.2.3 one currency (D15 case 3): asked after the file is read, only when its revenue names no currency - no
+       pre-selected answer, Continue disabled until one is chosen. -->
+  <dialog id="import-currency-dialog" class="action-dialog">
+    <h3 id="import-currency-title">Import</h3>
+    <p id="import-currency-file" class="page-subtitle"></p>
+    <p>This file has revenue figures but does not say in which currency.</p>
+    <label class="hubspot-field">Revenue in this file is in
+      <select id="import-currency"></select>
+    </label>
+    <p id="import-currency-warning" class="warning-banner" role="alert" hidden></p>
     <div class="action-dialog-actions">
-      <button id="hubspot-import-choose-btn" type="button">Choose HubSpot CSV file…</button>
-      <button type="button" class="action-dialog-close-btn">Close</button>
+      <button id="import-currency-go-btn" type="button" disabled>Continue</button>
+      <button id="import-currency-cancel-btn" type="button">Cancel</button>
     </div>
-    <input type="file" id="hubspot-import-file-input" accept=".csv,text/csv" hidden />
-    <p id="hubspot-import-status" class="page-subtitle" role="status" hidden></p>
   </dialog>
 
-  <dialog id="import-accounts-dialog" class="action-dialog">
-    <h3>Import Research Workbook</h3>
+  <!-- 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format - it replaces Import Research Workbook…
+       and Import from HubSpot…. Team Lead (or no team) only. Every format goes through the same check-first summary,
+       safety copy and add-and-fill import. -->
+  <dialog id="import-dialog" class="action-dialog">
+    <h3>Import</h3>
+    <fieldset class="io-choice">
+      <legend>File type</legend>
+      <label><input type="radio" name="import-format" value="salesteam" checked /> SalesTeam CSV - a file exported with Export…</label>
+      <label><input type="radio" name="import-format" value="hubspot" /> HubSpot export (CSV) - companies or contacts</label>
+      <label><input type="radio" name="import-format" value="salesforce" /> Salesforce export (CSV) - accounts or contacts</label>
+      <label><input type="radio" name="import-format" value="dynamics" /> Microsoft Dynamics export (Excel or CSV) - accounts or contacts</label>
+      <!-- 1.2.2.13 (Boaz): last - the research now runs inside SalesTeam, so a workbook made outside is rarely used. -->
+      <label><input type="radio" name="import-format" value="workbook" /> Research workbook (.xlsx) - research done outside SalesTeam</label>
+    </fieldset>
     <p class="page-subtitle">
-      Load the Excel workbook (.xlsx) that the SalesTeam research prompt produces - in ChatGPT or any other AI
-      assistant - or one you filled in yourself from the template. <strong>Importing replaces</strong> the accounts,
-      contacts and initiatives currently loaded. (To bring back a SalesTeam backup, use "Restore Accounts &amp; Contacts
-      from Backup…" instead.)
+      An import <strong>only adds and fills in</strong>: companies, contacts and initiatives you do not have yet are
+      added, empty fields are filled, and nothing you have is replaced or removed. Where the file and an account
+      disagree by more than 10%, the same rules as for web findings decide; what could change a priority comes to
+      Decisions. You see what it will do before anything is saved.
     </p>
+    <fieldset id="import-what-field" class="io-choice" hidden>
+      <legend>Accounts or contacts?</legend>
+      <label><input type="radio" name="import-what" value="accounts" checked /> Accounts - one file</label>
+      <label><input type="radio" name="import-what" value="contacts" /> Contacts - one file</label>
+      <label><input type="radio" name="import-what" value="both" /> Both - choose the accounts file and the contacts file together</label>
+    </fieldset>
+    <p id="import-format-note" class="page-subtitle"></p>
     <div class="action-dialog-actions">
-      <button id="import-accounts-choose-btn" type="button">Choose workbook…</button>
+      <button id="import-choose-btn" type="button">Choose file…</button>
       <button type="button" class="action-dialog-close-btn">Close</button>
     </div>
-    <h4 class="import-help-heading">Don't have a workbook yet?</h4>
-    <div class="import-help-buttons">
-      <button id="import-copy-prompt-btn" type="button" title="Copy the research prompt to the clipboard, ready to paste into ChatGPT or another AI assistant">Copy research prompt</button>
-      <button id="import-download-prompt-btn" type="button" title="Save the research prompt as a text file">Download research prompt (.txt)</button>
-      <button id="import-download-template-btn" type="button" title="An empty workbook with the right sheets and columns, mandatory ones marked">Download empty Excel template</button>
+    <input type="file" id="import-csv-file-input" accept=".csv,text/csv" hidden />
+    <div id="import-workbook-help">
+      <h4 class="import-help-heading">Don't have a workbook yet?</h4>
+      <div class="import-help-buttons">
+        <button id="import-copy-prompt-btn" type="button" title="Copy the research prompt to the clipboard, ready to paste into ChatGPT or another AI assistant">Copy research prompt</button>
+        <button id="import-download-prompt-btn" type="button" title="Save the research prompt as a text file">Download research prompt (.txt)</button>
+        <button id="import-download-template-btn" type="button" title="An empty workbook with the right sheets and columns, mandatory ones marked">Download empty Excel template</button>
+      </div>
+      <p id="import-help-status" class="page-subtitle" role="status"></p>
+      <details class="import-columns-details">
+        <summary>Which columns are mandatory?</summary>
+        <div id="import-columns-list"></div>
+      </details>
     </div>
-    <p id="import-help-status" class="page-subtitle" role="status"></p>
-    <details class="import-columns-details">
-      <summary>Which columns are mandatory?</summary>
-      <div id="import-columns-list"></div>
-    </details>
   </dialog>
 
   <dialog id="restore-accounts-dialog" class="action-dialog">
@@ -839,8 +885,8 @@
     <p class="page-subtitle">
       Bring back accounts, contacts and initiatives from a SalesTeam backup - the backup zip made by Backup &amp;
       Restore, or an older .json file. You choose what to restore; the parts you tick <strong>replace</strong> what
-      is loaded now, and a safety copy of your current data is saved first. (To load a research workbook, use
-      "Import Research Workbook…" instead.)
+      is loaded now, and a safety copy of your current data is saved first. (To load a research workbook or a CSV
+      file, use "Import…" instead.)
     </p>
     <div class="action-dialog-actions">
       <button id="restore-accounts-choose-btn" type="button">Choose backup file…</button>
@@ -849,12 +895,9 @@
   </dialog>
 
   <dialog id="resolve-dialog" class="action-dialog">
-    <h3>Resolve LinkedIn Company IDs</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
-    <p class="page-subtitle">
-      Look up each Target Account company on LinkedIn to resolve its numeric company ID - the Scanner searches
-      only companies it has an id for.
-    </p>
+    <h3>Advanced tools → Resolve LinkedIn Company IDs</h3>
+    <p class="page-subtitle">Looks each account up on LinkedIn to find its company ID - the Scanner can only search
+      companies that have one.</p>
     <label for="resolve-company-ids-limit-input" id="resolve-company-ids-limit-label">
       Limit to
       <input type="number" id="resolve-company-ids-limit-input" min="1" title="Only resolve this many companies this run - leave blank to resolve everything still missing an ID. Useful for a quick test before committing to a full run." />
@@ -869,12 +912,9 @@
   </dialog>
 
   <dialog id="discover-contacts-dialog" class="action-dialog">
-    <h3>Discover Contacts for Existing Companies</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
-    <p class="page-subtitle">
-      Look up contacts at each existing Target Account company via its own LinkedIn People tab, using the Setup
-      wizard's target-contact profile - only visits a company currently below the contact-count threshold.
-    </p>
+    <h3>Advanced tools → Discover Contacts for Existing Companies</h3>
+    <p class="page-subtitle">Finds contacts on each account's LinkedIn People tab that match your target-contact profile.
+      Only accounts below the contact threshold are visited.</p>
     <label for="discover-contacts-existing-limit-input" id="discover-contacts-existing-limit-label">
       Limit to
       <input type="number" id="discover-contacts-existing-limit-input" min="1" title="Only visit this many companies this run - leave blank to work through every company currently below the contact threshold. Useful for a quick test before committing to a full run." />
@@ -889,13 +929,9 @@
   </dialog>
 
   <dialog id="fetch-size-dialog" class="action-dialog">
-    <h3>Fetch Company Size</h3>
-    <p class="page-subtitle"><strong>The automatic pipeline normally does this for you.</strong> This tool is for support and special cases.</p>
-    <p class="page-subtitle">
-      Visit each company (imported or discovered) currently missing a real employee count on its own LinkedIn
-      page and read it off there - LinkedIn's company-search result cards never show size, only a company's own
-      page does.
-    </p>
+    <h3>Advanced tools → Fetch Company Size</h3>
+    <p class="page-subtitle">Reads the employee count from the company's own LinkedIn page, for each account that has none
+      yet.</p>
     <label for="fetch-company-size-limit-input" id="fetch-company-size-limit-label">
       Limit to
       <input type="number" id="fetch-company-size-limit-input" min="1" title="Only visit this many companies this run - leave blank to work through every company currently missing a size. Useful for a quick test before committing to a full run." />
@@ -910,12 +946,9 @@
   </dialog>
 
   <dialog id="prioritize-companies-dialog" class="action-dialog">
-    <h3>Prioritize Companies</h3>
-    <p class="page-subtitle">
-      Score every eligible company's Priority (P1-P5): imported research is trusted directly when confident,
-      otherwise a free deterministic pre-score (Location/Size/Industry/matched Contacts) runs, optionally
-      refined by an AI Strategic Fit judgment.
-    </p>
+    <h3>Advanced tools → Prioritize Companies</h3>
+    <p class="page-subtitle">Scores each account's priority (P1-P5) from location, size, industry and contacts; research
+      you imported is used where it is confident. AI Strategic Fit can refine the score.</p>
     <label for="prioritize-companies-rescore-checkbox" id="prioritize-companies-rescore-label">
       <input type="checkbox" id="prioritize-companies-rescore-checkbox" />
       Rescore already-scored companies too

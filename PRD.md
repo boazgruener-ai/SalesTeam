@@ -29,7 +29,7 @@ in a system; they don't help *find* them on LinkedIn in the first place.
 ## 3. Non-goals
 
 - Not a full CRM. No pipeline stages beyond a simple status label, no deal value/forecasting, no team
-  features beyond team use - since 1.2.2 a team shares its data through a OneDrive folder it owns (section 6.23); no server, no CRM-style roles beyond Team Admin.
+  features beyond team use - since 1.2.2 a team shares its data through a OneDrive folder it owns (section 6.23); no server, no CRM-style roles beyond Team Lead.
 - Never sends a message on the user's behalf. Drafts are generated for copy-paste only.
 - No timer-driven scanning. Every Posts/Jobs scan is a manual click. Account preparation (1.2.0 pipeline)
   runs by itself only after the user switches it on once, only while Chrome is open, visibly, within the
@@ -226,6 +226,10 @@ copy per page.
   excluded company is filtered, whatever its category: `builtin-other-exclusions` (`sourceList: "others"` -> category
   `other`), on by default and added to existing installs by the same backfill. The wizard's Exclusions step says so:
   an excluded company never shows up in Target Accounts and is never scanned for leads.
+- **Existing Customers and Existing Partners filters retired (1.2.3, 2026-10-07).** Customers and partners are no longer
+  exclusions (6.24): `builtin-customers` / `builtin-partners` left the defaults and are dropped from a stored list on its
+  next read (`RETIRED_NEGATIVE_TOPIC_IDS`); the Scanner's two checkboxes are gone. On update, only the leads whose
+  Irrelevant reason starts "Existing Customers / Partners" are re-judged against the current filters.
 - **The Scanner tile's "Author title contains" filter is now wizard-list-backed too, same day** — its
   free-text textarea was a second, independently-maintained title list duplicating the Setup wizard's own
   Target Contacts profile (`targetContactProfile.exactTitles`/`titleKeywords`, 6.20 — also PRD 6.12's Phase 6
@@ -1984,9 +1988,9 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 - **About you** - a new first step: company, website, language. Research my company (about US$0.30, under a minute, a progress screen with Stop and Skip) reads the seller's website and proposes Location, Size, Industry, What you sell, Things you can offer, Ideal customer, Target contacts and Companies to exclude (setup-proposals.js, pure; proposal-ui.js). On a first setup the proposals are filled in; on an existing setup each is shown beside the current value and taken only with Use proposal.
 - **Research coverage** - the research lists every offer on the resources, downloads or events page and searches for competitors on purpose (8 pages, 4 searches); fewer than five competitors triggers a short competitors-only follow-up (researchMoreCompetitors). The progress screen expects the last measured run, else 40 s. The Activity Log line counts offers kept/left out and competitors, customers and partners.
-- **Offered once to existing installs** - a setup finished without the research sees a one-time offer on the Settings cards and at the top of Change Settings - Research (opens About you with the research started) or No thanks (setupResearch.declinedInSettings). The action stays under Settings > User Profile > Open About you.
+- **Offered once to existing installs** - a setup finished without the research sees a one-time offer on Settings > Automation (since 1.2.2.8 only there) - Research (opens About you with the research started) or No thanks (setupResearch.declinedInSettings). The action stays under Settings > User Profile > Open About you.
 - **New steps** - Initiative stages (ranked, at least one ticked), Companies to include (Name, website - the exclusion list wins), How big is your list (accounts, contacts per account, initiatives per account) with a live cost-and-time estimate from onboarding-estimate.js, measured averages replacing the defaults after 20 accounts. 12 steps in the first Setup since 1.2.0.51: Discovery Prioritization, Leads Prioritization and Company aliases moved to Change Settings > Advanced (defaults apply), and technical detail inside a step sits behind an Advanced settings link. Finish asks how research findings are handled (decide where safe, or ask about every difference - askEveryDifference).
-- **Finish** - with automatic preparation and web research ticked, Finish starts the build: included companies, then Web Discovery from company listings on the web (Source “Web”), then the web lane; LinkedIn is kicked. The wizard itself never visits LinkedIn. The stop rule ends discovery at the list's target.
+- **Finish** - with web research ticked, Finish starts the build: included companies, then Web Discovery from company listings on the web (Source “Web”), then the web lane; LinkedIn is kicked when automatic preparation is ticked too (the two are independent since 1.2.2.39). The wizard itself never visits LinkedIn. The stop rule ends discovery at the list's target.
 - **Leads Prioritization** - the step opens with one general explanation, then Posts (rules you build) and Job ads (two fixed rules) as two parts. The Job ads' 0-100 confidence threshold became a level the user picks (Very High / High / Medium / Low, default High; key jobRulesMinConfidence). An account's level is its workbook rating, else SalesTeam's own Priority (P1 Very High ... P4-P5 Low), so web and LinkedIn accounts count too (accountConfidenceRank, evaluateTargetAccountMatch). The numeric threshold remains only inside company prioritization (hasSufficientImportEvidence).
 
 **Building the accounts**
@@ -2027,6 +2031,113 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 - **Top bar and Settings > Team** - reconnect, not connected, and “Not in sync” after 2 minutes of failed rounds (changes blocked, reading open); members table with role, online, assigned count, Sync now.
 - **Team log** - colleagues' changes with before and after; Activity Log filter Everything / Me / Automatic / Colleagues / Team.
 - **Not in 1.2.2** - advanced mode - admin-defined queues (territory, VIP, global) with members per queue and automatic assignment rules, replacing the Mine / Others filter (TEAM_USE_DESIGN.md section 11); a Microsoft Graph data layer (Option B) with real locks.
+- **Changed in 1.2.3 (test builds 1.2.2.5+)** - Team Admin is now Team Lead: one per team, decided by the team folder, with hand-over (Make Team Lead…), a deputy with the same rights (Make deputy…) and Close the team…. Joining needs an invitation: the Team Lead invites by name and e-mail (at Create or with Add member…), the members table shows Invited rows (⋮ Cancel invitation), an invitation is used once and gives the member's name, and one waiting for this person is announced in the top bar on every page (Join… opens it). Create and Join choose the team's folder itself (Chrome refuses the OneDrive folder when Windows keeps Desktop or Documents in it): Create makes a new folder inside OneDrive in Chrome's folder window, its name filling in the team name; Join chooses the shared team folder and keeps looking in it every 30 s until the invitation is there. A PC that lost its saved team state re-reads every file in the team folder and sends nothing until it has (1.2.2.9). Groups (advanced mode) are in section 6.26.
+
+### 6.24 Exclusions and relationships (v1.2.3)
+
+1.2.3 stops treating existing customers and partners as exclusions. Until 1.2.2 a Customer or Partner entry hid the company everywhere - no research, no contacts, no leads - which is wrong for upselling. Exclusions are now Competitors, Recruiters / staffing agencies and Other only; customers and partners stay normal accounts with a Relationship tag. The requirements (R1-R6, Q1-Q6) are in EXCLUSIONS_RELATIONSHIPS_REQUIREMENTS.md; the design, its decisions (D1-D8) and each step as built in EXCLUSIONS_RELATIONSHIPS_DESIGN.md.
+
+**Data**
+
+- **Two lists** - companyExclusions (competitor, recruiter, other) and the new companyRelationships (customer, partner), same entry shape (category, slug, name, domain, source, sourceUrl) and the same matching (LinkedIn page, normalised name or website domain). A company that is both customer and partner has two entries. Shared in a team (team-keys.js); in full backups and the Decisions watch lists.
+- **Matchers** (pure, company-identity.js) - the exclusion matcher skips customer / partner entries, so none of the ~20 places that hide excluded companies changed; the relationship matcher reads companyRelationships plus any customer / partner entry still left in companyExclusions. relationshipOf gives [], customer, partner or both.
+- **Migration** - splitCompanyLists (pure, relationships.js) moves customer / partner entries to the new list. Idempotent and flag-free; runs on update, after a full restore and after a workbook import; in a team only for the Team Lead (a member's matchers already treat leftovers correctly). Activity Log relationships_migrated and a one-time pop-up that counts the accounts and leads that really come back.
+- **Workbook** - an Exclusion_List row with reason Customer or Partner adds the company to companyRelationships (by slug, name or website), and the workbook's Excluded = Yes is ignored for a company on the relationship lists, so a re-import keeps it visible. Research prompt V1.35 asks for existing customers and partners instead of customers to exclude; validate_workbook.py notes such rows.
+
+**What a relationship changes**
+
+- **Leads** - the Existing Customers / Existing Partners lead filters are retired and the leads they hid come back as New (D8); a customer's lead matches its target account.
+- **Priority** - a customer is raised one level when priority is read, never stored: effectivePriority (pure) turns P2 into P1, P3 into P2, P4 into P3 and P5 into P4 (D3); a manual priority is left as set; a partner only is neutral. accountPriorityFor (storage.js) feeds getAccountViews, so pipeline order, Ready selection, scannable scope and the decision queue follow, plus the Target Accounts column, pie, bulk edit, CSV and HubSpot export (the raised value, D4). The reason gets "Raised one level: existing customer". Removing the tag removes the raise at once.
+- **AI** - one relationship line (relationshipPromptLine) in the account overview (account and contact Sales Mentor, Customer Voice), the lead Sales Mentor, every outreach draft and the general Sales Mentor's lead list: an existing customer or partner, not a cold prospect.
+
+**Screens**
+
+- **Tag** - a purple outline pill (Customer, Partner, Customer · Partner), computed from the matcher, never stored: account page title, contact page Company field, Target Contacts company cell, Leads Dashboard Company column.
+- **Target Accounts** - a Relationship column (shown by default, after Priority) with a new choice filter in its header menu: Any / Customer / Partner / None, with the usual chip, tinted header and Clear all (D5).
+- **⋮ Relationship…** - in the account menu (list row and page, after Merge…), no team or the Team Lead only: two checkboxes and Save; ticking adds an entry from the account's LinkedIn page, name and website; unticking removes every matching entry of that category.
+- **Setup** - Companies to exclude has three tables (Competitors, Recruiters / staffing agencies, Other), and the new step Customers and partners (right after it) has two (Customers, Partners / resellers). One table component (company-list-table.js): Company, LinkedIn page, Website; A-Z; search; count; + Add and Edit as an inline row validated by parseCompanyListEntry; row ⋮ Edit, Remove and Move to the other four lists. A company on an exclusion list and a relationship list is flagged red on both rows; the exclusion wins (D2). Both steps edit one draft and Save on either writes both lists (D7). Research proposals stay a tick list above the tables (D6): competitors on the first step, customers and partners on the second. A team member sees the tables read-only.
+- **Not in 1.2.3** - other relationship types (prospect, former customer, supplier - the lists are built so more can be added), customer data from a CRM (HubSpot / Salesforce import - a roadmap item of its own) and a per-contact relationship.
+
+### 6.25 Export and import (v1.2.3)
+
+1.2.3 replaces the separate import and export commands with one Import… and one Export… on the Target Accounts and Target Contacts Dashboards, for four file types besides the research workbook: SalesTeam's own CSV, HubSpot, Salesforce and Microsoft Dynamics 365 Sales. All of them are files - there is no sign-in to a CRM and no live connection. Every import goes through one path and only adds and fills in: nothing a user, the web research or an earlier import put there is replaced or removed. Requirements and design: EXPORT_IMPORT_REQUIREMENTS.md, EXPORT_IMPORT_DESIGN.md (D1-D16).
+
+**One import path**
+
+- **Readers** - each format only reads its file into the research workbook's row shape: the workbook itself (xlsx-lite.js), a SalesTeam CSV (csv-import.js), HubSpot (hubspot.js), Salesforce and Dynamics (crm-files.js). detectImportFile tells the files apart by their header row, and a file that is not the chosen type says what it looks like (“a Salesforce contacts export”).
+- **Match and plan** - pure, import-merge.js. Accounts are matched by LinkedIn page, then website domain, then normalised name and aliases; contacts by LinkedIn profile, e-mail, or the same person within the account. planImport returns new rows, fills, kept, taken, decisions and skipped rows; a file id already used by another company gets a fresh one (D4), because the team sync is keyed on the id.
+- **Add and fill only** - new accounts, contacts and initiatives are added, and empty fields are filled as overrides with provenance import - stored rows are never rewritten. A numeric difference within importTolerancePct (10%, Change Settings > Advanced) keeps the current value; any other difference goes through the web-findings rules 1-11 (arbitrateAccount) with the current value preferred.
+- **Decisions** - a difference that could change a priority becomes an “Import difference” card (kind import_finding): Current and Import side by side, Keep current / Use import, and “apply to similar”. In a team only the Team Lead and the deputy see these cards.
+- **Check first, then write** - the summary shows the counts - new accounts, new contacts, fields filled, differences kept, differences for Decisions, rows skipped - before anything is saved. Then a safety copy (before-import), the write in batches of 100 accounts, one result pop-up, one Activity Log entry and one team-log line per import.
+- **Who** - Import… and Restore are for a user without a team, or the Team Lead and deputy (mayImport: not shown in the menus, refused by the router and again in storage). Export… is for everyone and writes the rows the table shows.
+
+**Files**
+
+- **Export…** - one dialog: Format (CSV / HubSpot / Salesforce / Microsoft Dynamics), Accounts / Contacts / Both, and the folder to save to. With a search or filter on, it asks whether to export all rows or only the filtered ones. “Both” writes the accounts and their contacts as two files.
+- **Salesforce** - exactly the column titles of Salesforce's own sample files, in their order, so the Data Import Wizard maps every column by itself. Type is Customer, Partner or Prospect (the relationship); Description holds “Label: value” lines (priority and score, company type, LinkedIn page, HQ city and country, registry address, SalesTeam id) that Import reads back, so a file returns unchanged. The billing address comes from the registry address. Employees and Annual Revenue are whole numbers, no state is written, a city is one city of at most 40 characters, and every column is cut to Salesforce's length limit. Checked in a real Salesforce organisation on 2026-10-10: all 569 accounts and 2,330 of 2,372 contacts went in; the rest were Salesforce's own duplicate rules.
+- **Microsoft Dynamics 365 Sales** - build 1.2.2.19. The same module with its own column table (D11). Accounts: Account Name, Website, Relationship Type, Number of Employees, Annual Revenue, Address 1: Street 1 / City / ZIP/Postal Code / Country/Region, Description. Contacts: First Name, Last Name, Job Title, Email, Business Phone, Company Name, Address 1: City / Country/Region, Description. Industry is a fixed list of values in Dynamics, so SalesTeam's industry is written as a Description line and read back from there. Import reads the display names and the field names (name, websiteurl, revenue, emailaddress1, parentcustomerid …), the Excel file that Export to Excel saves (.xlsx, first sheet, read directly - D12) with the record id from its hidden “(Do Not Modify)” column, contact views that hold only Full Name, and the Currency column.
+- **Dynamics: any language** - build 1.2.2.20, from two real Export to Excel files of a German organisation. Dynamics writes the column titles in the organisation's language (“Firmenname”, “Adresse 1: Ort”) and keeps each column's field name in a hidden sheet of the file; Import reads the field names from there (withDynamicsFieldNames), so an export in any language is read like an English one. A Full Name written “Last, First” is turned round. A contact with no company in the file is skipped.
+- **Dynamics: still to check** - the files SalesTeam exports have English column titles from Microsoft's documentation. Whether Dynamics' import maps every column by itself, in particular in an organisation that is not in English, has not yet been checked.
+- **Round trip** - builds 1.2.2.21-1.2.2.23. Exporting to a CRM file and importing that file again reports nothing new, nothing filled and no differences. Three things make that so: a contact value in the file that is only the start of the current one is not a difference (a CRM file cuts a job title to its column's limit - 100 characters for Dynamics, 128 for Salesforce; HubSpot and SalesTeam's CSV are not cut - and SalesTeam's own value is never shortened or replaced); a row of a file SalesTeam exported is matched to its own entry by the SalesTeam id in Description, when the name is still that person, before the LinkedIn profile, e-mail or name are tried, so a person stored twice is not compared with the other entry; and Details in the check-first summary lists every line behind the counts - Filled, Updated and Kept as it is, with the current value, the file's value and the reason (importDetailLines).
+- **One currency** - revenue is shown in the default currency and stored as found (D13). Every export is in the default currency (D14), named in the column title or, for Salesforce and Dynamics, in the export pop-up. An import never guesses a file's currency (D15): a currency column per row, else a currency in the column title, else the summary asks, with no answer pre-selected - and warns when the figures look like another currency.
+- **Revenue without its unit** - D16. A revenue that is impossible for a company in scope (below 10,000 per employee per year, counted against the targeting minimum) is not filled in; it becomes a Decisions card - Correct it / Keep / Remove account - with the likely unit suggested (491.1 becomes 491.1 million).
+
+**Data quality, from the first real Salesforce import**
+
+- **Headcount is a whole number** - full-time equivalents from annual reports (941.2) are rounded wherever they come in - web findings, imports, hand edits (wholeEmployees) - and repairEmployeeDecimals rounds what was stored before, once, on update.
+- **One person, one entry per account** - pure, person-identity.js. samePerson: the same LinkedIn profile, or the same first and last name after dropping titles, initials, middle names and brackets, with umlauts written either way; namesakes with two different profiles stay two people. Used by the web research, the imports, the discovery merge and the account merge. Pairs already stored come to Decisions as “Same person?” - Merge / Keep both.
+- **Not in 1.2.3** - live connections to a CRM (API, sign-in, two-way sync); Leads and Opportunities; reading a CRM's customer or partner type into the relationship lists.
+
+### 6.26 Team advanced mode: Team Lead and account groups (v1.2.3)
+
+1.2.3 adds advanced mode to team use: the Team Lead splits the team’s accounts into groups, and each member sees and works only the accounts of their groups. A team without groups behaves exactly as in 1.2.2 (R9.1). The requirements (R1-R10) are in TEAM_ADVANCED_MODE_REQUIREMENTS.md; the design, its decisions (D1-D19) and each step as built in TEAM_ADVANCED_MODE_DESIGN.md. Invitations and choosing the team folder are described in 6.23.
+
+**Team Lead**
+
+- **One role, decided by the team folder** - the creator is the first Team Lead; after that each hand-over is a change record that counts only if its author was Team Lead at that stamp, so every PC walks the same records and reaches the same Team Lead (teamLeadOf, pure, team-groups.js). Every role check goes through isTeamLead(); the local membership.role is no longer used (D1).
+- **Deputy** - at most one member, with the Team Lead’s rights until the Team Lead ends it (members ⋮ Make deputy… / End deputy, D15). For absences; the hand-over (Make Team Lead…) is for a permanent change.
+- **Close the team…** - for the Team Lead only, in place of Leave the team (D16): every PC stops sharing, each person keeps the data as their own copy, all assignments end and the folder is marked closed. A team nobody else joined closes with a short confirmation. A member’s Leave the team… is a small link at the bottom of Settings > Team (1.2.2.38) - the normal way out is the Team Lead’s Remove from team….
+- **Take-over** - for a Team Lead who is gone (D13). When the Team Lead’s SalesTeam has not been seen in the team for 30 days - no heartbeat, no file, no change record - Settings > Team offers Take over as Team Lead… to the deputy, or to every member when there is no deputy; with a deputy the other members are told who can. The merge judges the take-over record by the same rule on every PC (teamLeadOf; the earliest valid one wins), the absent Team Lead becomes a Member and everyone is told in the top bar. The new Team Lead can hand the role back (takeOverAsTeamLead, TEAM_TAKE_OVER in team-sync.js).
+
+**Groups**
+
+- **Data** - one shared map, teamGroups, one row per group: name, description, kind (filter or named accounts), the filter or the account list, and its members. Other is a fixed row that holds only members. The merge ignores a group record whose author did not have the Team Lead’s rights at that stamp (applyChange, two passes) - the first role rule enforced in the merge itself (D2).
+- **Computed, never stored** - team-groups.js (pure: groupFacts, matchesFilter, groupsOf, membersOf, mayAccess) takes an account’s effective values and returns its group ids, the same on every PC. Filter fields: Region (six regions from the Global HQ country, geo-regions.js), Country, Size (the Setup bucket S-XXL from the global employee count; sizeEmployeesOf is shared with the Size column), Local / Global, Industry, Company type, effective Priority and Relationship. An unknown value never matches. An account in no group is in Other; a member in no group counts as in Other (D9). An account can be in several groups.
+- **Editor** - Settings > Team > Groups: + New group and the row ⋮ Edit… / Delete…. One multi-select per filter field, with values from what the accounts hold plus the Setup - no free typing; named accounts as a search box and a tick list; members as ticks. The preview is live (“Matches 42 accounts - 30 unassigned, 12 assigned”, who joins, who leaves, who loses an assignee). The kind is fixed once saved (D11), with “Copy its current accounts into a new named group…”. Nothing changes until Save. The first group shows a one-time notice that advanced mode is on.
+- **Groups table** - Group, Kind, Members, Accounts, Assigned, Unassigned, Ready. The Accounts, Unassigned and Ready counts open Target Accounts with the matching pickers (target-accounts.html?group=&owner=unassigned&ready=1). Warnings “no members” on a group and “nothing assigned” on a member. Members see the table read-only.
+- **Members table** - a row ⋮ for the Team Lead (Make Team Lead…, Make deputy… / End deputy, Groups…, Release all, Remove from team…) and a Groups column (D10).
+
+**Visibility**
+
+- **One rule** - an account is seen by the Team Lead, the deputy and the members of its groups (canSeeAccount, canSeeLead - pure). The background publishes it with the claim summary (teamAccountStates) and every page asks teamAccounts.canSee. Wired into Target Accounts (applyVisibleRows - lists, counts, pages and exports follow), Target Contacts, the Leads Dashboard, the side panel counts, the account and contact pages (“This account is not in your groups.”), Decisions, the Pipeline status chart and readiness map, and the LinkedIn badge.
+- **Leads without an account** - a lead (post) whose company is not a team account is seen by the Team Lead, the deputy and the member who scanned it (scannedBy; older leads by the author of their first stamp) - D12.
+- **A view filter, not secrecy** - every PC still holds all the team’s data, because the merge needs it and the folder is shared anyway (D3). CSV and CRM exports carry only what the member sees; the full backup carries everything. Help says so.
+- **Pickers** - a Group dropdown (member: All my groups and their own groups; Team Lead and deputy: All accounts, every group, Other; hidden for a member in a single group) and an Assigned dropdown (Assigned or not / Assigned to me / Assigned to others / Unassigned) on Target Accounts, Target Contacts and the Leads Dashboard, from one shared builder (team-accounts-ui.js groupPicker, ownerPicker), remembered per page (D14). In a team without groups Target Accounts keeps the Mine / Others / Unassigned / All buttons.
+- **Groups column and header** - a Groups column on Target Accounts, and on Target Contacts and the Leads Dashboard hidden by default; the account page shows its groups next to the title.
+
+**Group changes**
+
+- **By the Team Lead** - Add to group… / Remove from group… in the account ⋮ (list row and page) and as two buttons in the bulk bar - named groups only, offered only where they do something. Editing a filter, a list or a group’s members applies at once; before Save the confirmation counts the accounts that move and, by name, who loses an assignee (“Anna 2, Luc 1”).
+- **Lost access ends the assignment** - an assignment whose assignee has no access through the account’s current groups is void on every PC - computed in the published summary, not written, so it waits for nobody’s PC (D6). A former member’s accounts are left alone. The Team Lead’s PC also writes an explicit release (TEAM_RELEASE_VOID), which gives the log line and the assignee’s notice “… moved to VIP - it is no longer in your groups”.
+- **Hand edits** - only Global HQ country, Local / Global, company type and industry can move an account by hand. A member’s edit that would take an account out of a group is refused on Save (“Only the Team Lead moves an account to another group”); the Team Lead’s or deputy’s edit applies after a warning pop-up (Save and move it / Cancel).
+- **The pin** - when research or the pipeline finds data on an assigned account that would change its groups, the data is saved and the groups are held at their old value in teamGroupPins (team-sync.js holdMoves; written by the PC that made the change). The Groups column says “(move to VIP - waiting for the Team Lead’s decision)”, and the Team Lead gets a Decisions card (kind group_move) with one answer, Move it. The pin goes when the account is released or reassigned. An unassigned account moves at once (D5).
+
+**Pipeline and Discovery**
+
+- **Access first** - teamWorkGate checks access before everything else, in mayWork (pipeline, web lane) and offLimits (bulk research, reason groups). An account assigned to me stays mine whatever the share says.
+- **Candidates** - workCandidates (pure): the online members with access to the account, plus the Team Lead and the deputy when theirs is set to All accounts; when that list is empty, the online Team Lead and deputy share the gap. Rendezvous hashing is unchanged, so the shares stay disjoint, and members’ groups are researched on members’ API keys (R7.4).
+- **My pipeline researches** - Settings > Team, for the Team Lead and the deputy once the team has groups: “Only accounts no member can work on right now” (default) or “All accounts”, saved with Save (D7). A personal key, teamLeadResearch, published with the heartbeat so every PC builds the same candidate lists.
+- **Discovery** - in a team with groups only the Team Lead’s and the deputy’s pipeline looks for new companies (discoverForTargets returns team_lead_only, also at the wizard’s Finish) - D8. Web Discovery started by hand is not restricted.
+- **Independent Automation switches** - build 1.2.2.39, with or without a team: pipelineAutomation.enabled is the LinkedIn work only and webEnabled the web research. Web research alone runs the web jobs, Discovery and the web lane and never opens LinkedIn; the status line says “Web research only - the LinkedIn work is off”.
+
+**Notices, team log and robustness**
+
+- **Notices** - top-bar notices (teamNotices) for being added to or taken out of a group, for groups being set up, for an account lost to a group move and for an accepted invitation.
+- **Team log** - group changes in words (created, filter changed field by field, members added or removed, deleted), the Team Lead chain, and releases “(no longer in their groups)”. A colleague’s automatic bookkeeping reads “SalesTeam on Annick’s PC updated X: …” or “checked X - nothing new to record” (1.2.2.39).
+- **Damaged change files** - build 1.2.2.27, after OneDrive left five change files holding only zero bytes and a colleague’s reading stopped there for good: each PC re-checks 20 of its own files per read round (verifyOwnFiles), and one that stays unreadable for 60 s is rewritten from its own state with the original stamps (recordsBetween).
+- **Bulk assign** - build 1.2.2.32: assigning or releasing several accounts is one job, one save and one change file (TEAM_ASSIGN_MANY / TEAM_UNASSIGN_MANY).
+- **Tests** - test_pure_modules.py (996 checks: lead chain in any order, null facts, Other, pins, candidates) and test_team_sync.py (242 checks: hand-over, take-over after 30 days, a non-lead’s group record ignored, invitations, pinned move approved, disjoint shares per group, a zeroed file repaired).
+- **Not in 1.2.3** - a company-wide Admin role above the teams; sign-in with Microsoft; Setup and rules enforced in the merge (they keep the screen lock, D2); a reader skipping a damaged file whose writer never returns; “The team already has this company” on add, scan and import duplicates.
 
 ## 7. Non-functional requirements
 
@@ -2094,7 +2205,8 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
   maintenance when scraping breaks.
 - Negative-topic and Author-title matching is keyword-based, not exact — a common word can over-match, which
   is why every automatic status change is reviewable and reversible, never a silent delete.
-- No CRM push (Salesforce/other) yet — leads live only in this extension.
+- No live CRM connection — accounts and contacts move to HubSpot, Salesforce and Microsoft Dynamics as files (6.25);
+  leads (posts) live only in this extension.
 - Company grouping is normalized-string matching, not brand/subsidiary aliasing — it handles minor legal-suffix
   variation ("Azqore" vs "Azqore SA") but has no way to know that different names are the same company (e.g.
   "Google Inc." vs "Alphabet," "Facebook" vs "Meta"). A proper alias/merge mechanism is planned as later work,
@@ -3074,7 +3186,7 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
   key equals their record's normalized company name, so alias-keyed duplicates never enter the count.
 
 - **Future milestone (parked, 2026-09-19, NOT started): use by a whole sales team, not one salesperson.**
-  **Update: shipped in 1.2.2 as phase 1 + basic mode (section 6.23); advanced-mode queues remain open.**
+  **Update: shipped in 1.2.2 as phase 1 + basic mode (section 6.23); advanced mode (account groups) followed in 1.2.3 (section 6.26).**
 
   The trigger: providing SalesTeam to the members of the user's wife's sales team, several of whom work in the
   same region and possibly on the same accounts. Today it is single-user by design (all data in one browser's
@@ -3106,4 +3218,4 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.2**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.3**.

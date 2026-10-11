@@ -18,6 +18,7 @@ or document, the right move is to lift the logic back out into a pure module rat
 the test.
 """
 
+import csv
 import io
 import os
 import re
@@ -31,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1300,6 +1301,100 @@ def test_company_identity(ctx):
     check("a slug-only entry adds no name to match", ctx.eval("matchesExclusion(EXM, { name: 'Adecco Group' })"), False)
 
 
+def test_relationships(ctx):
+    """1.2.3 step 0: customers / partners leave the exclusion list (EXCLUSIONS_RELATIONSHIPS_DESIGN.md 3.2, 4.1, 6.1, 7)."""
+    ctx.eval("""
+    var REL_EXCL = [
+      { slug: "adecco", category: "recruiter" },
+      { name: "Rival AG", category: "competitor" },
+      { slug: "nestle-s-a", name: "Nestle", category: "customer" },
+      { domain: "migros.ch", category: "customer", source: "research" },
+      { name: "Partner Co", category: "partner" },
+      { name: "Partner Co", category: "customer" },
+    ];
+    var REL_EXM = buildExclusionMatcher(REL_EXCL, []);
+    var REL_M = buildRelationshipMatcher([], REL_EXCL);
+    """)
+    # The exclusion matcher skips customer / partner entries even while they are still on the list.
+    check("a competitor is still excluded", ctx.eval("matchesExclusion(REL_EXM, { name: 'Rival' })"), True)
+    check("a recruiter is still excluded", ctx.eval("matchesExclusion(REL_EXM, { slug: 'adecco' })"), True)
+    check("a leftover customer entry excludes nothing (slug)", ctx.eval("matchesExclusion(REL_EXM, { slug: 'nestle-s-a' })"), False)
+    check("a leftover customer entry excludes nothing (domain)", ctx.eval("matchesExclusion(REL_EXM, { website: 'https://www.migros.ch' })"), False)
+    check("a leftover partner entry excludes nothing", ctx.eval("matchesExclusion(REL_EXM, { name: 'Partner Co AG' })"), False)
+    # The relationship matcher reads leftovers too, by slug, name or domain.
+    check("customer by slug", ctx.eval("JSON.stringify(relationshipOf(REL_M, { slug: 'Nestle-S-A' }))"), '["customer"]')
+    check("customer by website", ctx.eval("JSON.stringify(relationshipOf(REL_M, { name: 'Migros-Genossenschafts-Bund', website: 'migros.ch/de' }))"), '["customer"]')
+    check("customer and partner", ctx.eval("JSON.stringify(relationshipOf(REL_M, { name: 'Partner Co' }))"), '["customer","partner"]')
+    check("a competitor has no relationship", ctx.eval("JSON.stringify(relationshipOf(REL_M, { name: 'Rival AG' }))"), "[]")
+    check("no matcher: no relationship", ctx.eval("JSON.stringify(relationshipOf(null, { name: 'Nestle' }))"), "[]")
+    check("matchesRelationship", ctx.eval("matchesRelationship(REL_M, { slug: 'nestle-s-a' })"), True)
+    check("the exclusion matcher carries the kept matcher", ctx.eval("buildExclusionMatcher([], [], REL_M).kept === REL_M"), True)
+    check("no kept matcher by default", ctx.eval("buildExclusionMatcher([], []).kept"), None)
+
+    # splitCompanyLists: moves, keeps order of the rest, idempotent, no duplicates.
+    ctx.eval("""
+    var REL_S1 = splitCompanyLists(REL_EXCL, [{ name: "Nestle SA", category: "customer" }]);
+    var REL_S2 = splitCompanyLists(REL_S1.exclusions, REL_S1.relationships);
+    """)
+    check("exclusions keep only competitor / recruiter / other",
+          ctx.eval("JSON.stringify(REL_S1.exclusions.map(function (e) { return e.category; }))"), '["recruiter","competitor"]')
+    check("an equal entry already on the list is not added twice (name+slug differ -> added)",
+          ctx.eval("REL_S1.relationships.length"), 5)
+    check("moved counts", ctx.eval("JSON.stringify(REL_S1.moved)"), '{"customer":3,"partner":1}')
+    check("running it again moves nothing", ctx.eval("JSON.stringify(REL_S2.moved)"), '{"customer":0,"partner":0}')
+    check("running it again changes nothing", ctx.eval("REL_S2.relationships.length === REL_S1.relationships.length && REL_S2.exclusions.length === 2"), True)
+    check("an exact duplicate is not moved twice",
+          ctx.eval("splitCompanyLists([{ name: 'Nestle', category: 'customer' }], [{ name: 'Nestlé'.replace('é','e'), category: 'customer' }]).moved.customer"), 0)
+    check("empty input", ctx.eval("JSON.stringify(splitCompanyLists(null, null))"), '{"exclusions":[],"relationships":[],"moved":{"customer":0,"partner":0}}')
+
+    # Priority raise (R5.4, D3).
+    for base, raised in (("P1", "P1"), ("P2", "P1"), ("P3", "P2"), ("P4", "P3"), ("P5", "P4")):
+        check("raise %s" % base, ctx.eval("raisePriority('%s')" % base), raised)
+    check("raise: no priority", ctx.eval("raisePriority(null)"), None)
+    check("raise: unknown value untouched", ctx.eval("raisePriority('High')"), "High")
+    check("customer P3 -> P2, raised", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P3', relationship: ['customer'] }))"), '{"priority":"P2","raised":true}')
+    check("customer P1 stays P1, not marked raised", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P1', relationship: ['customer'] }))"), '{"priority":"P1","raised":false}')
+    check("partner only stays neutral", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P3', relationship: ['partner'] }))"), '{"priority":"P3","raised":false}')
+    check("customer and partner is raised", ctx.eval("effectivePriority({ priority: 'P4', relationship: ['customer', 'partner'] }).priority"), "P3")
+    check("a priority set by hand is never raised", ctx.eval("JSON.stringify(effectivePriority({ priority: 'P3', manual: true, relationship: ['customer'] }))"), '{"priority":"P3","raised":false}')
+    check("no relationship: unchanged", ctx.eval("effectivePriority({ priority: 'P2' }).priority"), "P2")
+
+    # Prompt line and tag.
+    check("prompt line: customer", ctx.eval("relationshipPromptLine(['customer'], 'Nestle', 'TIMETOACT').indexOf('Nestle is an existing customer of TIMETOACT') >= 0"), True)
+    check("prompt line: partner", ctx.eval("relationshipPromptLine(['partner'], 'ALSO', 'TIMETOACT').indexOf('partner / reseller of TIMETOACT') >= 0"), True)
+    check("prompt line: both", ctx.eval("relationshipPromptLine(['customer','partner'], 'X', 'Y').indexOf('customer and a partner') >= 0"), True)
+    check("prompt line: none", ctx.eval("relationshipPromptLine([], 'X', 'Y')"), "")
+    check("tag text", ctx.eval("relationshipTagText(['customer','partner'])"), "Customer · Partner")
+    check("tag text: none", ctx.eval("relationshipTagText([])"), "")
+
+    # The pop-up / log text (R3.2, step 1): a moved company that is not an account is not called one.
+    check("moved, not an account", ctx.eval("relationshipsMovedText({ partner: 1 })"),
+          "1 partner moved from the exclusions to the new Customers and partners list - customers and partners are no longer excluded. None of them is one of your accounts, so Target Accounts does not change.")
+    check("moved, accounts back", ctx.eval("relationshipsMovedText({ customer: 12, partner: 3, accounts: 9 })"),
+          "12 customers and 3 partners moved from the exclusions to the new Customers and partners list - customers and partners are no longer excluded. 9 of them are accounts and are back in Target Accounts, with a Relationship tag; they join the normal research queue.")
+    check("one account back", ctx.eval("relationshipsMovedText({ customer: 1, accounts: 1 }).indexOf('1 of them is an account and is back') >= 0"), True)
+    check("leads only", ctx.eval("relationshipsMovedText({ leads: 4 })"),
+          "4 leads (posts) from customers' and partners' people are back in the Leads Dashboard as New.")
+    check("nothing", ctx.eval("relationshipsMovedText({})"), "")
+
+    # Setup table rows (design 9.2).
+    check("row: name only", ctx.eval("JSON.stringify(parseCompanyListEntry({ name: ' Acme AG ' }))"), '{"entry":{"name":"Acme AG"}}')
+    check("row: LinkedIn company page", ctx.eval("parseCompanyListEntry({ linkedin: 'https://www.linkedin.com/company/acme-ag/about/' }).entry.slug"), "acme-ag")
+    check("row: LinkedIn profile refused", ctx.eval("!!parseCompanyListEntry({ name: 'X', linkedin: 'https://www.linkedin.com/in/jane/' }).error"), True)
+    check("row: website kept as domain", ctx.eval("parseCompanyListEntry({ name: 'Acme', website: 'https://www.acme.ch/de' }).entry.domain"), "acme.ch")
+    check("row: LinkedIn link as website refused", ctx.eval("!!parseCompanyListEntry({ website: 'linkedin.com/company/acme' }).error"), True)
+    check("row: nothing entered", ctx.eval("!!parseCompanyListEntry({}).error"), True)
+    check("row: not a web address", ctx.eval("!!parseCompanyListEntry({ name: 'A', website: 'acme' }).error"), True)
+    check("same company by name", ctx.eval("sameCompanyEntry({ name: 'Acme AG' }, { name: 'ACME' })"), True)
+    check("same company by domain", ctx.eval("sameCompanyEntry({ domain: 'acme.ch' }, { name: 'Other', domain: 'https://www.acme.ch' })"), True)
+    check("different companies", ctx.eval("sameCompanyEntry({ name: 'Acme', slug: 'acme' }, { name: 'Beta', slug: 'beta' })"), False)
+
+    # Team: the new list key is shared per entry, after companyExclusions.
+    check("companyRelationships is a team list key", ctx.eval("teamKeyKind('companyRelationships')"), "list")
+    check("companyExclusions stays the first list key", ctx.eval("TEAM_LIST_KEYS[0].key"), "companyExclusions")
+    check("the move notice is personal", ctx.eval("classifyStorageKey('relationshipsMigrationNotice')"), "personal")
+
+
 def test_per_field_research(ctx):
     """1.2.1 step 1 (design 5.3): each web value carries its own source; the old plain format is still read."""
     ctx.eval(r"""
@@ -1725,11 +1820,15 @@ def test_setup_proposals(ctx):
     check("offer line", ctx.eval("offerLine({ text: 'Data maturity report', url: 'https://acme.ch/report' })"), "Data maturity report - https://acme.ch/report")
     check("exclusions: no website/source dropped, seller dropped, listed twice dropped",
           j("SP.exclusions.items.map(e => e.category + ':' + e.name + ':' + (e.domain || ''))"),
-          '["competitor:Rival AG:rival.ch","customer:Big Bank:","partner:Cloudco:cloudco.com"]')
+          '["competitor:Rival AG:rival.ch"]')
+    check("relationships (1.2.3): customers and partners on their own step",
+          j("SP.relationships.items.map(e => e.category + ':' + e.name + ':' + (e.domain || ''))"),
+          '["customer:Big Bank:","partner:Cloudco:cloudco.com"]')
+    check("relationships: research again on that step rebuilds only it", j("Object.keys(buildSetupProposals(SP_RAW, SP_CTX, ['relationships']))"), '["relationships"]')
     check("about: site language -> output language", ctx.eval("SP.about.outputLanguage"), "german")
     check("about: Italian site -> no proposal", ctx.eval("outputLanguageForSite('it')"), None)
     check("only: one step rebuilt", j("Object.keys(buildSetupProposals(SP_RAW, SP_CTX, ['size']))"), '["size"]')
-    check("nothing found: empty answer", j("Object.values(buildSetupProposals({}, SP_CTX)).map(p => p.found)"), '[false,false,false,false,false,false,false,false,false]')
+    check("nothing found: empty answer", j("Object.values(buildSetupProposals({}, SP_CTX)).map(p => p.found)"), '[false,false,false,false,false,false,false,false,false,false]')
     check("source label", ctx.eval("sourceLabel('https://www.acme.ch/about/')"), "acme.ch/about")
     check("ticked: first setup, all", j("initiallyTicked(['a', 'b'], [], false)"), '[true,true]')
     check("ticked: completed before, only those saved", j("initiallyTicked(['a', 'B'], ['b'], true)"), '[false,true]')
@@ -2306,6 +2405,46 @@ def test_team_log_and_join(ctx):
       var txt = function (x) { return teamLogText(x, function (k) { return k === 'acme ag' ? 'Acme AG' : k; }, function (m) { return m; }); };
     """)
     check("team log: one line per member, change and account; claims left out", e("LOG.length"), 4)
+    # 1.2.2.39: the pipeline's own bookkeeping makes the line SalesTeam's, and is not listed.
+    e("""var AUTO = teamLogEntries([
+        {t: formatStamp(T6 + 50, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {linkedinCompanyId: '1', linkedinResolveAttemptedAt: 5, provenance: {}}},
+      ], LS, n6);
+      var AUTO2 = teamLogEntries([
+        {t: formatStamp(T6 + 51, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {contactDiscoveryAttemptedAt: 5, provenance: {}, pipeline: {}}},
+      ], LS, n6);""")
+    check("team log: automatic work says what it found", (e("isAutomaticEntry(AUTO[0])"), e("txt(AUTO[0])")), (True, "updated Acme AG: LinkedIn company id"))
+    check("team log: automatic work that found nothing", e("txt(AUTO2[0])"), "checked Acme AG - nothing new to record")
+    check("team log: a hand edit is still the member's", (e("isAutomaticEntry(LOG[0])"), e("txt(LOG[0])").startswith("changed Acme AG")), (False, True))
+    # 1.2.3 step 3 (design 11): an account group's own lines.
+    e("""
+      var GS = newState();
+      var grec = function (n, id, f) { return {t: formatStamp(T6 + 100 + n, 0, 'boaz'), e: 'setting', id: 'teamGroups:' + id, op: 'set', f: f}; };
+      var glog = function (recs) {
+        var pri = new Map();
+        var out = [];
+        recs.forEach(function (r) { pri = new Map([[r, priorOf(GS, r)]]); out = out.concat(teamLogEntries([r], GS, n6, pri)); applyChanges(GS, [r]); });
+        return out.map(txt);
+      };
+      setTeamCreator(GS, 'boaz');
+      var GL = glog([
+        grec(1, 'g1', {name: 'VIP', kind: 'named', accounts: ['a', 'b'], members: ['anna'], createdAt: 'x', deleted: false}),
+        grec(2, 'g2', {name: 'Swiss', kind: 'filter', filter: {country: ['Switzerland'], size: ['S', 'M']}, members: [], createdAt: 'x', deleted: false}),
+        grec(3, 'g2', {filter: {country: ['Switzerland'], size: ['M', 'XL']}}),
+        grec(4, 'g2', {members: ['anna', 'ben']}),
+        grec(5, 'g1', {members: []}),
+        grec(6, 'g1', {name: 'VIP accounts'}),
+        grec(7, 'other', {members: ['ben']}),
+        grec(8, 'g1', {deleted: true})]);
+    """)
+    check("team log: groups in words", e("JSON.stringify(GL)"), json.dumps([
+        "created the group VIP (named, 2 accounts); added anna to VIP",
+        "created the group Swiss (by filter)",
+        "changed the filter of Swiss: size + XL, − S",
+        "added anna, ben to Swiss",
+        "removed anna from VIP",
+        "changed the group VIP accounts",
+        "added ben to Other",
+        "deleted the group VIP accounts"], ensure_ascii=False, separators=(",", ":")))
     e("""
       var REC = {t: formatStamp(T6 + 7, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {company: 'Acme Group'}};
       var PRI = new Map([[REC, priorOf(LS, REC)]]);
@@ -2319,6 +2458,53 @@ def test_team_log_and_join(ctx):
     check("team log: a setting", e("txt(LOG[3])"), "changed the setting negativeTopics")
     check("team log: kept to the newest TEAM_LOG_KEPT, old ones out",
           e("appendTeamLog([{at: 1}, {at: T6}], [{at: T6 + 9}], T6 + 10).map(function (x) { return x.at; }).join(',')"), "%d,%d" % (1759480000000, 1759480000009))
+
+    # 1.2.3 Export & Import step 1 (design 3.6, D6): one import = one team-log line, however many accounts it touched.
+    e("""
+      applyChanges(LS, [{t: formatStamp(T6 + 20, 0, 'anna'), e: 'account', id: 'wb:c-2', op: 'set', f: {companyId: 'c-2', company: 'Beta SA'}}]);
+      var RUN = {id: 'imp-1', file: 'research.xlsx', at: T6, by: 'Anna', summary: '1 new account, 2 empty fields filled'};
+      var ILOG = teamLogEntries([
+        {t: formatStamp(T6 + 21, 0, 'anna'), e: 'account', id: 'wb:c-2', op: 'set', f: {companyId: 'c-2', company: 'Beta SA'}},
+        {t: formatStamp(T6 + 22, 0, 'anna'), e: 'account', id: 'x:beta sa', op: 'set', f: {importRun: RUN}},
+        {t: formatStamp(T6 + 23, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {overrides: {industry: 'Banking'}, importRun: RUN}},
+        {t: formatStamp(T6 + 24, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {aliases: ['Acme']}},
+        {t: formatStamp(T6 + 25, 0, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: {status: 'Won'}},
+      ], LS, n6);
+      var ILINE = ILOG.filter(function (x) { return x.kind === 'import'; });
+    """)
+    check("import log: one line for the whole import, the other member's change apart",
+          e("JSON.stringify([ILOG.length, ILINE.length, ILINE[0].accounts.slice().sort()])"), '[2,1,["acme ag","beta sa"]]')
+    check("import log: in words", e("txt(ILINE[0])"), "imported research.xlsx: 1 new account, 2 empty fields filled")
+    check("import log: the same import arriving in a later round stays one line",
+          e("(function () { var later = JSON.parse(JSON.stringify(ILINE[0])); later.at += 50; later.accounts = ['gamma']; "
+            "var out = appendTeamLog(appendTeamLog([], ILINE, T6 + 30), [later], T6 + 90); "
+            "return JSON.stringify([out.length, out[0].accounts.length]); })()"), "[1,3]")
+    check("may import: no team / Team Lead / deputy / member",
+          e("JSON.stringify([mayImportFor(null, null), mayImportFor({memberId: 'a'}, {leadKnown: true, lead: 'a'}), "
+            "mayImportFor({memberId: 'd'}, {leadKnown: true, lead: 'a', deputy: 'd'}), mayImportFor({memberId: 'm'}, {leadKnown: true, lead: 'a'})])"),
+          "[true,true,true,false]")
+
+    # 1.2.3 step 2 (design 6.1): what a member sees.
+    e("""
+      var SUM = { groupsOn: true, leadKnown: true, lead: 'a', deputy: 'd', myGroups: ['g1'],
+        g: { acme: ['g1', 'g2'], beta: ['g2'], gamma: ['other'] }, leadBy: { L3: 'm' } };
+      var M = { memberId: 'm' };
+      var seeA = function (mb, s, keys) { return keys.map(function (k) { return canSeeAccount(mb, s, k); }); };
+    """)
+    check("can see: no team, and a team without groups - everything",
+          e("JSON.stringify([canSeeAccount(null, null, 'beta'), canSeeAccount(M, { leadKnown: true, lead: 'a' }, 'beta')])"), "[true,true]")
+    check("can see: Team Lead and deputy - everything",
+          e("JSON.stringify([canSeeAccount({memberId: 'a'}, SUM, 'beta'), canSeeAccount({memberId: 'd'}, SUM, 'beta')])"), "[true,true]")
+    check("can see: a member - own group yes, other group no, Other no, unknown account = Other",
+          e("JSON.stringify(seeA(M, SUM, ['acme', 'beta', 'gamma', 'new co']))"), "[true,false,false,false]")
+    check("can see: a member in no group is in Other",
+          e("JSON.stringify(seeA(M, Object.assign({}, SUM, { myGroups: [] }), ['acme', 'gamma', 'new co']))"), "[false,true,true]")
+    check("can see lead: follows its account",
+          e("JSON.stringify([canSeeLead(M, SUM, { key: 'L1' }, 'acme'), canSeeLead(M, SUM, { key: 'L2', scannedBy: 'm' }, 'beta')])"), "[true,false]")
+    check("can see lead: no account - who scanned it, else the first author, else the Team Lead",
+          e("JSON.stringify([canSeeLead(M, SUM, { key: 'L4', scannedBy: 'm' }, 'nowhere'), canSeeLead(M, SUM, { key: 'L5', scannedBy: 'x' }, ''), "
+            "canSeeLead(M, SUM, { key: 'L3' }, ''), canSeeLead(M, SUM, { key: 'L6' }, ''), canSeeLead({memberId: 'a'}, SUM, { key: 'L5', scannedBy: 'x' }, '')])"),
+          "[true,false,true,false,true]")
 
     e("""
       var LOCAL = {
@@ -2367,6 +2553,265 @@ def test_team_log_and_join(ctx):
     check("join: proposals keyed per member and account",
           e("JSON.stringify(Object.keys(joinProposals(OV.shared, {memberId: 'm1', memberName: 'Eve', at: 1, assigneeOf: function () { return 'boaz'; }})))"), '["m1~beta"]')
 
+def test_team_groups(ctx):
+    """1.2.3 step 0 (TEAM_ADVANCED_MODE_DESIGN.md 3, 4.2, 5, 8.3, D9, D13): the Team Lead chain and account groups."""
+    e = lambda x: ctx.eval(x)
+
+    # Regions (geo-regions.js) - the six regions, an unknown country is never guessed.
+    check("region: Switzerland", e("regionOfCountry('Switzerland')"), "europe")
+    check("region: case and spaces", e("regionOfCountry('  united states ')"), "northAmerica")
+    check("region: Japan is South-East Asia (D4)", e("regionOfCountry('Japan')"), "southEastAsia")
+    check("region: unknown country", e("regionOfCountry('Atlantis')"), None)
+    check("region: no country", e("regionOfCountry(null)"), None)
+
+    # Size: storage.js's resolveSizeBucket now IS sizeBucketKey - same buckets, same edges, same loose numbers.
+    e("""var BUCKETS = [
+      { key: 'S', min: 0, max: 200 }, { key: 'M', min: 201, max: 500 }, { key: 'L', min: 501, max: 1000 },
+      { key: 'XL', min: 1001, max: 5000 }, { key: 'XXL', min: 5001, max: Infinity }];
+      function oldResolve(v) { var n = parseLooseNumber(v); if (n === null) return null;
+        var b = BUCKETS.find(function (x) { return n >= x.min && n <= x.max; }); return b ? b.key : null; }""")
+    same = e("""JSON.stringify([200, 201, 500, 501, 1000, 1001, 5000, 5001, '6,500+', '>5,000', '1.5k', null, 'n/a', 0, '']
+      .filter(function (v) { return sizeBucketKey(v, BUCKETS) !== oldResolve(v); }))""")
+    check("size: sizeBucketKey gives resolveSizeBucket's bucket for every edge", same, "[]")
+
+    # Facts and filters.
+    e("""var VIEW = { globalHqCountry: 'Switzerland', globalEmployees: '6,500+', targetCountryRelationship: 'Local company',
+        industry: 'Banking', companyType: 'Private', salesTeamPriority: 'P1', relationship: ['customer'] };
+      var F = groupFacts(VIEW, { buckets: BUCKETS });""")
+    check("facts: all fields", e("JSON.stringify(F)"),
+          '{"region":"europe","country":"Switzerland","size":"XXL","scope":"local","industry":"Banking","companyType":"Private","priority":"P1","relationship":["customer"]}')
+    check("facts: Size from a number, a count written as text, the LinkedIn count, a range - one reading for group and column",
+          e("JSON.stringify([{ globalEmployees: 300 }, { globalEmployees: '350' }, { employeeCount: 420 }, { globalEmployees: '', employeeCount: 250 }, {}]"
+            ".map(function (v) { return sizeBucketKey(sizeEmployeesOf(v), BUCKETS); }))"), '["M","M","M","M",null]')
+    check("facts: an empty view is all unknown", e("JSON.stringify(groupFacts({}, { buckets: BUCKETS }))"),
+          '{"region":null,"country":null,"size":null,"scope":null,"industry":null,"companyType":null,"priority":null,"relationship":[]}')
+    check("filter: any of a field's values", e("matchesFilter(F, { size: ['XL', 'XXL'] })"), True)
+    check("filter: all fields together", e("matchesFilter(F, { size: ['XXL'], region: ['africa'] })"), False)
+    check("filter: case-insensitive values", e("matchesFilter(F, { industry: ['banking'] })"), True)
+    check("filter: an empty field is no condition", e("matchesFilter(F, { size: [], region: ['europe'] })"), True)
+    check("filter: an unknown fact never matches (R2.5)", e("matchesFilter(groupFacts({ globalEmployees: 300 }, { buckets: BUCKETS }), { region: ['europe'] })"), False)
+    check("filter: relationship customer", e("matchesFilter(F, { relationship: ['customer'] })"), True)
+    check("filter: relationship none", e("matchesFilter(groupFacts({}, {}), { relationship: ['none'] })"), True)
+    check("filter: relationship none vs a customer", e("matchesFilter(F, { relationship: ['none'] })"), False)
+    check("save check: a filter with no condition is refused", e("groupProblem({ name: 'All', kind: 'filter', filter: {} })"),
+          "Add at least one condition - or use All accounts.")
+    check("save check: a named group is fine", e("groupProblem({ name: 'VIP', kind: 'named', accounts: [] })"), "")
+
+    # Groups, Other, pins, members (D9).
+    e("""var GROUPS = {
+        'g-swiss': { name: 'Swiss', kind: 'filter', filter: { country: ['Switzerland'] }, members: ['anna', 'luc', 'gone'] },
+        'g-vip':   { name: 'VIP', kind: 'named', accounts: ['roche', 'ubs'], members: ['boaz'] },
+        'g-old':   { name: 'Old', kind: 'filter', filter: { country: ['Switzerland'] }, members: ['fay'], deleted: true },
+        'g-empty': { name: 'Broken', kind: 'filter', filter: {}, members: ['luc'] },
+        other:     { members: [] } };
+      var TEAM = ['boaz', 'anna', 'luc', 'fay'];
+      var IX = groupIndex(GROUPS, TEAM);
+      var LEADS = { lead: 'boaz', deputy: null };
+      var SWISS = groupFacts({ globalHqCountry: 'Switzerland' }, {});
+      var US = groupFacts({ globalHqCountry: 'United States' }, {});""")
+    check("groups: filter + named list", e("JSON.stringify(groupsOf('roche', SWISS, IX))"), '["g-swiss","g-vip"]')
+    check("groups: no match -> Other", e("JSON.stringify(groupsOf('acme', US, IX))"), '["other"]')
+    check("groups: a deleted group catches nothing", e("IX.live.some(function (g) { return g.id === 'g-old'; })"), False)
+    check("groups: a filter with no conditions catches nothing", e("JSON.stringify(groupsOf('x', US, IX))"), '["other"]')
+    check("groups: a pin holds the old groups", e("JSON.stringify(groupsOf('roche', SWISS, IX, { roche: { groups: ['other'] } }))"), '["other"]')
+    check("groups: a pin to a deleted group falls back", e("JSON.stringify(groupsOf('roche', SWISS, IX, { roche: { groups: ['g-old'] } }))"), '["g-swiss","g-vip"]')
+    check("groups: on as soon as one live group exists", e("groupsOn(GROUPS) && !groupsOn({ other: { members: [] } })"), True)
+    check("members: a former member is not counted", e("JSON.stringify(membersOf('g-swiss', IX))"), '["anna","luc"]')
+    check("members: in no live group -> Other (D9)", e("JSON.stringify(membersOf('other', IX))"), '["fay"]')
+    check("members: a member's groups", e("JSON.stringify(memberGroups('anna', IX))"), '["g-swiss"]')
+
+    # Access and void assignments (D6).
+    check("access: Team Lead sees everything", e("mayAccess('boaz', ['other'], IX, LEADS)"), True)
+    check("access: deputy sees everything", e("mayAccess('fay', ['g-swiss'], IX, { lead: 'boaz', deputy: 'fay' })"), True)
+    check("access: member in the group", e("mayAccess('anna', ['g-swiss', 'g-vip'], IX, LEADS)"), True)
+    check("access: member not in the group", e("mayAccess('fay', ['g-swiss'], IX, LEADS)"), False)
+    check("access: no groups = 1.2.2, everyone sees all", e("mayAccess('fay', ['g-x'], groupIndex({}, TEAM), LEADS)"), True)
+    check("access: who", e("JSON.stringify(accessOf(['g-swiss'], IX, LEADS))"), '["anna","boaz","luc"]')
+    # Step 5 (design 9, R7): who shares the automatic work on an account.
+    cand = lambda online, groups, leads="LEADS", modes="{}", ix="IX": e("JSON.stringify(workCandidates(%s, %s, %s, %s, %s))" % (json.dumps(online), json.dumps(groups), ix, leads, modes))
+    check("candidates: the group's online members, not the Team Lead (fills gaps only)", cand(["fay", "luc", "boaz", "anna"], ["g-swiss"]), '["anna","luc"]')
+    check("candidates: 'All accounts' - the Team Lead shares every group", cand(["fay", "luc", "boaz", "anna"], ["g-swiss"], modes="{ boaz: true }"), '["anna","boaz","luc"]')
+    check("candidates: nobody of the group online -> the Team Lead", cand(["boaz", "fay"], ["g-swiss"]), '["boaz"]')
+    check("candidates: nobody of the group online, Team Lead offline -> nobody", cand(["fay"], ["g-swiss"]), '[]')
+    check("candidates: Team Lead and deputy share a gap", cand(["boaz", "fay"], ["g-swiss"], leads="{ lead: 'boaz', deputy: 'fay' }"), '["boaz","fay"]')
+    check("candidates: a deputy with 'All accounts' works beside the members, the Team Lead does not",
+          cand(["anna", "boaz", "fay"], ["g-swiss"], leads="{ lead: 'boaz', deputy: 'fay' }", modes="{ fay: true }"), '["anna","fay"]')
+    check("candidates: a Member's 'All accounts' counts for nothing", cand(["fay", "anna"], ["g-swiss"], modes="{ fay: true }"), '["anna"]')
+    check("candidates: no groups = 1.2.2, everyone online", cand(["fay", "boaz", "anna"], ["g-x"], ix="groupIndex({}, TEAM)"), '["anna","boaz","fay"]')
+    check("void: assignee left without access",
+          e("JSON.stringify(voidAssignments({ roche: 'anna', acme: 'anna', ubs: 'boaz', nestle: 'luc' }, { roche: ['g-swiss'], acme: ['other'], ubs: ['g-vip'], nestle: ['g-swiss'] }, IX, LEADS))"),
+          '[{"key":"acme","member":"anna"}]')
+    check("void: a former member's accounts stay assigned (R6.4)", e("voidAssignments({ roche: 'gone' }, { roche: ['g-swiss'] }, IX, LEADS).length"), 0)
+    # Step 4 (design 8.2): pins.
+    check("pins: live only while assigned to the member it was written for",
+          e("JSON.stringify(Object.keys(livePins({ a: { groups: ['g-swiss'], for: 'anna' }, b: { groups: ['g-swiss'], for: 'anna' }, c: { groups: ['g-swiss'], for: 'anna' }, d: { groups: [] } }, { a: 'anna', b: 'luc', d: 'anna' })))"), '["a"]')
+    check("pins: same groups in any order", e("sameGroups(['g-vip', 'g-swiss'], ['g-swiss', 'g-vip']) && !sameGroups(['g-vip'], ['other'])"), True)
+    check("pins: a change of members or name is not a change of what a group holds",
+          e("groupDefsKey(GROUPS) === groupDefsKey(Object.assign({}, GROUPS, { 'g-swiss': Object.assign({}, GROUPS['g-swiss'], { name: 'CH', members: [] }) }))"), True)
+    check("pins: a filter change is", e("groupDefsKey(GROUPS) === groupDefsKey(Object.assign({}, GROUPS, { 'g-swiss': Object.assign({}, GROUPS['g-swiss'], { filter: { country: ['Austria'] } }) }))"), False)
+    check("pins: the reason in words", e("factsDiffText(groupFacts({ globalHqCountry: 'Switzerland', globalEmployees: 800 }, { buckets: [{ key: 'L', min: 501, max: 1000 }, { key: 'XXL', min: 5001, max: Infinity }] }), groupFacts({ globalHqCountry: 'Switzerland', globalEmployees: 9000 }, { buckets: [{ key: 'L', min: 501, max: 1000 }, { key: 'XXL', min: 5001, max: Infinity }] }))"), "size L → XXL")
+    check("void: nothing in basic mode", e("voidAssignments({ a: 'x' }, { a: ['other'] }, groupIndex({}, TEAM), LEADS).length"), 0)
+    check("counts", e("JSON.stringify(groupCounts({ roche: ['g-swiss', 'g-vip'], ubs: ['g-vip'], acme: ['other'] }, IX, { assignments: { roche: 'anna' }, ready: { ubs: true, acme: true } }))"),
+          '{"g-empty":{"accounts":0,"assigned":0,"unassigned":0,"ready":0},"g-swiss":{"accounts":1,"assigned":1,"unassigned":0,"ready":0},"g-vip":{"accounts":2,"assigned":1,"unassigned":1,"ready":1},"other":{"accounts":1,"assigned":0,"unassigned":1,"ready":1}}')
+
+    # The Team Lead chain (3.1, 3.4, D13).
+    e("""var D = 24 * 3600 * 1000, T0 = 1759480000000;
+      function st2(wall, member) { return formatStamp(wall, 0, member); }
+      function lr(wall, author, id, member) { return { t: st2(wall, author), id: id, member: member === undefined ? null : member }; }
+      var never = function () { return false; }, always = function () { return true; };""")
+    check("lead: the creator", e("teamLeadOf('boaz', []).lead"), "boaz")
+    check("lead: unknown creator -> nobody", e("teamLeadOf(null, [lr(T0, 'boaz', 'lead', 'anna')]).lead"), None)
+    check("lead: hand-over", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna')]).lead"), "anna")
+    check("lead: a hand-over by a member is ignored", e("teamLeadOf('boaz', [lr(T0, 'luc', 'lead', 'luc')]).lead"), "boaz")
+    check("lead: hand-over and back", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna'), lr(T0 + 5, 'anna', 'lead', 'boaz')]).lead"), "boaz")
+    check("lead: the old lead cannot hand over again", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna'), lr(T0 + 5, 'boaz', 'lead', 'luc')]).lead"), "anna")
+    check("deputy: made by the lead", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay')]).deputy"), "fay")
+    check("deputy: made by a member is ignored", e("teamLeadOf('boaz', [lr(T0, 'fay', 'deputy', 'fay')]).deputy"), None)
+    check("deputy: a deputy cannot appoint another", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'fay', 'deputy', 'luc')]).deputy"), "fay")
+    check("deputy: a deputy cannot hand over the lead", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'fay', 'lead', 'fay')]).lead"), "boaz")
+    check("deputy: ended by the lead", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'boaz', 'deputy', null)]).deputy"), None)
+    check("deputy: ends with a hand-over", e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 1, 'boaz', 'lead', 'anna')]).deputy"), None)
+    check("takeover: lead quiet, no deputy -> anyone",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: never }).lead"), "luc")
+    check("takeover: lead still active -> ignored",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: always }).lead"), "boaz")
+    check("takeover: without an activity check -> ignored",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D, 'luc', 'takeover', 'luc')]).lead"), "boaz")
+    check("takeover: with a deputy, only the deputy",
+          e("teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: never }).lead"), "boaz")
+    check("takeover: the deputy takes over",
+          e("JSON.stringify((function (c) { return [c.lead, c.deputy]; })(teamLeadOf('boaz', [lr(T0, 'boaz', 'deputy', 'fay'), lr(T0 + 40 * D, 'fay', 'takeover', 'fay')], { activeWithin: never })))"), '["fay",null]')
+    check("takeover: the first one wins",
+          e("teamLeadOf('boaz', [lr(T0 + 40 * D + 9, 'anna', 'takeover', 'anna'), lr(T0 + 40 * D, 'luc', 'takeover', 'luc')], { activeWithin: function (m) { return m !== 'boaz'; } }).lead"), "luc")
+    check("rights at a stamp: before and after a hand-over",
+          e("""(function () { var c = teamLeadOf('boaz', [lr(T0, 'boaz', 'lead', 'anna')]);
+                return [leadRightsAt(c, 'boaz', st2(T0 - 1, 'boaz')), leadRightsAt(c, 'boaz', st2(T0 + 1, 'boaz')), leadRightsAt(c, 'anna', st2(T0 + 1, 'anna'))].join(); })()"""),
+          "true,false,true")
+
+    # The merge: only the Team Lead's (or deputy's) group records count - in any order of arrival (4.2).
+    e("""var GR = [
+        { t: st2(T0 + 1, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'EMEA', kind: 'filter', members: ['anna'] } },
+        { t: st2(T0 + 2, 'anna'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'Anna was here' } },
+        { t: st2(T0 + 3, 'luc'),  e: 'setting', id: 'teamGroups:g-2', op: 'set', f: { name: 'Luc only', kind: 'named' } },
+        { t: st2(T0 + 10, 'boaz'), e: 'team', id: 'lead', op: 'set', f: { member: 'anna' } },
+        { t: st2(T0 + 11, 'anna'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'EMEA (Anna)' } },
+        { t: st2(T0 + 12, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { members: ['boaz'] } },
+        { t: st2(T0 + 13, 'anna'), e: 'team', id: 'deputy', op: 'set', f: { member: 'fay' } },
+        { t: st2(T0 + 14, 'fay'),  e: 'setting', id: 'teamGroups:g-3', op: 'set', f: { name: 'Fay as deputy', kind: 'named' } },
+        { t: st2(T0 + 15, 'anna'), e: 'team', id: 'deputy', op: 'set', f: { member: null } },
+        { t: st2(T0 + 16, 'fay'),  e: 'setting', id: 'teamGroups:g-3', op: 'set', f: { name: 'Fay after' } },
+        { t: st2(T0 + 20, 'luc'),  e: 'account', id: 'wb:c-1', op: 'set', f: { company: 'Roche' } },
+      ];
+      function groupPicture(s) {
+        return JSON.stringify(['teamGroups:g-1', 'teamGroups:g-2', 'teamGroups:g-3', 'wb:c-1'].map(function (id) {
+          var v = entityView(s, id === 'wb:c-1' ? 'account' : 'setting', id); return v && v.exists ? v.values : null; })
+          .concat([leadChain(s).lead, leadChain(s).deputy, ignoredGated(s).length]));
+      }
+      var GS = newState(); setTeamCreator(GS, 'boaz'); applyChanges(GS, GR);
+      var GREF = groupPicture(GS);""")
+    check("merge: only valid group records count", e("GREF"),
+          '[{"kind":"filter","members":["anna"],"name":"EMEA (Anna)"},null,{"kind":"named","name":"Fay as deputy"},{"company":"Roche"},"anna",null,4]')
+    order_free = e("""(function () {
+        for (var seed = 1; seed <= 40; seed++) {
+          var s = newState();
+          if (seed % 2) setTeamCreator(s, 'boaz');
+          applyChanges(s, shuffled(GR, seed));
+          if (!(seed % 2)) setTeamCreator(s, 'boaz');       // the creator read after the records
+          applyChanges(s, shuffled(GR, seed + 50));
+          if (groupPicture(s) !== GREF) return seed;
+        }
+        return 0;
+      })()""")
+    check("merge: 40 shuffled orders (lead records late or early, creator before or after) give the same groups", order_free, 0)
+    check("merge: without a known creator no group record counts", e("""(function () {
+        var s = newState(); applyChanges(s, GR); var v = entityView(s, 'setting', 'teamGroups:g-1'); return Boolean(v && v.exists); })()"""), False)
+    check("merge: an old state (before 1.2.3) gains the new parts", e("""(function () {
+        var s = { entities: {}, lost: {}, seen: {} }; s.seen[st2(T0, 'boaz') + '|account|wb:c-9'] = true;
+        setTeamCreator(s, 'boaz'); applyChanges(s, GR); return groupPicture(s) === GREF && Boolean(s.days.boaz); })()"""), True)
+
+    # Compaction keeps the chain and the group records whole, and one record per day (D13 is snapshot-proof).
+    e("""var OWN = [
+        { t: st2(T0, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'New' } },
+        { t: st2(T0 + 2 * D, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'Met' } },
+        { t: st2(T0 + 1, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'A' } },
+        { t: st2(T0 + 2, 'boaz'), e: 'setting', id: 'teamGroups:g-1', op: 'set', f: { name: 'B' } },
+        { t: st2(T0 + 3, 'boaz'), e: 'team', id: 'deputy', op: 'set', f: { member: 'fay' } },
+        { t: st2(T0 + 4, 'boaz'), e: 'team', id: 'deputy', op: 'set', f: { member: null } },
+      ];
+      var CO = compactChanges(OWN);""")
+    check("compaction: group and team records all kept", e("CO.filter(function (r) { return r.e === 'team' || r.id === 'teamGroups:g-1'; }).length"), 4)
+    check("compaction: a superseded day keeps an empty marker", e("JSON.stringify(CO.filter(function (r) { return r.id === 'wb:c-1'; }).map(function (r) { return r.f; }))"),
+          '[{"status":"Met"}]')
+    e("""var OWN2 = [
+        { t: st2(T0, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'New' } },
+        { t: st2(T0 + 2 * D, 'boaz'), e: 'account', id: 'wb:c-1', op: 'set', f: { status: 'Met' } }];
+      var CO2 = compactChanges(OWN2);""")
+    check("compaction: the first day survives as an empty record", e("JSON.stringify(CO2.map(function (r) { return r.f; }))"), '[{},{"status":"Met"}]')
+    check("compaction: same activity days from the snapshot", e("""(function () {
+        var a = newState(); applyChanges(a, OWN2); var b = newState(); applyChanges(b, CO2);
+        return JSON.stringify(a.days) === JSON.stringify(b.days) && JSON.stringify(entityView(a, 'account', 'wb:c-1').values) === JSON.stringify(entityView(b, 'account', 'wb:c-1').values); })()"""), True)
+
+
+def test_revenue_units(ctx):
+    """D16 (EXPORT_IMPORT_DESIGN.md 8b): a revenue written without its unit, judged on its own. The cases are the
+    accounts the 1.2.2.13 HubSpot export showed (employee counts as stored then)."""
+    e = ctx.eval
+    e("""
+      var RU_BANDS = [{ key: 'S', min: 0, max: 200 }, { key: 'M', min: 201, max: 500 }, { key: 'L', min: 501, max: 1000 },
+        { key: 'XL', min: 1001, max: 5000 }, { key: 'XXL', min: 5001, max: Infinity }];
+      var RU_MONEY = { targetCurrency: 'USD', rates: { rates: { USD: 1, CHF: 1.25, EUR: 1.08 } } };
+      function ru(v, c, emp, min) { return revenueUnitsCheck(v, c, emp, min, RU_MONEY); }
+    """)
+    # targeting minimum = low end of the smallest ticked band; never a fixed 200
+    check("min: M and up ticked", e("targetingMinimum({ M: {checked:true}, L: {checked:true}, XL: {checked:true} }, RU_BANDS)"), 201)
+    check("min: XL smallest", e("targetingMinimum({ XL: {checked:true}, XXL: {checked:true} }, RU_BANDS)"), 1001)
+    check("min: S ticked -> 0", e("targetingMinimum({ S: {checked:true}, M: {checked:true} }, RU_BANDS)"), 0)
+    check("min: nothing ticked -> 0", e("targetingMinimum({}, RU_BANDS)"), 0)
+    # the seven accounts: the unit is found
+    check("Cornèr 491.1 CHF, 911 -> millions", e("ru(491.1, 'CHF', 911, 201).factor"), 1000000)
+    check("Cornèr suggested", e("ru(491.1, 'CHF', 911, 201).suggested"), 491100000)
+    check("Lindt Schweiz 5.92, 14466 -> billions", e("ru(5.92, 'CHF', 14466, 201).factor"), 1000000000)
+    check("Appenzeller KB 49.4, 130 (below min) -> millions", e("ru(49.4, 'CHF', 130, 201).factor"), 1000000)
+    check("Appenzeller KB judged on the minimum", e("ru(49.4, 'CHF', 130, 201).basis"), "targeting")
+    check("Appenzeller KB out of scope (Remove offered)", e("ru(49.4, 'CHF', 130, 201).outOfScope"), True)
+    check("Datacolor 93.2 USD, 426 -> millions", e("ru(93.2, 'USD', 426, 201).factor"), 1000000)
+    check("Metrohm 400, 3200 -> millions", e("ru(400, 'CHF', 3200, 201).factor"), 1000000)
+    check("Swissmedic 115, 580 -> millions", e("ru(115, 'CHF', 580, 201).factor"), 1000000)
+    check("ISS Schweiz 914, 14000 -> millions", e("ru(914, 'CHF', 14000, 201).factor"), 1000000)
+    # HT5 AG: an empty holding, 0 employees, 282,000 CHF - out of scope, not a units error
+    check("HT5 flagged", e("ru(282000, 'CHF', 0, 201) !== null"), True)
+    check("HT5 no unit suggested", e("ru(282000, 'CHF', 0, 201).factor"), None)
+    check("HT5 credible small", e("ru(282000, 'CHF', 0, 201).credibleSmall"), True)
+    # credible values are left alone
+    check("Cornèr in full is fine", e("ru(491100000, 'CHF', 911, 201)"), None)
+    check("a small firm at its real size is fine", e("ru(30000000, 'CHF', 250, 201)"), None)
+    check("missing headcount: the minimum still judges", e("ru(491.1, 'CHF', null, 1001).factor"), 1000000)
+    check("S band ticked, no headcount: not judged", e("ru(491.1, 'CHF', null, 0)"), None)
+    check("S band ticked, real headcount still judges", e("ru(491.1, 'CHF', 911, 0).factor"), 1000000)
+    check("unparseable value: not judged", e("ru('n/a', 'CHF', 911, 201)"), None)
+    # judged in the default currency: 9,000 EUR per employee is 9,720 USD (< 10k), 9,500 CHF is 11,875 USD (fine)
+    check("per employee in the default currency (CHF ok)", e("ru(9500 * 1000, 'CHF', 1000, 201)"), None)
+    check("per employee in the default currency (EUR low)", e("ru(9000 * 1000, 'EUR', 1000, 201) !== null"), True)
+    check("between the fits: flagged without a unit", e("var r = ru(5000 * 1000, 'USD', 1000, 201); JSON.stringify([r !== null, r.factor])"), '[true,null]')
+
+    # an import never fills a revenue that lost its unit: it becomes a units finding, and its currency waits with it
+    e("""
+      var RU_ROW = { companyId: 'C-1', company: 'Corner Bank', globalEmployees: 911 };
+      var RU_PLAN = planCompanyUpdate(RU_ROW, { overrides: {} }, { company: 'Corner Bank', globalRevenue: 491.1, revenueCurrency: 'CHF' },
+        { buckets: RU_BANDS, money: RU_MONEY, unitsMinimum: 201, fileName: 'h.csv', at: 1 });
+      var RU_OK = planCompanyUpdate(RU_ROW, { overrides: {} }, { company: 'Corner Bank', globalRevenue: 491100000, revenueCurrency: 'CHF' },
+        { buckets: RU_BANDS, money: RU_MONEY, unitsMinimum: 201 });
+    """)
+    check("import: unitless revenue not written", e("'globalRevenue' in RU_PLAN.overrides"), False)
+    check("import: its currency waits with it", e("'revenueCurrency' in RU_PLAN.overrides"), False)
+    check("import: units finding", e("JSON.stringify([RU_PLAN.findings.globalRevenue.rule, RU_PLAN.findings.globalRevenue.currency])"), '["units","CHF"]')
+    check("import: a full amount is filled", e("RU_OK.overrides.globalRevenue"), 491100000)
+
+    # Decisions: one similar group per origin and unit
+    check("similar key", e("similarKey({ kind: 'revenue_units', payload: { origin: 'current', factor: 1000000, outOfScope: false } })"), "units:current:1000000:0")
+    check("no unit, no group", e("similarKey({ kind: 'revenue_units', payload: { origin: 'current', factor: null } })"), None)
+    check("kind sorted last", e("sortDecisions([{ kind: 'revenue_units', company: 'A' }, { kind: 'finding', company: 'B' }])[0].kind"), "finding")
+
 
 def main():
     ctx = MiniRacer()
@@ -2412,6 +2857,16 @@ def main():
     test_team_list_rows(ctx)
     test_team_claims(ctx)
     test_team_log_and_join(ctx)
+    test_team_groups(ctx)
+    test_relationships(ctx)
+    test_team_invites(ctx)
+    test_import_merge(ctx)
+    test_csv_import(ctx)
+    test_crm_files(ctx)
+    test_import_cut_values(ctx)
+    test_whole_employees(ctx)
+    test_person_identity(ctx)
+    test_revenue_units(ctx)
 
     print()
     for f in _failures:
@@ -2422,6 +2877,500 @@ def main():
         return 1
     print("%d checks passed." % _passes)
     return 0
+
+
+def test_team_invites(ctx):
+    """1.2.3 step 1b (D17-D19): invitations and the team folder's name."""
+    e = ctx.eval
+    check("invites: open, accepted, cancelled", e("[inviteState({ status: 'open' }), inviteState({ acceptedBy: 'm-1' }), inviteState({ status: 'cancelled', acceptedBy: 'm-1' }), inviteState(null)].join()"),
+          "open,accepted,cancelled,missing")
+    check("invites: matched by name, accents and spaces aside", e("inviteMatches({ name: 'Annick  Zütter' }, { name: ' annick zutter' })"), True)
+    check("invites: matched by name, spaces and punctuation aside", e("inviteMatches({ name: 'member2' }, { name: 'Member 2' })"), True)
+    check("invites: a different name does not match", e("inviteMatches({ name: 'Member 3' }, { name: 'Member 2' })"), False)
+    check("invites: matched by e-mail",e("inviteMatches({ name: 'A Z', email: 'Anna@X.ch' }, { name: 'Annick', email: 'anna@x.ch' })"), True)
+    check("invites: an empty profile matches nothing", e("inviteMatches({ name: '', email: '' }, { name: '', email: '' })"), False)
+    check("invites: refused - missing / other team / cancelled / used", e("""[inviteRefusal(null), inviteRefusal({ teamId: 't-2', status: 'open' }, { teamId: 't-1' }),
+        inviteRefusal({ status: 'cancelled' }), inviteRefusal({ acceptedBy: 'm-1' }, { memberId: 'm-2' })].map(function (x) { return x.split(' ')[0]; }).join()"""),
+          "There,There,The,This")
+    check("invites: my own acceptance is no refusal", e("inviteRefusal({ acceptedBy: 'm-1' }, { memberId: 'm-1' })"), None)
+    check("invites: open, oldest first", e("openInvites({ a: { name: 'B', at: 2 }, b: { name: 'A', at: 1 }, c: { name: 'C', at: 0, status: 'cancelled' } }).map(function (i) { return i.name; }).join()"), "A,B")
+    check("team folder name: Windows-safe", e("teamFolderName('Sales: CH/DE?  ') + '|' + teamFolderName('...')"), "SalesTeam - Sales CH DE|SalesTeam - Team")
+
+
+def test_import_merge(ctx):
+    """1.2.3 Export & Import step 0 (EXPORT_IMPORT_DESIGN.md 3.2-3.3): an import only adds and fills."""
+    e = ctx.eval
+    e("""
+      var IM_OPTS = { buckets: ctxFor().buckets, locationTier: ctxFor().locationTier, tolerancePct: 10, fileName: 'f.xlsx', at: 1 };
+      var IM_CURRENT = {
+        companies: [
+          { companyId: 'C-001', company: 'Acme AG', globalEmployees: 1200, globalHqCountry: 'Switzerland', linkedinLink: 'https://www.linkedin.com/company/acme/' },
+          { companyId: 'W-web.ch', company: 'Webfound GmbH', source: 'Web', website: 'https://web.ch' },
+          { companyId: 'C-002', company: 'Gone SA', globalEmployees: 50 },
+          { companyId: 'C-003', company: 'Banded AG', globalEmployees: 400, globalHqCountry: 'Switzerland' },
+        ],
+        contacts: [{ contactId: 'P-1', companyId: 'C-001', company: 'Acme AG', fullName: 'Anna Muster', jobTitle: 'CIO', lastVerified2: 'https://www.linkedin.com/in/anna-m/' }],
+        aiInitiatives: [{ initiativeId: 'I-1', companyId: 'C-001', initiativeName: 'Chatbot' }],
+        extras: { 'gone': { deletedAt: 5, overrides: {} }, 'acme': { overrides: { website: 'acme.ch' } } },
+        contactExtras: {},
+      };
+      var IM_FILE = {
+        companies: [
+          { companyId: 'C-001', company: 'ACME AG.', globalEmployees: 1250, globalHqCity: 'Zug', website: 'https://other.example' },
+          { companyId: 'C-002', company: 'Newco AG', globalEmployees: 300 },
+          { companyId: 'C-009', company: 'Gone SA', globalEmployees: 60 },
+          { companyId: 'C-010', company: 'Banded AG', globalEmployees: 900 },
+          { companyId: 'C-011', company: 'Other name', website: 'https://www.web.ch/en' },
+        ],
+        contacts: [
+          { contactId: 'P-1', companyId: 'C-001', fullName: 'Anna Muster', jobTitle: 'CTO', city: 'Zug' },
+          { contactId: 'P-2', companyId: 'C-002', fullName: 'Ben Neu' },
+          { contactId: 'P-3', company: 'Nowhere Ltd', fullName: 'Cleo X' },
+        ],
+        aiInitiatives: [{ initiativeId: 'I-1', companyId: 'C-001', initiativeName: 'chatbot' }, { initiativeId: 'I-2', companyId: 'C-002', initiativeName: 'RAG' }],
+      };
+      var IM = planImport(IM_FILE, IM_CURRENT, IM_OPTS);
+    """)
+    check("import: new accounts = Newco + the contact's company", e("IM.newCompanies.map(function (c) { return c.company; }).join()"), "Newco AG,Nowhere Ltd")
+    check("import: a taken id is remapped (team rows keyed by id)", e("IM.newCompanies[0].companyId"), "C-002-i1")
+    check("import: the new contact follows the remapped id", e("IM.newContacts.filter(function (c) { return c.fullName === 'Ben Neu'; })[0].companyId"), "C-002-i1")
+    check("import: an account removed in SalesTeam is not brought back", e("IM.skipped.some(function (s) { return /removed/.test(s.reason); })"), True)
+    check("import: matched by name despite case and dot", e("'acme' in IM.companyPatches"), True)
+    check("import: empty HQ city filled", e("IM.companyPatches['acme'].overrides.globalHqCity"), "Zug")
+    check("import: 1200 vs 1250 is not a question", e("IM.decisions.some(function (d) { return d.key === 'acme'; })"), False)
+    check("import: a user-typed website is never overwritten", e("'website' in IM.companyPatches['acme'].overrides"), False)
+    check("import: band change over 10% goes to Decisions (rule 6)", e("IM.companyPatches['banded'].findings.globalEmployees.rule"), 6)
+    check("import: ...with the file's value", e("IM.companyPatches['banded'].findings.globalEmployees.value"), 900)
+    check("import: ...and the current one is not overwritten", e("'globalEmployees' in IM.companyPatches['banded'].overrides"), False)
+    check("import: web-found account matched by website, not duplicated", e("IM.newCompanies.some(function (c) { return c.company === 'Other name'; })"), False)
+    check("import: existing contact matched by name, title kept", e("'jobTitle' in IM.contactPatches['acme::anna muster'].overrides"), False)
+    check("import: existing contact's empty city filled", e("IM.contactPatches['acme::anna muster'].overrides.city"), "Zug")
+    check("import: the different title is counted as kept", e("IM.kept.some(function (k) { return k.field === 'jobTitle'; })"), True)
+    check("import: an initiative the account already lists is not added again", e("IM.newInitiatives.map(function (i) { return i.initiativeName + '@' + i.companyId; }).join()"), "RAG@C-002-i1")
+    e("""
+      var IM2 = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 900 }] },
+        Object.assign({}, IM_CURRENT, { extras: { 'banded': { overrides: {}, importFindingsDismissed: { globalEmployees: 900 } } } }), IM_OPTS);
+      var IM3 = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 900 }] },
+        Object.assign({}, IM_CURRENT, { extras: { 'banded': { overrides: {}, importFindings: { globalEmployees: { value: 900 } } } } }), IM_OPTS);
+      var IM4 = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 2000 }] },
+        Object.assign({}, IM_CURRENT, { extras: { 'banded': { overrides: {}, importFindingsDismissed: { globalEmployees: 900 } } } }), IM_OPTS);
+    """)
+    check("import: 'Keep current' answered -> not asked again", e("IM2.counts.decisions"), 0)
+    check("import: already waiting -> not added twice", e("IM3.counts.decisions"), 0)
+    check("import: a different value is asked again", e("IM4.counts.decisions"), 1)
+    e("""
+      var SAME = planImport({ companies: [{ companyId: 'C-001', company: 'Acme AG', globalEmployees: 1200, globalHqCountry: 'Switzerland' }],
+        contacts: [{ companyId: 'C-001', fullName: 'Anna Muster', jobTitle: 'CIO' }] }, IM_CURRENT, IM_OPTS);
+    """)
+    check("import: the same data again changes nothing", e("importSummaryText(SAME.counts)"), "nothing new - everything in the file is already in SalesTeam")
+    e("""
+      var T = { companies: [{ company: 'Edge AG', globalEmployees: 1140 }] };
+      var TC = { companies: [{ companyId: 'E', company: 'Edge AG', globalEmployees: 1000, globalHqCountry: 'Switzerland' }], extras: {} };
+      var T10 = planImport(T, TC, IM_OPTS);
+      var T15 = planImport(T, TC, Object.assign({}, IM_OPTS, { tolerancePct: 15 }));
+    """)
+    check("import: 1000 vs 1140 (band change, 13%) asked at 10%", e("T10.counts.decisions"), 1)
+    check("import: ...kept without a question at 15%", e("T15.counts.decisions + '/' + T15.kept[0].rule"), "0/tolerance")
+    e("var BAD = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 0, globalRevenue: 5000000 }] }, IM_CURRENT, IM_OPTS);")
+    check("import: 0 employees from the file is never written", e("'globalEmployees' in ((BAD.companyPatches['banded'] || {}).overrides || {})"), False)
+    check("import: summary text", e("importSummaryText({ newCompanies: 1, filled: 2, decisions: 1 })"), "1 new account, 2 empty fields filled, 1 difference for Decisions")
+    # 1.2.2.10 live test (Boaz, 9 Oct): an import never overrules a hand edit, LinkedIn or cited web research
+    e("""
+      var axaRow = { companyId: 'A', company: 'AXA Switzerland', companyType: 'International company', globalEmployees: 1001, globalHqCountry: 'Switzerland' };
+      var axaExtra = { overrides: { swissEmployees: 4500, globalHqCountry: 'Switzerland', globalEmployees: 1001 },
+        provenance: { globalEmployees: { src: 'linkedin', v: 1001 }, globalHqCountry: { src: 'web', cited: true, v: 'Switzerland' } } };
+      var AXA = planImport({ companies: [{ company: 'AXA Switzerland', globalEmployees: 4700, globalHqCountry: 'France' }] },
+        { companies: [axaRow], extras: { 'axa switzerland': axaExtra } }, IM_OPTS);
+      var galRow = { companyId: 'G', company: 'Galenica', globalEmployees: 7000, globalEmployeesConfidence: 'estimate', globalHqCountry: 'Switzerland' };
+      var GAL = planImport({ companies: [{ company: 'Galenica', globalEmployees: 4511 }] },
+        { companies: [galRow], extras: { galenica: { overrides: { globalEmployees: 7971 }, provenance: { globalEmployees: { src: 'web', cited: true, v: 7971 } } } } }, IM_OPTS);
+      var ROW = planImport({ companies: [{ company: 'AXA Switzerland', globalHqCountry: 'France' }] },
+        { companies: [axaRow], extras: {} }, IM_OPTS);
+    """)
+    check("import: a LinkedIn headcount is not overruled", e("'globalEmployees' in ((AXA.companyPatches['axa switzerland'] || {}).overrides || {})"), False)
+    check("import: a cited web HQ country is not overruled (rule 11)", e("'globalHqCountry' in ((AXA.companyPatches['axa switzerland'] || {}).overrides || {})"), False)
+    check("import: ...both counted as kept, rule 'source'", e("AXA.kept.filter(function (k) { return k.rule === 'source'; }).length + '/' + AXA.counts.taken"), "2/0")
+    check("import: a cited web headcount is not overruled", e("GAL.counts.taken"), 0)
+    check("import: the stored row's own value can still be corrected (rule 11)", e("ROW.companyPatches['axa switzerland'].overrides.globalHqCountry + '/' + ROW.counts.taken"), "France/1")
+
+
+
+def test_csv_import(ctx):
+    """1.2.3 Export & Import step 2 (design 3.1): SalesTeam CSV and HubSpot files read into workbook rows."""
+    e = ctx.eval
+    check("detect: SalesTeam accounts export", e("JSON.stringify(detectImportFile(['Company', 'Industry', 'Priority', 'Priority Score', 'LinkedIn Link', 'Employees']))"),
+          '{"format":"salesteam","kind":"accounts"}')
+    check("detect: SalesTeam contacts export (has Name, like HubSpot companies)", e("JSON.stringify(detectImportFile(['Name', 'Company', 'Status', 'Job Title', 'Contact Link']))"),
+          '{"format":"salesteam","kind":"contacts"}')
+    check("detect: HubSpot companies", e("JSON.stringify(detectImportFile(['Record ID', 'Company name', 'Company Domain Name', 'Industry']))"),
+          '{"format":"hubspot","kind":"accounts"}')
+    check("detect: HubSpot contacts", e("JSON.stringify(detectImportFile(['Record ID', 'First Name', 'Last Name', 'Email', 'Associated Company']))"),
+          '{"format":"hubspot","kind":"contacts"}')
+    check("detect: a CRM file with only a Company column is not taken for SalesTeam's", e("detectImportFile(['Company', 'Owner'])"), None)
+    check("detect: says what a wrong file looks like", e("describeImportFile(detectImportFile(['First Name', 'Email']))"), "a HubSpot contacts export")
+    e("""
+      var CSV_ROWS = salesteamCsvRows([
+        { 'Company': 'Acme AG', 'Priority': 'P1', 'Employees': "1'250", 'Global Revenue': '2,500,000', 'Global HQ City': 'Zug', 'Readiness': 'Ready', 'Source': 'Web' },
+        { 'Company': '', 'Employees': '5' },
+      ], 'accounts');
+      var CSV_CONTACTS = salesteamCsvRows([{ 'Name': 'Ben Neu', 'Company': 'Newco AG', 'Job Title': 'CIO', 'Status': 'Contacted', 'Contact Link': 'https://www.linkedin.com/in/ben/' }], 'contacts');
+    """)
+    check("salesteam csv: a row without a company is skipped", e("CSV_ROWS.length"), 1)
+    check("salesteam csv: numbers read with separators", e("CSV_ROWS[0].globalEmployees + '/' + CSV_ROWS[0].globalRevenue"), "1250/2500000")
+    check("salesteam csv: computed columns are not read back", e("'salesTeamPriority' in CSV_ROWS[0] || 'readiness' in CSV_ROWS[0]"), False)
+    check("salesteam csv: a new row is marked source CSV, not the file's old source", e("CSV_ROWS[0].source"), "CSV")
+    check("salesteam csv: contact columns mapped", e("CSV_CONTACTS[0].fullName + '|' + CSV_CONTACTS[0].jobTitle + '|' + CSV_CONTACTS[0].lastVerified2"),
+          "Ben Neu|CIO|https://www.linkedin.com/in/ben/")
+    e("""
+      var CUR = applyFileCurrency({ companies: [{ company: 'A', globalRevenue: 5 }, { company: 'B', globalRevenue: 7, revenueCurrency: 'EUR' }, { company: 'C' }] }, 'CHF');
+    """)
+    check("D7: revenue without a currency is read as the chosen one", e("CUR.companies[0].revenueCurrency"), "CHF")
+    check("D7: a currency in the file is kept", e("CUR.companies[1].revenueCurrency"), "EUR")
+    check("D7: no revenue, no currency added", e("'revenueCurrency' in CUR.companies[2]"), False)
+    check("D7: fileNeedsCurrency", e("fileNeedsCurrency({ companies: [{ globalRevenue: 1 }] }) + '/' + fileNeedsCurrency(CUR)"), "true/false")
+    # 1.2.2.15 one currency (D14/D15): the export names the currency in the title; reading it back uses it.
+    check("D14: revenue title read", e("JSON.stringify(revenueTitleCurrency('Local Revenue (chf)'))"),
+          '{"field":"swissRevenue","currencyField":"swissRevenueCurrency","currency":"CHF"}')
+    check("D14: other bracketed titles are not revenue", e("revenueTitleCurrency('Employee Count (LinkedIn band)')"), None)
+    check("D14: a new export is still recognised", e("JSON.stringify(detectImportFile(['Company', 'Industry', 'Global Revenue (USD)', 'Readiness']))"),
+          '{"format":"salesteam","kind":"accounts"}')
+    e("""
+      var TITLED = salesteamCsvRows([
+        { 'Company': 'A AG', 'Global Revenue (USD)': '1,000,000', 'Local Revenue (USD)': '500' },
+        { 'Company': 'B AG', 'Global Revenue (USD)': '2,000,000', 'Global Revenue Currency': 'EUR' },
+        { 'Company': 'C AG', 'Global Revenue (USD)': '' },
+      ], 'accounts');
+    """)
+    check("D15 case 2: the title's currency is used", e("TITLED[0].globalRevenue + ' ' + TITLED[0].revenueCurrency + ' / ' + TITLED[0].swissRevenueCurrency"), "1000000 USD / USD")
+    check("D15 case 1: a row's own currency column wins over the title", e("TITLED[1].revenueCurrency"), "EUR")
+    check("D15: no revenue, no currency from the title", e("'revenueCurrency' in TITLED[2]"), False)
+    check("D15: a titled file needs no currency question", e("fileNeedsCurrency({ companies: TITLED })"), False)
+    check("D15: a value naming its currency needs no question", e("fileNeedsCurrency({ companies: [{ globalRevenue: 'CHF 102m' }] })"), False)
+    check("D15: a local revenue without its own currency is in the global one",
+          e("fileNeedsCurrency({ companies: [{ globalRevenue: 5, revenueCurrency: 'EUR', swissRevenue: 2 }] }) + '/' + ('swissRevenueCurrency' in applyFileCurrency({ companies: [{ swissRevenue: 2, revenueCurrency: 'EUR' }] }, 'CHF').companies[0])"),
+          "false/false")
+    e("""
+      var MONEY = { targetCurrency: 'USD', rates: { rates: { USD: 1, CHF: 1.25, EUR: 1.17 } } };
+      // stored in USD; the file has the same amounts in CHF (USD / 1.25)
+      var CHF_PAIRS = [100, 200, 400, 800].map(function (n) { return { file: n / 1.25, stored: n, storedCurrency: 'USD' }; });
+    """)
+    check("plausibility: CHF read as USD is caught", e("currencyPlausibility(CHF_PAIRS, 'USD', MONEY).likely"), "CHF")
+    check("plausibility: read as CHF it fits", e("currencyPlausibility(CHF_PAIRS, 'CHF', MONEY)"), None)
+    check("plausibility: an unchanged round trip fits", e("currencyPlausibility([1, 2, 3].map(function (n) { return { file: n, stored: n, storedCurrency: 'USD' }; }), 'USD', MONEY)"), None)
+    check("plausibility: too few accounts to tell", e("currencyPlausibility(CHF_PAIRS.slice(0, 2), 'USD', MONEY)"), None)
+    check("plausibility: a gap no currency explains is not a currency warning",
+          e("currencyPlausibility([1, 2, 3].map(function (n) { return { file: n * 3, stored: n, storedCurrency: 'USD' }; }), 'USD', MONEY)"), None)
+    check("plausibility: stored in CHF, file in CHF read as CHF fits",
+          e("currencyPlausibility([1, 2, 3].map(function (n) { return { file: n, stored: n, storedCurrency: 'CHF' }; }), 'CHF', MONEY)"), None)
+    # The same plan as the workbook: an existing account gets its empty field filled, nothing replaced.
+    e("""
+      var CSV_PLAN = planImport({ companies: CSV_ROWS, contacts: CSV_CONTACTS },
+        { companies: [{ companyId: 'C-1', company: 'Acme AG', globalEmployees: 1200 }], contacts: [], extras: {}, contactExtras: {} },
+        { buckets: ctxFor().buckets, locationTier: ctxFor().locationTier, tolerancePct: 10, fileName: 'x.csv', at: 1 });
+    """)
+    check("csv through the plan: empty HQ city filled", e("CSV_PLAN.companyPatches['acme'].overrides.globalHqCity"), "Zug")
+    check("csv through the plan: 1200 vs 1250 kept, within 10%", e("'globalEmployees' in CSV_PLAN.companyPatches['acme'].overrides"), False)
+    check("csv through the plan: a contact's unknown company becomes an account", e("CSV_PLAN.newCompanyNames.join()"), "Newco AG")
+    # 1.2.2.13 round-trip test (Boaz exported and re-imported unchanged files: 6 new contacts, 1,261 fills).
+    e("""
+      var RT = planImport(
+        { companies: [{ company: 'ADM Switzerland', globalEmployees: 5000 }],
+          contacts: [{ company: 'Holcim Schweiz / Suisse / Svizzera', fullName: 'Pascal Degen' }] },
+        { companies: [
+            { companyId: 'C-1', company: 'Holcim Group', aliases: ['Holcim Schweiz / Suisse / Svizzera'] },
+            { companyId: 'D-2', company: 'Holcim Schweiz / Suisse / Svizzera' },
+            { companyId: 'C-3', company: 'ADM Switzerland', employeeRange: '>5,000' } ],
+          contacts: [{ contactId: 'P-1', companyId: 'D-2', company: 'Holcim Schweiz / Suisse / Svizzera', fullName: 'Pascal Degen' }],
+          extras: {}, contactExtras: {} },
+        { buckets: ctxFor().buckets, locationTier: ctxFor().locationTier, tolerancePct: 10, at: 1 });
+    """)
+    check("round trip: a person under a subsidiary that is also a group alias is not new", e("RT.counts.newContacts"), 0)
+    check("round trip: the LinkedIn band shown as Employees is not filled in as a number", e("RT.counts.filled"), 0)
+    check("salesteam csv: the worked-out Seniority is not read back", e("'seniority' in salesteamCsvRows([{ Name: 'A B', Company: 'X', Seniority: 'C-level' }], 'contacts')[0]"), False)
+
+
+def test_import_cut_values(ctx):
+    """1.2.2.21 (Boaz's Dynamics round trip): a contact value the CRM file cut short is not a difference."""
+    e = ctx.eval
+    e("""
+      var LONG = 'Head of Group Information Technology, Digital Transformation and Artificial Intelligence, Member of the Executive Board';
+      var CUT_NOW = { companies: [{ companyId: 'C-1', company: 'Acme AG' }], contacts: [
+        { contactId: 'P-1', companyId: 'C-1', company: 'Acme AG', fullName: 'Anna Muster', jobTitle: LONG, city: 'Zürich (ZH)' },
+        { contactId: 'P-2', companyId: 'C-1', company: 'Acme AG', fullName: 'Peter Beispiel', jobTitle: 'Chief Financial Officer', city: 'Bern' } ] };
+      var CUT = planImport({ companies: [{ company: 'Acme AG' }], contacts: [
+        { company: 'Acme AG', fullName: 'Anna Muster', jobTitle: LONG.slice(0, 100).trim(), city: 'Zürich' },
+        { company: 'Acme AG', fullName: 'Peter Beispiel', jobTitle: 'Chief Operating Officer', city: 'Be' } ] }, CUT_NOW, {});
+      var BACK_ROWS = crmContactRows('dynamics', parseCsvForTest(buildCrmFiles('dynamics', CUT_NOW.companies, CUT_NOW.contacts).contactsCsv));
+      var BACK_PLAN = planImport({ companies: [], contacts: BACK_ROWS }, CUT_NOW, {});
+    """ .replace("parseCsvForTest", "(function (csv) { var lines = csv.replace(/^\\uFEFF/, '').trim().split('\\r\\n').map(function (l) { var out = [], cur = '', q = false; for (var i = 0; i < l.length; i++) { var ch = l[i]; if (q) { if (ch === '\"' && l[i + 1] === '\"') { cur += '\"'; i++; } else if (ch === '\"') q = false; else cur += ch; } else if (ch === '\"') q = true; else if (ch === ',') { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; }); return lines.slice(1).map(function (r) { var o = {}; lines[0].forEach(function (h, i) { o[h] = r[i]; }); return o; }); })"))
+    check("import: a job title cut at the column limit and a shortened city are not differences", e("CUT.kept.filter(function (k) { return k.contact === 'Anna Muster'; }).length"), 0)
+    check("import: a really different job title is still a difference; two letters are not 'the start'", e("CUT.kept.map(function (k) { return k.contact + ':' + k.field; }).join('|')"), "Peter Beispiel:jobTitle|Peter Beispiel:city")
+    e("""
+      var TWIN_NOW = { companies: [{ companyId: 'C-1', company: 'Acme AG' }], contacts: [
+        { contactId: 'P-10', companyId: 'C-1', company: 'Acme AG', fullName: 'Rita Muster', jobTitle: 'Chief Technology Officer', lastVerified2: 'https://www.linkedin.com/in/ritamuster/' },
+        { contactId: 'P-11', companyId: 'C-1', company: 'Acme AG', fullName: 'Dr. Rita Muster', jobTitle: 'CTO', city: 'Flawil', lastVerified2: 'https://www.linkedin.com/in/ritamuster/' } ] };
+      var TWIN_FILE = crmContactRows('dynamics', [{ 'First Name': 'Dr. Rita', 'Last Name': 'Muster', 'Job Title': 'CTO', 'Company Name': 'Acme AG', 'Address 1: City': 'Flawil',
+        'Description': 'LinkedIn: https://www.linkedin.com/in/ritamuster/\\nSalesTeam id: P-11' }]);
+      var TWIN = planImport({ companies: [], contacts: TWIN_FILE }, TWIN_NOW, {});
+      var OTHER = planImport({ companies: [], contacts: [{ contactId: 'P-11', company: 'Acme AG', fullName: 'Somebody Else', jobTitle: 'CFO' }] }, TWIN_NOW, {});
+    """)
+    check("import: a SalesTeam file's row carries its entry's id", e("TWIN_FILE[0].contactId"), "P-11")
+    check("import: a person stored twice - the file's row is matched to its own entry, not the twin", e("JSON.stringify([TWIN.counts.filled, TWIN.counts.kept, TWIN.counts.newContacts])"), "[0,0,0]")
+    check("import: the same id for another person is not a match", e("OTHER.counts.newContacts + '|' + OTHER.newContacts[0].contactId"), "1|P-11-i1")
+    check("import details: one line per filled field and per difference kept", e("importDetailLines({ fills: [{ company: 'Acme AG', label: 'website', imported: 'https://acme.ch' }], kept: CUT.kept }).join(' / ')"),
+          "Filled: Acme AG - website: https://acme.ch / Kept as it is: Peter Beispiel (Acme AG) - jobTitle: current Chief Financial Officer, in the file Chief Operating Officer (a contact keeps its current value) / Kept as it is: Peter Beispiel (Acme AG) - city: current Bern, in the file Be (a contact keeps its current value)")
+    check("import details: a long list is cut", e("importDetailLines({ kept: CUT.kept }, 1).length + '|' + importDetailLines({ kept: CUT.kept }, 1)[1]"), "2|… and 1 more")
+    check("import: a Dynamics export of the same contacts comes back with nothing to do", e("JSON.stringify(BACK_PLAN.counts)"),
+          '{"newCompanies":0,"newContacts":0,"newInitiatives":0,"filled":0,"taken":0,"kept":0,"decisions":0,"skipped":0}')
+
+
+def test_crm_files(ctx):
+    """1.2.3 Export & Import step 3 (design 8): Salesforce files written in the wizard's own columns and read back."""
+    e = ctx.eval
+    SF_ACC = "Account Name,Annual Revenue,Billing Street,Billing City,Billing State/Province,Billing Zip/Postal Code,Billing Country,Description,Employees,Fax,Industry,Phone,Shipping Street,Shipping City,Shipping State/Province,Shipping Zip/Postal Code,Shipping Country,Type,Website"
+    SF_CON = "First Name,Last Name,Email,Phone,Title,Account Name,Mailing Street,Mailing City,Mailing State/Province,Mailing Zip/Postal Code,Mailing Country,Lead Source,Consent Status"
+    check("detect: Salesforce's sample accounts file", e("JSON.stringify(detectImportFile(%s))" % json.dumps(SF_ACC.split(","))),
+          '{"format":"salesforce","kind":"accounts"}')
+    check("detect: Salesforce's sample contacts file (not HubSpot contacts)", e("JSON.stringify(detectImportFile(%s))" % json.dumps(SF_CON.split(","))),
+          '{"format":"salesforce","kind":"contacts"}')
+    check("detect: Salesforce API names (Data Loader)", e("JSON.stringify(detectImportFile(['Id', 'Name', 'AnnualRevenue', 'NumberOfEmployees', 'BillingCountry']))"),
+          '{"format":"salesforce","kind":"accounts"}')
+    check("detect: HubSpot contacts still HubSpot", e("JSON.stringify(detectImportFile(['First Name', 'Last Name', 'Email', 'Associated Company']))"),
+          '{"format":"hubspot","kind":"contacts"}')
+    check("detect: says what a Salesforce file is", e("describeImportFile(detectImportFile(%s))" % json.dumps(SF_CON.split(","))), "a Salesforce contacts export")
+    check("registry address: street, zip, city", e("JSON.stringify(splitRegistryAddress('Rütistrasse 12, 8952 Schlieren'))"),
+          '{"street":"Rütistrasse 12","zip":"8952","city":"Schlieren","state":null,"country":null}')
+    check("registry address: canton and country after the city", e("JSON.stringify(splitRegistryAddress('Rue de Morges 23, 1023 Crissier, VD, Switzerland'))"),
+          '{"street":"Rue de Morges 23","zip":"1023","city":"Crissier","state":"VD","country":"Switzerland"}')
+    check("registry address: no zip -> not split", e("splitRegistryAddress('Meilen, Switzerland')"), None)
+    e("""
+      var SF = buildCrmFiles('salesforce', [
+          { companyId: 'C-1', company: 'AXA Switzerland', globalRevenue: 6200000000, globalEmployees: 4700, industry: 'Insurance',
+            globalHqCity: 'Paris', globalHqCountry: 'France', zefixAddress: 'General-Guisan-Strasse 40, 8400 Winterthur',
+            linkedinLink: 'https://www.linkedin.com/company/axa-switzerland/', companyType: 'Public', website: 'https://www.axa.ch',
+            salesTeamPriority: 'P1', salesTeamPriorityScore: 81.6, relationship: ['partner'] },
+          { companyId: 'C-2', company: 'Acme, "the" AG', globalHqCity: 'Zug', globalHqCountry: 'Switzerland', relationship: ['customer', 'partner'] } ],
+        [ { contactId: 'P-1', company: 'AXA Switzerland', fullName: 'Anna Maria Muster', jobTitle: 'CIO', publicBusinessEmail: 'a@axa.ch',
+            city: 'Winterthur', country: 'Switzerland', lastVerified2: 'https://www.linkedin.com/in/anna/' } ],
+        { registryCountry: 'Switzerland' });
+    """)
+    # parseCsv lives in hubspot.js (not pure): the files are read back with Python's csv module, as a CRM would.
+    def read_csv(text):
+        rows = list(csv.reader(io.StringIO(text.lstrip("﻿"), newline="")))
+        return {"headers": rows[0], "records": [dict(zip(rows[0], r)) for r in rows[1:]]}
+    e("var SF_P = %s; var SF_C = %s;" % (json.dumps(read_csv(e("SF.accountsCsv"))), json.dumps(read_csv(e("SF.contactsCsv")))))
+    check("export: accounts header is exactly Salesforce's sample", e("SF_P.headers.join(',')"), SF_ACC)
+    check("export: contacts header = sample + Description", e("SF_C.headers.join(',')"), SF_CON + ",Description")
+    check("export: billing from the registry address, in the registry's country (not the French HQ)",
+          e("['Billing Street','Billing Zip/Postal Code','Billing City','Billing Country'].map(function (k) { return SF_P.records[0][k]; }).join('|')"),
+          "General-Guisan-Strasse 40|8400|Winterthur|Switzerland")
+    check("export: no registry address -> HQ city and country", e("SF_P.records[1]['Billing City'] + '|' + SF_P.records[1]['Billing Country']"), "Zug|Switzerland")
+    check("export: Type is the relationship (customer wins)", e("SF_P.records[0].Type + '|' + SF_P.records[1].Type"), "Partner|Customer")
+    check("export: a company name with comma and quotes survives", e("SF_P.records[1]['Account Name']"), 'Acme, "the" AG')
+    check("export: priority and SalesTeam id in Description", e("/SalesTeam priority: P1 \\(score 82\\)/.test(SF_P.records[0].Description) && /SalesTeam id: C-1/.test(SF_P.records[0].Description)"), True)
+    check("export: contact split into first / last, Lead Source Other, Consent empty",
+          e("[SF_C.records[0]['First Name'], SF_C.records[0]['Last Name'], SF_C.records[0]['Lead Source'], SF_C.records[0]['Consent Status']].join('|')"),
+          "Anna Maria|Muster|Other|")
+    e("""
+      var BACK = crmAccountRows('salesforce', SF_P.records);
+      var BACK_C = crmContactRows('salesforce', SF_C.records);
+    """)
+    check("round trip: HQ comes back from Description, not from the billing address", e("BACK[0].globalHqCity + '|' + BACK[0].globalHqCountry"), "Paris|France")
+    check("round trip: registry address, LinkedIn page, company type", e("[BACK[0].zefixAddress, BACK[0].linkedinLink, BACK[0].companyType].join('|')"),
+          "General-Guisan-Strasse 40, 8400 Winterthur|https://www.linkedin.com/company/axa-switzerland/|Public")
+    check("round trip: numbers", e("BACK[0].globalRevenue + '|' + BACK[0].globalEmployees"), "6200000000|4700")
+    check("round trip: revenue without a currency asks for one (D15 case 3)", e("fileNeedsCurrency({ companies: BACK })"), True)
+    check("round trip: source Salesforce", e("BACK[0].source"), "Salesforce")
+    check("round trip: contact", e("[BACK_C[0].fullName, BACK_C[0].company, BACK_C[0].jobTitle, BACK_C[0].publicBusinessEmail, BACK_C[0].lastVerified2].join('|')"),
+          "Anna Maria Muster|AXA Switzerland|CIO|a@axa.ch|https://www.linkedin.com/in/anna/")
+    e("""
+      var ORG = crmAccountRows('salesforce', [
+        { 'Account ID': '001A', 'Account Name': 'Suspendisse Non Associates', 'Annual Revenue': '500000', 'Billing City': 'Every City',
+          'Billing Country': 'United States', 'Employees': '20', 'Website': 'www.example.com/sample', 'Description': 'Manufacturer in Every City CA' },
+        { Id: '001B', Name: 'Enim', AnnualRevenue: 'USD 1,500,000', NumberOfEmployees: '' },
+        { 'Account Name': '' } ]);
+    """)
+    check("org file: billing address read as HQ", e("ORG[0].globalHqCity + '|' + ORG[0].globalHqCountry"), "Every City|United States")
+    check("org file: record id kept, website gets https", e("ORG[0].companyId + '|' + ORG[0].website"), "SF-001A|https://www.example.com/sample")
+    check("org file: API names; revenue naming its currency kept as text; empty employees left out",
+          e("ORG[1].company + '|' + ORG[1].globalRevenue + '|' + ('globalEmployees' in ORG[1])"), "Enim|USD 1,500,000|false")
+    check("org file: a row without a name is skipped", e("ORG.length"), 2)
+    # Salesforce's error file from the first real import (2026-10-10): 7 of 9 refusals came from the file.
+    e("""
+      var FIX = buildCrmFiles('salesforce', [
+          { company: 'BB Biotech', globalEmployees: 72.8, globalRevenue: 180000000.4 },
+          { company: "McDonald's Switzerland", zefixAddress: 'Rue de Morges 23, 1023 Crissier, VD, Switzerland' },
+          { company: 'PepsiCo Switzerland', globalHqCity: 'Harrison, New York (global); Geneva (Swiss/European office)', globalHqCountry: 'United States' } ], [], {});
+    """)
+    def fix_rows():
+        return read_csv(e("FIX.accountsCsv"))["records"]
+    FIX = fix_rows()
+    check("salesforce fix: Employees and Annual Revenue are whole numbers", FIX[0]["Employees"] + "|" + FIX[0]["Annual Revenue"], "73|180000000")
+    check("salesforce fix: no state (a canton is refused for Switzerland)", FIX[1]["Billing State/Province"] + "|" + FIX[1]["Billing Country"], "|Switzerland")
+    check("salesforce fix: one city, at most 40 characters", FIX[2]["Billing City"], "Harrison, New York")
+    check("salesforce fix: the whole HQ text stays in Description", "Harrison, New York (global); Geneva" in FIX[2]["Description"], True)
+
+    # Microsoft Dynamics 365 Sales (design 8a): the same module with its own column table.
+    DYN_ACC = "Account Name,Website,Relationship Type,Number of Employees,Annual Revenue,Address 1: Street 1,Address 1: City,Address 1: ZIP/Postal Code,Address 1: Country/Region,Description"
+    DYN_CON = "First Name,Last Name,Job Title,Email,Business Phone,Company Name,Address 1: City,Address 1: Country/Region,Description"
+    e("""
+      var DYN = buildCrmFiles('dynamics', [
+          { companyId: 'C-1', company: 'AXA Switzerland', globalRevenue: 6200000000.4, globalEmployees: 4700.6, industry: 'Insurance',
+            globalHqCity: 'Paris', globalHqCountry: 'France', zefixAddress: 'General-Guisan-Strasse 40, 8400 Winterthur',
+            linkedinLink: 'https://www.linkedin.com/company/axa-switzerland/', companyType: 'Public', website: 'https://www.axa.ch',
+            salesTeamPriority: 'P1', salesTeamPriorityScore: 81.6, relationship: ['customer'] },
+          { companyId: 'C-2', company: 'Zug AG', globalHqCity: 'Zug', globalHqCountry: 'Switzerland' } ],
+        [ { contactId: 'P-1', company: 'AXA Switzerland', fullName: 'Anna Maria Muster', jobTitle: 'CIO', publicBusinessEmail: 'a@axa.ch',
+            publicBusinessPhone: '+41 52 000 00 00', city: 'Winterthur', country: 'Switzerland', lastVerified2: 'https://www.linkedin.com/in/anna/' } ],
+        { registryCountry: 'Switzerland' });
+    """)
+    e("var DYN_P = %s; var DYN_C = %s;" % (json.dumps(read_csv(e("DYN.accountsCsv"))), json.dumps(read_csv(e("DYN.contactsCsv")))))
+    check("dynamics export: accounts header is Dynamics' own column names (no Industry, no Currency)", e("DYN_P.headers.join(',')"), DYN_ACC)
+    check("dynamics export: contacts header", e("DYN_C.headers.join(',')"), DYN_CON)
+    check("dynamics export: address from the registry address",
+          e("['Address 1: Street 1','Address 1: ZIP/Postal Code','Address 1: City','Address 1: Country/Region'].map(function (k) { return DYN_P.records[0][k]; }).join('|')"),
+          "General-Guisan-Strasse 40|8400|Winterthur|Switzerland")
+    check("dynamics export: whole numbers, Relationship Type", e("[DYN_P.records[0]['Number of Employees'], DYN_P.records[0]['Annual Revenue'], DYN_P.records[0]['Relationship Type'], DYN_P.records[1]['Relationship Type']].join('|')"),
+          "4701|6200000000|Customer|Prospect")
+    check("dynamics export: industry goes into Description", e("/^Industry: Insurance$/m.test(DYN_P.records[0].Description) && /SalesTeam id: C-1/.test(DYN_P.records[0].Description)"), True)
+    check("salesforce export: industry stays in its own column, not in Description", e("/Industry:/.test(SF_P.records[0].Description) + '|' + SF_P.records[0].Industry"), "false|Insurance")
+    check("dynamics export: contact", e("['First Name','Last Name','Job Title','Email','Business Phone','Company Name'].map(function (k) { return DYN_C.records[0][k]; }).join('|')"),
+          "Anna Maria|Muster|CIO|a@axa.ch|+41 52 000 00 00|AXA Switzerland")
+    check("dynamics detect: SalesTeam's own Dynamics accounts file", e("JSON.stringify(detectImportFile(DYN_P.headers))"), '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics detect: SalesTeam's own Dynamics contacts file", e("JSON.stringify(detectImportFile(DYN_C.headers))"), '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics detect: Export to Excel, default accounts view",
+          e("JSON.stringify(detectImportFile(['(Do Not Modify) Account', '(Do Not Modify) Row Checksum', '(Do Not Modify) Modified On', 'Account Name', 'Main Phone', 'Address 1: City', 'Primary Contact', 'Email (Primary Contact)']))"),
+          '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics detect: Export to Excel, default contacts view (Full Name only)",
+          e("JSON.stringify(detectImportFile(['(Do Not Modify) Contact', '(Do Not Modify) Row Checksum', '(Do Not Modify) Modified On', 'Full Name', 'Email', 'Company Name', 'Business Phone']))"),
+          '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics detect: field names", e("JSON.stringify(detectImportFile(['name', 'websiteurl', 'numberofemployees', 'revenue', 'address1_city']))"), '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics detect: titles both CRMs use follow the chosen file type",
+          e("detectImportFile(['Account Name', 'Website', 'Industry'], 'dynamics').format + '|' + detectImportFile(['Account Name', 'Website', 'Industry'], 'salesforce').format + '|' + detectImportFile(['Account Name', 'Website', 'Industry']).format"),
+          "dynamics|salesforce|salesforce")
+    check("dynamics detect: a Salesforce file stays Salesforce even when Dynamics was chosen", e("detectImportFile(%s, 'dynamics').format" % json.dumps(SF_ACC.split(","))), "salesforce")
+    check("dynamics detect: Salesforce's samples are still Salesforce", e("detectImportFile(%s).format + '|' + detectImportFile(%s).format" % (json.dumps(SF_ACC.split(",")), json.dumps(SF_CON.split(",")))), "salesforce|salesforce")
+    check("dynamics detect: HubSpot contacts with a Company Name column stay HubSpot", e("detectImportFile(['First Name', 'Last Name', 'Email', 'Company Name', 'Phone Number']).format"), "hubspot")
+    check("dynamics detect: says what the file is", e("describeImportFile(detectImportFile(DYN_C.headers))"), "a Microsoft Dynamics contacts export")
+    e("""
+      var DBACK = crmAccountRows('dynamics', DYN_P.records);
+      var DBACK_C = crmContactRows('dynamics', DYN_C.records);
+    """)
+    check("dynamics round trip: HQ and industry come back from Description", e("[DBACK[0].globalHqCity, DBACK[0].globalHqCountry, DBACK[0].industry, DBACK[0].companyType].join('|')"), "Paris|France|Insurance|Public")
+    check("dynamics round trip: numbers, website, source", e("[DBACK[0].globalRevenue, DBACK[0].globalEmployees, DBACK[0].website, DBACK[0].source, DBACK[0].researchStatus].join('|')"),
+          "6200000000|4701|https://www.axa.ch|Microsoft Dynamics|Imported from Microsoft Dynamics")
+    check("dynamics round trip: revenue without a currency asks for one", e("fileNeedsCurrency({ companies: DBACK })"), True)
+    check("dynamics round trip: contact", e("[DBACK_C[0].fullName, DBACK_C[0].company, DBACK_C[0].jobTitle, DBACK_C[0].publicBusinessEmail, DBACK_C[0].publicBusinessPhone, DBACK_C[0].city, DBACK_C[0].lastVerified2].join('|')"),
+          "Anna Maria Muster|AXA Switzerland|CIO|a@axa.ch|+41 52 000 00 00|Winterthur|https://www.linkedin.com/in/anna/")
+    e("""
+      var DORG = crmAccountRows('dynamics', [
+        { '(Do Not Modify) Account': 'a1b2', '(Do Not Modify) Row Checksum': 'x==', '(Do Not Modify) Modified On': '45000.5', 'Account Name': 'Contoso AG',
+          'Main Phone': '555-0100', 'Address 1: City': 'Basel', 'Address 1: Country/Region': 'Switzerland', 'Industry': 'Consulting',
+          'Annual Revenue': '1500000', 'Currency': 'Swiss Franc', 'Number of Employees': '1,200', 'Website': 'contoso.ch' },
+        { name: 'Fabrikam', revenue: '250000', transactioncurrencyid: 'Groat', numberofemployees: '40', address1_city: 'Bern' },
+        { 'Account Name': 'Adventure Works', 'Annual Revenue': '$2,000,000.00' },
+        { 'Account Name': '' } ]);
+      var DORG_C = crmContactRows('dynamics', [
+        { '(Do Not Modify) Contact': 'c9', 'Full Name': 'Yvonne McKay', 'Email': 'y@contoso.ch', 'Company Name': 'Contoso AG', 'Business Phone': '555-0101', 'Job Title': 'Head of IT' },
+        { firstname: 'Rene', lastname: 'Valdes', parentcustomerid: 'Fabrikam', emailaddress1: 'r@fabrikam.com', jobtitle: 'CTO', telephone1: '555' },
+        { 'Full Name': 'No Company' } ]);
+    """)
+    check("dynamics org file: address read as HQ, industry column read, record id kept",
+          e("[DORG[0].globalHqCity, DORG[0].globalHqCountry, DORG[0].industry, DORG[0].companyId, DORG[0].website].join('|')"), "Basel|Switzerland|Consulting|DYN-a1b2|https://contoso.ch")
+    check("dynamics org file: Currency column names the currency; numbers read", e("[DORG[0].globalRevenue, DORG[0].revenueCurrency, DORG[0].globalEmployees].join('|')"), "1500000|CHF|1200")
+    check("dynamics org file: a row with its currency needs no question", e("fileNeedsCurrency({ companies: [DORG[0]] })"), False)
+    check("dynamics org file: field names; an unknown currency name is asked for, not guessed",
+          e("[DORG[1].company, DORG[1].globalRevenue, DORG[1].revenueCurrency, DORG[1].globalHqCity, fileNeedsCurrency({ companies: [DORG[1]] })].join('|')"), "Fabrikam|250000||Bern|true")
+    check("dynamics org file: revenue with a currency sign keeps it", e("DORG[2].globalRevenue + '|' + fileNeedsCurrency({ companies: [DORG[2]] })"), "$2,000,000.00|false")
+    check("dynamics org file: a row without a name is skipped", e("DORG.length"), 3)
+    check("dynamics org contacts: Full Name only", e("[DORG_C[0].fullName, DORG_C[0].company, DORG_C[0].jobTitle, DORG_C[0].publicBusinessEmail, DORG_C[0].publicBusinessPhone, DORG_C[0].contactId].join('|')"),
+          "Yvonne McKay|Contoso AG|Head of IT|y@contoso.ch|555-0101|DYN-c9")
+    check("dynamics org contacts: field names", e("[DORG_C[1].fullName, DORG_C[1].company, DORG_C[1].jobTitle, DORG_C[1].publicBusinessEmail].join('|')"), "Rene Valdes|Fabrikam|CTO|r@fabrikam.com")
+    check("dynamics org contacts: no company -> skipped", e("DORG_C.length"), 2)
+    # 2026-10-10: real "Export to Excel" files of a German organisation - titles in German, field names in the hidden sheet.
+    e("""
+      var DE_ACC = withDynamicsFieldNames({
+        headers: ['(Nicht ändern) Firma', '(Nicht ändern) Zeilenprüfsumme', '(Nicht ändern) Geändert am', 'Firmenname', 'Telefon 1', 'Adresse 1: Ort', 'Primärer Kontakt', 'E-Mail (Primärer Kontakt) (Kontakt)', 'Kundenbetreuer', 'Besitzer (Unternehmenseinheit)'],
+        records: [{ '(Nicht ändern) Firma': '5db9', '(Nicht ändern) Zeilenprüfsumme': 'x==', '(Nicht ändern) Geändert am': '46287.31', 'Firmenname': 'Firma XYZ', 'Adresse 1: Ort': 'Zürich', 'Besitzer (Unternehmenseinheit)': 'BU' }],
+        fieldKey: 'account:abc/DEF+1==:accountid=%28Nicht%20%c3%a4ndern%29%20Firma&checksumLogicalName=%28Nicht%20%c3%a4ndern%29%20Zeilenpr%c3%bcfsumme&modifiedon=%28Nicht%20%c3%a4ndern%29%20Ge%c3%a4ndert%20am&name=Firmenname&telephone1=Telefon%201&address1_city=Adresse%201%3a%20Ort&primarycontactid=Prim%c3%a4rer%20Kontakt&7befeabe-bf01-4207-97f8-7a96e05d2332.emailaddress1=E-Mail%20%28Prim%c3%a4rer%20Kontakt%29%20%28Kontakt%29&ownerid=Kundenbetreuer&owningbusinessunit=Besitzer%20%28Unternehmenseinheit%29' });
+      var DE_KEY = 'contact:abc==:contactid=%28Nicht%20%c3%a4ndern%29%20Kontakt&fullname=%20Vollst%c3%a4ndiger%20Name&firstname=Vorname&middlename=Zweiter%20Vorname&lastname=Nachname&parentcustomerid=Firmenname&jobtitle=Position&emailaddress1=E-Mail&telephone1=Telefon%20%28gesch%c3%a4ftlich%29&mobilephone=Mobiltelefonnummer&new_lastactivity=Letzte%20Aktivit%c3%a4t';
+      var DE_CON = withDynamicsFieldNames({
+        headers: ['(Nicht ändern) Kontakt', 'Vollständiger Name', 'Vorname', 'Zweiter Vorname', 'Nachname', 'Firmenname', 'Position', 'E-Mail', 'Telefon (geschäftlich)', 'Mobiltelefonnummer', 'Letzte Aktivität'],
+        records: [
+          { '(Nicht ändern) Kontakt': 'b1e8', 'Vollständiger Name': 'Muster, Anna', 'Vorname': 'Anna', 'Nachname': 'Muster', 'Firmenname': 'Firma XYZ', 'Position': 'Online Marketing Specialist', 'E-Mail': 'a@xyz.ch', 'Telefon (geschäftlich)': '044 000 00 00' },
+          { '(Nicht ändern) Kontakt': 'b1e9', 'Vollständiger Name': 'Ohne, Firma', 'Vorname': 'Firma', 'Nachname': 'Ohne' } ],
+        fieldKey: DE_KEY });
+      var DE_FULL = withDynamicsFieldNames({ headers: ['Vollständiger Name', 'Firmenname'], records: [{ 'Vollständiger Name': 'Muster, Anna', 'Firmenname': 'Firma XYZ' }, { 'Vollständiger Name': 'Peter Meier', 'Firmenname': 'Firma XYZ' }], fieldKey: DE_KEY });
+      var DE_ROWS = crmAccountRows('dynamics', DE_ACC.records);
+      var DE_ROWS_C = crmContactRows('dynamics', DE_CON.records);
+    """)
+    check("dynamics German export: titles become field names", e("DE_ACC.headers.join('|')"),
+          "accountid|checksumlogicalname|modifiedon|name|telephone1|address1_city|primarycontactid|7befeabe-bf01-4207-97f8-7a96e05d2332.emailaddress1|ownerid|owningbusinessunit")
+    check("dynamics German export: accounts file recognised", e("JSON.stringify(detectImportFile(DE_ACC.headers, 'dynamics'))"), '{"format":"dynamics","kind":"accounts"}')
+    check("dynamics German export: contacts file recognised", e("JSON.stringify(detectImportFile(DE_CON.headers, 'dynamics'))"), '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics German export: contacts view with Full Name only recognised", e("JSON.stringify(detectImportFile(DE_FULL.headers, 'dynamics'))"), '{"format":"dynamics","kind":"contacts"}')
+    check("dynamics German export: account", e("[DE_ROWS.length, DE_ROWS[0].company, DE_ROWS[0].globalHqCity, DE_ROWS[0].companyId, DE_ROWS[0].source].join('|')"), "1|Firma XYZ|Zürich|DYN-5db9|Microsoft Dynamics")
+    check("dynamics German export: contact (same title 'Firmenname' is the contact's company here)",
+          e("[DE_ROWS_C.length, DE_ROWS_C[0].fullName, DE_ROWS_C[0].company, DE_ROWS_C[0].jobTitle, DE_ROWS_C[0].publicBusinessEmail, DE_ROWS_C[0].publicBusinessPhone, DE_ROWS_C[0].contactId].join('|')"),
+          "1|Anna Muster|Firma XYZ|Online Marketing Specialist|a@xyz.ch|044 000 00 00|DYN-b1e8")
+    check("dynamics German export: 'Last, First' full name turned round, a plain one kept", e("crmContactRows('dynamics', DE_FULL.records).map(function (r) { return r.fullName; }).join('|')"), "Anna Muster|Peter Meier")
+    check("dynamics field names: a file without the hidden sheet is left as it is", e("withDynamicsFieldNames({ headers: ['Account Name'], records: [{ 'Account Name': 'A' }], fieldKey: '' }).headers.join('|') + '|' + dynamicsFieldNames('just some text')"), "Account Name|null")
+    check("currency names", e("[currencyOfName('Swiss Franc'), currencyOfName('eur'), currencyOfName('US Dollar'), currencyOfName('Groat'), currencyOfName('')].join('|')"), "CHF|EUR|USD||")
+
+
+def test_whole_employees(ctx):
+    """1.2.2.17 (Boaz): a headcount is stored as a whole number - FTE figures from annual reports are rounded."""
+    e = ctx.eval
+    check("employees: FTE number rounded", e("wholeEmployees(941.2) + '|' + wholeEmployees(925.72) + '|' + wholeEmployees(72.5)"), "941|926|73")
+    check("employees: plain numeric string with decimals rounded", e("wholeEmployees('1419.4')"), 1419)
+    check("employees: whole values and text left as they are", e("JSON.stringify([wholeEmployees(8500), wholeEmployees(\"1'250\"), wholeEmployees('>5,000'), wholeEmployees('6,500+'), wholeEmployees(null)])"),
+          '[8500,"1\'250",">5,000","6,500+",null]')
+    check("employees: row copied only when something changed", e("var r0 = { company: 'A', globalEmployees: 10 }; withWholeEmployees(r0) === r0"), True)
+    check("employees: both fields rounded", e("JSON.stringify(withWholeEmployees({ company: 'SNB', globalEmployees: 941.2, swissEmployees: 925.72 }))"),
+          '{"company":"SNB","globalEmployees":941,"swissEmployees":926}')
+    check("employees: a web finding is rounded", e("computeFindingProposals({ company: 'SNB' }, null, { employeesGlobal: '941.2' }).filter(function (p) { return p.key === 'globalEmployees'; })[0].found"), 941)
+
+
+def test_person_identity(ctx):
+    """Contact deduplication (2026-10-10): the ~10 people the Salesforce import showed in SalesTeam twice."""
+    e = ctx.eval
+    same = lambda a, b: e("samePerson(%s, %s)" % (json.dumps(a), json.dumps(b)))
+    check("same: Dr. title", same({"fullName": "Hansjoerg Rodi", "lastVerified2": "https://www.linkedin.com/in/hansjoerg-rodi-bb3236220"}, {"fullName": "Dr. Hansjoerg Rodi"}), True)
+    check("same: Ö written as Oe", same({"fullName": "Oezlem Civelek"}, {"fullName": "Özlem Civelek"}), True)
+    check("same: ä written as a", same({"fullName": "Heiko Schäfer"}, {"fullName": "Dr. Heiko Schafer"}), True)
+    check("same: hyphenated first name", same({"fullName": "Hans-Jörg Muster"}, {"fullName": "Hansjoerg Muster"}), True)
+    check("same: middle initial", same({"fullName": "Keelan I. Adamson", "lastVerified2": "https://www.sec.gov/Archives/x.htm"}, {"fullName": "Keelan Adamson"}), True)
+    check("same: nickname in brackets", same({"fullName": "Weng Kuan (WK) Tan"}, {"fullName": "Weng Kuan Tan"}), True)
+    check("same: middle name", same({"fullName": "Guido Fabrizio Pinna"}, {"fullName": "Guido Pinna"}), True)
+    check("same: one LinkedIn profile, trailing slash", same({"fullName": "Andreas Ronchetti Salomon", "lastVerified2": "https://www.linkedin.com/in/aronchetti/"},
+                                                               {"fullName": "Andreas Ronchetti", "lastVerified2": "https://ch.linkedin.com/in/aronchetti?trk=x"}), True)
+    check("different: namesakes with two profiles", same({"fullName": "Patrick Graf", "lastVerified2": "https://www.linkedin.com/in/pgraf1"},
+                                                          {"fullName": "Patrick Graf", "lastVerified2": "https://www.linkedin.com/in/pgraf2"}), False)
+    check("different: another first name", same({"fullName": "Thomas Muster"}, {"fullName": "Andreas Muster"}), False)
+    check("different: a single name matches nothing by name", same({"fullName": "Madonna"}, {"fullName": "Madonna"}), False)
+    check("Ma is a surname, not a title", e("personNameWords('Jack Ma').join(' ')"), "jack ma")
+    check("profile slug: only linkedin.com/in", e("[linkedinProfileSlug('https://www.sec.gov/x'), linkedinProfileSlug('https://www.linkedin.com/in/Oezlem%C3%96/')].join('|')"), "|oezlemö")
+    e("""
+      var IDX = createPersonIndex();
+      IDX.add('Kühne + Nagel', { fullName: 'Hansjoerg Rodi' }, 'K1');
+      IDX.add('Basler Kantonalbank', { fullName: 'Oezlem Civelek', lastVerified2: 'https://www.linkedin.com/in/oezlemcivelek' }, 'B1');
+    """)
+    check("index: found at the same account", e("IDX.find('Kühne + Nagel', { fullName: 'Dr. Hansjoerg Rodi' })"), "K1")
+    check("index: not at another account", e("IDX.find('Kuehne Logistics', { fullName: 'Dr. Hansjoerg Rodi' })"), None)
+    check("index: by LinkedIn profile", e("IDX.find('Basler Kantonalbank', { fullName: 'Ö. Civelek', lastVerified2: 'https://www.linkedin.com/in/oezlemcivelek/' })"), "B1")
+    check("index: a namesake with another profile is someone else", e("IDX.find('Basler Kantonalbank', { fullName: 'Özlem Civelek', lastVerified2: 'https://www.linkedin.com/in/other' })"), None)
+    e("""
+      var PAIRS = contactDuplicatePairs([
+        { key: 'a', company: 'Sanitas', fullName: 'Andreas Schönenberger', jobTitle: 'CEO' },
+        { key: 'b', company: 'Sanitas', fullName: 'Dr. Andreas Schönenberger', lastVerified2: 'https://www.linkedin.com/in/aschoenenberger', jobTitle: 'CEO', source: 'Web' },
+        { key: 'c', company: 'Allianz Suisse', fullName: 'Patrick Maurer' },
+        { key: 'd', company: 'Montana Aerospace', fullName: 'Patrick Maurer' },
+        { key: 'e', company: 'Mammut', fullName: 'Heiko Schäfer' },
+        { key: 'f', company: 'Mammut', fullName: 'Dr. Heiko Schäfer' } ], { keptApart: new Set([contactPairKey('f', 'e')]) });
+      var KEEP = fullerFirst(PAIRS[0][0], PAIRS[0][1])[0].key;
+    """)
+    check("pairs: one pair - other accounts and 'Keep both' left out", e("PAIRS.length"), 1)
+    check("pairs: the fuller entry (with LinkedIn) is kept on Merge", e("KEEP"), "b")
 
 
 if __name__ == "__main__":

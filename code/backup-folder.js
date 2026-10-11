@@ -2,9 +2,13 @@
 // (showDirectoryPicker) and then write into it; the folder handle is remembered in IndexedDB. Chrome may
 // ask again for permission after the browser restarts - that can only be granted from a click, which is
 // why backup-restore.js shows a "click to resume" banner instead of failing silently.
+//
+// 1.2.2.13: the same store also remembers the folder Export… last saved to (EXPORT_FOLDER_KEY) - a second handle
+// next to the backup one, so choosing an export folder never moves the backups.
 const DB_NAME = "salesteam-backup";
 const STORE = "handles";
 const KEY = "folder";
+export const EXPORT_FOLDER_KEY = "export-folder";
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -31,9 +35,9 @@ async function idb(mode, fn) {
 
 export const folderPickerSupported = () => typeof window !== "undefined" && typeof window.showDirectoryPicker === "function";
 
-export async function getStoredFolder() {
+export async function getStoredFolder(key = KEY) {
   try {
-    return (await idb("readonly", (s) => s.get(KEY))) || null;
+    return (await idb("readonly", (s) => s.get(key))) || null;
   } catch {
     return null;
   }
@@ -70,6 +74,19 @@ export async function requestFolderPermission(handle) {
     return await handle.requestPermission({ mode: "readwrite" });
   } catch {
     return "denied";
+  }
+}
+
+// Export…'s folder (1.2.2.13, Boaz: "not always in Downloads, and remember the last folder"). Must be called from a
+// click; the picker opens where it was last used. Resolves to the handle, or null if the user cancelled.
+export async function pickExportFolder() {
+  try {
+    const handle = await window.showDirectoryPicker({ id: "salesteam-exports", mode: "readwrite", startIn: "documents" });
+    await idb("readwrite", (s) => s.put(handle, EXPORT_FOLDER_KEY));
+    return handle;
+  } catch (err) {
+    if (err && err.name === "AbortError") return null;
+    throw err;
   }
 }
 
