@@ -549,6 +549,8 @@ def main():
     check("shares: the gate is connected", (rd.get("connected"), re_.get("connected")), (True, True))
     check("shares: every account goes to exactly one of them", all(a != b for a, b in zip(rd["may"], re_["may"])), True)
     check("shares: both get some", (sum(rd["may"]) > 5, sum(re_["may"]) > 5), (True, True))
+    r, folder = eli.call("teamWorkGate().then(function (g) { return g.discovery; })", folder)
+    check("shares: without groups every member's pipeline may run Discovery (1.2.3 step 5: unchanged)", r, True)
     r, folder = eli.call("claimAccount('beta sa', { kind: 'pipeline' })", folder)
     check("shares: Eli's pipeline may not claim Beta while Dora still holds it", (r.get("ok"), r.get("reason")), (False, "held"))
     r, folder = dora.call("releaseAccount('beta sa')", folder)
@@ -777,6 +779,60 @@ def main():
     for key, was in kept.items():
         if was:
             r, folder = dora.call("assignAccount('%s', { to: '%s' })" % (key, was), folder)
+    folder = both(folder)
+
+    # 1.2.3 step 5 (design 9, R7): the pipeline's shares with groups. Dora is Team Lead, Eli is in Swiss only.
+    sw = ["sw %d" % i for i in range(40)]
+    ot = ["ot %d" % i for i in range(40)]
+    views_before = dora.e("JSON.stringify(VIEWS)")
+    v5 = json.dumps(json.loads(views_before) + [{"key": k, "globalHqCountry": "Switzerland"} for k in sw] + [{"key": k, "globalHqCountry": "France"} for k in ot])
+    for m in (dora, eli):
+        m.e("VIEWS = %s" % v5)
+    folder = both(folder)
+
+    def shares(m, keys, folder):
+        return m.call("teamWorkGate().then(function (g) { return %s.map(function (k) { return g.mayWork(k); }); })" % json.dumps(keys), folder)
+
+    def shares_both(folder):
+        out = []
+        for m, keys in ((dora, sw), (eli, sw), (dora, ot), (eli, ot)):
+            r, folder = shares(m, keys, folder)
+            out.append(r)
+        return out, folder
+
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5: a group's accounts are worked by its member, not by the Team Lead", (sum(dsw), sum(esw)), (0, 40))
+    check("step 5: Other, with no member in it, goes to the Team Lead - never to a member without access", (sum(dot), sum(eot)), (40, 0))
+    r, folder = eli.call("teamWorkGate().then(function (g) { return [g.discovery, g.offLimits('ot 0'), g.offLimits('sw 0')]; })", folder)
+    check("step 5: a member's pipeline runs no Discovery; bulk research stays inside the groups", r, [False, {"reason": "groups"}, None])
+    r, folder = dora.call("teamWorkGate().then(function (g) { return g.discovery; })", folder)
+    check("step 5: the Team Lead's pipeline runs Discovery", r, True)
+    # "All accounts": published with the heartbeat, so both PCs build the same candidates.
+    dora.set_local({"teamLeadResearch": "all"})
+    folder = both(folder)
+    check("step 5: the choice travels with the heartbeat", json.loads(folder["members/%s/heartbeat.json" % dora_id]).get("research"), "all")
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5, All accounts: every account of the group goes to exactly one of them", all(a != b for a, b in zip(dsw, esw)), True)
+    check("step 5, All accounts: both get some", (sum(dsw) > 5, sum(esw) > 5), (True, True))
+    check("step 5, All accounts: Other is still the Team Lead's alone", (sum(dot), sum(eot)), (40, 0))
+    dora.set_local({"teamLeadResearch": "gaps"})
+    folder = both(folder)
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5: back to filling gaps", (sum(dsw), sum(esw)), (0, 40))
+    # Eli is not heard from for 11 minutes: his group has nobody online, so the Team Lead's pipeline covers it.
+    dora.e("FOLDER = %s;" % json.dumps(folder))
+    dora.advance(11 * 60000)
+    folder = json.loads(dora.e("JSON.stringify(FOLDER)"))
+    dsw, folder = shares(dora, sw, folder)
+    check("step 5: a group with nobody online goes to the Team Lead", sum(dsw), 40)
+    eli.e("FOLDER = %s;" % json.dumps(folder))
+    eli.advance(11 * 60000)
+    folder = json.loads(eli.e("JSON.stringify(FOLDER)"))
+    folder = both(folder)
+    (dsw, esw, dot, eot), folder = shares_both(folder)
+    check("step 5: Eli is back, and his group is his again", (sum(dsw), sum(esw)), (0, 40))
+    for m in (dora, eli):
+        m.e("VIEWS = %s" % views_before)
     folder = both(folder)
 
     # Back to basic mode for the rest of the test: the group is deleted (marked).

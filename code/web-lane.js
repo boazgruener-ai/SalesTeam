@@ -147,8 +147,8 @@ export function stopWebLane() {
 
 // An automatic run asks before every account whether it may still go on.
 async function autoStopReason() {
+  // 1.2.2.39: web research has its own switch (webBudgetState says "off"), independent of the LinkedIn work.
   const a = await getPipelineAutomation();
-  if (!a.enabled) return "automation_off";
   if (a.pausedDay === localDay()) return "paused_today";
   const w = await webBudgetState();
   return w.reason ? `web_${w.reason}` : null;

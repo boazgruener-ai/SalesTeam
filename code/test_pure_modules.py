@@ -2405,6 +2405,16 @@ def test_team_log_and_join(ctx):
       var txt = function (x) { return teamLogText(x, function (k) { return k === 'acme ag' ? 'Acme AG' : k; }, function (m) { return m; }); };
     """)
     check("team log: one line per member, change and account; claims left out", e("LOG.length"), 4)
+    # 1.2.2.39: the pipeline's own bookkeeping makes the line SalesTeam's, and is not listed.
+    e("""var AUTO = teamLogEntries([
+        {t: formatStamp(T6 + 50, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {linkedinCompanyId: '1', linkedinResolveAttemptedAt: 5, provenance: {}}},
+      ], LS, n6);
+      var AUTO2 = teamLogEntries([
+        {t: formatStamp(T6 + 51, 0, 'anna'), e: 'account', id: 'x:acme ag', op: 'set', f: {contactDiscoveryAttemptedAt: 5, provenance: {}, pipeline: {}}},
+      ], LS, n6);""")
+    check("team log: automatic work says what it found", (e("isAutomaticEntry(AUTO[0])"), e("txt(AUTO[0])")), (True, "updated Acme AG: LinkedIn company id"))
+    check("team log: automatic work that found nothing", e("txt(AUTO2[0])"), "checked Acme AG - nothing new to record")
+    check("team log: a hand edit is still the member's", (e("isAutomaticEntry(LOG[0])"), e("txt(LOG[0])").startswith("changed Acme AG")), (False, True))
     # 1.2.3 step 3 (design 11): an account group's own lines.
     e("""
       var GS = newState();
@@ -2617,6 +2627,17 @@ def test_team_groups(ctx):
     check("access: member not in the group", e("mayAccess('fay', ['g-swiss'], IX, LEADS)"), False)
     check("access: no groups = 1.2.2, everyone sees all", e("mayAccess('fay', ['g-x'], groupIndex({}, TEAM), LEADS)"), True)
     check("access: who", e("JSON.stringify(accessOf(['g-swiss'], IX, LEADS))"), '["anna","boaz","luc"]')
+    # Step 5 (design 9, R7): who shares the automatic work on an account.
+    cand = lambda online, groups, leads="LEADS", modes="{}", ix="IX": e("JSON.stringify(workCandidates(%s, %s, %s, %s, %s))" % (json.dumps(online), json.dumps(groups), ix, leads, modes))
+    check("candidates: the group's online members, not the Team Lead (fills gaps only)", cand(["fay", "luc", "boaz", "anna"], ["g-swiss"]), '["anna","luc"]')
+    check("candidates: 'All accounts' - the Team Lead shares every group", cand(["fay", "luc", "boaz", "anna"], ["g-swiss"], modes="{ boaz: true }"), '["anna","boaz","luc"]')
+    check("candidates: nobody of the group online -> the Team Lead", cand(["boaz", "fay"], ["g-swiss"]), '["boaz"]')
+    check("candidates: nobody of the group online, Team Lead offline -> nobody", cand(["fay"], ["g-swiss"]), '[]')
+    check("candidates: Team Lead and deputy share a gap", cand(["boaz", "fay"], ["g-swiss"], leads="{ lead: 'boaz', deputy: 'fay' }"), '["boaz","fay"]')
+    check("candidates: a deputy with 'All accounts' works beside the members, the Team Lead does not",
+          cand(["anna", "boaz", "fay"], ["g-swiss"], leads="{ lead: 'boaz', deputy: 'fay' }", modes="{ fay: true }"), '["anna","fay"]')
+    check("candidates: a Member's 'All accounts' counts for nothing", cand(["fay", "anna"], ["g-swiss"], modes="{ fay: true }"), '["anna"]')
+    check("candidates: no groups = 1.2.2, everyone online", cand(["fay", "boaz", "anna"], ["g-x"], ix="groupIndex({}, TEAM)"), '["anna","boaz","fay"]')
     check("void: assignee left without access",
           e("JSON.stringify(voidAssignments({ roche: 'anna', acme: 'anna', ubs: 'boaz', nestle: 'luc' }, { roche: ['g-swiss'], acme: ['other'], ubs: ['g-vip'], nestle: ['g-swiss'] }, IX, LEADS))"),
           '[{"key":"acme","member":"anna"}]')

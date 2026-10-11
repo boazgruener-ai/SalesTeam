@@ -194,11 +194,25 @@ export function shownFields(fields) {
   return all.filter((f) => !(/At$/.test(f) && all.includes(f.slice(0, -2))));
 }
 
+// 1.2.2.39 (Boaz: "Annick changed Georg Utz Group: Contact discovery attempted at" - she changed nothing, her
+// pipeline did): a change that carries the bookkeeping only SalesTeam's own automatic work writes (an "…AttemptedAt"
+// or "…ScoredAt" stamp, the pipeline record) is SalesTeam's, on that member's PC. Its line names what was found, not
+// the bookkeeping: "SalesTeam on Annick's PC updated Georg Utz Group: LinkedIn company id", or "… checked Swissgrid".
+const AUTO_MARK = (f) => /(Attempted|Scored)At$/.test(f) || f === "pipeline";
+const AUTO_BOOKKEEPING = (f) => AUTO_MARK(f) || f === "provenance";
+export function isAutomaticEntry(entry) {
+  return Boolean(entry) && entry.op === "set" && (entry.kind === "account" || entry.kind === "contact") && (entry.fields || []).some(AUTO_MARK);
+}
+// The fields such a line (and its value columns) shows.
+export function entryFields(entry) {
+  return isAutomaticEntry(entry) ? (entry.fields || []).filter((f) => !AUTO_BOOKKEEPING(f)) : entry.fields || [];
+}
+
 // One line for the Activity Log: "changed UBS: status, notes", "assigned UBS to Anna", ...
 // `name(key)`: the account's display name; `who(member)`: a member's name.
 export function teamLogText(entry, name, who) {
   const what = entry.key ? name(entry.key) : entry.kind === "lead" ? `the lead ${entry.label || entry.ref}` : entry.ref;
-  const shown = shownFields(entry.fields).map(fieldName);
+  const shown = shownFields(entryFields(entry)).map(fieldName);
   const fields = shown.length ? `: ${shown.slice(0, 8).join(", ")}${shown.length > 8 ? ` +${shown.length - 8}` : ""}` : "";
   const part = entry.kind === "contact" ? (entry.rows > 1 ? ` (${entry.rows} contacts)` : " (a contact)") : "";
   // The join proposals' own bookkeeping (team-join.js): said in words, not as a setting's fields.
@@ -240,6 +254,7 @@ export function teamLogText(entry, name, who) {
     default:
       if (entry.removed === true) return `removed ${what}${part}`;
       if (entry.removed === false && entry.fields.every((f) => f === "deletedAt" || f === "deletedBy")) return `restored ${what}${part}`;
+      if (isAutomaticEntry(entry)) return shown.length ? `updated ${what}${part}${fields}` : `checked ${what}${part} - nothing new to record`;
       return entry.kind === "setting" ? `changed the setting ${what}${fields}` : `changed ${what}${part}${fields}`;
   }
 }

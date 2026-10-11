@@ -1836,7 +1836,7 @@ async function confirmReadyGate() {
   if (ready >= MIN_READY_TO_SCAN) return true;
   const auto = await getPipelineAutomation();
   const more = total === 0 ? " Import your target accounts, or run Discovery, first."
-    : auto.enabled ? " SalesTeam is preparing more automatically while Chrome is open."
+    : auto.enabled || auto.webEnabled ? " SalesTeam is preparing more automatically while Chrome is open."
     : " Automatic preparation can get them ready: Settings > Automation.";
   if (ready === 0) {
     const have = total === 0 ? "You have no target accounts yet." : "None of your accounts is Ready yet.";

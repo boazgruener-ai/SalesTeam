@@ -1258,7 +1258,7 @@ async function renderTargetsStep() {
   // Change Settings (Boaz, 2026-10-01): raising a target does nothing while the automation that builds the list is off.
   if (settingsMode) {
     const a = await getPipelineAutomation();
-    const off = !a.enabled ? "Automatic preparation is off" : !a.webEnabled ? "Automatic web research is off" : null;
+    const off = !a.enabled && !a.webEnabled ? "Automatic preparation is off" : !a.webEnabled ? "Automatic web research is off" : null;
     if (off) out.textContent += ` ${off} (Settings > Automation), so SalesTeam does not build the list towards these numbers until you turn it on.`;
   }
 }
@@ -2119,13 +2119,13 @@ el("finish-btn").addEventListener("click", async () => {
   for (const box of el("finish-findings-rules").querySelectorAll("input[data-setting]")) findings[box.dataset.setting] = box.checked;
   await saveWebFindingsArbitration(findings);
   await setPipelineAutomationEnabled(el("finish-automation-checkbox").checked, "Setup wizard");
-  // W4: web research only with automatic preparation on, since it runs inside it.
-  const webOn = el("finish-automation-checkbox").checked && el("finish-web-checkbox").checked;
+  // 1.2.2.39 (Boaz): the two switches are independent - web research runs with or without the LinkedIn work.
+  const webOn = el("finish-web-checkbox").checked;
   await setWebResearchAutomation({ enabled: webOn, monthlyUsd: webOn ? Math.max(0, Number(el("finish-web-budget").value) || 0) : undefined }, "Setup wizard");
   await markOnboardingCompleted();
   // Design 3.11 (R3.4.1): Finish starts building the list - Web Discovery, then the web lane; the LinkedIn lane is
   // kicked. The background does it; the wizard never visits LinkedIn.
-  if (el("finish-automation-checkbox").checked) chrome.runtime.sendMessage({ type: "ONBOARDING_BUILD_START" }).catch(() => {});
+  if (el("finish-automation-checkbox").checked || webOn) chrome.runtime.sendMessage({ type: "ONBOARDING_BUILD_START" }).catch(() => {});
   await warnIfDiscoveryNowStale();
   if (await offerRescoreIfRulesChanged()) return;
   setupJustFinished = true;
@@ -2832,9 +2832,7 @@ async function init() {
   el("finish-web-checkbox").checked = automation.webEnabled;
   el("finish-web-budget").value = String(automation.webMonthlyUsd > 0 ? automation.webMonthlyUsd : DEFAULT_WEB_BUDGET_USD);
   const syncWebBox = () => {
-    const on = el("finish-automation-checkbox").checked;
-    el("finish-web-checkbox").disabled = !on;
-    el("finish-web-budget").disabled = !on || !el("finish-web-checkbox").checked;
+    el("finish-web-budget").disabled = !el("finish-web-checkbox").checked;
   };
   el("finish-automation-checkbox").addEventListener("change", syncWebBox);
   el("finish-web-checkbox").addEventListener("change", syncWebBox);

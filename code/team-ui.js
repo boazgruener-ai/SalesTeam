@@ -5,7 +5,7 @@
 //   initTeamSettings() - Settings > Team: create / join / leave / close, the folder, members (⋮), groups, sync state.
 // The folder work itself runs in the background worker (team-sync.js); this file only asks it (TEAM_* messages).
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
-import { askConfirm, showNotice } from "./confirm-dialog.js";
+import { askConfirm, showNotice, markSaved } from "./confirm-dialog.js";
 import { backupNow } from "./backup-restore.js";
 import { getUserProfile } from "./storage.js";
 import { groupIndex, OTHER_GROUP } from "./team-groups.js";
@@ -724,7 +724,7 @@ async function onLeave() {
   setText("team-member-status", counted.ok ? "" : `Could not count your assigned accounts (${counted.error}) - you can still leave.`, !counted.ok);
   if (!counted.ok) console.warn("SalesTeam Leave the team:", counted.error);
   const go = await askConfirm(
-    `Leave the team "${m.teamName}"?\n\nThis browser stops sharing. The data here stays as it is now, as your own copy; ` +
+    `Leave the team "${m.teamName}"?\n\nNormally the Team Lead removes a member from the team - leave by yourself only when that is not possible.\n\nThis browser stops sharing. The data here stays as it is now, as your own copy; ` +
     "your colleagues keep the team's data. What you wrote stays in the team folder." +
     (mine ? `\n\nYour ${mine} assigned account${mine === 1 ? "" : "s"} become${mine === 1 ? "s" : ""} unassigned, so colleagues can work on ${mine === 1 ? "it" : "them"}.` : ""),
     { okLabel: "Leave the team", cancelLabel: "Stay", danger: true });
@@ -983,6 +983,37 @@ function onSoloInvitedJoin() {
 let rendering = false;
 let formerOpen = false; // Former members folded open - kept across the 5 s redraws
 
+// 1.2.3 step 5 (advanced-mode design 9, D7): "My pipeline researches" - the Team Lead's and the deputy's own choice,
+// kept on this PC (team-sync.js publishes it with the heartbeat). Saved only with Save.
+const LEAD_RESEARCH_KEY = "teamLeadResearch";
+const LEAD_RESEARCH_HINTS = {
+  gaps: "Your colleagues' pipelines research the accounts of their groups, on their own API keys. Your pipeline researches the accounts " +
+    "assigned to you and the accounts nobody else can work right now: a group with no member online, and Other when no member is in it.",
+  all: "Your pipeline takes an equal share of every group, alongside the group's online members. That is faster, but more of the research runs on your API key.",
+};
+let leadResearchSaved = "gaps";
+function showLeadResearch() {
+  const select = $("team-lead-research-select");
+  $("team-lead-research-hint").textContent = LEAD_RESEARCH_HINTS[select.value] || "";
+  $("team-lead-research-save").disabled = select.value === leadResearchSaved;
+}
+async function paintLeadResearch(show) {
+  $("team-lead-research").hidden = !show;
+  if (!show) return;
+  const select = $("team-lead-research-select");
+  const unsaved = select.value !== leadResearchSaved; // a choice not saved yet survives the 5 s redraw
+  leadResearchSaved = (await chrome.storage.local.get(LEAD_RESEARCH_KEY))[LEAD_RESEARCH_KEY] === "all" ? "all" : "gaps";
+  if (!unsaved) select.value = leadResearchSaved;
+  showLeadResearch();
+}
+async function onSaveLeadResearch() {
+  const value = $("team-lead-research-select").value === "all" ? "all" : "gaps";
+  await chrome.storage.local.set({ [LEAD_RESEARCH_KEY]: value });
+  leadResearchSaved = value;
+  showLeadResearch();
+  markSaved($("team-lead-research-status"));
+}
+
 export async function renderTeamSettings() {
   const section = $("team-section");
   if (!section || rendering) return;
@@ -1014,7 +1045,7 @@ export async function renderTeamSettings() {
     const roleOf = (id) => (id === leads.lead ? "Team Lead" : id === leads.deputy ? "Deputy Team Lead" : rolesKnown || id === m.memberId ? "Member" : "…");
     const role = roleOf(m.memberId);
     // Boaz 2026-10-08: the Team Lead does not leave the team they lead - they close it (D16), or hand over first.
-    $("team-leave-btn").hidden = m.memberId === leads.lead;
+    $("team-leave-line").hidden = m.memberId === leads.lead;
     $("team-close-btn").hidden = m.memberId !== leads.lead;
     setText("team-member-who", `You are ${m.name} in the team "${m.teamName}" (${role}), since ${timeText(Date.parse(m.joinedAt))}.`);
     const connected = handle && permission === "granted";
@@ -1121,6 +1152,7 @@ export async function renderTeamSettings() {
       }
       if (!(st.members || []).length && !invited.length) table.append(memberRow(["No colleague has joined yet - invite them with Add member….", "", "", "", "", "", ""]));
       // The group counts read every account: only while the card is on screen (the 5 s redraw then keeps them fresh).
+      paintLeadResearch(hasRights && index.on).catch(() => {});
       if (!section.hidden) renderTeamGroups(gctx).catch((err) => setText("team-member-status", `Groups: ${err.message}`, true));
       if (badge) badge.textContent = connected ? `${st.online} online` : "!";
     } else if (badge) {
@@ -1160,6 +1192,8 @@ export function initTeamSettings() {
   $("team-join-team").addEventListener("change", (e) => showInvitesOf(Number(e.target.value)));
   $("team-join-btn").addEventListener("click", onJoin);
   $("team-add-member-btn").addEventListener("click", onAddMember);
+  $("team-lead-research-select").addEventListener("change", showLeadResearch);
+  $("team-lead-research-save").addEventListener("click", onSaveLeadResearch);
   $("team-leave-btn").addEventListener("click", onLeave);
   $("team-close-btn").addEventListener("click", onClose);
   $("team-repick-btn").addEventListener("click", onRepick);

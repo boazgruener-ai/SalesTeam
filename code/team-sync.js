@@ -23,7 +23,7 @@ import {
 } from "./team-merge.js";
 import {
   groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, isLiveGroup, OTHER_GROUP,
-  mayAccess, livePins, sameGroups, groupDefsKey, factsDiffText,
+  mayAccess, workCandidates, livePins, sameGroups, groupDefsKey, factsDiffText,
 } from "./team-groups.js";
 import {
   claimIdFor, accountKeyOfChange, activeMembersOf, claimView, assignmentView, offLimitsFor, teamAccountSummary,
@@ -513,7 +513,7 @@ async function readFolder(root, me, { includeSelf = false } = {}) {
     const self = m === me && !includeSelf;
     if (!self) {
       const hb = await readTeamJson(root, ["members", m], "heartbeat.json");
-      if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0, clock: hb.data.clock || null, left: hb.data.left || null };
+      if (hb.status === "ok") update.hb[m] = { at: hb.data.at, lastN: hb.data.lastN || 0, clock: hb.data.clock || null, left: hb.data.left || null, all: hb.data.research === "all" };
       if (!meta.profiles[m]) {
         const p = await readTeamJson(root, ["members", m], "profile.json");
         if (p.status === "ok") update.profiles[m] = p.data;
@@ -723,11 +723,20 @@ async function seedShadow() {
   if (rewrite.size) await writeBack(rewrite);
 }
 
+// Step 5 (design 9, D7): "My pipeline researches" in Settings > Team, for the Team Lead and the deputy - a personal
+// setting, kept on this PC. "gaps" (default): only accounts no member can work right now. "all": every account.
+export const LEAD_RESEARCH_KEY = "teamLeadResearch";
+async function leadResearchMode() {
+  return (await chrome.storage.local.get(LEAD_RESEARCH_KEY))[LEAD_RESEARCH_KEY] === "all" ? "all" : "gaps";
+}
+
 let leaving = false; // leaveTeam has written the sign-off heartbeat: a round still running must not overwrite it
 async function heartbeat(root, me) {
   if (leaving) return;
   await writeTeamJson(root, ["members", me], "heartbeat.json",
-    { member: me, name: membership.name, at: Date.now(), lastN: mem.meta.lastWrittenN, clock: tick(mem.clock, Date.now()), version: chrome.runtime.getManifest().version });
+    { member: me, name: membership.name, at: Date.now(), lastN: mem.meta.lastWrittenN, clock: tick(mem.clock, Date.now()), version: chrome.runtime.getManifest().version,
+      // Step 5 (design 9, D7): the Team Lead's "My pipeline researches" - colleagues build the same candidate lists from it.
+      research: await leadResearchMode() });
   mem.meta.lastHeartbeatAt = Date.now();
   ackDue = false;
 }
@@ -1730,28 +1739,44 @@ function offLimitsNow(key, ctx) {
 // The pipeline and the web lane (design 6.5, R3.5): null when not in a team. Otherwise `connected` (no automatic
 // work while the team cannot see it) and mayWork(key): not held by a colleague, and in this member's share of the
 // accounts (rendezvous over the members active now - a joining or leaving member moves only its own share).
+// 1.2.3 step 5 (advanced-mode design 9, R7): with groups, only an account I have access to, shared among the online
+// people who may work it (workCandidates); `discovery`: whether this PC's pipeline may run Discovery (D8).
 export async function teamWorkGate() {
   if (!(await loadMembership())) return null;
+  const myMode = await leadResearchMode();
+  const groups = (await chrome.storage.local.get("teamGroups")).teamGroups;
   return enqueue(async () => {
     await ensureLoaded();
     const connected = Boolean(await connectedRoot()) && inSyncNow();
     const ctx = claimContext();
     const members = [ctx.me, ...ctx.activeMembers];
+    const leads = leadNow();
+    // The groups of each account as last computed (kept across a worker restart); who is in which group, as of now.
+    const index = groupsByKey ? groupIndex(groups, currentTeam()) : null;
+    const advanced = Boolean(index?.on);
+    const allModes = { [ctx.me]: myMode === "all" };
+    for (const m of ctx.activeMembers) allModes[m] = Boolean(mem.meta.hb[m]?.all);
+    const groupsFor = (key) => groupsByKey[key] || [OTHER_GROUP];
+    const noAccess = (key) => advanced && !mayAccess(ctx.me, groupsFor(key), index, leads);
     return {
       connected,
+      discovery: !advanced || hasLeadRights(),
       mayWork(key) {
         if (!connected || !key) return false;
+        if (noAccess(key)) return false;
         const now = claimContext();
         // Step 5 (R6.2, Q6): a colleague's assigned account is off-limits; my own assigned ones are always mine.
         if (offLimitsNow(key, now)) return false;
         if (assignmentView(mem.state, key, now).mine) return true;
         const state = claimView(mem.state, key, now).state;
         // An account I already hold is mine to finish, whatever the share says now.
-        return state === "mine" || state === "checking" || pipelineOwner(key, members) === ctx.me;
+        if (state === "mine" || state === "checking") return true;
+        return pipelineOwner(key, advanced ? workCandidates(members, groupsFor(key), index, leads, allModes) : members) === ctx.me;
       },
-      // Work the member started itself (bulk research of chosen accounts): no shares, only R6.2.
+      // Work the member started itself (bulk research of chosen accounts): no shares, only R6.2 - and my groups.
       offLimits(key) {
         if (!connected) return { reason: "offline" };
+        if (key && noAccess(key)) return { reason: "groups" };
         const o = key ? offLimitsNow(key, claimContext()) : null;
         return o && { ...o, name: memberName(o.member) };
       },
@@ -2136,6 +2161,7 @@ export function initTeamSync() {
       membershipLoaded = true;
     }
     if (membershipLoaded && !membership) return;
+    if (LEAD_RESEARCH_KEY in changes) ackDue = true; // the choice goes out with the next round's heartbeat
     if ("teamGroupPins" in changes) pinsExist = Object.keys(changes.teamGroupPins.newValue || {}).length > 0;
     if (membership && GROUP_INPUT_KEYS.some((k) => k in changes)) markGroupsDirty();
     let any = false;

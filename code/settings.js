@@ -1063,13 +1063,13 @@ const automationSave = mountCardSave("automation-section", {
     }
     storedAutomation = v;
     if (v.enabled && before && !before.enabled) kickAndExplain("settings");
-    else if (v.enabled) kickPipelineFromPage("settings");
+    else if (v.enabled || v.webEnabled) kickPipelineFromPage("settings"); // 1.2.2.39: web research runs by itself too
   },
   revert: () => showAutomationValues(storedAutomation),
 });
 async function renderAutomationCard() {
   const a = await getPipelineAutomation();
-  automationResumeBtn.hidden = !(a.enabled && a.pausedDay === localDay());
+  automationResumeBtn.hidden = !((a.enabled || a.webEnabled) && a.pausedDay === localDay());
   const wasDirty = storedAutomation !== null && automationSave.isDirty();
   // W3: off means 0; the default is offered as soon as the box is ticked.
   storedAutomation = {

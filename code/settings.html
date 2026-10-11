@@ -474,10 +474,27 @@
         <!-- 1.2.3 step 1 (TEAM_ADVANCED_MODE_DESIGN.md 10.2): wired by team-groups-ui.js. -->
         <h4>Groups</h4>
         <div id="team-groups"></div>
+        <!-- 1.2.3 step 5 (TEAM_ADVANCED_MODE_DESIGN.md 9, D7): for the Team Lead and the deputy, once the team has groups. -->
+        <div id="team-lead-research" hidden>
+          <h4>My pipeline</h4>
+          <label for="team-lead-research-select">My pipeline researches:</label>
+          <select id="team-lead-research-select">
+            <option value="gaps">Only accounts no member can work right now</option>
+            <option value="all">All accounts</option>
+          </select>
+          <p class="field-hint" id="team-lead-research-hint"></p>
+          <div class="settings-buttons-row">
+            <button type="button" id="team-lead-research-save" class="team-primary-btn" disabled>Save</button>
+            <span class="field-hint" id="team-lead-research-status" role="status"></span>
+          </div>
+        </div>
         <div class="settings-buttons-row">
-          <button type="button" id="team-leave-btn" class="danger-btn">Leave the team…</button>
           <button type="button" id="team-close-btn" class="danger-btn" hidden>Close the team…</button>
         </div>
+        <!-- 1.2.2.38 (Boaz): a member normally asks the Team Lead to remove them - leaving by oneself is a link, not a button. -->
+        <p class="field-hint team-create-line" id="team-leave-line">
+          <button type="button" id="team-leave-btn" class="team-link-btn">Leave the team…</button>
+        </p>
         <p class="field-hint team-status" id="team-member-status" role="status"></p>
       </div>
     </section>

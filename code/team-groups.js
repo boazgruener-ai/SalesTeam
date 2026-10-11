@@ -9,6 +9,7 @@
 //   groupsOf(key, facts, index, pins)   the account's group ids (["other"] when none)
 //   groupIndex(groups, team)            live groups, members per group (a member in no group is in Other)
 //   mayAccess / accessOf                who may see and work an account: Team Lead, deputy, members of its groups
+//   workCandidates                      who shares the automatic work on an account (step 5)
 //   voidAssignments                     assignments whose assignee no longer has access (D6 - computed on every PC)
 //   groupCounts                         per group: accounts, assigned, unassigned, ready
 
@@ -244,6 +245,19 @@ export function accessOf(groupIds, index, leads) {
   const out = new Set([leads?.lead, leads?.deputy].filter(Boolean));
   for (const g of groupIds || []) for (const m of membersOf(g, index)) out.add(m);
   return [...out].sort();
+}
+
+// Step 5 (design 9, R7): who shares the automatic work (pipeline, web lane) on one account. `online`: the members
+// active now, me included. A member is a candidate for the accounts of their groups. The Team Lead and the deputy
+// take a share of every account only with "All accounts" (allModes[member] true); otherwise they fill the gaps -
+// the accounts nobody else online can work (a group with nobody online, Other with no member in it).
+// Every PC builds the same list from the heartbeats and the shared groups, so the shares stay disjoint.
+export function workCandidates(online, groupIds, index, leads, allModes) {
+  const list = [...new Set(online || [])].filter(Boolean).sort();
+  if (!index?.on) return list;
+  const hasRights = (m) => m === leads?.lead || m === leads?.deputy;
+  const first = list.filter((m) => (hasRights(m) ? Boolean(allModes?.[m]) : mayAccess(m, groupIds, index, leads)));
+  return first.length ? first : list.filter(hasRights);
 }
 
 // D6: an assignment whose assignee has no access through the account's current groups is void on every PC.

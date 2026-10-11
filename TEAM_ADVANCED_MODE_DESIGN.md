@@ -374,6 +374,19 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 - **Discovery (D8):** in advanced mode only the Team Lead's pipeline runs Discovery. `discoveryMayRun` returns
   "team: Discovery is run by the Team Lead" for members. In basic mode nothing changes.
 
+**As built (1.2.2.37, 2026-10-11):**
+
+- The candidates of an account are one pure function, `workCandidates` in `team-groups.js`: the online members
+  who have access to it, plus the Team Lead and the deputy when theirs is set to "All accounts". When that list is
+  empty, the candidates are the Team Lead and the deputy who are online - they share the gap between them.
+- `teamWorkGate()` checks access first, in `mayWork` (pipeline, web lane) and in `offLimits` (bulk research, reason
+  `groups`). An account assigned to me is still mine whatever the share says.
+- "My pipeline researches:" is shown in Settings > Team to the Team Lead and the deputy once the team has groups,
+  and is saved with Save. Key `teamLeadResearch` (personal); the heartbeat carries it as `research`.
+- Discovery: `discoveryMayRun` is unchanged. The check is in `discoverForTargets` (pipeline-runner.js), through the
+  gate's `discovery` (reason `team_lead_only`); it also covers the wizard's Finish. The **deputy's** pipeline runs
+  Discovery too, as the deputy has the Team Lead's rights (3.4). Web Discovery started by hand is not restricted.
+
 ---
 
 ## 10. Settings > Team: Groups section and members table (R1.3, R8)
@@ -525,7 +538,7 @@ teamGroups["other"] = { members: [...] }   // built in, never deleted, no filter
 | 2 | **Visibility.** `canSee` in the companies and contacts tables, Leads Dashboard, side panel, account/contact page, Decisions, exports, LinkedIn badge. **Built 2026-10-10 with the Group dropdown of section 7 pulled forward (Boaz):** one shared `teamAccounts.groupPicker` on Target Accounts, Target Contacts and the Leads Dashboard - a member is offered "All my groups" and their own groups, the Team Lead "All accounts", every group and Other; hidden for a member in a single group; the choice is remembered per page. The Assigned pills stay as they are until step 3. | 1.2.2.24 |
 | 3 | **Picker, column, header, notices, log.** (Group dropdown: done in step 2.) Assigned as a dropdown, deep links from the overview, Groups column, header line; notice detectors; team-log lines. **Built 2026-10-11:** Groups column on Target Contacts and the Leads Dashboard (hidden by default), the groups next to the account page title, the Assigned dropdown (`teamAccounts.ownerPicker`: Contacts and Leads in any team; on Target Accounts in place of the buttons once the team has groups), Accounts / Unassigned / Ready counts in the Groups overview as links, top-bar notices for being added to or removed from a group and for groups being set up, team-log lines for groups in words, an empty-list text for a member whose groups hold no account. Left for step 4: the pin wording in the Groups column, "an account of mine lost to a group move". | 1.2.2.29 |
 | 4 | **Group changes.** Add to / Remove from group… (row, page, bulk); pins from automatic work and `group_move` decisions; voided assignments and the Team Lead's explicit releases with the before-save count. `test_team_sync.py`: research moves an assigned account → pinned → approved → assignee loses it; unassigned moves at once. **Built 2026-10-11:** Add to group… / Remove from group… in the account ⋮ (row and page) and as two buttons in the bulk bar, offered only where they do something; the pin is written by the PC that made the change (`team-sync.js holdMoves`) - a member's PC pins, the Team Lead's PC applies at once and releases an assignee left without access (the code has no "Automatic" marker on writes, and nobody can change a colleague's assigned account, so "whose PC" decides); Decisions kind `group_move` (Move it / Keep it where it is), where the account would go computed from the data as it is at that moment; the void rule in the published summary (a former member's accounts are left alone, R6.4); `TEAM_RELEASE_VOID` after every save that voids assignments, with the count by name before saving; the "… no longer in your groups" notice; the Groups column says "(move to VIP - waiting for the Team Lead's decision)". **Changed after the live test (Boaz, 2026-10-11):** a member's hand edit that would move an account out of a group is refused on Save ("Only the Team Lead moves an account to another group"); the Team Lead's or deputy's own edit applies at once after a warning pop-up (Save and move it / Cancel); the `group_move` card has one answer, **Move it** - "Keep it where it is" is removed (wrong data is corrected on the account, and the card goes by itself). The pin remains for what research and the pipeline find on an assigned account. | 1.2.2.33-36 |
-| 5 | **Pipeline and Discovery.** Access in `mayWork`, candidates with access, Team Lead fills gaps, Discovery Team Lead only. `test_team_sync.py`: shares disjoint and covering per group; a group with nobody online goes to the Team Lead. | 1.2.2.13 |
+| 5 | **Pipeline and Discovery.** Access in `mayWork`, candidates with access, Team Lead fills gaps, Discovery Team Lead only. `test_team_sync.py`: shares disjoint and covering per group; a group with nobody online goes to the Team Lead. **Built 2026-10-11** - see "As built" in section 9. | 1.2.2.37 |
 | 6 | Help ("Account groups", "Working as a team", Team Lead), PRD section + gen_docs mirror, one 1.2.3 release-notes entry covering both items, listing/website check → **1.2.3** rebuilt. | 1.2.3 |
 
 1.2.2.9 (2026-10-09) is not a step of this table: a PC that lost its saved shadow no longer re-sends every row

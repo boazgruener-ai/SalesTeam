@@ -6,7 +6,7 @@
 // on their own (storage.js prunes anything past the 90-day retention
 // window), not via any action on this page.
 import { getActivityLog } from "./storage.js";
-import { teamLogText, fieldName, shownFields } from "./team-log.js";
+import { teamLogText, fieldName, shownFields, isAutomaticEntry, entryFields } from "./team-log.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 // Team use step 6 (R3.11): the team log (team-sync.js TEAM_LOG_KEY) - who in the team changed what. "Team" shows
@@ -372,10 +372,11 @@ function teamRows(teamLog, me) {
     actor: "team",
     who: e.m === me ? "You" : e.mn || "A colleague",
     timestamp: e.at,
-    label: `${e.m === me ? "You" : e.mn || "A colleague"} ${teamLogText(e, (k) => e.name || k, (m) => (m === me ? "you" : e.names?.[m] || e.tn || "a colleague"))}`,
+    // 1.2.2.39: automatic work is SalesTeam's, not the member's - "SalesTeam on Annick's PC updated …".
+    label: `${isAutomaticEntry(e) ? (e.m === me ? "SalesTeam on this PC" : `SalesTeam on ${e.mn || "a colleague"}'s PC`) : e.m === me ? "You" : e.mn || "A colleague"} ${teamLogText(e, (k) => e.name || k, (m) => (m === me ? "you" : e.names?.[m] || e.tn || "a colleague"))}`,
     // A join proposal's bookkeeping fields say nothing to a reader - the line itself says what happened.
-    prevValue: e.ref === "teamJoinProposals" ? null : e.before && Object.keys(e.before).length ? fieldLines(e.before, e.fields) : null,
-    newValue: e.ref === "teamJoinProposals" ? null : fieldLines(e.after, e.fields),
+    prevValue: e.ref === "teamJoinProposals" ? null : e.before && Object.keys(e.before).length ? fieldLines(e.before, entryFields(e)) : null,
+    newValue: e.ref === "teamJoinProposals" ? null : fieldLines(e.after, entryFields(e)),
   }));
 }
 

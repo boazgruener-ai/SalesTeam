@@ -81,6 +81,8 @@ export const TEAM_PERSONAL_KEYS = [
   "companyExclusionsMigrated", "relationshipsMigrationNotice", "locationHeuristicV2Migrated", "locationHeuristicV3Migrated",
   // the team layer's own state
   "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices", "teamLog", "teamGroupNoticesSeen",
+  // 1.2.3 step 5 (advanced-mode design 9, D7): the Team Lead's "My pipeline researches" - published with the heartbeat
+  "teamLeadResearch",
 ];
 
 export function teamKeyKind(key) {
