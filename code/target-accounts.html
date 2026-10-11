@@ -370,6 +370,7 @@
              later step may turn it into a queue picker (account groups the admin assigns). -->
         <!-- 1.2.3 step 2 (design 7): one account group at a time - only with groups, only the member's own groups. -->
         <select id="team-group-picker" class="team-group-picker" title="Show one account group at a time" hidden></select>
+        <select id="team-owner-picker" class="team-group-picker" title="Show accounts by who they are assigned to" hidden></select>
         <span id="team-owner-filter" class="team-owner-filter" hidden>
           <button type="button" data-owner="mine" title="Accounts assigned to you">Mine</button>
           <button type="button" data-owner="others" title="Accounts assigned to a colleague">Others</button>
@@ -424,6 +425,7 @@
       <div id="contacts-explorer-controls" hidden>
         <input id="contacts-search-input" type="text" placeholder="Search name, company, or title…" />
         <select id="contacts-team-group-picker" class="team-group-picker" title="Show one account group at a time" hidden></select>
+        <select id="contacts-team-owner-picker" class="team-group-picker" title="Show accounts by who they are assigned to" hidden></select>
         <button id="contacts-columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="contacts-result-count"></span>
       </div>
@@ -463,6 +465,8 @@
       <div id="account-title-row">
         <h2 id="account-title"></h2>
         <span id="account-relationship-tag" class="relationship-tag" hidden></span>
+        <!-- 1.2.3 step 3 (R6.3): the account's groups, "EMEA · VIP". -->
+        <span id="account-groups-tag" class="team-groups-tag" title="The account groups this account is in" hidden></span>
         <button id="account-actions-btn" class="kebab-btn" type="button" title="Actions">&#8942;</button>
       </div>
       <div id="account-overview" class="entity-overview"></div>

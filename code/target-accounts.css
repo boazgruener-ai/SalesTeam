@@ -2264,3 +2264,7 @@ th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc !important; }
 /* 1.2.3 step 2 (design 7): the Group dropdown above a table. */
 .team-group-picker[hidden] { display: none; }
 .team-group-picker { border: 1px solid var(--border, #ccc); border-radius: 6px; background: #fff; color: #333; padding: 4px 8px; font-size: 12px; margin-right: 8px; vertical-align: middle; max-width: 220px; }
+
+/* 1.2.3 step 3 (R6.3): the account's groups next to its title. */
+.team-groups-tag[hidden] { display: none; }
+.team-groups-tag { font-size: 12px; color: #555; background: #eef1f6; border-radius: 10px; padding: 2px 10px; margin-left: 8px; white-space: nowrap; }

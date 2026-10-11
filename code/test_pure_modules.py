@@ -2405,6 +2405,36 @@ def test_team_log_and_join(ctx):
       var txt = function (x) { return teamLogText(x, function (k) { return k === 'acme ag' ? 'Acme AG' : k; }, function (m) { return m; }); };
     """)
     check("team log: one line per member, change and account; claims left out", e("LOG.length"), 4)
+    # 1.2.3 step 3 (design 11): an account group's own lines.
+    e("""
+      var GS = newState();
+      var grec = function (n, id, f) { return {t: formatStamp(T6 + 100 + n, 0, 'boaz'), e: 'setting', id: 'teamGroups:' + id, op: 'set', f: f}; };
+      var glog = function (recs) {
+        var pri = new Map();
+        var out = [];
+        recs.forEach(function (r) { pri = new Map([[r, priorOf(GS, r)]]); out = out.concat(teamLogEntries([r], GS, n6, pri)); applyChanges(GS, [r]); });
+        return out.map(txt);
+      };
+      setTeamCreator(GS, 'boaz');
+      var GL = glog([
+        grec(1, 'g1', {name: 'VIP', kind: 'named', accounts: ['a', 'b'], members: ['anna'], createdAt: 'x', deleted: false}),
+        grec(2, 'g2', {name: 'Swiss', kind: 'filter', filter: {country: ['Switzerland'], size: ['S', 'M']}, members: [], createdAt: 'x', deleted: false}),
+        grec(3, 'g2', {filter: {country: ['Switzerland'], size: ['M', 'XL']}}),
+        grec(4, 'g2', {members: ['anna', 'ben']}),
+        grec(5, 'g1', {members: []}),
+        grec(6, 'g1', {name: 'VIP accounts'}),
+        grec(7, 'other', {members: ['ben']}),
+        grec(8, 'g1', {deleted: true})]);
+    """)
+    check("team log: groups in words", e("JSON.stringify(GL)"), json.dumps([
+        "created the group VIP (named, 2 accounts); added anna to VIP",
+        "created the group Swiss (by filter)",
+        "changed the filter of Swiss: size + XL, − S",
+        "added anna, ben to Swiss",
+        "removed anna from VIP",
+        "changed the group VIP accounts",
+        "added ben to Other",
+        "deleted the group VIP accounts"], ensure_ascii=False, separators=(",", ":")))
     e("""
       var REC = {t: formatStamp(T6 + 7, 0, 'anna'), e: 'account', id: 'wb:c-1', op: 'set', f: {company: 'Acme Group'}};
       var PRI = new Map([[REC, priorOf(LS, REC)]]);

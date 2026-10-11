@@ -372,7 +372,7 @@ function teamRows(teamLog, me) {
     actor: "team",
     who: e.m === me ? "You" : e.mn || "A colleague",
     timestamp: e.at,
-    label: `${e.m === me ? "You" : e.mn || "A colleague"} ${teamLogText(e, (k) => e.name || k, (m) => (m === me ? "you" : e.tn || "a colleague"))}`,
+    label: `${e.m === me ? "You" : e.mn || "A colleague"} ${teamLogText(e, (k) => e.name || k, (m) => (m === me ? "you" : e.names?.[m] || e.tn || "a colleague"))}`,
     // A join proposal's bookkeeping fields say nothing to a reader - the line itself says what happened.
     prevValue: e.ref === "teamJoinProposals" ? null : e.before && Object.keys(e.before).length ? fieldLines(e.before, e.fields) : null,
     newValue: e.ref === "teamJoinProposals" ? null : fieldLines(e.after, e.fields),

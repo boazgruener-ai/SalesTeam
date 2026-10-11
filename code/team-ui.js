@@ -142,10 +142,11 @@ async function paintTeamNotices() {
   if (!all.length) { clearStatusMessage(NOTICE_BAR_ID); return; }
   // 1.2.3 step 1: "Boaz made you Team Lead" and the like - each its own sentence, before the accounts.
   // 1.2.3 step 1b: "Annick Zutter joined the team" (kind "joined") is a sentence of its own too.
-  const isText = (n) => n.kind === "role" || n.kind === "joined";
+  // 1.2.3 step 3: "Boaz added you to the group VIP" (kind "group") likewise.
+  const isText = (n) => n.kind === "role" || n.kind === "joined" || n.kind === "group";
   // Only the latest role sentence counts (an older "made you Team Lead" is history), and a line said twice is said once.
   const lastRole = all.filter((n) => n.kind === "role").pop();
-  const roles = [...new Set(all.filter((n) => n.kind === "joined" || n === lastRole).map((n) => n.text))];
+  const roles = [...new Set(all.filter((n) => n.kind === "joined" || n.kind === "group" || n === lastRole).map((n) => n.text))];
   const notices = all.filter((n) => !isText(n));
   if (!notices.length) {
     setStatusMessage(NOTICE_BAR_ID, { priority: true, text: roles.join(" "), action: { label: "OK", onClick: () => chrome.storage.local.remove(NOTICES_KEY) } });

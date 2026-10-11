@@ -197,7 +197,17 @@ export async function renderTeamGroups(ctx, { force = false } = {}) {
       const memTd = el("td", "", members.length ? namesOf(members, ctx).join(", ") : "");
       if (!members.length && g.id !== OTHER_GROUP) memTd.append(el("span", "team-warn", "no members"));
       tr.append(memTd);
-      for (const n of [c.accounts, c.assigned, c.unassigned, c.ready]) tr.append(el("td", "team-num", String(n)));
+      // Step 3 (design 7): Accounts, Unassigned and Ready open Target Accounts on this group.
+      const listLink = (n, query) => {
+        const td = el("td", "team-num");
+        if (!n || !(ctx.canEdit || mine.has(g.id))) { td.textContent = String(n); return td; }
+        const a = el("a", "", String(n));
+        a.href = chrome.runtime.getURL(`target-accounts.html?group=${encodeURIComponent(g.id)}${query}`);
+        a.title = "Open these accounts in Target Accounts";
+        td.append(a);
+        return td;
+      };
+      tr.append(listLink(c.accounts, ""), el("td", "team-num", String(c.assigned)), listLink(c.unassigned, "&owner=unassigned"), listLink(c.ready, "&ready=1"));
       const act = el("td");
       if (ctx.canEdit && g.id !== OTHER_GROUP) {
         act.append(kebabButton(`group-${g.id}`, `Actions for the group ${g.name}`, () => [

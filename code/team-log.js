@@ -34,7 +34,44 @@ function subjectOf(state, r, normalize) {
   if (r.e === "lead") return { kind: "lead", key: null, ref: id };
   // 1.2.3: the Team Lead chain (team|lead, team|deputy, team|takeover).
   if (r.e === "team") return { kind: "team", key: null, ref: id };
+  // 1.2.3 step 3 (design 11): an account group - its own readable lines, not "changed the setting teamGroups".
+  if (r.e === "setting" && id.startsWith("teamGroups:")) return { kind: "group", key: null, ref: id.slice("teamGroups:".length) };
   return { kind: "setting", key: null, ref: id.replace(/:.*$/, "") || id };
+}
+
+// A group's filter, before -> after, field by field: "size + XL, − S · country + Austria".
+const FILTER_FIELD_NAMES = {
+  region: "region", country: "country", size: "size", scope: "local / global", industry: "industry",
+  companyType: "company type", priority: "priority", relationship: "relationship",
+};
+export function filterDiffText(before, after) {
+  const parts = [];
+  for (const [field, label] of Object.entries(FILTER_FIELD_NAMES)) {
+    const a = Array.isArray(before?.[field]) ? before[field].map(String) : [];
+    const b = Array.isArray(after?.[field]) ? after[field].map(String) : [];
+    const bits = [...b.filter((v) => !a.includes(v)).map((v) => `+ ${v}`), ...a.filter((v) => !b.includes(v)).map((v) => `− ${v}`)];
+    if (bits.length) parts.push(`${label} ${bits.join(", ")}`);
+  }
+  return parts.join(" · ");
+}
+
+// What one record changes about a group, added up over the records of a line.
+function noteGroupChange(entry, r, prior, state) {
+  const g = entry.group || (entry.group = { name: null, created: false, deleted: false, kind: null, accounts: null, added: [], removed: [], filter: "", other: false });
+  const was = (f) => { const v = prior?.f?.[f]?.v; return v && typeof v === "object" && v.$unset ? undefined : v; };
+  const f = r.f || {};
+  const stored = state?.entities?.setting?.[String(r.id)]?.f;
+  g.name = entry.ref === "other" ? "Other" : (typeof f.name === "string" && f.name) || was("name") || stored?.name?.v || g.name || entry.ref;
+  if ("createdAt" in f && !was("createdAt")) { g.created = true; g.kind = f.kind || null; g.accounts = Array.isArray(f.accounts) ? f.accounts.length : null; }
+  if ("deleted" in f) g.deleted = f.deleted === true;
+  if ("members" in f) {
+    const a = Array.isArray(was("members")) ? was("members") : [];
+    const b = Array.isArray(f.members) ? f.members : [];
+    for (const m of b) if (!a.includes(m) && !g.added.includes(m)) g.added.push(m);
+    for (const m of a) if (!b.includes(m) && !g.removed.includes(m)) g.removed.push(m);
+  }
+  if ("filter" in f && !g.created) g.filter = filterDiffText(was("filter"), f.filter) || g.filter;
+  if (["name", "description", "accounts", "kind"].some((k) => k in f) && !g.created) g.other = true;
 }
 
 // A value as the log shows it: short text (an unset field -> null).
@@ -95,6 +132,7 @@ export function teamLogEntries(records, state, normalize, priors = null) {
     entry.rows += 1;
     if (op === "set" && r.f && typeof r.f === "object") {
       const prior = priors?.get(r) || null;
+      if (s.kind === "group") noteGroupChange(entry, r, prior, state);
       for (const f of Object.keys(r.f)) {
         if (INTERNAL_FIELD(f)) continue;
         if (!entry.fields.includes(f)) {
@@ -169,6 +207,20 @@ export function teamLogText(entry, name, who) {
   if (entry.kind === "import") {
     const n = (entry.accounts || []).length;
     return `imported ${entry.ref || "a file"}: ${entry.label || `${n} account${n === 1 ? "" : "s"}`}`;
+  }
+  if (entry.kind === "group") {
+    const g = entry.group || {};
+    const name = g.name || (entry.ref === "other" ? "Other" : entry.ref);
+    if (entry.op === "delete" || g.deleted) return `deleted the group ${name}`;
+    const names = (list) => list.map(who).join(", ");
+    const members = [g.added?.length ? `added ${names(g.added)} to ${name}` : "", g.removed?.length ? `removed ${names(g.removed)} from ${name}` : ""].filter(Boolean);
+    if (g.created) {
+      const how = g.kind === "named" ? `named${g.accounts != null ? `, ${g.accounts} account${g.accounts === 1 ? "" : "s"}` : ""}` : "by filter";
+      return [`created the group ${name} (${how})`, ...members].join("; ");
+    }
+    const parts = [g.filter ? `changed the filter of ${name}: ${g.filter}` : "", ...members].filter(Boolean);
+    if (parts.length) return parts.join("; ");
+    return `changed the group ${name}`;
   }
   if (entry.kind === "team") {
     if (entry.ref === "lead") return `made ${who(entry.to)} Team Lead`;

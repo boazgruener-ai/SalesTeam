@@ -21,7 +21,7 @@ import {
   pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed, stampMember,
   leadChain, setTeamCreator, isGatedRow, recordsBetween,
 } from "./team-merge.js";
-import { groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, OTHER_GROUP } from "./team-groups.js";
+import { groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, isLiveGroup, OTHER_GROUP } from "./team-groups.js";
 import {
   claimIdFor, accountKeyOfChange, activeMembersOf, claimView, assignmentView, offLimitsFor, teamAccountSummary,
 } from "./team-claims.js";
@@ -318,6 +318,8 @@ async function recordTeamLog(records, priors = null) {
     if (e.key) e.name = names.get(e.key) || e.key;
     e.mn = memberName(e.m);
     if (e.to) e.tn = memberName(e.to);
+    // Step 3: the members a group line names ("added Anna to EMEA").
+    if (e.group) { e.names = {}; for (const m of [...(e.group.added || []), ...(e.group.removed || [])]) e.names[m] = memberName(m); }
   }
   const prev = (await chrome.storage.local.get(TEAM_LOG_KEY))[TEAM_LOG_KEY];
   await chrome.storage.local.set({ [TEAM_LOG_KEY]: appendTeamLog(prev, entries, Date.now()) });
@@ -329,6 +331,7 @@ async function applyRemote(records) {
   const me = membership?.memberId;
   const takenFrom = new Map(); // "@key" -> author
   const leadsBefore = leadNow();
+  const groupsBefore = records.some((r) => r && (r.e === "team" || isGatedRow(r.e, r.id))) ? myGroupsNow() : null;
   for (const r of records) {
     if (r.op !== "unassign" || r.e !== "account" || !String(r.id).startsWith("@")) continue;
     const author = stampMember(r.t);
@@ -346,6 +349,7 @@ async function applyRemote(records) {
   await save(["state"]);
   if (affected.size) await writeBack(affected);
   await noteRoleChange(leadsBefore, records);
+  if (groupsBefore) await noteGroupChange(groupsBefore, records);
   if (takenFrom.size && !mem.meta.replaying) {
     const now = Date.now();
     const added = [];
@@ -361,6 +365,43 @@ async function applyRemote(records) {
     }
   }
   return affected.size;
+}
+
+// 1.2.3 step 3 (design 11, R3.4): "Boaz added you to the group VIP" - in the top bar until OK, on the member's own PC.
+// The member's groups as the team's merged state has them, before and after a batch. The Team Lead and the deputy see
+// every account whatever their groups, so they are told nothing.
+function myGroupsNow() {
+  const groups = patchValue("teamGroups", undefined, projectKey(mem.state, "teamGroups")) || {};
+  const on = groupsOn(groups);
+  const ids = on ? memberGroups(membership?.memberId, groupIndex(groups, currentTeam())).filter((id) => id !== OTHER_GROUP) : [];
+  const names = {};
+  for (const [id, g] of Object.entries(groups)) if (isLiveGroup(id, g)) names[id] = g.name || id;
+  return { on, ids, names, lead: hasLeadRights() };
+}
+
+async function noteGroupChange(before, records) {
+  if (mem.meta.replaying) return;
+  const after = myGroupsNow();
+  if (before.lead || after.lead) return;
+  const last = records.filter((r) => r && isGatedRow(r.e, r.id)).sort((a, b) => (a.t < b.t ? 1 : -1))[0];
+  const by = last ? memberName(stampMember(last.t)) : "The Team Lead";
+  const nameOf = (id) => after.names[id] || before.names[id] || id;
+  const list = (ids) => ids.map(nameOf).join(", ");
+  const texts = [];
+  if (!before.on && after.on) {
+    texts.push(`${by} set up account groups. You now see the accounts of ${after.ids.length ? `your group${after.ids.length === 1 ? "" : "s"}: ${list(after.ids)}` : "no group (Other)"}.`);
+  } else if (before.on && !after.on) {
+    texts.push(`${by} removed the account groups. You see every account again.`);
+  } else if (after.on) {
+    const added = after.ids.filter((id) => !before.ids.includes(id));
+    const removed = before.ids.filter((id) => !after.ids.includes(id));
+    if (added.length) texts.push(`${by} added you to the group${added.length === 1 ? "" : "s"} ${list(added)}.`);
+    if (removed.length) texts.push(`${by} removed you from the group${removed.length === 1 ? "" : "s"} ${list(removed)}.${after.ids.length ? "" : " You now see the accounts in no group (Other)."}`);
+  }
+  if (!texts.length) return;
+  const now = Date.now();
+  const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
+  await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((text) => ({ kind: "group", text, at: now }))].slice(-50) });
 }
 
 // 1.2.3 step 1 (design 3.3, 3.4): "Boaz made you Team Lead" / "… deputy" / "ended your deputy role" - in the top bar
@@ -1218,7 +1259,8 @@ export function discardKeptAside(key) {
 // a free account to itself and releases only its own; the Team Lead can also release or reassign anyone's. Nobody
 // assigns an account a colleague is updating right now (the claim says so) - try again when they are done.
 
-async function assignInner(key, to) {
+// later: one of several in a row (assignAccounts) - the caller saves, publishes and starts the folder round once.
+async function assignInner(key, to, { later = false } = {}) {
   if (!key) return { ok: false, reason: "no_key" };
   if (!(await connectedRoot())) return { ok: false, reason: "offline", ...describeClaim(key) };
   if (!inSyncNow()) return { ok: false, reason: "not_in_sync", ...describeClaim(key) };
@@ -1239,10 +1281,54 @@ async function assignInner(key, to) {
   pushOwn({ t: tick(mem.clock, now), e: "account", id, op: "assign", ...(target === me ? {} : { member: target }) });
   mem.claims.assigning[key] = { to: target, at: now };
   delete mem.claims.assignLost[key];
+  if (later) return { ok: true, changed: true };
   await save(["state", "outbox", "claims"]);
   await publishSummary();
   scheduleTick(0);
   return { ok: true, ...describeClaim(key) };
+}
+
+// 1.2.2.32 (Boaz: assigning 5 accounts took long): several accounts in ONE job. One by one, each account saved the
+// whole team state, published the summary and started a folder round - and each next message waited behind that round.
+// -> { ok, results: [{ key, ok, reason }] }
+export function assignAccounts(keys, { to = null } = {}) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    const results = [];
+    let changed = false;
+    for (const key of keys || []) {
+      const r = await assignInner(key, to, { later: true });
+      if (r.changed) changed = true;
+      results.push({ key, ok: r.ok !== false, reason: r.reason || null });
+    }
+    if (changed) {
+      await save(["state", "outbox", "claims"]);
+      await publishSummary();
+      scheduleTick(0);
+    }
+    return { ok: true, results };
+  });
+}
+
+export function unassignAccounts(keys) {
+  return enqueue(async () => {
+    if (!(await loadMembership())) return { member: false, ok: false };
+    await ensureLoaded();
+    const results = [];
+    let changed = false;
+    for (const key of keys || []) {
+      const r = await unassignInner(key, { later: true });
+      if (r.changed) changed = true;
+      results.push({ key, ok: r.ok !== false, reason: r.reason || null });
+    }
+    if (changed) {
+      await save(["state", "outbox", "claims"]);
+      await publishSummary();
+      scheduleTick(0);
+    }
+    return { ok: true, results };
+  });
 }
 
 export function assignAccount(key, { to = null } = {}) {
@@ -1257,6 +1343,12 @@ export function unassignAccount(key) {
   return enqueue(async () => {
     if (!(await loadMembership())) return { member: false, ok: false };
     await ensureLoaded();
+    return unassignInner(key);
+  });
+}
+
+async function unassignInner(key, { later = false } = {}) {
+  {
     if (!(await connectedRoot())) return { ok: false, reason: "offline", ...describeClaim(key) };
     if (!inSyncNow()) return { ok: false, reason: "not_in_sync", ...describeClaim(key) };
     const ctx = claimContext();
@@ -1272,11 +1364,12 @@ export function unassignAccount(key) {
     }
     delete mem.claims.assigning[key];
     delete mem.claims.assignLost[key];
+    if (later) return { ok: true, changed: true };
     await save(["state", "outbox", "claims"]);
     await publishSummary();
     scheduleTick(0);
     return { ok: true, ...describeClaim(key) };
-  });
+  }
 }
 
 export function dismissAssignNotice(key) {
@@ -1904,6 +1997,8 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_ASIDE_DISCARD": return reply(discardKeptAside(message.key));
     case "TEAM_ASSIGN": return reply(assignAccount(message.key, { to: message.to || null }));
     case "TEAM_UNASSIGN": return reply(unassignAccount(message.key));
+    case "TEAM_ASSIGN_MANY": return reply(assignAccounts(message.keys, { to: message.to || null }));
+    case "TEAM_UNASSIGN_MANY": return reply(unassignAccounts(message.keys));
     case "TEAM_ASSIGN_DISMISS": return reply(dismissAssignNotice(message.key));
     case "TEAM_UNASSIGN_ALL": return reply(unassignAllOf(message.member));
     case "TEAM_REMOVE_MEMBER": return reply(removeMember(message.member));

@@ -13,6 +13,7 @@
 //   teamAccounts.canSee(key)         - 1.2.3 step 2: is the account in one of my groups (always, without groups)
 //   teamAccounts.canSeeLead(lead)    - the same for a lead, through its company
 //   teamAccounts.groupPicker(selectEl, storageKey, onPick) - the Group dropdown above a table (design 7)
+//   teamAccounts.ownerPicker(selectEl, storageKey, onPick, opts) - the Assigned dropdown (design 7)
 //   teamAccounts.onChange(fn)
 
 import { summaryOffLimits } from "./team-claims.js";
@@ -116,10 +117,12 @@ export const teamAccounts = {
   },
 
   // 1.2.2.7: "Strategic Accounts, Swiss Accounts" - the account's groups by name (null without groups).
-  groupNames(key) {
+  groupNames(key, separator = ", ") {
     if (!membership || !summary?.groupsOn) return null;
-    return (summary.g?.[key] || ["other"]).map((g) => (g === "other" ? "Other" : groupRows[g]?.name || g)).join(", ");
+    return (summary.g?.[key] || ["other"]).map((g) => (g === "other" ? "Other" : groupRows[g]?.name || g)).join(separator);
   },
+  // Is this company one of the team's accounts (a lead's company may be none yet)?
+  isAccount: (key) => Boolean(membership && key && summary?.g?.[key]),
 
   // 1.2.3 step 1 (D10): Reassign to… offers only members with access - the Team Lead, the deputy, or a member of one of
   // the account's groups (a member in no group is in Other). Without groups everyone has access (R9.1).
@@ -158,6 +161,11 @@ export const teamAccounts = {
     };
     const picker = {
       value,
+      // A link from the Groups overview picks the group (kept only if it is one of this member's choices).
+      set(id) {
+        stored = id || "";
+        try { localStorage.setItem(storageKey, stored); } catch { /* remembered for this visit only */ }
+      },
       matches: (key) => { const v = value(); return !v || (summary?.g?.[key] || ["other"]).includes(v); },
       // A lead of a company that is no account is in no group: shown under "All" only.
       matchesLead(lead) {
@@ -190,6 +198,40 @@ export const teamAccounts = {
       try { localStorage.setItem(storageKey, stored); } catch { /* remembered for this visit only */ }
       onPick();
     });
+    return picker;
+  },
+
+  // Design 7: the Assigned dropdown - Assigned or not / to me / to others / Unassigned (wording: Boaz, 2026-10-11; the 1.2.2
+  // filter). On Target Contacts and the Leads Dashboard whenever this PC is in a team; on Target Accounts it takes the
+  // place of the Mine / Others / Unassigned / All buttons once the team has groups (onlyWithGroups) - a team without
+  // groups keeps the buttons exactly as they were (R6.4). Returns { paint(), value(), set(v), matches(key) }.
+  ownerPicker(selectEl, storageKey, onPick, { onlyWithGroups = false } = {}) {
+    const CHOICES = [["all", "Assigned or not"], ["mine", "Assigned to me"], ["others", "Assigned to others"], ["unassigned", "Unassigned"]];
+    let stored = "all";
+    try { stored = localStorage.getItem(storageKey) || "all"; } catch { /* remembered for this visit only */ }
+    if (!CHOICES.some(([v]) => v === stored)) stored = "all";
+    if (selectEl) {
+      for (const [v, label] of CHOICES) {
+        const el = document.createElement("option");
+        el.value = v;
+        el.textContent = label;
+        selectEl.appendChild(el);
+      }
+    }
+    const picker = {
+      value: () => (membership ? stored : "all"),
+      set(v) {
+        stored = CHOICES.some(([c]) => c === v) ? v : "all";
+        try { localStorage.setItem(storageKey, stored); } catch { /* remembered for this visit only */ }
+      },
+      matches: (key) => this.ownerFilter(key, picker.value()),
+      paint: () => {
+        if (!selectEl) return;
+        selectEl.hidden = !membership || (onlyWithGroups && !summary?.groupsOn);
+        selectEl.value = stored;
+      },
+    };
+    selectEl?.addEventListener("change", () => { picker.set(selectEl.value); onPick(); });
     return picker;
   },
 

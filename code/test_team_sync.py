@@ -633,6 +633,22 @@ def main():
     notices = sorted((n["key"], n["by"], n["to"]) for n in (eli.local("teamNotices") or []))
     check("notice: Eli is told which accounts the admin took (reassigned / released)",
           notices, [("delta ag", "Dora", "Dora"), ("epsilon ag", "Dora", None)])
+    # 1.2.2.32: several accounts in one job - one save, one change file.
+    r, folder = dora.sync(folder)
+    files_before = dora.status()["lastWrittenN"]
+    r, folder = dora.call("assignAccounts(['zeta ag', 'eta ag'], { to: '%s' })" % eli_id, folder)
+    check("assign many: both accounts in one answer", [(x["key"], x["ok"]) for x in r.get("results", [])], [("zeta ag", True), ("eta ag", True)])
+    r, folder = dora.sync(folder)
+    check("assign many: one change file for both", dora.status()["lastWrittenN"] - files_before, 1)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("getClaimStatus('eta ag')", folder)
+    check("assign many: Eli has Eta", (r.get("assignee") or {}).get("me"), True)
+    r, folder = dora.call("unassignAccounts(['zeta ag', 'eta ag', 'nobody ag'])", folder)
+    check("release many: both released, an unassigned one is fine", [x["ok"] for x in r.get("results", [])], [True, True, True])
+    r, folder = dora.sync(folder)
+    r, folder = eli.sync(folder)
+    r, folder = eli.call("getClaimStatus('eta ag')", folder)
+    check("release many: Eta is unassigned for Eli", r.get("assignee"), None)
     check("notice: nothing for Dora - she did it herself (only 'Eli joined')", [x for x in dora.local("teamNotices") or [] if x.get("kind") != "joined"], [])
 
     # 1.2.2.6 (Boaz: 13 assigned to him on Annick's PC, 0 on his own): a PC whose saved state is lost gets its own
@@ -663,6 +679,9 @@ def main():
     r, folder = dora.sync(folder)
     r, folder = eli.sync(folder)
     check("groups: the Team Lead's group reaches Eli", ((eli.local("teamGroups") or {}).get("g-ch") or {}).get("name"), "Swiss")
+    group_notes = lambda m: [n["text"] for n in (m.local("teamNotices") or []) if n.get("kind") == "group"]
+    check("groups: Eli is told that groups were set up, and which are his", group_notes(eli), ["Dora set up account groups. You now see the accounts of your group: Swiss."])
+    check("groups: the Team Lead is told nothing", group_notes(dora), [])
     eli.set_local({"teamGroups": {"g-ch": {"name": "Eli renamed it", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id]},
                                   "g-eli": {"name": "Eli's own", "kind": "named", "accounts": [], "members": [eli_id]}}})
     r, folder = eli.sync(folder)

@@ -1081,7 +1081,8 @@ function rawValue(company, column) {
     const overrides = accountExtras[normalizeCompanyName(company.company)]?.overrides || {};
     return sizeBucketKey(sizeEmployeesOf({ ...company, ...overrides }), SIZE_PRIORITY_BUCKETS);
   }
-  if (column.id === "teamGroups") return company.fullName == null ? teamAccounts.groupNames(normalizeCompanyName(company.company)) : null;
+  // A contact shows its account's groups (step 3; hidden by default on Target Contacts).
+  if (column.id === "teamGroups") return teamAccounts.groupNames(normalizeCompanyName(company.company));
   if (company.fullName == null && column.id === "salesTeamPriority") return accountPriorityInfo(company).priority;
   if (column.id === "relationship") return company.fullName == null ? (relationshipTagText(accountPriorityInfo(company).relationship) || null) : null;
   // A contact row always has fullName, a company row never does - reused
@@ -1229,7 +1230,7 @@ function sortedFilteredCompanies() {
   const query = searchInputEl.value.trim().toLowerCase();
   const sortCol = COMPANY_COLUMNS.find((c) => c.id === sortField);
   const filtered = workbook.companies.filter((c) => matchesGlobalSearch(c, query) && matchesColumnFilters(c)
-    && teamAccounts.ownerFilter(normalizeCompanyName(c.company), teamOwnerFilter)
+    && accountOwnerPicker.matches(normalizeCompanyName(c.company))
     && accountGroupPicker.matches(normalizeCompanyName(c.company)));
   if (sortCol) {
     filtered.sort((a, b) => {
@@ -2297,7 +2298,6 @@ function onContactFiltersChanged() {
 // Team use 1.2.2 step 5 (TEAM_USE_DESIGN.md 7): badges, the owner filter, off-limits row actions, bulk assign
 // --------------------------------------------------------------------------
 const TEAM_OWNER_FILTER_STORAGE_KEY = "salesteam-team-owner-filter"; // per browser profile = per member
-let teamOwnerFilter = (() => { try { return localStorage.getItem(TEAM_OWNER_FILTER_STORAGE_KEY) || "all"; } catch { return "all"; } })();
 
 // 1.2.3 (R2.4): the Customer / Partner tag, or null when the company is neither.
 function relationshipTagNode(relationship) {
@@ -2459,9 +2459,12 @@ const TEAM_REFUSAL_TEXT = {
 async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess = [], already = 0 } = {}) {
   let done = 0;
   const refused = {};
+  // 1.2.2.32: all of them in one message - one by one, each account cost a save of the whole team state and a folder round.
+  let many = null;
+  try { many = await chrome.runtime.sendMessage({ type: `${type}_MANY`, keys, ...(to ? { to } : {}) }); } catch { /* counted as refused */ }
+  const byKey = new Map((many?.results || []).map((r) => [r.key, r]));
   for (const key of keys) {
-    let r = null;
-    try { r = await chrome.runtime.sendMessage({ type, key, ...(to ? { to } : {}) }); } catch { /* counted as refused */ }
+    const r = byKey.get(key);
     if (r && r.ok !== false) done++;
     else { const why = r?.reason || "offline"; refused[why] = (refused[why] || 0) + 1; }
   }
@@ -2648,20 +2651,27 @@ const accountGroupPicker = teamAccounts.groupPicker(document.getElementById("tea
 const contactGroupPicker = teamAccounts.groupPicker(document.getElementById("contacts-team-group-picker"),
   "salesteam-team-group-contacts", () => onContactFiltersChanged());
 
+// Step 3 (design 7): the Assigned choice. One value behind the buttons (a team without groups, as in 1.2.2) and the
+// dropdown that takes their place once the team has groups; Target Contacts has the dropdown, with its own choice.
+const accountOwnerPicker = teamAccounts.ownerPicker(document.getElementById("team-owner-picker"),
+  TEAM_OWNER_FILTER_STORAGE_KEY, () => onAccountFiltersChanged(), { onlyWithGroups: true });
+const contactOwnerPicker = teamAccounts.ownerPicker(document.getElementById("contacts-team-owner-picker"),
+  "salesteam-team-owner-filter-contacts", () => onContactFiltersChanged());
+
 function paintTeamOwnerFilter() {
   accountGroupPicker.paint();
+  accountOwnerPicker.paint();
   const removedBtn = document.getElementById("removed-btn");
   if (removedBtn) removedBtn.hidden = !teamAccounts.canRemove();
   const el = document.getElementById("team-owner-filter");
   if (!el) return;
-  el.hidden = !teamAccounts.inTeam();
-  for (const b of el.querySelectorAll("button")) b.classList.toggle("active", b.dataset.owner === teamOwnerFilter);
+  el.hidden = !teamAccounts.inTeam() || teamAccounts.groupsOn();
+  for (const b of el.querySelectorAll("button")) b.classList.toggle("active", b.dataset.owner === accountOwnerPicker.value());
 }
 document.getElementById("team-owner-filter")?.addEventListener("click", (event) => {
   const b = event.target.closest("button[data-owner]");
   if (!b) return;
-  teamOwnerFilter = b.dataset.owner;
-  try { localStorage.setItem(TEAM_OWNER_FILTER_STORAGE_KEY, teamOwnerFilter); } catch { /* remembered for this visit only */ }
+  accountOwnerPicker.set(b.dataset.owner);
   paintTeamOwnerFilter();
   onAccountFiltersChanged();
 });
@@ -2672,7 +2682,7 @@ function renderTable() {
   const accountChips = tableFilterChips(searchInputEl, columnFilters, COMPANY_COLUMNS);
   renderFilterChipsBar(document.getElementById("accounts-active-filters-bar"), accountChips, onAccountFiltersChanged,
     () => clearTableFilters(searchInputEl, columnFilters));
-  const ownerNote = teamAccounts.inTeam() && teamOwnerFilter !== "all" ? ` (${{ mine: "assigned to you", others: "assigned to colleagues", unassigned: "unassigned" }[teamOwnerFilter] || "all"} only)` : "";
+  const ownerNote = teamAccounts.inTeam() && accountOwnerPicker.value() !== "all" ? ` (${{ mine: "assigned to you", others: "assigned to colleagues", unassigned: "unassigned" }[accountOwnerPicker.value()] || "all"} only)` : "";
   resultCountEl.textContent = `${companies.length} of ${workbook.companies.length} companies${ownerNote}`;
   const cols = visibleColumns();
 
@@ -2771,6 +2781,7 @@ const CONTACT_LIST_COLUMNS = [
   { id: "publicBusinessPhone", label: "Business Phone", visible: true },
 
   // --- Hidden by default, one click away via the Columns button ---
+  { id: "teamGroups", label: "Groups" },
   { id: "aiRelevance", label: "Relevance", longText: true },
   { id: "seniorityPriority", label: "Seniority Priority", numeric: true },
   { id: "swissBased", label: "Local" },
@@ -2803,6 +2814,14 @@ function loadContactHiddenColumns() {
   } catch {
     contactHiddenColumns = new Set(defaultHidden);
   }
+  // Step 3: Groups is new and starts hidden here - also for someone whose saved choice predates the column.
+  try {
+    if (!localStorage.getItem("salesteam-target-contacts-groups-column-v1")) {
+      localStorage.setItem("salesteam-target-contacts-groups-column-v1", "1");
+      contactHiddenColumns.add("teamGroups");
+      saveContactHiddenColumns();
+    }
+  } catch { /* best-effort only */ }
 }
 
 function saveContactHiddenColumns() {
@@ -2897,6 +2916,7 @@ function sortedFilteredContacts() {
   const query = contactsSearchInputEl.value.trim().toLowerCase();
   const sortCol = CONTACT_LIST_COLUMNS.find((c) => c.id === contactSortField);
   const filtered = workbook.contacts.filter((c) => matchesContactGlobalSearch(c, query) && matchesContactColumnFilters(c)
+    && contactOwnerPicker.matches(normalizeCompanyName(c.company))
     && contactGroupPicker.matches(normalizeCompanyName(c.company)));
   if (contactSortField === "default") return sortContactsDefault(filtered);
   if (sortCol) {
@@ -3135,6 +3155,7 @@ function hasUnreviewedPostForContact(contact) {
 
 function renderContactsTable() {
   contactGroupPicker.paint();
+  contactOwnerPicker.paint();
   const contacts = sortedFilteredContacts();
   const contactChips = tableFilterChips(contactsSearchInputEl, contactColumnFilters, CONTACT_LIST_COLUMNS);
   renderFilterChipsBar(document.getElementById("contacts-active-filters-bar"), contactChips, onContactFiltersChanged,
@@ -3723,6 +3744,7 @@ function isContactDeleted(contact) {
   return isAccountDeleted(normalizeCompanyName(contact.company));
 }
 
+let emptyStateDefault = null; // the "nothing imported yet" text and its Import… button, put back when it applies again
 let lastExcludedCompanyKeys = new Set(); // loadWorkbook's exclusion result, reused by refreshAfterExtrasChange
 
 // After a change that only touches account / contact extras (remove, restore, bulk edit - 1.2.1.9): re-read the two
@@ -3798,6 +3820,11 @@ async function loadWorkbook() {
   const hasData = workbook.companies.length > 0;
   const hasContacts = workbook.contacts.length > 0;
   emptyStateEl.hidden = hasData;
+  // Step 3: a member whose groups hold no account yet is not told to import (that is the Team Lead's).
+  const noneInGroups = !hasData && teamAccounts.groupsOn() && rawWorkbook.companies.length > 0;
+  if (emptyStateDefault === null) emptyStateDefault = [...emptyStateEl.childNodes];
+  if (noneInGroups) emptyStateEl.textContent = "There are no accounts in your groups yet. The Team Lead decides which accounts each group holds (SalesTeam Settings → Team shows your groups).";
+  else if (!emptyStateEl.contains(emptyStateDefault[0])) emptyStateEl.replaceChildren(...emptyStateDefault);
   controlsEl.hidden = !hasData;
   tableWrapEl.hidden = !hasData;
   paginationTopEl.hidden = !hasData;
@@ -6831,6 +6858,11 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
     const text = relationshipTagText(accountPriorityInfo(company).relationship);
     tagEl.textContent = text;
     tagEl.hidden = !text;
+    // Step 3 (R6.3): the account's groups next to it, "EMEA · VIP" - only in a team with groups.
+    const groupsEl = document.getElementById("account-groups-tag");
+    const groupsText = teamAccounts.groupNames(companyKey, " · ");
+    groupsEl.textContent = groupsText || "";
+    groupsEl.hidden = !groupsText;
   }
 
   const companyLeads = allLeads.filter((l) => normalizeCompanyName(l.company) === companyKey);
@@ -7948,6 +7980,19 @@ async function init() {
     if (!listViewEl.hidden) renderTable(); else teamListsStale.accounts = true;
     if (!contactsListViewEl.hidden) renderContactsTable(); else teamListsStale.contacts = true;
   });
+  // Step 3 (design 7): a count in Settings > Team > Groups opens the list on that group -
+  // target-accounts.html?group=<id>&owner=unassigned&ready=1. Taken once, then dropped from the address.
+  {
+    const q = new URLSearchParams(location.search);
+    if (q.has("group") || q.has("owner") || q.has("ready")) {
+      if (q.has("group")) accountGroupPicker.set(q.get("group"));
+      accountOwnerPicker.set(q.get("owner") || "all");
+      clearTableFilters(searchInputEl, columnFilters);
+      if (q.get("ready") === "1") columnFilters.readiness = { text: "Ready", exclude: false };
+      saveFilterSortState();
+      history.replaceState(null, "", location.pathname + location.hash);
+    }
+  }
   await loadWorkbook();
   await route();
   openActionFromHash();

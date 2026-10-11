@@ -1008,6 +1008,11 @@ function buildLeadActionsMenu(lead) {
 // any overlap while actively scrolling covers much less area; "actions"
 // itself shrunk the most (150 -> 48) since it only ever needs to fit one
 // button, not a full data column's worth of width.
+function leadGroupNames(lead) {
+  const key = lead.company ? normalizeCompanyName(lead.company) : "";
+  return (teamAccounts.isAccount(key) && teamAccounts.groupNames(key)) || "";
+}
+
 const COLUMNS = [
   // Shown by default, in this order (reordered 2026-09-19, reported directly). Columns without
   // `visible: true` start hidden and are one click away via the Columns button.
@@ -1027,6 +1032,9 @@ const COLUMNS = [
   { id: "matchedTopics", label: "Matched Topic", visible: true, width: 130, getSortValue: leadMatchedTopicNames, getFilterText: leadMatchedTopicNames, render: matchedTopicsCell },
   { id: "matchedKeywords", label: "Matched Keywords", visible: true, width: 150, getSortValue: leadMatchedKeywords, getFilterText: leadMatchedKeywords, render: matchedKeywordsCell },
   // Hidden by default
+  // 1.2.3 step 3 (R6.3): the groups of the lead's account, in a team with groups.
+  { id: "teamGroups", label: "Groups", width: 130, getSortValue: leadGroupNames, getFilterText: leadGroupNames,
+    render: (td, l) => { td.textContent = leadGroupNames(l); } },
   { id: "firstScanned", label: "First Scanned", width: 130, getSortValue: (l) => l.firstSeenAt || 0, getFilterText: (l) => formatDateTime(l.firstSeenAt),
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
   { id: "location", label: "Location", width: 130, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
@@ -1123,6 +1131,14 @@ function loadHiddenColumns() {
   } catch {
     hiddenColumns = new Set(COLUMNS.filter((c) => !c.visible).map((c) => c.id));
   }
+  // 1.2.3 step 3: Groups is new and starts hidden - also for someone whose saved choice predates the column.
+  try {
+    if (!localStorage.getItem("salesteam-leads-groups-column-v1")) {
+      localStorage.setItem("salesteam-leads-groups-column-v1", "1");
+      hiddenColumns.add("teamGroups");
+      localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify([...hiddenColumns]));
+    }
+  } catch { /* best-effort only */ }
 }
 
 // Column filters/sort/search/status - persisted together as one blob since
@@ -1292,8 +1308,13 @@ function sortLeadsDefault(leads) {
 const leadGroupPicker = teamAccounts.groupPicker(document.getElementById("team-group-picker"),
   "salesteam-team-group-leads", () => renderTableFromScratch());
 
+// Step 3: the Assigned dropdown - who the lead's account is assigned to.
+const leadOwnerPicker = teamAccounts.ownerPicker(document.getElementById("team-owner-picker"),
+  "salesteam-team-owner-filter-leads", () => renderTableFromScratch());
+
 function applyFilterSortSearch() {
-  let leads = allLeads.filter((l) => leadGroupPicker.matchesLead(l));
+  let leads = allLeads.filter((l) => leadGroupPicker.matchesLead(l)
+    && leadOwnerPicker.matches(l.company ? normalizeCompanyName(l.company) : ""));
 
   if (statusFilter !== "all") {
     leads = leads.filter((l) => (l.status || "New") === statusFilter);
@@ -1777,6 +1798,7 @@ function buildGroupSummaryRow(group) {
 
 function renderTable() {
   leadGroupPicker.paint();
+  leadOwnerPicker.paint();
   renderColgroup();
   renderTableHead();
   syncStatusFilterSelect();

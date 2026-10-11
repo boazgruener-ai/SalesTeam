@@ -373,6 +373,9 @@ async function run() {
 }
 
 run().catch((err) => {
+  // The extension was reloaded or updated while this page was open: the page keeps this old script, but it can no
+  // longer reach SalesTeam (chrome.runtime is gone) - nobody is waiting for an answer, so there is nothing to report.
+  if (!chrome.runtime?.id) return;
   // Belt and suspenders: even a failure in run() itself (e.g. the initial
   // storage.local.get call) still reports something rather than leaving the
   // orchestration side to time out with zero information.
