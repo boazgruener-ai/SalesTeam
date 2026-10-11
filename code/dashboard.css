@@ -1690,3 +1690,7 @@ th.th-draggable { cursor: grab; }
 th.th-dragging { opacity: .45; }
 th.th-drop-before { box-shadow: inset 3px 0 0 #1155cc !important; }
 th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc !important; }
+
+/* 1.2.3 step 2 (design 7): the Group dropdown above a table. */
+.team-group-picker[hidden] { display: none; }
+.team-group-picker { border: 1px solid var(--border, #ccc); border-radius: 6px; background: #fff; color: #333; padding: 4px 8px; font-size: 12px; margin-right: 8px; vertical-align: middle; max-width: 220px; }

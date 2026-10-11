@@ -136,6 +136,7 @@ import {
 import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
+import { sizeEmployeesOf } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const emptyStateEl = document.getElementById("empty-state");
@@ -524,6 +525,11 @@ navCollapseBtn.addEventListener("click", () => {
 const listViewEl = document.getElementById("list-view");
 const accountViewEl = document.getElementById("account-view");
 const contactViewEl = document.getElementById("contact-view");
+const noAccessViewEl = document.getElementById("no-access-view");
+document.getElementById("no-access-back-link").addEventListener("click", (event) => {
+  event.preventDefault();
+  location.hash = "";
+});
 // Team use 1.2.2 step 4: claims on the account and contact pages (a contact's claim is its account's).
 const accountClaimGuard = createClaimGuard({
   viewEl: accountViewEl,
@@ -1069,7 +1075,12 @@ function rawValue(company, column) {
     const key = contactKeyFor(company.company, company.fullName);
     return effectiveStatus(leadStatusBucket(findLeadsForContact(company, allLeads)), contactExtras[key]?.manualStatus);
   }
-  if (column.id === "sizeBucket") return company.fullName == null ? sizeBucketKey(effectiveEmployees(company).value, SIZE_PRIORITY_BUCKETS) : null;
+  // The effective values (edits and applied research included) and the same reading as a group's Size (team-groups.js).
+  if (column.id === "sizeBucket") {
+    if (company.fullName != null) return null;
+    const overrides = accountExtras[normalizeCompanyName(company.company)]?.overrides || {};
+    return sizeBucketKey(sizeEmployeesOf({ ...company, ...overrides }), SIZE_PRIORITY_BUCKETS);
+  }
   if (column.id === "teamGroups") return company.fullName == null ? teamAccounts.groupNames(normalizeCompanyName(company.company)) : null;
   if (company.fullName == null && column.id === "salesTeamPriority") return accountPriorityInfo(company).priority;
   if (column.id === "relationship") return company.fullName == null ? (relationshipTagText(accountPriorityInfo(company).relationship) || null) : null;
@@ -1218,7 +1229,8 @@ function sortedFilteredCompanies() {
   const query = searchInputEl.value.trim().toLowerCase();
   const sortCol = COMPANY_COLUMNS.find((c) => c.id === sortField);
   const filtered = workbook.companies.filter((c) => matchesGlobalSearch(c, query) && matchesColumnFilters(c)
-    && teamAccounts.ownerFilter(normalizeCompanyName(c.company), teamOwnerFilter));
+    && teamAccounts.ownerFilter(normalizeCompanyName(c.company), teamOwnerFilter)
+    && accountGroupPicker.matches(normalizeCompanyName(c.company)));
   if (sortCol) {
     filtered.sort((a, b) => {
       const va = sortValue(a, sortCol);
@@ -2630,7 +2642,14 @@ document.getElementById("removed-restore-btn").addEventListener("click", async (
   }
 });
 
+// 1.2.3 step 2 (design 7): the Group dropdown of each list - one shared builder, the choice remembered per list.
+const accountGroupPicker = teamAccounts.groupPicker(document.getElementById("team-group-picker"),
+  "salesteam-team-group-accounts", () => onAccountFiltersChanged());
+const contactGroupPicker = teamAccounts.groupPicker(document.getElementById("contacts-team-group-picker"),
+  "salesteam-team-group-contacts", () => onContactFiltersChanged());
+
 function paintTeamOwnerFilter() {
+  accountGroupPicker.paint();
   const removedBtn = document.getElementById("removed-btn");
   if (removedBtn) removedBtn.hidden = !teamAccounts.canRemove();
   const el = document.getElementById("team-owner-filter");
@@ -2877,7 +2896,8 @@ function sortContactsDefault(contacts) {
 function sortedFilteredContacts() {
   const query = contactsSearchInputEl.value.trim().toLowerCase();
   const sortCol = CONTACT_LIST_COLUMNS.find((c) => c.id === contactSortField);
-  const filtered = workbook.contacts.filter((c) => matchesContactGlobalSearch(c, query) && matchesContactColumnFilters(c));
+  const filtered = workbook.contacts.filter((c) => matchesContactGlobalSearch(c, query) && matchesContactColumnFilters(c)
+    && contactGroupPicker.matches(normalizeCompanyName(c.company)));
   if (contactSortField === "default") return sortContactsDefault(filtered);
   if (sortCol) {
     filtered.sort((a, b) => {
@@ -3114,6 +3134,7 @@ function hasUnreviewedPostForContact(contact) {
 }
 
 function renderContactsTable() {
+  contactGroupPicker.paint();
   const contacts = sortedFilteredContacts();
   const contactChips = tableFilterChips(contactsSearchInputEl, contactColumnFilters, CONTACT_LIST_COLUMNS);
   renderFilterChipsBar(document.getElementById("contacts-active-filters-bar"), contactChips, onContactFiltersChanged,
@@ -3711,18 +3732,35 @@ async function refreshAfterExtrasChange() {
   const [extras, cExtras] = await Promise.all([getTargetAccountExtras(), getTargetContactExtras()]);
   accountExtras = extras;
   contactExtras = cExtras;
-  const kept = (c) => !lastExcludedCompanyKeys.has(normalizeCompanyName(c.company));
-  workbook = {
-    ...workbook,
-    companies: rawWorkbook.companies.filter((c) => !isAccountDeleted(normalizeCompanyName(c.company)) && kept(c)),
-    contacts: rawWorkbook.contacts.filter((c) => !isContactDeleted(c) && kept(c)),
-  };
+  applyVisibleRows();
   renderTable();
   renderAccountsStats();
   renderContactsTable();
   renderContactsStats();
   scheduleReadinessRefresh();
 }
+// The rows the lists, counts, pages and exports work on: not removed, not excluded, and - 1.2.3 step 2 (design 6) -
+// in one of this member's groups. Run again when the groups change (teamAccounts.onChange).
+function applyVisibleRows() {
+  const kept = (c) => {
+    const key = normalizeCompanyName(c.company);
+    return !lastExcludedCompanyKeys.has(key) && teamAccounts.canSee(key);
+  };
+  workbook = {
+    ...workbook,
+    companies: rawWorkbook.companies.filter((c) => !isAccountDeleted(normalizeCompanyName(c.company)) && kept(c)),
+    contacts: rawWorkbook.contacts.filter((c) => !isContactDeleted(c) && kept(c)),
+  };
+}
+
+// An account or contact page opened by link or history for an account that is in none of my groups.
+function hiddenByGroups(view, key) {
+  if (!teamAccounts.groupsOn()) return false;
+  if (view === "account") return !teamAccounts.canSee(key);
+  const c = rawWorkbook.contacts.find((x) => contactKeyFor(x.company, x.fullName) === key);
+  return Boolean(c) && !teamAccounts.canSee(normalizeCompanyName(c.company));
+}
+
 async function loadWorkbook() {
   // Before the read, not after: copies any linkedinLink the resolver stored in the lightweight
   // targetAccounts map into the workbook row that has none (2026-09-22). The two are separate storage
@@ -3753,13 +3791,8 @@ async function loadWorkbook() {
     wb.companies.filter((c) => isCompanyRowExcluded(c, exclusionMatcher)).map((c) => normalizeCompanyName(c.company))
   );
   lastExcludedCompanyKeys = excludedCompanyKeys;
-  workbook = {
-    ...wb,
-    companies: wb.companies.filter((c) =>
-      !isAccountDeleted(normalizeCompanyName(c.company)) && !excludedCompanyKeys.has(normalizeCompanyName(c.company))
-    ),
-    contacts: wb.contacts.filter((c) => !isContactDeleted(c) && !excludedCompanyKeys.has(normalizeCompanyName(c.company))),
-  };
+  workbook = { ...wb };
+  applyVisibleRows();
   const hasData = workbook.companies.length > 0;
   const hasContacts = workbook.contacts.length > 0;
   emptyStateEl.hidden = hasData;
@@ -7109,6 +7142,7 @@ function showView(view) {
   contactsListViewEl.hidden = view !== "contactsList";
   accountViewEl.hidden = view !== "account";
   contactViewEl.hidden = view !== "contact";
+  noAccessViewEl.hidden = view !== "noAccess";
   if (isListLike) showListTab(view === "contactsList" ? "contacts" : "accounts");
   // Reported directly, 2026-09-19: viewing a Contact (list or a single
   // Contact's own detail page) kept showing "Target Accounts Dashboard" as
@@ -7130,7 +7164,13 @@ async function route() {
   const { view, key } = parseHash();
   if (view !== "account") accountClaimGuard.hide();
   if (view !== "contact") contactClaimGuard.hide();
-  if (view === "account" && key) {
+  if ((view === "account" || view === "contact") && key && hiddenByGroups(view, key)) {
+    accountClaimGuard.hide();
+    contactClaimGuard.hide();
+    document.getElementById("no-access-text").textContent =
+      view === "account" ? "This account is not in your groups." : "This contact's account is not in your groups.";
+    showView("noAccess");
+  } else if (view === "account" && key) {
     showView("account");
     const startInEdit = pendingAccountEditKey === key;
     pendingAccountEditKey = null;
@@ -7892,6 +7932,16 @@ async function init() {
   // A list hidden behind an account page is marked stale and redrawn when it is shown again (route) - otherwise
   // "Back to Target Accounts" showed the badge from before (Nestlé still "Mine" after reassigning it, 1.2.1.9 test).
   teamAccounts.onChange(() => {
+    // Step 2: the groups (mine, or an account's) may have changed what I see.
+    const before = `${workbook.companies.length}/${workbook.contacts.length}`;
+    applyVisibleRows();
+    if (`${workbook.companies.length}/${workbook.contacts.length}` !== before) {
+      renderAccountsStats();
+      renderContactsStats();
+    }
+    const open = parseHash();
+    const onPage = !accountViewEl.hidden || !contactViewEl.hidden || !noAccessViewEl.hidden;
+    if (onPage && open.key && hiddenByGroups(open.view, open.key) === noAccessViewEl.hidden) route();
     if (!listViewEl.hidden) renderTable(); else teamListsStale.accounts = true;
     if (!contactsListViewEl.hidden) renderContactsTable(); else teamListsStale.contacts = true;
   });

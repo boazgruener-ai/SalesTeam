@@ -368,6 +368,8 @@
         <input id="search-input" type="text" placeholder="Search company or industry…" />
         <!-- 1.2.2 step 5 (R6.3): which accounts are shown - in one place (Boaz). The owner filter only in a team; a
              later step may turn it into a queue picker (account groups the admin assigns). -->
+        <!-- 1.2.3 step 2 (design 7): one account group at a time - only with groups, only the member's own groups. -->
+        <select id="team-group-picker" class="team-group-picker" title="Show one account group at a time" hidden></select>
         <span id="team-owner-filter" class="team-owner-filter" hidden>
           <button type="button" data-owner="mine" title="Accounts assigned to you">Mine</button>
           <button type="button" data-owner="others" title="Accounts assigned to a colleague">Others</button>
@@ -421,6 +423,7 @@
 
       <div id="contacts-explorer-controls" hidden>
         <input id="contacts-search-input" type="text" placeholder="Search name, company, or title…" />
+        <select id="contacts-team-group-picker" class="team-group-picker" title="Show one account group at a time" hidden></select>
         <button id="contacts-columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="contacts-result-count"></span>
       </div>
@@ -447,6 +450,12 @@
       </div>
 
       <div id="contacts-pagination-bottom" class="pagination-bar" hidden></div>
+    </div>
+
+    <!-- 1.2.3 step 2: an account or contact opened by link that is in none of the member's groups - nothing else is shown. -->
+    <div id="no-access-view" hidden>
+      <a href="#" id="no-access-back-link">&larr; Back to Target Accounts</a>
+      <p id="no-access-text">This account is not in your groups.</p>
     </div>
 
     <div id="account-view" hidden>

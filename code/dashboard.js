@@ -411,8 +411,16 @@ async function loadSettings() {
 
 async function loadLeads() {
   const [resultsMap, scanStartedAt] = await Promise.all([getResults(), getLastScanStartedAt()]);
-  allLeads = sortResultsByRelevance(resultsMap);
+  everyLead = sortResultsByRelevance(resultsMap);
+  applyVisibleLeads();
   lastScanStartedAt = scanStartedAt;
+}
+
+// 1.2.3 step 2 (design 6.2): with account groups, a member's dashboard holds only the leads of accounts in their
+// groups, and their own scanned leads of companies that are no account yet (D12). Run again when the groups change.
+let everyLead = [];
+function applyVisibleLeads() {
+  allLeads = teamAccounts.groupsOn() ? everyLead.filter((l) => teamAccounts.canSeeLead(l)) : everyLead;
 }
 
 async function loadTargetContacts() {
@@ -1280,8 +1288,12 @@ function sortLeadsDefault(leads) {
     || leadDate(b) - leadDate(a));
 }
 
+// 1.2.3 step 2 (design 7): the Group dropdown - the same builder as on Target Accounts and Target Contacts.
+const leadGroupPicker = teamAccounts.groupPicker(document.getElementById("team-group-picker"),
+  "salesteam-team-group-leads", () => renderTableFromScratch());
+
 function applyFilterSortSearch() {
-  let leads = allLeads.slice();
+  let leads = allLeads.filter((l) => leadGroupPicker.matchesLead(l));
 
   if (statusFilter !== "all") {
     leads = leads.filter((l) => (l.status || "New") === statusFilter);
@@ -1764,6 +1776,7 @@ function buildGroupSummaryRow(group) {
 }
 
 function renderTable() {
+  leadGroupPicker.paint();
   renderColgroup();
   renderTableHead();
   syncStatusFilterSelect();
@@ -2989,6 +3002,9 @@ async function init() {
   await teamAccounts.ready();
   // Assignments arrive from the team in the background: repaint the badges and the open lead's notice.
   teamAccounts.onChange(() => {
+    const before = allLeads.length;
+    applyVisibleLeads();
+    if (allLeads.length !== before) renderAllPieCharts();
     renderTable();
     if (currentDetailLead && !document.getElementById("detail-view").hidden) paintTeamNotice(currentDetailLead);
   });

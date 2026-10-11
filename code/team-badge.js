@@ -4,6 +4,7 @@
 // Runs in the background worker; reads only - never writes, never visits anything.
 import { normalizeCompanyName, parseLinkedinCompanySlug } from "./storage.js";
 import { TEAM_MEMBERSHIP_KEY, TEAM_ACCOUNTS_KEY } from "./team-sync.js";
+import { canSeeAccount } from "./team-groups.js";
 
 const lower = (v) => String(v || "").trim().toLowerCase();
 
@@ -68,6 +69,10 @@ export async function teamBadgeFor(url) {
   // The one the team has a state for (assigned / being updated) wins; otherwise the first.
   const key = known.find((k) => summary.accounts?.[k]) || known[0] || null;
   if (!key) return { show: false };
+  // 1.2.3 step 2 (R3.3): an account in none of my groups - the team has it, and no more is said.
+  if (!canSeeAccount(v[TEAM_MEMBERSHIP_KEY], summary, key)) {
+    return { show: true, tone: "other", company: null, text: "SalesTeam — the team already has this company" };
+  }
   const company = nameIn(key);
   const entry = summary.accounts?.[key] || null;
   const name = (m) => (m === summary.me ? "you" : summary.names?.[m] || "a colleague");

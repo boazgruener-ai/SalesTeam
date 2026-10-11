@@ -504,6 +504,8 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
   try {
     const timeframe = await getTimeframe();
     const negativeTopics = await getNegativeTopics();
+    // 1.2.3 step 2 (D12): in a team, a new lead remembers whose scan found it.
+    const scannedBy = (await chrome.storage.local.get("teamMembership")).teamMembership?.memberId || null;
 
     const jobSearchEnabled = await getJobSearchEnabled();
     const jobSearchLocation = await getEffectiveJobSearchLocation();
@@ -583,7 +585,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
           for (const post of posts) {
             console.log(`  - ${post.author}: matchedKeywords=`, post.matchedKeywords, `snippet="${post.snippet.slice(0, 100)}"`);
           }
-          autoIrrelevantCount += mergeTopicPosts(existingResults, topic, posts, negativeTopics);
+          autoIrrelevantCount += mergeTopicPosts(existingResults, topic, posts, negativeTopics, scannedBy);
 
           if (completed < totalSubQueries) {
             await keepAliveSleep(randomDelay());
@@ -645,7 +647,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
         for (const post of intersected) {
           console.log(`  - ${post.author}: matchedKeywords=`, post.matchedKeywords, `snippet="${post.snippet.slice(0, 100)}"`);
         }
-        autoIrrelevantCount += mergeTopicPosts(existingResults, topic, intersected, negativeTopics);
+        autoIrrelevantCount += mergeTopicPosts(existingResults, topic, intersected, negativeTopics, scannedBy);
       }
 
       await chrome.storage.local.remove(["currentScanTopicId", "currentScanTopicName", "currentScanDeepScroll"]);
@@ -690,7 +692,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
           for (const job of jobs) {
             console.log(`  - "${job.title}" @ ${job.company}: matchedKeywords=`, job.matchedKeywords);
           }
-          autoIrrelevantCount += mergeJobPosts(existingResults, topic, jobs, negativeTopics);
+          autoIrrelevantCount += mergeJobPosts(existingResults, topic, jobs, negativeTopics, scannedBy);
 
           if (completed < totalSubQueries) {
             await keepAliveSleep(randomDelay());
@@ -734,7 +736,7 @@ async function scanAllTopics({ reapplyToExisting = false } = {}) {
               .map((post) => ({ ...post, matchedKeywords: localTopicMatch(post, topic) }))
               .filter((post) => post.matchedKeywords.length > 0);
             if (matchingPosts.length > 0) {
-              autoIrrelevantCount += mergeTopicPosts(existingResults, topic, matchingPosts, negativeTopics);
+              autoIrrelevantCount += mergeTopicPosts(existingResults, topic, matchingPosts, negativeTopics, scannedBy);
             }
           }
 

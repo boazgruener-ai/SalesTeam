@@ -2444,6 +2444,28 @@ def test_team_log_and_join(ctx):
             "mayImportFor({memberId: 'd'}, {leadKnown: true, lead: 'a', deputy: 'd'}), mayImportFor({memberId: 'm'}, {leadKnown: true, lead: 'a'})])"),
           "[true,true,true,false]")
 
+    # 1.2.3 step 2 (design 6.1): what a member sees.
+    e("""
+      var SUM = { groupsOn: true, leadKnown: true, lead: 'a', deputy: 'd', myGroups: ['g1'],
+        g: { acme: ['g1', 'g2'], beta: ['g2'], gamma: ['other'] }, leadBy: { L3: 'm' } };
+      var M = { memberId: 'm' };
+      var seeA = function (mb, s, keys) { return keys.map(function (k) { return canSeeAccount(mb, s, k); }); };
+    """)
+    check("can see: no team, and a team without groups - everything",
+          e("JSON.stringify([canSeeAccount(null, null, 'beta'), canSeeAccount(M, { leadKnown: true, lead: 'a' }, 'beta')])"), "[true,true]")
+    check("can see: Team Lead and deputy - everything",
+          e("JSON.stringify([canSeeAccount({memberId: 'a'}, SUM, 'beta'), canSeeAccount({memberId: 'd'}, SUM, 'beta')])"), "[true,true]")
+    check("can see: a member - own group yes, other group no, Other no, unknown account = Other",
+          e("JSON.stringify(seeA(M, SUM, ['acme', 'beta', 'gamma', 'new co']))"), "[true,false,false,false]")
+    check("can see: a member in no group is in Other",
+          e("JSON.stringify(seeA(M, Object.assign({}, SUM, { myGroups: [] }), ['acme', 'gamma', 'new co']))"), "[false,true,true]")
+    check("can see lead: follows its account",
+          e("JSON.stringify([canSeeLead(M, SUM, { key: 'L1' }, 'acme'), canSeeLead(M, SUM, { key: 'L2', scannedBy: 'm' }, 'beta')])"), "[true,false]")
+    check("can see lead: no account - who scanned it, else the first author, else the Team Lead",
+          e("JSON.stringify([canSeeLead(M, SUM, { key: 'L4', scannedBy: 'm' }, 'nowhere'), canSeeLead(M, SUM, { key: 'L5', scannedBy: 'x' }, ''), "
+            "canSeeLead(M, SUM, { key: 'L3' }, ''), canSeeLead(M, SUM, { key: 'L6' }, ''), canSeeLead({memberId: 'a'}, SUM, { key: 'L5', scannedBy: 'x' }, '')])"),
+          "[true,false,true,false,true]")
+
     e("""
       var LOCAL = {
         targetAccounts: {'acme ag': {company: 'Acme AG'}, 'beta sa': {company: 'Beta SA', linkedinCompanyId: '77'}, 'gamma': {company: 'Gamma'}, 'gone': {company: 'Gone'}},
@@ -2518,6 +2540,9 @@ def test_team_groups(ctx):
       var F = groupFacts(VIEW, { buckets: BUCKETS });""")
     check("facts: all fields", e("JSON.stringify(F)"),
           '{"region":"europe","country":"Switzerland","size":"XXL","scope":"local","industry":"Banking","companyType":"Private","priority":"P1","relationship":["customer"]}')
+    check("facts: Size from a number, a count written as text, the LinkedIn count, a range - one reading for group and column",
+          e("JSON.stringify([{ globalEmployees: 300 }, { globalEmployees: '350' }, { employeeCount: 420 }, { globalEmployees: '', employeeCount: 250 }, {}]"
+            ".map(function (v) { return sizeBucketKey(sizeEmployeesOf(v), BUCKETS); }))"), '["M","M","M","M",null]')
     check("facts: an empty view is all unknown", e("JSON.stringify(groupFacts({}, { buckets: BUCKETS }))"),
           '{"region":null,"country":null,"size":null,"scope":null,"industry":null,"companyType":null,"priority":null,"relationship":[]}')
     check("filter: any of a field's values", e("matchesFilter(F, { size: ['XL', 'XXL'] })"), True)

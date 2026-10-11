@@ -1,6 +1,6 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
-import { leadRightsOf, mayImportFor } from "./team-groups.js";
+import { leadRightsOf, mayImportFor, canSeeAccount } from "./team-groups.js";
 import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum, withWholeEmployees, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
 import { joinProposalItems, applyJoinProposal } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
@@ -6239,7 +6239,11 @@ function buildDecisionQueueShared(views) {
 
 export async function getDecisionQueue() {
   // Team use step 6 (R6.7): the Team Lead's join proposals come first - a colleague is waiting on them.
-  const [q, proposals] = await Promise.all([buildDecisionQueueShared(), joinProposalItems().catch(() => [])]);
+  const [built, proposals] = await Promise.all([buildDecisionQueueShared(), joinProposalItems().catch(() => [])]);
+  // 1.2.3 step 2 (design 6.2): a member is not asked about an account that is in none of their groups.
+  const team = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const items = built.items.filter((i) => !i.accountKey || canSeeAccount(team.teamMembership, team.teamAccountStates, i.accountKey));
+  const q = items.length === built.items.length ? built : { items, count: items.length };
   return proposals.length ? { items: [...proposals, ...q.items], count: q.count + proposals.length } : q;
 }
 
@@ -7067,7 +7071,8 @@ export function parseRelativeTimestamp(text, referenceMs) {
 // activity-log entry for the whole scan rather than one per lead - calling
 // the (async, storage-backed) activity log once per matched post here would
 // risk a lost-update race between concurrent read-modify-write cycles.
-export function mergeTopicPosts(existingResults, topic, scrapedPosts, negativeTopics = []) {
+// scannedBy (1.2.3 step 2, D12): in a team, the member whose scan found the lead - never changed afterwards.
+export function mergeTopicPosts(existingResults, topic, scrapedPosts, negativeTopics = [], scannedBy = null) {
   const now = Date.now();
   let newlyIrrelevantCount = 0;
   for (const post of scrapedPosts) {
@@ -7122,6 +7127,7 @@ export function mergeTopicPosts(existingResults, topic, scrapedPosts, negativeTo
         newLead.irrelevantReason = formatIrrelevantReason(negativeTopicMatch);
         newlyIrrelevantCount++;
       }
+      if (scannedBy) newLead.scannedBy = scannedBy;
       existingResults[post.key] = newLead;
     }
   }
@@ -7132,7 +7138,7 @@ export function mergeTopicPosts(existingResults, topic, scrapedPosts, negativeTo
 // from LinkedIn's Jobs vertical - a different lead shape (title/company/
 // location instead of author/snippet), stored in the same results map with
 // type: "job" so both kinds show up together in one merged, ranked list.
-export function mergeJobPosts(existingResults, topic, scrapedJobs, negativeTopics = []) {
+export function mergeJobPosts(existingResults, topic, scrapedJobs, negativeTopics = [], scannedBy = null) {
   const now = Date.now();
   let newlyIrrelevantCount = 0;
   for (const job of scrapedJobs) {
@@ -7177,6 +7183,7 @@ export function mergeJobPosts(existingResults, topic, scrapedJobs, negativeTopic
         newLead.irrelevantReason = formatIrrelevantReason(negativeTopicMatch);
         newlyIrrelevantCount++;
       }
+      if (scannedBy) newLead.scannedBy = scannedBy;
       existingResults[job.key] = newLead;
     }
   }

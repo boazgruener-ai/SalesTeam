@@ -76,12 +76,14 @@ function openTeamSettings() {
 // ---------------------------------------------------------------------------------------------------
 
 let barBusy = false;
+let barShowsFolderProblem = false;
 
 async function paintTeamBar() {
   const membership = await getMembership();
   if (!membership) { clearStatusMessage(BAR_ID); return; }
   const { handle, permission } = await folderState();
   if (!handle || permission === "denied") {
+    barShowsFolderProblem = true;
     setStatusMessage(BAR_ID, {
       tone: "error", priority: true,
       text: `Team "${membership.teamName}": SalesTeam cannot use the team folder on this PC. Your changes wait here and colleagues' changes do not arrive. Pick the folder again in Settings > Team.`,
@@ -90,6 +92,7 @@ async function paintTeamBar() {
     return;
   }
   if (permission !== "granted") {
+    barShowsFolderProblem = true;
     setStatusMessage(BAR_ID, {
       tone: "error", priority: true,
       text: `Click to reconnect to the team folder "${handle.name}". Until then your changes wait on this PC and colleagues' changes do not arrive.`,
@@ -104,6 +107,9 @@ async function paintTeamBar() {
     });
     return;
   }
+  // 1.2.2.26 (Boaz: the folder was picked again, the red bar stayed until the page was refreshed): the folder is
+  // usable now, so its message goes at once - the background's answer below can wait behind the first long read.
+  if (barShowsFolderProblem) { barShowsFolderProblem = false; clearStatusMessage(BAR_ID); }
   let st = null;
   try { st = await send({ type: "TEAM_SYNC_STATUS" }); } catch { return; }
   if (st && st.member && st.lastError && st.errorSince && Date.now() - st.errorSince >= NOT_IN_SYNC_AFTER_MS) {

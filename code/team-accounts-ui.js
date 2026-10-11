@@ -10,10 +10,14 @@
 //   teamAccounts.isTeamLead()        - 1.2.3: the Team Lead, as decided by the team folder (team-groups.js)
 //   teamAccounts.hasLeadRights()     - the Team Lead or the deputy (everything but hand-over, deputy, removing the lead)
 //   teamAccounts.mayAccess(m, key)   - 1.2.3: may this member see and work the account (always, without groups)
+//   teamAccounts.canSee(key)         - 1.2.3 step 2: is the account in one of my groups (always, without groups)
+//   teamAccounts.canSeeLead(lead)    - the same for a lead, through its company
+//   teamAccounts.groupPicker(selectEl, storageKey, onPick) - the Group dropdown above a table (design 7)
 //   teamAccounts.onChange(fn)
 
 import { summaryOffLimits } from "./team-claims.js";
-import { leadRightsOf, isTeamLeadOf } from "./team-groups.js";
+import { leadRightsOf, isTeamLeadOf, canSeeAccount, canSeeLead, isLiveGroup } from "./team-groups.js";
+import { normalizeCompanyName } from "./storage.js";
 
 const KEY = "teamAccountStates"; // team-sync.js TEAM_ACCOUNTS_KEY
 const MEMBERSHIP_KEY = "teamMembership";
@@ -124,6 +128,69 @@ export const teamAccounts = {
     if (member === summary.lead || member === summary.deputy) return true;
     const mine = summary.ofMember?.[member] || ["other"];
     return (summary.g?.[key] || ["other"]).some((g) => mine.includes(g));
+  },
+
+  // 1.2.3 step 2 (design 6): the view filter. An account in none of my groups, and a lead of one, are not shown.
+  groupsOn: () => Boolean(membership && summary?.groupsOn),
+  canSee: (key) => canSeeAccount(membership, summary, key),
+  canSeeLead: (lead) => canSeeLead(membership, summary, lead, lead?.company ? normalizeCompanyName(lead.company) : ""),
+
+  // Design 7 (Boaz, 2026-10-10): one Group dropdown above each table, so a member can work one group at a time.
+  // A member is offered "All my groups" and the groups the Team Lead put them in; the Team Lead and the deputy
+  // "All accounts", every group and Other. Hidden without groups, and for a member in a single group (nothing to
+  // choose). The choice is remembered per page. Returns { paint(), value(), matches(key), matchesLead(lead) }.
+  groupPicker(selectEl, storageKey, onPick) {
+    let stored = "";
+    try { stored = localStorage.getItem(storageKey) || ""; } catch { /* remembered for this visit only */ }
+    let painted = null;
+    const options = () => {
+      if (!membership || !summary?.groupsOn) return [];
+      const ids = this.hasLeadRights()
+        ? [...Object.keys(groupRows).filter((id) => isLiveGroup(id, groupRows[id])), "other"]
+        : (summary.myGroups?.length ? summary.myGroups : ["other"]);
+      return ids.map((id) => ({ id, name: id === "other" ? "Other" : groupRows[id]?.name || id }))
+        .sort((a, b) => (a.id === "other") - (b.id === "other") || a.name.localeCompare(b.name));
+    };
+    // The stored choice survives a moment without the summary (page start) and a group I am taken out of and put back.
+    const value = () => {
+      const opts = options();
+      return opts.length >= 2 && opts.some((o) => o.id === stored) ? stored : "";
+    };
+    const picker = {
+      value,
+      matches: (key) => { const v = value(); return !v || (summary?.g?.[key] || ["other"]).includes(v); },
+      // A lead of a company that is no account is in no group: shown under "All" only.
+      matchesLead(lead) {
+        const v = value();
+        if (!v) return true;
+        const key = lead?.company ? normalizeCompanyName(lead.company) : "";
+        return Boolean(key && summary?.g?.[key]) && summary.g[key].includes(v);
+      },
+      paint: () => {
+        if (!selectEl) return;
+        const opts = options();
+        selectEl.hidden = opts.length < 2;
+        const all = this.hasLeadRights() ? "All accounts" : "All my groups";
+        const signature = JSON.stringify([all, opts]);
+        if (signature !== painted) {
+          painted = signature;
+          selectEl.innerHTML = "";
+          for (const o of [{ id: "", name: all }, ...opts]) {
+            const el = document.createElement("option");
+            el.value = o.id;
+            el.textContent = o.name;
+            selectEl.appendChild(el);
+          }
+        }
+        selectEl.value = value();
+      },
+    };
+    selectEl?.addEventListener("change", () => {
+      stored = selectEl.value;
+      try { localStorage.setItem(storageKey, stored); } catch { /* remembered for this visit only */ }
+      onPick();
+    });
+    return picker;
   },
 
   onChange(fn) { listeners.add(fn); },

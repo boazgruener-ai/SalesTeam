@@ -93,13 +93,23 @@ export function chainLeadRights(chain, member) {
 const plainText = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
 const sameText = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 
+// The one employee figure Size is read from - for a group's Size AND the Size column (1.2.2.25: the column read only
+// a stored number of the imported row, so a count written as text or found later by research showed "-" on accounts a
+// "Size M" group rightly contained). An exact number first, else the count as written, else the size range.
+export function sizeEmployeesOf(view) {
+  const v = view || {};
+  if (typeof v.globalEmployees === "number") return v.globalEmployees;
+  if (typeof v.employeeCount === "number") return v.employeeCount;
+  return v.globalEmployees || v.employeeCount || v.employeeRange || null;
+}
+
 // buckets: storage.js's SIZE_PRIORITY_BUCKETS - the same buckets the Size column and size priority use (D4).
 export function groupFacts(view, { buckets = [] } = {}) {
   const v = view || {};
   return {
     region: regionOfCountry(v.globalHqCountry),
     country: plainText(v.globalHqCountry),
-    size: sizeBucketKey(v.globalEmployees, buckets),
+    size: sizeBucketKey(sizeEmployeesOf(v), buckets),
     scope: localOrGlobal(v),
     industry: plainText(v.industry),
     companyType: plainText(v.companyType),
@@ -252,6 +262,27 @@ export function leadRightsOf(membership, summary) {
 // Team Lead (and deputy) may do them. Without a team: always.
 export function mayImportFor(membership, summary) {
   return !membership || leadRightsOf(membership, summary);
+}
+
+// 1.2.3 step 2 (design 6.1): what this PC's member sees. Without a team or without groups: everything. The Team Lead
+// and the deputy: everything. Otherwise an account in one of the member's groups (a member in no group is in Other,
+// and so is an account the summary has no groups for yet).
+export function canSeeAccount(membership, summary, key) {
+  if (!membership || !summary || !summary.groupsOn) return true;
+  if (leadRightsOf(membership, summary)) return true;
+  const mine = summary.myGroups && summary.myGroups.length ? summary.myGroups : [OTHER_GROUP];
+  return ((summary.g && summary.g[key]) || [OTHER_GROUP]).some((g) => mine.includes(g));
+}
+
+// A lead follows its company's account. A lead whose company is not an account (D12) is shown to the member who
+// scanned it: lead.scannedBy, else the author of the record that brought it into the team (summary.leadBy), else the
+// Team Lead - who sees everything anyway.
+export function canSeeLead(membership, summary, lead, companyKey) {
+  if (!membership || !summary || !summary.groupsOn) return true;
+  if (leadRightsOf(membership, summary)) return true;
+  if (companyKey && summary.g && summary.g[companyKey]) return canSeeAccount(membership, summary, companyKey);
+  const by = (lead && lead.scannedBy) || (lead && summary.leadBy && summary.leadBy[lead.key]) || summary.lead || null;
+  return by === membership.memberId;
 }
 
 export function isTeamLeadOf(membership, summary) {

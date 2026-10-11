@@ -795,6 +795,7 @@ const GROUP_INPUT_KEYS = ["teamGroups", "teamGroupPins", "targetAccountsWorkbook
   "companyRelationships", "companyExclusions"];
 const GROUPS_EVERY_MS = 2000;
 let groupsByKey = null; // { key: [group ids] } or null (basic mode)
+let leadByKey = {}; // step 2: { lead key: member } for leads of non-accounts scanned by a member (not the Team Lead)
 let groupsDirty = true;
 let groupsAt = 0;
 let groupsTimer = null;
@@ -819,9 +820,23 @@ async function computeGroupsOf(groups, pins, team) {
 
 async function refreshGroups() {
   const got = await chrome.storage.local.get(["teamGroups", "teamGroupPins"]);
-  if (!groupsOn(got.teamGroups)) { groupsByKey = null; return; }
+  if (!groupsOn(got.teamGroups)) { groupsByKey = null; leadByKey = {}; return; }
   const r = await computeGroupsOf(got.teamGroups, got.teamGroupPins, currentTeam());
   groupsByKey = r.byKey;
+  // Step 2 (D12): a lead whose company is not an account belongs to the member who scanned it. Leads from before
+  // scannedBy existed: the author of the record that first set the lead (its firstSeenAt never changes). Only
+  // members other than the Team Lead are listed - everything else counts as the Team Lead's.
+  const results = (await chrome.storage.local.get("results")).results || {};
+  const lead = leadNow().lead;
+  const by = {};
+  for (const [k, l] of Object.entries(results)) {
+    if (!l || l.scannedBy) continue;
+    const ck = l.company ? normalizeCompanyName(l.company) : "";
+    if (ck && r.byKey[ck]) continue;
+    const author = stampMember(mem.state.entities?.lead?.[k]?.f?.firstSeenAt?.t);
+    if (author && author !== lead) by[k] = author;
+  }
+  leadByKey = by;
   measure({ kind: "groups", accounts: r.accounts, groups: r.index.live.length, views_ms: r.viewsMs, ms: r.ms });
 }
 
@@ -899,6 +914,7 @@ async function publishSummary() {
     // Step 1: everyone's groups - Reassign to… offers only members with access to the account.
     value.ofMember = index.ofMember;
     value.g = groupsByKey;
+    value.leadBy = leadByKey;
   }
   const json = JSON.stringify(value);
   if (json === lastSummaryJson) return;
