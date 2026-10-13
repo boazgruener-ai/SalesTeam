@@ -2040,6 +2040,22 @@ add_bullets(doc, [
     "Not in 1.2.4 - reminders and tasks, attachments, mentioning a colleague, private notes, notes on initiatives, reading notes from a CRM file on import, real HubSpot notes in the HubSpot files.",
 ])
 
+doc.add_heading("6.28 Team usage and the Anthropic Usage page (v1.2.4)", level=3)
+doc.add_paragraph("1.2.4 lets the Team Lead and the deputy see what the team spends on AI: each member’s monthly total on their own Anthropic API key. The page formerly called Billing is now Anthropic Usage. The requirements (R1-R6) are in BILLING_TEAM_USAGE_REQUIREMENTS.md; the design and its decisions (D1-D9) in BILLING_TEAM_USAGE_DESIGN.md.")
+add_bullets(doc, [
+    "Who sees what - a member sees only their own usage. The Team Lead and the deputy also see the Team usage section. Members never see each other’s figures, in no table, log or export.",
+    "What a member shares - per calendar month, the estimated cost in US$ and the number of web researches, from the day of joining on (D5). Nothing about days, features, tokens or accounts. A month’s figures are never lowered, so the total since joining stays right after the 400-day limit of the count (D4). The pure module team-usage.js works them out; they are kept in teamUsageMonths (personal, not in a backup).",
+    "A file of its own - each member’s background worker writes members/<member>/usage.json to the team folder, once a minute at most and only when something changed. It is not a shared key: shared rows land in every colleague’s storage and backup (D2).",
+    "Encrypted for the Team Lead and the deputy - every member’s browser has one key pair (RSA-OAEP, Web Crypto; the private key cannot be exported and stays in the browser’s IndexedDB) and writes its public key to members/<member>/usage-key.json. The totals are encrypted with a fresh AES-GCM key that is wrapped for the Team Lead and the deputy (team-usage-seal.js, D1). The file is rewritten when the Team Lead, the deputy or one of their keys changes. This protects against a colleague who opens the file, not against one who tampers with the folder; the texts say “encrypted for the Team Lead and the deputy”, never “secure”.",
+    "The Team usage section - on Settings > Anthropic Usage, between the totals and “Day by day”. One line per person: Member, Joined, This month, Last month, Since joining, Web researches this month, Updated; a Team total; sortable by any column. Members with the same name are one line, marked “(2 browsers)” (D3). The page asks the background worker when it opens and once a minute while it is in front (D7).",
+    "Members who left, older builds, hand-over - a member who left stays in the table, marked “(left)”, until the end of the following calendar year. A colleague without a usage file shows “No figures yet - needs SalesTeam 1.2.4”. The Team Lead’s browser keeps a copy of what it last read (teamUsageTable, personal), removed when the rights end. After a hand-over to someone who was not deputy, a member who had already left shows “Figures not available” (D9).",
+    "The member’s own page - says “on your own Anthropic API key in this browser” and, in a team, “Your Team Lead sees your monthly total and your number of web researches. Nothing else is shared.” The “Reset the counters…” button is removed.",
+    "Backup and restore - each browser has a random install id, written into a backup’s manifest. The usage count is its own backup category, “Usage and cost count”, offered on restore only in the browser that made the backup; from another browser or a backup made before 1.2.4 it is taken out when the file is read, and the result says so (D6).",
+    "Web research fixes in the same builds - a research whose request grew beyond the model’s limit (“prompt is too long”) is repeated once with web search only; a failed research is logged as an error; the top bar names the LinkedIn limit only when it was reached; the web research line says “paused for today” while automation is paused.",
+    "Tests - test_pure_modules.py (1,074 checks: monthly totals, never lowered, the table) and test_team_sync.py (299 checks: sealed for the Team Lead only, for both with a deputy, rewritten on change, a former deputy loses the copy, a member who left). The encryption itself was run in a real browser.",
+    "Not in 1.2.4 - a budget or limit per member, warnings to the Team Lead, a colleague’s days or features, official figures from Anthropic, one shared API key, an export of the table. One person as one member across browsers waits for the sign-in item; until then Help recommends one browser per person.",
+])
+
 doc.add_heading("7. Non-functional requirements", level=2)
 add_bullets(doc, [
     "No timers, one standing consent — the only alarms use is team sync (1.2.2, team members only; it never starts LinkedIn work). Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.",
@@ -3058,7 +3074,7 @@ add_bullets(doc, [
 
 doc.add_heading("9. Version history", level=2)
 doc.add_paragraph(
-    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.3.20."
+    "See RELEASE_NOTES.md for the full, dated changelog. Current version: 1.2.4."
 )
 
 for section in doc.sections:

@@ -29,6 +29,32 @@
   accounts or two contacts keeps the notes of both. The Activity Log says that a note was added, edited or deleted,
   never its text.
 
+## Team usage: what the team spends on AI (builds 1.2.3.18-1.2.3.20)
+
+- **Team usage** - the Team Lead and the deputy see what each member's SalesTeam has used on that member's own
+  Anthropic API key: one line per member with the day they joined, this month, last month, the total since joining, the
+  number of web researches this month and when the figures last arrived, plus a team total. It is a section of
+  Settings → Anthropic Usage; click a column title to sort.
+- **Members never see each other's figures** - a member sees only their own usage, and is told what the Team Lead
+  sees: the monthly total and the number of web researches. Nothing about days, features or accounts is shared.
+- **Encrypted for the Team Lead and the deputy** - each member's totals are written to the team folder in a file of
+  their own, encrypted so that only the Team Lead's and the deputy's SalesTeam can open it.
+- **From the day of joining** - only usage since a member joined the team is counted. A person who uses SalesTeam in
+  two browsers under the same name is one line, marked "(2 browsers)".
+- **"Billing" is now "Anthropic Usage"** - the page shows usage on your Anthropic API key, not a bill from SalesTeam.
+  The menu entry, the page and the messages that point to it use the new name.
+- **No "Reset the counters…" button** - the count is no longer reset by hand. Days older than 400 drop out by
+  themselves.
+- **A restore no longer brings in another browser's usage** - a backup remembers which browser made it. The "Usage
+  and cost count" is offered on restore only in that browser; from another browser, or from a backup made before
+  1.2.4, it is left out and the result says so.
+- **Web research** - a research that read a very long document failed with "prompt is too long" and was tried again in
+  every run; it is now repeated once with web search only. A failed research is marked as an error in the Activity
+  Log. The top bar says "LinkedIn limit reached" only when it was, and the web research line says "paused for today"
+  while automation is paused.
+- **Help** - "What does the team spend on AI? (Team usage)" and "Can I use SalesTeam in two browsers, for example
+  Chrome and Edge?" (we recommend one browser per person).
+
 ## Microsoft Edge wording and smaller improvements (builds 1.2.3.1-1.2.3.9, 1.2.3.17)
 
 - **Texts that fit every browser** - SalesTeam's texts say "your browser" where they said "Chrome", and the team
@@ -42,7 +68,7 @@
 - **Backup and restore say that they are working** - a "Working…" window shows while a backup or a restore runs, and
   the backup's result appears in it.
 - **Small fixes** - "X joined the team. Add X to groups" leaves the top bar once X is in a group; the page can no
-  longer slide up under the top bar; the Billing tables are shown in full width; the Activity Log says "You assigned X
+  longer slide up under the top bar; the usage tables are shown in full width; the Activity Log says "You assigned X
   to yourself".
 
 # SalesTeam — v1.2.3

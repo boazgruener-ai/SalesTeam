@@ -297,7 +297,7 @@ const QA = [
     category: "Team",
     question: "What is shared with my team, and what stays on my computer?",
     keywords: ["shared", "personal", "private", "what is shared", "api key", "drafts", "visible to colleagues", "who contacted whom", "privacy", "team data"],
-    answer: 'Shared with the whole team: accounts, contacts, leads (posts) and their statuses, the notes on them, the Setup (what you sell, ideal customer, target contacts, message templates) and the rules (exclusions, Negative Topics, prioritization). Everyone in the team sees the shared data, including who contacted whom and who changed what. Personal, never written to the team folder: your Anthropic API key, User Profile, drafts, Advisors chats, scanner settings (Topics, timeframe, job search), LinkedIn limits and counters, web budget and your Activity Log. The team folder lives in your team\'s own OneDrive; SalesTeam has no server and never sees it.',
+    answer: 'Shared with the whole team: accounts, contacts, leads (posts) and their statuses, the notes on them, the Setup (what you sell, ideal customer, target contacts, message templates) and the rules (exclusions, Negative Topics, prioritization). Everyone in the team sees the shared data, including who contacted whom and who changed what. Personal, never written to the team folder: your Anthropic API key, User Profile, drafts, Advisors chats, scanner settings (Topics, timeframe, job search), LinkedIn limits and counters, web budget and your Activity Log. One thing is shared with the Team Lead and the deputy only: your monthly AI usage total and your number of web researches (see "What does the team spend on AI?"). The team folder lives in your team\'s own OneDrive; SalesTeam has no server and never sees it.',
   },
   {
     id: "team-assign",
@@ -354,6 +354,20 @@ const QA = [
     question: "In a team with groups, which accounts does my SalesTeam research?",
     keywords: ["pipeline", "research", "my pipeline researches", "automatic preparation", "which accounts", "api key cost", "discovery", "team lead only", "all accounts", "nobody online", "groups"],
     answer: 'Your automatic preparation and web research work only on accounts of your groups, and share them with the group\'s other members who are online, so no account is researched twice. The research of your groups therefore runs on your own Anthropic API key. Team Lead and deputy: under Settings > Team, "My pipeline researches:" has two choices, saved with Save. "Only accounts no member can work on right now" (the default) covers your own assigned accounts and what nobody else can work on at the moment - a group with no member online, and Other when no member is in it. "All accounts" takes an equal share of every group, which is faster but uses more of your API key. In a team with groups, new companies are looked for (Discovery) only by the Team Lead\'s and the deputy\'s SalesTeam; Web Discovery started by hand works for everyone.',
+  },
+  {
+    id: "team-usage",
+    category: "Team",
+    question: "What does the team spend on AI? (Team usage)",
+    keywords: ["team usage", "cost", "costs", "spend", "usage", "anthropic usage", "billing", "api key cost", "who spends", "monthly total", "web researches", "team total", "joined", "encrypted"],
+    answer: 'Every member works with their own Anthropic API key, and Settings > Anthropic Usage shows each member what their own SalesTeam has used in this browser. The Team Lead and the deputy see one more section there, "Team usage": one line per member with the day they joined, this month, last month, the total since joining, the number of web researches this month and when the figures last arrived, plus a team total. Click a column title to sort. Only usage from the day a member joined the team is counted - what someone used before is not shown. Members never see each other\'s figures: each member\'s SalesTeam shares only its monthly total and its number of web researches, and writes them to the team folder encrypted for the Team Lead and the deputy. Nothing about days, features or accounts is shared. The figures are SalesTeam\'s estimates; each member\'s Anthropic Console shows the official cost. "No figures yet - needs SalesTeam 1.2.4" means that colleague has not updated yet.',
+  },
+  {
+    id: "team-two-browsers",
+    category: "Team",
+    question: "Can I use SalesTeam in two browsers, for example Chrome and Edge?",
+    keywords: ["two browsers", "second browser", "chrome and edge", "edge", "another browser", "second pc", "two computers", "same person", "2 browsers", "copy settings"],
+    answer: 'We recommend one browser per person. SalesTeam has no sign-in, so a second browser is a second member of the team: it needs its own invitation, it appears as its own line under Settings > Team, and the accounts assigned to you in one browser show in the other as a colleague\'s. If you do need a second browser: the Team Lead invites it under exactly the same name and puts it into the same groups. Everything the team shares - accounts, contacts, leads (posts), notes, the Setup and the rules - is then the same in both. Your own settings (API key, scanner topics, personas, language) are kept per browser; copy them with Settings > Backup in the first browser and Restore in the second, ticking only the settings you want. In "Team usage", the Team Lead sees members with the same name as one line, marked "(2 browsers)".',
   },
   {
     id: "team-log",
