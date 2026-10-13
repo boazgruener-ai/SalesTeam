@@ -137,7 +137,7 @@ import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
-import { accountTimelineMarked, lastNoteByAccount, lastNoteByContact, noteSearchText, noteLine, leadNoteAbout, notesAbout, notesPromptSection } from "./notes.js";
+import { accountTimelineMarked, lastNoteByAccount, lastNoteByContact, noteSearchText, noteLine, leadNoteAbout, notesAbout, notesPromptSection, notesOn, notesExportLines } from "./notes.js";
 import { getNotes } from "./storage.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
@@ -3512,8 +3512,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     getNotes().then((notes) => {
       allNotes = notes;
       rebuildNotesIndex();
-      if (!listViewEl.hidden) renderTable();
-      if (!contactsListViewEl.hidden) renderContactsTable();
+      // A list that is not on screen now (the note was written on an account's or contact's page) is redrawn when it
+      // is shown again (route) - without this it kept its old Last note until something else redrew it.
+      if (!listViewEl.hidden) renderTable(); else teamListsStale.accounts = true;
+      if (!contactsListViewEl.hidden) renderContactsTable(); else teamListsStale.contacts = true;
     });
   }
   if ("targetAccountExtras" in changes) {
@@ -7030,7 +7032,9 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
 
   // 1.2.4 Notes (R2.3): one timeline - the notes on the account, on its contacts and on its leads, each marked with
   // what it is about. A new note written here is on the account. Lead notes only for leads this member sees (5.3).
-  notesSection(document.getElementById("account-notes")).show({ on: "account", key: companyKey, select: (all) => accountTimelineOf(all, companyKey) });
+  notesSection(document.getElementById("account-notes")).show({
+    on: "account", key: companyKey, name: company.company || companyKey, select: (all) => accountTimelineOf(all, companyKey),
+  });
 
   const overviewEl = document.getElementById("account-overview");
   overviewEl.innerHTML = "";
@@ -7190,7 +7194,9 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
   paintContactBackLink();
 
   // 1.2.4 Notes (R2.4): the contact page shows the notes on this contact only.
-  notesSection(document.getElementById("contact-notes")).show({ on: "contact", key: contactKey });
+  notesSection(document.getElementById("contact-notes")).show({
+    on: "contact", key: contactKey, name: `${contact.fullName || "a contact"}${contact.company ? ` (${contact.company})` : ""}`,
+  });
 
   const contactLeads = findLeadsForContact(contact, allLeads);
   const contactOverrides = contactExtras[contactKey]?.overrides || {};
@@ -7470,8 +7476,15 @@ function tableCsv(columns, rows) {
       if (column.id === "seniorityPriority" && v != null && v !== "") v = SENIORITY_PRIORITY_LABELS[v] || v;
       cells.push(v == null ? "" : v);
     }
+    // 1.2.4 (R7.2, design 9.1): every note of the row, one per line - an account's whole timeline, a contact's own.
+    // An export-only column: it is in no list and not in the Columns menu.
+    const rowNotes = row.fullName != null
+      ? notesOn(allNotes, "contact", contactKeyFor(row.company, row.fullName))
+      : accountTimelineOf(allNotes, normalizeCompanyName(row.company));
+    cells.push(notesExportLines(rowNotes).join("\n"));
     return cells;
   });
+  headers.push("Notes");
   const compact = compactCsvColumns(headers, lines);
   return toCsv(compact.headers, compact.rows);
 }

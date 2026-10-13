@@ -1240,8 +1240,10 @@ def main():
           (sorted(pia.local("notes")), sorted(quin.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-pia", "n-quin"], ["n-pia", "n-quin"], True))
     check("notes: a note travels as its own row, filed under the account type",
           [(c.get("e"), c.get("op"), c["f"].get("text")) for c in note_changes(pia_id, "n-pia")], [("account", "set", "Pia called.")])
-    check("notes: no line in the team log yet, and never the text (R8.2)",
-          ["Pia called." in json.dumps(m.local("teamLog") or []) or "note:" in json.dumps(m.local("teamLog") or []) for m in (pia, quin)], [False, False])
+    check("notes: the text is never in the team log (R8.2)", ["Pia called." in json.dumps(m.local("teamLog") or []) for m in (pia, quin)], [False, False])
+    note_lines = lambda m: sorted((x.get("mn"), x.get("note"), x.get("on"), x.get("key")) for x in (m.local("teamLog") or []) if x.get("kind") == "note")
+    check("notes: one team log line per note added, with the author's name, on both PCs (R8.1)",
+          (note_lines(pia), note_lines(quin)), ([("Pia", "added", "account", "acme ag"), ("Quin", "added", "account", "acme ag")],) * 2)
 
     # B. A delete against a colleague's later edit: the note stays deleted on every PC (D2).
     gone = dict(pia.local("notes")["n-pia"], text="", deletedAt=2000, deletedBy=pia_id)
@@ -1264,6 +1266,9 @@ def main():
     folder = all_round(folder, (pia, quin))
     check("notes: edited, then deleted later - deleted and without its text on both PCs",
           [(m.local("notes")["n-quin"]["deletedAt"], m.local("notes")["n-quin"]["text"]) for m in (pia, quin)], [(4000, ""), (4000, "")])
+    check("notes: the team log says who deleted and who edited - each once",
+          sorted((x.get("mn"), x.get("note")) for x in (quin.local("teamLog") or []) if x.get("kind") == "note" and x.get("note") != "added"),
+          [("Pia", "deleted"), ("Pia", "deleted"), ("Quin", "edited"), ("Quin", "edited")])
     check("notes: the entries stay (a removed entry could come back)", (sorted(pia.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-pia", "n-quin"], True))
 
     # C. A note goes out while the account is held - the holder's and a colleague's (R4.4).
@@ -1284,6 +1289,17 @@ def main():
           ((quin.local("notes").get("n-colleague") or {}).get("text"), r.get("state")), ("Written while Quin edits.", "mine"))
     r, folder = quin.call("releaseAccount('beta ag')", folder)
     folder = all_round(folder, (quin, pia))
+
+    # Restore (R7.1): a backup made before a note was written is restored - the note is gone on every PC and stays gone.
+    before_restore = pia.local("notes")
+    put_note(pia, "n-late", note("account", "acme ag", "Written after the backup.", pia_id, "Pia", 6500))
+    folder = all_round(folder, (pia, quin))
+    check("notes, restore: the later note is on both PCs first", ("n-late" in pia.local("notes"), "n-late" in quin.local("notes")), (True, True))
+    pia.set_local({"notes": before_restore})
+    folder = all_round(folder, (pia, quin))
+    folder = all_round(folder, (pia, quin))
+    check("notes, restore: the note written after the backup is gone on both PCs, and stays gone",
+          ("n-late" in pia.local("notes"), "n-late" in quin.local("notes"), same(pia.local("notes"), before_restore)), (False, False, True))
 
     # D. A colleague who has not updated yet (still on 1.2.3) is not disturbed, and gets the notes after updating.
     inv, folder = invite(pia, "Rex", folder)

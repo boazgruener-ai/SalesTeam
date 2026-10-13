@@ -3,7 +3,8 @@
 // menu, so it does not depend on the page it sits in. The rules are in notes.js, the writers in storage.js.
 //
 //   const notes = notesSection(document.getElementById("account-notes"));
-//   notes.show({ on: "account", key: companyKey });            // again on every render of the page: the draft is kept
+//   notes.show({ on: "account", key: companyKey, name: "Belimed" });   // again on every render: the draft is kept
+//   name: what the Activity Log calls the subject ("Note added on Belimed"); accountKey: a lead's account, if any
 //   notes.show({ on: "account", key, select: (all) => accountTimeline(all, key, leadKeys) });   // step 2: the timeline
 //   notes.hide();
 //
@@ -11,8 +12,8 @@
 // data-unsaved-note - a mark of its own. The page's "leave this page?" warning looks for it (notesUnsaved); the edit
 // hold looks only for data-unsaved, so typing a note never takes the account.
 
-import { getNotes, addNote, editNote, deleteNote } from "./storage.js";
-import { notesOn, noteDate, noteLine, mayEditNote, mayDeleteNote, NOTE_MAX_CHARS } from "./notes.js";
+import { getNotes, addNote, editNote, deleteNote, appendActivityLog } from "./storage.js";
+import { notesOn, noteDate, noteLine, mayEditNote, mayDeleteNote, contactAccountKey, NOTE_MAX_CHARS } from "./notes.js";
 import { leadRightsOf } from "./team-groups.js";
 import { askConfirm } from "./confirm-dialog.js";
 
@@ -90,11 +91,12 @@ function build(container) {
   const list = el("div", "notes-list");
   container.append(title, box, actions, list);
 
-  let subject = null;   // { on, key, select }
+  let subject = null;   // { on, key, select, name, accountKey }
   let editingId = null; // the note being edited (its text is in the box), else null
   let editingText = "";
   let saving = false;
   let turn = 0;
+  let shownNotes = [];  // the list as last drawn: the Activity Log line of an edit needs the note it was
   const expanded = new Set(); // ids of notes opened in full
 
   function paintBox() {
@@ -117,6 +119,21 @@ function build(container) {
     box.value = "";
     problem.textContent = "";
     paintBox();
+  }
+
+  // R8: "Note added on Belimed" in the Activity Log, without the note's text. A contact's or a lead's note changed
+  // from the account's timeline names both: "Note edited on Anna Muster (Belimed)".
+  function logNote(done, note) {
+    if (!subject) return;
+    const own = note.on === subject.on && note.key === subject.key;
+    const name = subject.name || "this " + subject.on;
+    const companyKey = note.on === "account" ? note.key : note.on === "contact" ? contactAccountKey(note.key) : subject.accountKey || (subject.on === "account" ? subject.key : null);
+    appendActivityLog({
+      actor: "user", action: `note_${done}`,
+      label: `Note ${done} on ${own ? name : `${note.about || `a ${note.on}`} (${name})`}`,
+      ...(companyKey ? { relatedCompanyKey: companyKey } : {}),
+      ...(note.on === "contact" ? { relatedContactKey: note.key } : {}),
+    }).catch(() => {});
   }
 
   function noteRow(note, team) {
@@ -153,6 +170,7 @@ function build(container) {
         if (!ok) return;
         const r = await deleteNote(note.id);
         if (!r.ok) problem.textContent = "Only the note's author or the Team Lead can delete it.";
+        else logNote("deleted", note);
         if (editingId === note.id) resetBox();
         await refresh();
       } });
@@ -175,6 +193,7 @@ function build(container) {
     const m = got.teamMembership || null;
     const team = { inTeam: Boolean(m), me: m?.memberId || null, leadRights: leadRightsOf(m, got.teamAccountStates) };
     const shown = subject.select ? subject.select(all) : notesOn(all, subject.on, subject.key);
+    shownNotes = shown;
     title.textContent = `Notes (${shown.length})`;
     // A note being edited that a colleague deleted meanwhile: its text stays in the box, as a new note.
     if (editingId !== null && !shown.some((n) => n.id === editingId)) { editingId = null; editingText = ""; paintBox(); }
@@ -191,9 +210,13 @@ function build(container) {
     problem.textContent = "";
     paintBox();
     try {
+      const edited = editingId ? shownNotes.find((n) => n.id === editingId) : null;
       const r = editingId ? await editNote(editingId, box.value) : await addNote(subject.on, subject.key, box.value);
       saving = false;
-      if (r.ok) resetBox();
+      if (r.ok) {
+        logNote(edited ? "edited" : "added", edited || { on: subject.on, key: subject.key });
+        resetBox();
+      }
       else {
         problem.textContent = r.reason === "not-yours" ? "Only the note's author can change it." : r.reason === "missing" ? "This note was deleted meanwhile. Press Add note to keep your text as a new note." : "Not saved.";
         if (r.reason === "missing") { editingId = null; editingText = ""; }
@@ -233,10 +256,10 @@ function build(container) {
 
   const controller = {
     refresh,
-    async show({ on, key, select = null }) {
+    async show({ on, key, select = null, name = "", accountKey = null }) {
       const same = subject && subject.on === on && subject.key === key;
       if (!same) stashDraft();
-      subject = { on, key, select };
+      subject = { on, key, select, name, accountKey };
       if (!same) { expanded.clear(); takeDraft(); list.scrollTop = 0; }
       container.hidden = false;
       live.add(controller);

@@ -2869,6 +2869,7 @@ def main():
     test_revenue_units(ctx)
     test_country_names(ctx)
     test_notes(ctx)
+    test_note_log_lines(ctx)
 
     print()
     for f in _failures:
@@ -3022,6 +3023,18 @@ def test_notes(ctx):
                 sec.charAt(sec.length - 1) === '\\n', notesPromptSection([]) === '', notesPromptSection(notesAbout(NOTES, [{ on: 'lead', key: 'none' }])) === ''].join()"""),
           "true,true,true,true")
     check("notes: export lines - every note whole", e("notesExportLines([NOTES.n4, many[0]]).map(function (l) { return l.length; }).join()"), "71,812")
+
+
+def test_note_log_lines(ctx):
+    """1.2.4 Notes, build step 5 (R8): the team log's lines for notes."""
+    e = ctx.eval
+    e("""
+      var NL = function (entry) { return teamLogText(entry, function (k) { return k === 'acme ag' ? 'Acme AG' : k; }, function (m) { return m; }); };
+    """)
+    check("note log: added on an account", e("NL({ kind: 'note', op: 'note', note: 'added', on: 'account', key: 'acme ag' })"), "added a note on Acme AG")
+    check("note log: edited on a contact names the account", e("NL({ kind: 'note', op: 'note', note: 'edited', on: 'contact', key: 'acme ag' })"), "edited a note on a contact of Acme AG")
+    check("note log: deleted on a lead names the post's author", e("NL({ kind: 'note', op: 'note', note: 'deleted', on: 'lead', key: null, label: 'Anna Muster' })"), "deleted a note on the lead Anna Muster")
+    check("note log: a lead not known here", e("NL({ kind: 'note', op: 'note', note: 'added', on: 'lead', key: null, label: null })"), "added a note on a lead")
 
 
 def test_team_invites(ctx):

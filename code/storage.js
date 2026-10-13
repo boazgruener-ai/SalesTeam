@@ -15,7 +15,7 @@ import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, 
 import { createPersonIndex, contactDuplicatePairs, contactPairKey, fullerFirst, linkedinProfileSlug } from "./person-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 import { relationshipOf } from "./company-identity.js";
-import { noteEntry, editedNote, deletedNote, isLiveNote, mayEditNote, mayDeleteNote } from "./notes.js";
+import { noteEntry, editedNote, deletedNote, isLiveNote, mayEditNote, mayDeleteNote, rekeyNotes } from "./notes.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
 export { RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS, relationshipsMovedText };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
@@ -2550,7 +2550,7 @@ export async function exportTargetAccountsBackup() {
       getTargetAccountsWorkbookMeta(),
       getTargetAccountScoreThreshold(),
       chrome.storage.local.get([DISCOVERED_COMPANIES_KEY, DISCOVERED_CONTACTS_KEY]),
-      chrome.storage.local.get([TARGET_ACCOUNT_EXTRAS_KEY, TARGET_CONTACT_EXTRAS_KEY]),
+      chrome.storage.local.get([TARGET_ACCOUNT_EXTRAS_KEY, TARGET_CONTACT_EXTRAS_KEY, "notes"]),
     ]);
   return {
     exportedAt: new Date().toISOString(),
@@ -2569,6 +2569,8 @@ export async function exportTargetAccountsBackup() {
     // removals, and Sales Mentor / Customer Voice chats. Keyed by normalized company name / contact key.
     targetAccountExtras: extras[TARGET_ACCOUNT_EXTRAS_KEY] || {},
     targetContactExtras: extras[TARGET_CONTACT_EXTRAS_KEY] || {},
+    // 1.2.4 (R7.1): the notes on accounts, contacts and leads. Restored with the "accounts" part (design 9.4).
+    notes: extras.notes || {},
   };
 }
 
@@ -2603,6 +2605,8 @@ async function importTargetAccountsBackupUnlocked(data, sections = null) {
     if (typeof data.targetAccountScoreThreshold === "number") {
       await saveTargetAccountScoreThreshold(data.targetAccountScoreThreshold);
     }
+    // 1.2.4 Notes: only when the backup carries them - a backup made before notes existed leaves today's notes alone.
+    if (isPlainObject(data.notes)) await chrome.storage.local.set({ notes: data.notes });
   }
   // Your own edits per account/contact - only when the backup carries them (an older backup has none).
   if (has("edits") && (isPlainObject(data.targetAccountExtras) || isPlainObject(data.targetContactExtras))) {
@@ -4826,6 +4830,7 @@ export async function mergeTargetContacts(keepKey, dropKey) { return withAccount
   };
   extras[dropKey] = { ...dropExtra, deletedAt: Date.now(), mergedInto: keepKey };
   await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: extras });
+  await moveNotesUnlocked([{ on: "contact", from: dropKey, to: keepKey }]); // 1.2.4 (R7.5): the notes of both are kept
   return { keep: keepRow.fullName, drop: dropRow.fullName };
 }); }
 
@@ -4984,6 +4989,14 @@ async function mergeTargetAccountsUnlocked(keepKey, dropKey, { keepId = null, dr
     await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: contactExtras });
   }
 
+  // 1.2.4 Notes (R7.5): the dropped account's notes move to the kept one, and each contact's notes follow the contact
+  // to its new key - also a contact that was already on the kept account under another spelling. Lead notes stay:
+  // a lead keeps its key.
+  await moveNotesUnlocked([
+    ...(sameKey ? [] : [{ on: "account", from: dropKey, to: keepKey }]),
+    ...movedContactKeys.filter((m) => m.oldKey !== m.newKey).map((m) => ({ on: "contact", from: m.oldKey, to: m.newKey })),
+  ]);
+
   // Post leads are tied to an account by company name.
   const results = await getResults();
   let leadsMoved = 0;
@@ -5040,6 +5053,14 @@ const NOTES_KEY = "notes";
 export async function getNotes() {
   const data = await chrome.storage.local.get(NOTES_KEY);
   return data[NOTES_KEY] || {};
+}
+
+// R7.5 (design 10): notes follow a merge to the kept account or contact. For a caller already inside the account
+// write lock. moves: [{ on, from, to }] (notes.js rekeyNotes).
+async function moveNotesUnlocked(moves) {
+  const { notes, moved } = rekeyNotes(await getNotes(), moves);
+  if (moved > 0) await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return moved;
 }
 
 async function noteWriter() {

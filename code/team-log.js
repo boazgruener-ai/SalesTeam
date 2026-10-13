@@ -39,6 +39,27 @@ function subjectOf(state, r, normalize) {
   return { kind: "setting", key: null, ref: id.replace(/:.*$/, "") || id };
 }
 
+// 1.2.4 Notes: a note row's record as a log entry, or null (nothing a reader needs: a re-sent row, a bare unset).
+// What the note is about comes from the record itself (a new note carries everything) or from the merged state.
+function noteLogEntry(state, r) {
+  const m = stampMember(r.t);
+  const at = stampWall(r.t);
+  if (!m || !at || r.op !== "set" || !r.f || typeof r.f !== "object") return null;
+  const id = String(r.id);
+  const set = (f) => r.f[f] !== undefined && r.f[f] !== null && !(typeof r.f[f] === "object" && r.f[f].$unset);
+  const note = set("deletedAt") ? "deleted" : set("at") && set("on") ? "added" : set("editedAt") ? "edited" : null;
+  if (!note) return null;
+  const now = (f) => (r.f[f] !== undefined ? r.f[f] : state?.entities?.account?.[id]?.f?.[f]?.v);
+  const on = now("on");
+  const subject = typeof now("key") === "string" ? now("key") : "";
+  const i = subject.indexOf("::");
+  const key = on === "account" ? subject : on === "contact" && i > 0 ? subject.slice(0, i) : null;
+  return {
+    at, m, op: "note", kind: "note", note, on: on || null, key: key || null, ref: id.slice("note:".length),
+    label: on === "lead" ? leadLabel(state, subject) : null, fields: [], rows: 1, before: {}, after: {},
+  };
+}
+
 // A group's filter, before -> after, field by field: "size + XL, − S · country + Austria".
 const FILTER_FIELD_NAMES = {
   region: "region", country: "country", size: "size", scope: "local / global", industry: "industry",
@@ -101,9 +122,12 @@ export function teamLogEntries(records, state, normalize, priors = null) {
   }
   for (const r of records || []) {
     if (!r || SKIPPED_OPS.has(r.op)) continue;
-    // 1.2.4 Notes (R8.2): a note's text is never repeated in the log. Its own lines ("added a note on ...") come with
-    // build step 5; until then a note writes no line.
-    if (r.e === "account" && String(r.id).startsWith("note:")) continue;
+    // 1.2.4 Notes (R8): "added a note on Belimed" - one line per note added, edited or deleted, never its text.
+    if (r.e === "account" && String(r.id).startsWith("note:")) {
+      const entry = noteLogEntry(state, r);
+      if (entry) groups.set(`${entry.m}|note|${entry.ref}|${entry.note}|${entry.at}`, entry);
+      continue;
+    }
     const m = stampMember(r.t);
     const at = stampWall(r.t);
     if (!m || !at) continue;
@@ -223,6 +247,12 @@ export function teamLogText(entry, name, who, self = false) {
   if (entry.kind === "setting" && entry.ref === "teamJoinProposals") {
     const n = entry.rows > 1 ? `${entry.rows} join proposals` : "a join proposal";
     return entry.op === "delete" ? `settled ${n}` : `made ${n} (accounts they had worked on before joining)`;
+  }
+  if (entry.kind === "note") {
+    const done = entry.note === "deleted" ? "deleted a note on" : entry.note === "edited" ? "edited a note on" : "added a note on";
+    if (entry.on === "lead") return `${done} ${entry.label ? `the lead ${entry.label}` : "a lead"}`;
+    if (entry.on === "contact") return `${done} a contact${entry.key ? ` of ${name(entry.key)}` : ""}`;
+    return `${done} ${entry.key ? name(entry.key) : "an account"}`;
   }
   if (entry.kind === "import") {
     const n = (entry.accounts || []).length;

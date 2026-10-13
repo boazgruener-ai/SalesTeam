@@ -46,8 +46,10 @@ export const BACKUP_CATEGORIES = [
   },
   {
     id: "accounts", label: "Accounts, contacts and initiatives",
-    detail: "The imported research workbook as it was, including discovered companies already merged in. Replaces your current accounts and contacts.",
-    keys: ["targetAccounts", "targetAccountsImportedAt", "targetAccountsImportedFileName", "targetAccountsWorkbook", "targetAccountsWorkbookImportedAt"],
+    detail: "The imported research workbook as it was, including discovered companies already merged in, and the notes on accounts, contacts and leads. Replaces your current accounts, contacts and notes.",
+    // 1.2.4 (NOTES_DESIGN.md 9.4): "notes" belongs here, so restoring the accounts brings the notes too. A zip made by
+    // 1.2.3.15 or earlier holds them under "Other data" instead.
+    keys: ["targetAccounts", "targetAccountsImportedAt", "targetAccountsImportedFileName", "targetAccountsWorkbook", "targetAccountsWorkbookImportedAt", "notes"],
   },
   {
     id: "edits", label: "Your edits to accounts and contacts",

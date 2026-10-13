@@ -77,7 +77,7 @@ import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-co
 import { initDecisionsDot } from "./decisions-dot.js";
 import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
-import { lastNoteByLead, noteSearchText, noteLine } from "./notes.js";
+import { lastNoteByLead, noteSearchText, noteLine, leadNoteAbout, notesOn, notesExportLines } from "./notes.js";
 import { getNotes } from "./storage.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
@@ -1021,9 +1021,12 @@ function leadGroupNames(lead) {
 // 1.2.4 Notes (design 7): the latest note per lead and the notes' text for the search box. Rebuilt when the leads or
 // the notes change.
 let lastNoteOfLead = {};
+let leadsListStale = false; // the notes changed while the list was hidden
 let noteTextOfLead = new Map();
+let allNotes = {};
 async function loadNotesIndex() {
   const notes = await getNotes();
+  allNotes = notes;
   lastNoteOfLead = lastNoteByLead(notes);
   noteTextOfLead = noteSearchText(notes).lead;
 }
@@ -1943,7 +1946,10 @@ function showListView() {
 function renderDetail(lead) {
   currentDetailLead = lead;
   mentorHistory = lead.mentorHistory || [];
-  notesSection(document.getElementById("detail-notes")).show({ on: "lead", key: lead.key }); // 1.2.4 Notes (R2.4)
+  notesSection(document.getElementById("detail-notes")).show({ // 1.2.4 Notes (R2.4)
+    on: "lead", key: lead.key, name: `${leadNoteAbout(lead)}${lead.company ? ` (${lead.company})` : ""}`,
+    accountKey: lead.company ? normalizeCompanyName(lead.company) : null,
+  });
 
   document.getElementById("detail-title").textContent = leadTitle(lead);
   document.getElementById("detail-meta").textContent =
@@ -2094,6 +2100,7 @@ function route() {
     }
   }
   showListView();
+  if (leadsListStale) { leadsListStale = false; renderTable(); }
 }
 
 document.getElementById("back-to-list-link").addEventListener("click", (event) => {
@@ -2333,7 +2340,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     alert("No leads to export.");
     return;
   }
-  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Company", "Connection", "Status", "Priority", "Priority Reason", "Last note", "URL"];
+  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Company", "Connection", "Status", "Priority", "Priority Reason", "Last note", "Notes", "URL"];
   const rows = leads.map((lead) => [
     formatDateTime(leadDate(lead)),
     formatDateTime(lead.firstSeenAt),
@@ -2347,6 +2354,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     leadPriorityLabel(lead),
     lead.priorityReason || "",
     leadLastNoteText(lead), // 1.2.4 (R7.2)
+    notesExportLines(notesOn(allNotes, "lead", lead.key)).join("\n"),
     leadCreatorUrl(lead) || (lead.type === "job" ? lead.jobUrl : lead.postUrl) || "",
   ]);
   // Same file shape as the accounts/contacts exports: empty columns left out, sparse ones last, UTF-8 that Excel reads.
@@ -2967,7 +2975,9 @@ window.addEventListener("hashchange", () => {
 // tab at the same time.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.notes) loadNotesIndex().then(() => { if (!listViewEl.hidden) renderTable(); }); // 1.2.4: the Last note column
+  // 1.2.4: the Last note column. A note written on a lead's own page (the list is hidden then) is drawn when the
+  // list is shown again (route).
+  if (changes.notes) loadNotesIndex().then(() => { if (!listViewEl.hidden) renderTable(); else leadsListStale = true; });
   if (changes.results) {
     loadLeads().then(() => {
       renderAllPieCharts();
