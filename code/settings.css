@@ -915,3 +915,11 @@ body {
 #embedded-page-wrap {
   height: 100%;
 }
+
+/* 1.2.3.8 (Boaz, 2026-10-13: the white frame covered only part of the Billing tables): the card grows with its
+   tables - their cells never wrap - instead of stopping at the 640 px the other Settings cards share. */
+#billing-section {
+  width: min-content; /* the widest table; the texts wrap to it */
+  min-width: 100%;
+  max-width: none;
+}
