@@ -1015,6 +1015,8 @@ let teamUsageLast = null;
 function drawTeamUsage() {
   const r = teamUsageLast;
   const box = document.getElementById("team-usage");
+  // R2.2: a member is told what the Team Lead sees of their usage; the Team Lead and the deputy see the table instead.
+  document.getElementById("usage-shared-note").hidden = !(r?.member && !r.lead);
   box.hidden = !r?.lead;
   if (!r?.lead) return;
   const when = (ms) => (ms ? new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "");

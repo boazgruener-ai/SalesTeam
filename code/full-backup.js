@@ -19,7 +19,24 @@ import { withAccountWriteLock, migrateCompanyRelationshipsIfNeeded } from "./sto
 // would make a browser believe it is a team member it no longer is.
 const EXCLUDED_EXACT = new Set(["anthropicApiKey", "lastAutoBackupAt", "lastBackupInfo", "scanAbortRequested", "companyLocationSizeCache", "teamMembership", "teamAccountStates", "teamNotices", "teamLog",
   // 1.2.4 Billing "Team usage": tied to one membership in one browser, as teamMembership is
-  "teamUsageMonths", "teamUsageTable"]);
+  "teamUsageMonths", "teamUsageTable",
+  // which browser this is (below) - a backup names it in its manifest, and it is never restored
+  "installId"]);
+
+// 1.2.4 (BILLING_TEAM_USAGE_DESIGN.md 7, D6): the usage and cost count belongs to the browser it was counted in.
+// Each browser gives itself a random id once; a backup carries it, and the count is restored only where the ids
+// match. Another browser, a SalesTeam that was removed and installed again, a backup from before 1.2.4 (no id): the
+// count stays out - restored into another browser it showed that browser US$98.51 it had never spent, and in a team
+// it would reach the Team Lead as that member's usage.
+const INSTALL_ID_KEY = "installId";
+const USAGE_KEY = "apiUsage";
+export async function getInstallId() {
+  const got = (await chrome.storage.local.get(INSTALL_ID_KEY))[INSTALL_ID_KEY];
+  if (got) return got;
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ [INSTALL_ID_KEY]: id });
+  return id;
+}
 const EXCLUDED_PREFIXES = ["currentScan", "currentJobScan"];
 
 // category id -> { label, detail, keys | test }. A stored key belongs to the first category that claims
@@ -79,6 +96,11 @@ export const BACKUP_CATEGORIES = [
     keys: ["linkedinTouchLog"],
   },
   {
+    id: "usage", label: "Usage and cost count",
+    detail: "What SalesTeam counted on your Anthropic API key in this browser (Settings > Anthropic Usage). Offered only when the backup was made in this browser.",
+    keys: [USAGE_KEY],
+  },
+  {
     id: "display", label: "Display preferences",
     detail: "Which table columns are shown, sort order, filters and page sizes.",
     // stored in the pages' localStorage, not chrome.storage - handled separately below
@@ -125,6 +147,7 @@ function summarize(id, data) {
       const entries = Object.entries(data).reduce((n, [k, v]) => n + (k.startsWith("activityLog:") ? count(v) : 0), 0);
       return `${entries} entries`;
     }
+    case "usage": return `${count((data[USAGE_KEY] || {}).days)} days`;
     case "display": return `${Object.keys(data).length} saved preferences`;
     default: return `${Object.keys(data).length} item${Object.keys(data).length === 1 ? "" : "s"}`;
   }
@@ -197,6 +220,7 @@ export async function buildFullBackupZip({ includeApiKey = false } = {}) {
     format: 1,
     createdAt,
     extensionVersion: version,
+    installId: await getInstallId(),
     categories,
     spreadsheets: spreadsheets.map((f) => f.name),
     includesApiKey: Boolean(includeApiKey),
@@ -229,7 +253,23 @@ export async function parseFullBackup(arrayBuffer) {
     const bytes = entries.get(`data/${id}.json`);
     if (bytes) data[id] = JSON.parse(bytesToText(bytes));
   }
-  return { manifest, data };
+  // D6: a backup from another browser (or from before 1.2.4) - its usage count is taken out here, so no restore
+  // dialog offers it and no caller can write it. Before 1.2.4 the count lay under "Other data".
+  let usageLeftOut = false;
+  if (!manifest.installId || manifest.installId !== (await getInstallId())) {
+    for (const id of Object.keys(data)) {
+      if (!(USAGE_KEY in data[id])) continue;
+      delete data[id][USAGE_KEY];
+      usageLeftOut = true;
+      const cat = manifest.categories[id];
+      if (cat?.keys) cat.keys = cat.keys.filter((k) => k !== USAGE_KEY);
+      if (Object.keys(data[id]).length === 0) {
+        delete data[id];
+        delete manifest.categories[id];
+      }
+    }
+  }
+  return { manifest, data, usageLeftOut };
 }
 
 // Writes the chosen categories back. `selected` = Set of category ids. Each selected category REPLACES the

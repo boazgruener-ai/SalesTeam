@@ -327,9 +327,12 @@
     <section class="settings-card" id="billing-section">
       <h3>Anthropic Usage</h3>
       <p class="field-hint">
-        What SalesTeam's AI features have used on <strong>your own Anthropic API key</strong>: tokens, web searches and an
+        What SalesTeam's AI features have used on <strong>your own Anthropic API key in this browser</strong>: tokens, web searches and an
         <strong>estimated</strong> cost in US dollars, worked out from Anthropic's published prices. Your Anthropic Console is the
         official figure. Only calls made by this extension are counted, from the day this page started keeping count.
+      </p>
+      <p id="usage-shared-note" class="field-hint" hidden>
+        Your Team Lead sees your monthly total and your number of web researches. Nothing else is shared.
       </p>
       <table id="billing-totals" class="billing-table"></table>
       <p id="billing-average" class="field-hint"></p>

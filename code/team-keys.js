@@ -89,7 +89,7 @@ export const TEAM_PERSONAL_KEYS = [
   "teamLeadResearch",
   // 1.2.4 Billing "Team usage": this member's monthly totals (shared as a sealed file of their own, not as rows), and
   // the copy the Team Lead / deputy last read. The usage count itself has always been personal.
-  "teamUsageMonths", "teamUsageTable", "apiUsage", "costWarningUsd",
+  "teamUsageMonths", "teamUsageTable", "apiUsage", "costWarningUsd", "installId",
 ];
 
 export function teamKeyKind(key) {

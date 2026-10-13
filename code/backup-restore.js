@@ -471,7 +471,8 @@ async function restoreFromFileInner(file, RESTORE_WORKING) {
     await restoreFullBackup(parsed, sections);
     if (sections.has("leadsMerge") && parsed.data.leads) await importLeads(parsed.data.leads);
     appendActivityLog({ actor: "user", action: "full_backup_restored", label: `Restored backup ${file.name} (${[...sections].join(", ")})` });
-    return `Restored ${[...sections].join(", ")} from ${file.name}.`;
+    return `Restored ${[...sections].join(", ")} from ${file.name}.`
+      + (parsed.usageLeftOut ? " The usage and cost count was not restored - this backup is from another browser, or was made before SalesTeam 1.2.4." : "");
   }
 
   // older single-purpose JSON backups

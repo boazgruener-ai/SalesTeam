@@ -3235,4 +3235,4 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.3.19**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.3.20**.

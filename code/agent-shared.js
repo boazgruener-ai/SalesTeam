@@ -1826,6 +1826,11 @@ export async function researchAccountForLane(company, { known, topicWords, indus
   let current = false;
   let triedCurrent = false;
   let sendThinkingOff = true;
+  // 1.2.3.20: a page the research reads can be far larger than its limit says (a long annual report as a PDF), and
+  // the request then exceeds what the model accepts - "prompt is too long: 272739 tokens > 200000 maximum". That
+  // account failed in every run (Primeo Energie, 1 Oct 2026). It is tried once more from the start with web search
+  // only, which cannot grow that way.
+  let searchOnly = false;
   const sources = new Map();
   let text = "";
   let searches = 0;
@@ -1840,7 +1845,7 @@ export async function researchAccountForLane(company, { known, topicWords, indus
         max_tokens: 4000,
         system,
         tools: [
-          { type: current ? WEB_FETCH_TOOL_CURRENT : WEB_FETCH_TOOL_BASIC, name: "web_fetch", max_uses: 4, max_content_tokens: 10000 },
+          ...(searchOnly ? [] : [{ type: current ? WEB_FETCH_TOOL_CURRENT : WEB_FETCH_TOOL_BASIC, name: "web_fetch", max_uses: 4, max_content_tokens: 10000 }]),
           { type: current ? WEB_SEARCH_TOOL_CURRENT : WEB_SEARCH_TOOL_BASIC, name: "web_search", max_uses: 2 },
         ],
         messages,
@@ -1854,6 +1859,13 @@ export async function researchAccountForLane(company, { known, topicWords, indus
         });
       } catch (err) {
         if (err.status === 400 && sendThinkingOff && /thinking/i.test(err.body || "")) { sendThinkingOff = false; turn--; continue; }
+        // (it arrives in the middle of the streamed answer, so it carries no HTTP status)
+        if (!searchOnly && /prompt is too long/i.test(`${err.body || ""} ${err.message || ""}`)) {
+          searchOnly = true;
+          messages.length = 1; // from the start: what was read so far is what made it too long
+          turn = -1;
+          continue;
+        }
         if (err.status === 400 && !current && !triedCurrent && /web_(fetch|search)|tool/i.test(err.body || "")) { current = true; triedCurrent = true; turn--; continue; }
         if (err.status === 400 && /web.?(search|fetch)/i.test(err.body || "")) {
           throw new Error(`${err.message} - if web search or web fetch is not switched on for your Anthropic account, ask its owner to enable it in the Anthropic Console settings, then try again.`);
