@@ -2967,6 +2967,13 @@ def test_notes(ctx):
           "the job ad of Oct 4|a job ad|a post|a contact")
     check("notes: the timeline line of a lead note", e("noteLine(accountTimelineMarked(NOTES, 'acme ag', {}, [{ key: 'https://x/post-1', postedAt: D(3) }])[2], true)"),
           "Oct 3, 2026 — Boaz · on the post of Oct 3: Liked and commented.")
+    check("notes: search text (R5.5) - an account's row finds its contacts' and leads' notes; a contact and a lead their own",
+          e("""var st = noteSearchText(NOTES, { 'https://x/post-1': 'acme ag' });
+               [st.account.get('acme ag').indexOf('brochure') > 0, st.account.get('acme ag').indexOf('liked and commented') > 0, st.account.get('beta sa').indexOf('brochure') > 0,
+                st.contact.get('acme ag::anna muster').indexOf('brochure') > 0, st.contact.get('acme ag::anna muster').indexOf('first call') > 0,
+                st.lead.get('https://x/post-1').indexOf('liked') > 0, st.account.has('acme agency'), st.lead.size].join()"""),
+          "true,true,false,true,false,true,true,2")
+    check("notes: a deleted note is not found by the search", e("noteSearchText({ n: deletedNote(NOTES.n1, 'm-1', D(21)) }).account.size"), 0)
     # editing and deleting
     check("notes: an edit keeps the date and is marked", e("var ed = editedNote(NOTES.n1, ' Spoke to Mr. Keller. ', D(20)); [ed.at === D(1), ed.editedAt === D(20), ed.text].join('|')"), "true|true|Spoke to Mr. Keller.")
     check("notes: an edit without a change, or to nothing, changes nothing", e("[editedNote(NOTES.n1, NOTES.n1.text + ' ', D(20)) === NOTES.n1, editedNote(NOTES.n1, '  ', D(20)) === NOTES.n1].join()"), "true,true")

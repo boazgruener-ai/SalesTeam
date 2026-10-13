@@ -87,6 +87,19 @@ export function lastNoteByAccount(notes, accountOfLead = {}) {
   return out;
 }
 
+// For the search boxes (R5.5): the text of every note that belongs to a row, lower-cased - an account's row has its
+// whole timeline. -> { account: Map key -> text, contact: Map, lead: Map }.
+export function noteSearchText(notes, accountOfLead = {}) {
+  const out = { account: new Map(), contact: new Map(), lead: new Map() };
+  const add = (map, key, text) => { if (key) map.set(key, `${map.get(key) || ""}\n${String(text).toLowerCase()}`); };
+  for (const n of liveNotes(notes)) {
+    if (n.on === "account") add(out.account, n.key, n.text);
+    else if (n.on === "contact") { add(out.contact, n.key, n.text); add(out.account, contactAccountKey(n.key), n.text); }
+    else { add(out.lead, n.key, n.text); add(out.account, accountOfLead?.[n.key], n.text); }
+  }
+  return out;
+}
+
 function lastNoteOn(notes, on) {
   const out = {};
   for (const n of liveNotes(notes)) if (n.on === on && !out[n.key]) out[n.key] = n;

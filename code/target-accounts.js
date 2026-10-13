@@ -137,7 +137,8 @@ import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
-import { accountTimelineMarked } from "./notes.js";
+import { accountTimelineMarked, lastNoteByAccount, lastNoteByContact, noteSearchText, noteLine, leadNoteAbout } from "./notes.js";
+import { getNotes } from "./storage.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
@@ -743,6 +744,9 @@ const COMPANY_COLUMNS = [
   },
   { id: "salesTeamPriorityScore", label: "Priority Score", visible: true, numeric: true },
   { id: "salesTeamPriorityReason", label: "Priority Reason", visible: true, longText: true },
+  // 1.2.4 Notes (R5): the latest note of the account's timeline - on the account, its contacts or its leads. Not a
+  // stored field (lastNoteOf below); sorts by the note's time, rows without a note last.
+  { id: "lastNote", label: "Last note", visible: true, longText: true },
   // Not a stored field - computed live from every lead matched to this company by
   // name (see accountStatusPillClass/renderCellContent), same rollup the pie uses.
   { id: "accountStatus", label: "Status", visible: true, pill: true },
@@ -1065,7 +1069,44 @@ function contactLinkLabel(url) {
   try { return `${new URL(url).hostname.replace(/^www\./, "")} ↗`; } catch { return "Open ↗"; }
 }
 
+// 1.2.4 Notes (design 7): what the Last note column and the search boxes read. Rebuilt when the workbook, the leads
+// or the notes change - never per cell. An account's entry covers its timeline; a lead counts only where this member
+// sees it (design 5.3).
+let allNotes = {};
+let notesIndex = { byAccount: {}, byContact: {}, text: { account: new Map(), contact: new Map() } };
+function rebuildNotesIndex() {
+  const accountOfLead = {};
+  const leadByKey = new Map();
+  for (const l of allLeads) {
+    if (!l.key || !l.company || !teamAccounts.canSeeLead(l)) continue;
+    accountOfLead[l.key] = normalizeCompanyName(l.company);
+    leadByKey.set(l.key, l);
+  }
+  const contactNames = {};
+  for (const c of rawWorkbook.contacts || []) {
+    const k = contactKeyFor(c.company, c.fullName);
+    if (k) contactNames[k] = c.fullName;
+  }
+  const byAccount = lastNoteByAccount(allNotes, accountOfLead);
+  for (const [key, n] of Object.entries(byAccount)) {
+    if (n.on === "contact") byAccount[key] = { ...n, about: contactNames[n.key] || "a contact" };
+    else if (n.on === "lead") byAccount[key] = { ...n, about: leadNoteAbout(leadByKey.get(n.key)) };
+  }
+  notesIndex = { byAccount, byContact: lastNoteByContact(allNotes), text: noteSearchText(allNotes, accountOfLead) };
+}
+// A contact row always has fullName, a company row never does (as in rawValue below).
+function lastNoteOf(row) {
+  return (row.fullName != null ? notesIndex.byContact[contactKeyFor(row.company, row.fullName)] : notesIndex.byAccount[normalizeCompanyName(row.company)]) || null;
+}
+function noteTextOf(row) {
+  return (row.fullName != null ? notesIndex.text.contact.get(contactKeyFor(row.company, row.fullName)) : notesIndex.text.account.get(normalizeCompanyName(row.company))) || "";
+}
+
 function rawValue(company, column) {
+  if (column.id === "lastNote") {
+    const note = lastNoteOf(company);
+    return note ? noteLine(note, teamAccounts.inTeam()) : null;
+  }
   if (column.id === "readiness") {
     if (company.fullName != null) return null;
     const a = readinessByCompanyId.get(company.companyId);
@@ -1190,6 +1231,7 @@ function localizeTypeWording(value) {
 }
 
 function sortValue(company, column) {
+  if (column.id === "lastNote") return lastNoteOf(company)?.at ?? null; // by the note's time; no note sorts last
   // Sorted by the COUNT, not by the label - "12 to review" belongs above "3 to review", which is
   // not what a lexical sort of the cell text does. Researched-with-nothing-open sorts below both,
   // never-researched below that.
@@ -1219,7 +1261,7 @@ function filterText(company, column) {
 function matchesGlobalSearch(company, query) {
   if (!query) return true;
   const haystack = `${company.company || ""} ${company.industry || ""}`.toLowerCase();
-  return haystack.includes(query);
+  return haystack.includes(query) || noteTextOf(company).includes(query); // 1.2.4 (R5.5): also inside the notes
 }
 
 function matchesColumnFilters(company) {
@@ -2827,6 +2869,8 @@ const CONTACT_LIST_COLUMNS = [
   { id: "sourceUrl", label: "Source", link: true },
   { id: "lastVerified", label: "Source Last Verified", date: true },
   { id: "evidenceQuality", label: "Source Evidence Quality" },
+  // 1.2.4 Notes (R5.2): the latest note on the contact; hidden by default here.
+  { id: "lastNote", label: "Last note", longText: true },
 ];
 
 const CONTACT_HIDDEN_COLUMNS_STORAGE_KEY = "salesteam-target-contacts-hidden-columns-v2";
@@ -2854,6 +2898,12 @@ function loadContactHiddenColumns() {
     if (!localStorage.getItem("salesteam-target-contacts-groups-column-v1")) {
       localStorage.setItem("salesteam-target-contacts-groups-column-v1", "1");
       contactHiddenColumns.add("teamGroups");
+      saveContactHiddenColumns();
+    }
+    // 1.2.4: the same for Last note (R5.2: hidden by default on Target Contacts).
+    if (!localStorage.getItem("salesteam-target-contacts-lastnote-column-v1")) {
+      localStorage.setItem("salesteam-target-contacts-lastnote-column-v1", "1");
+      contactHiddenColumns.add("lastNote");
       saveContactHiddenColumns();
     }
   } catch { /* best-effort only */ }
@@ -2907,7 +2957,7 @@ function loadContactFilterSortState() {
 function matchesContactGlobalSearch(contact, query) {
   if (!query) return true;
   const haystack = `${contact.fullName || ""} ${contact.company || ""} ${contact.jobTitle || ""}`.toLowerCase();
-  return haystack.includes(query);
+  return haystack.includes(query) || noteTextOf(contact).includes(query); // 1.2.4 (R5.5): also inside the notes
 }
 
 function matchesContactColumnFilters(contact) {
@@ -3429,7 +3479,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // the list view's flag column depends on these; an open Account/Contact
   // view already reflects the storage write that caused it directly.
   if ("results" in changes) {
-    getResults().then((results) => { allLeads = Object.values(results); if (!listViewEl.hidden) renderTable(); });
+    getResults().then((results) => { allLeads = Object.values(results); rebuildNotesIndex(); if (!listViewEl.hidden) renderTable(); });
+  }
+  // 1.2.4: a note added here or arriving from a colleague - the Last note column of whichever list is open.
+  if ("notes" in changes) {
+    getNotes().then((notes) => {
+      allNotes = notes;
+      rebuildNotesIndex();
+      if (!listViewEl.hidden) renderTable();
+      if (!contactsListViewEl.hidden) renderContactsTable();
+    });
   }
   if ("targetAccountExtras" in changes) {
     getTargetAccountExtras().then((extras) => { accountExtras = extras; if (!listViewEl.hidden) renderTable(); });
@@ -3836,6 +3895,8 @@ async function loadWorkbook() {
   accountExtras = extras;
   contactExtras = cExtras;
   rawWorkbook = wb; // the Removed dialog needs the rows the lists hide
+  allNotes = await getNotes();
+  rebuildNotesIndex();
   // Excluded (added 2026-09-17, the user's own confirmed design: "Hide from
   // Dashboard entirely, which is what we do for our own excluded
   // companies") - a company the workbook's own Excluded column marks "Yes",

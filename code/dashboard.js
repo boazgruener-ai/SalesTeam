@@ -76,6 +76,8 @@ import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-co
 import { initDecisionsDot } from "./decisions-dot.js";
 import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
+import { lastNoteByLead, noteSearchText, noteLine } from "./notes.js";
+import { getNotes } from "./storage.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const STATUS_COLORS = {
@@ -414,6 +416,7 @@ async function loadLeads() {
   const [resultsMap, scanStartedAt] = await Promise.all([getResults(), getLastScanStartedAt()]);
   everyLead = sortResultsByRelevance(resultsMap);
   applyVisibleLeads();
+  await loadNotesIndex();
   lastScanStartedAt = scanStartedAt;
 }
 
@@ -1014,6 +1017,17 @@ function leadGroupNames(lead) {
   return (teamAccounts.isAccount(key) && teamAccounts.groupNames(key)) || "";
 }
 
+// 1.2.4 Notes (design 7): the latest note per lead and the notes' text for the search box. Rebuilt when the leads or
+// the notes change.
+let lastNoteOfLead = {};
+let noteTextOfLead = new Map();
+async function loadNotesIndex() {
+  const notes = await getNotes();
+  lastNoteOfLead = lastNoteByLead(notes);
+  noteTextOfLead = noteSearchText(notes).lead;
+}
+const leadLastNoteText = (lead) => (lastNoteOfLead[lead.key] ? noteLine(lastNoteOfLead[lead.key], teamAccounts.inTeam()) : "");
+
 const COLUMNS = [
   // Shown by default, in this order (reordered 2026-09-19, reported directly). Columns without
   // `visible: true` start hidden and are one click away via the Columns button.
@@ -1039,6 +1053,9 @@ const COLUMNS = [
   { id: "firstScanned", label: "First Scanned", width: 130, getSortValue: (l) => l.firstSeenAt || 0, getFilterText: (l) => formatDateTime(l.firstSeenAt),
     render: (td, l) => { td.style.whiteSpace = "nowrap"; td.textContent = formatDateTime(l.firstSeenAt); } },
   { id: "location", label: "Location", width: 130, getSortValue: (l) => l.location || "", getFilterText: (l) => l.location || "", render: locationCell },
+  // 1.2.4 Notes (R5): the latest note on the lead. Sorts by the note's time; a lead without a note sorts last.
+  { id: "lastNote", label: "Last note", width: 240, getSortValue: (l) => lastNoteOfLead[l.key]?.at ?? null, getFilterText: leadLastNoteText,
+    render: (td, l) => clampedText(td, leadLastNoteText(l) || "—", { expandable: Boolean(leadLastNoteText(l)) }) },
 ];
 // 18th round of direct feedback (2026-09-19): "only in the Leads Dashboard,
 // the Kebabs have a column header called Action[s]... this whole back and
@@ -1137,6 +1154,12 @@ function loadHiddenColumns() {
     if (!localStorage.getItem("salesteam-leads-groups-column-v1")) {
       localStorage.setItem("salesteam-leads-groups-column-v1", "1");
       hiddenColumns.add("teamGroups");
+      localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify([...hiddenColumns]));
+    }
+    // 1.2.4: the same for Last note (R5.2: hidden by default on Leads).
+    if (!localStorage.getItem("salesteam-leads-lastnote-column-v1")) {
+      localStorage.setItem("salesteam-leads-lastnote-column-v1", "1");
+      hiddenColumns.add("lastNote");
       localStorage.setItem(HIDDEN_COLUMNS_STORAGE_KEY, JSON.stringify([...hiddenColumns]));
     }
   } catch { /* best-effort only */ }
@@ -1331,7 +1354,7 @@ function applyFilterSortSearch() {
     const q = searchText.trim().toLowerCase();
     leads = leads.filter((l) => {
       const haystack = [leadTitle(l), leadContent(l), leadCreatorName(l)].join(" ").toLowerCase();
-      return haystack.includes(q);
+      return haystack.includes(q) || (noteTextOfLead.get(l.key) || "").includes(q); // 1.2.4 (R5.5): also inside the notes
     });
   }
 
@@ -1353,6 +1376,8 @@ function applyFilterSortSearch() {
     leads.sort((a, b) => {
       const va = sortCol.getSortValue(a);
       const vb = sortCol.getSortValue(b);
+      // No value at all (Last note: no note) sorts last in both directions.
+      if (va == null || vb == null) return va == null && vb == null ? 0 : va == null ? 1 : -1;
       const cmp = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
       return sortDirection === "asc" ? cmp : -cmp;
     });
@@ -2306,7 +2331,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     alert("No leads to export.");
     return;
   }
-  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Company", "Connection", "Status", "Priority", "Priority Reason", "URL"];
+  const headers = ["Post Date", "First Scanned", "Source", "Title", "Content", "Creator", "Company", "Connection", "Status", "Priority", "Priority Reason", "Last note", "URL"];
   const rows = leads.map((lead) => [
     formatDateTime(leadDate(lead)),
     formatDateTime(lead.firstSeenAt),
@@ -2319,6 +2344,7 @@ function exportLeadsToCsv(leads, filenameTag) {
     lead.status || "New",
     leadPriorityLabel(lead),
     lead.priorityReason || "",
+    leadLastNoteText(lead), // 1.2.4 (R7.2)
     leadCreatorUrl(lead) || (lead.type === "job" ? lead.jobUrl : lead.postUrl) || "",
   ]);
   // Same file shape as the accounts/contacts exports: empty columns left out, sparse ones last, UTF-8 that Excel reads.
@@ -2939,6 +2965,7 @@ window.addEventListener("hashchange", () => {
 // tab at the same time.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
+  if (changes.notes) loadNotesIndex().then(() => { if (!listViewEl.hidden) renderTable(); }); // 1.2.4: the Last note column
   if (changes.results) {
     loadLeads().then(() => {
       renderAllPieCharts();
