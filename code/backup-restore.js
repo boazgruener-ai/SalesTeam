@@ -12,6 +12,7 @@ import {
   importSettings, importTargetAccountsBackup, importLeads, mayImport, IMPORT_REFUSED,
 } from "./storage.js";
 import { buildFullBackupZip, parseFullBackup, restoreFullBackup } from "./full-backup.js";
+import { showNotice, closeNotice } from "./confirm-dialog.js";
 import {
   folderPickerSupported, getStoredFolder, clearStoredFolder, pickBackupFolder, folderPermission,
   requestFolderPermission, writeToFolder,
@@ -447,10 +448,25 @@ export async function restoreFromFile(file) {
   if (team && !confirm(`You are in the team "${team.teamName}". Restoring changes the team's data too: the accounts, contacts, ` +
     "leads and settings you restore are sent to every colleague and replace what they have now. As Team Lead you decide " +
     "this for the whole team, so make sure the backup is the one the team should have.\n\nRestore anyway?")) return null;
+  // 1.2.3.17 (Boaz, 2026-10-13): reading a backup, saving the safety copy and restoring can each take a while, and
+  // nothing on the page said so. A "Working…" pop-up is shown while they run; it is taken away for the questions in
+  // between and when the restore ends (the caller shows the result).
+  const RESTORE_WORKING = "Working on the restore… A safety copy of your current data is saved first.";
+  try {
+    return await restoreFromFileInner(file, RESTORE_WORKING);
+  } finally {
+    closeNotice();
+  }
+}
+
+async function restoreFromFileInner(file, RESTORE_WORKING) {
   if (file.name.toLowerCase().endsWith(".zip")) {
+    showNotice("Reading the backup…", { working: true });
     const parsed = await parseFullBackup(await file.arrayBuffer());
+    closeNotice();
     const sections = await chooseRestoreSections("full", parsed.manifest);
     if (!sections) return null;
+    showNotice(RESTORE_WORKING, { working: true });
     if (!(await safetyCopyBefore("before-restore"))) return null;
     await restoreFullBackup(parsed, sections);
     if (sections.has("leadsMerge") && parsed.data.leads) await importLeads(parsed.data.leads);
@@ -478,19 +494,23 @@ export async function restoreFromFile(file) {
   if (parts.includes("settings")) {
     const sections = await chooseRestoreSections("settings", settings);
     if (sections) {
+      showNotice(RESTORE_WORKING, { working: true });
       if (!(await safetyCopyBefore("before-restore"))) return null;
       await importSettings(settings, sections);
       done.push(`settings (${[...sections].join(", ")})`);
     }
   }
   if (parts.includes("targetAccounts")) {
+    closeNotice();
     const sections = await chooseRestoreSections("targetAccounts", accounts);
     if (sections) {
+      showNotice(RESTORE_WORKING, { working: true });
       if (!done.length && !(await safetyCopyBefore("before-restore"))) return null;
       await importTargetAccountsBackup(accounts, sections);
       done.push(`Target Accounts (${[...sections].join(", ")})`);
     }
   }
+  closeNotice();
   if (parts.includes("leads")) {
     if (confirm("Add any leads from this backup that are missing locally? Leads you already have are never overwritten.")) {
       const restored = await importLeads(data);
@@ -779,11 +799,14 @@ function wireBackupCard() {
     if (includeKey && !confirm("This backup will contain your Anthropic API key in plain text. Only keep or share the file with people you trust with that key's spending. Continue?")) return;
     el("backup-now-btn").disabled = true;
     el("backup-action-status").textContent = "Backing up…";
+    showNotice("Working on the backup…", { working: true }); // 1.2.3.17: the small line beside the button was easy to miss
     try {
       const r = await backupNow({ includeApiKey: includeKey });
       el("backup-action-status").textContent = `Saved ${r.fileName} to ${await prettyWhere(r.where)}.`;
+      showNotice(el("backup-action-status").textContent);
     } catch (err) {
       el("backup-action-status").textContent = `Backup failed: ${err.message}`;
+      showNotice(el("backup-action-status").textContent, { error: true });
     }
     el("backup-now-btn").disabled = false;
     renderBackupCard();

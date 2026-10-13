@@ -123,6 +123,12 @@ const DESCRIPTION_LINES = {
   ],
 };
 const SALESTEAM_ID = "SalesTeam id";
+// 1.2.4 Notes (NOTES_DESIGN.md 9.2): these CRMs' import has no place for notes on an account or contact file, so they
+// go into Description - after the lines above and before the id line. Every note line starts with "- ", so
+// readDescription never takes one for a line of its own. Salesforce's Description holds 32,000 characters; Dynamics'
+// 2,000 is on its column (max).
+const NOTES_HEADING = "Notes:";
+const DESCRIPTION_MAX = 32000;
 
 function csvEscape(value) {
   const text = String(value ?? "");
@@ -189,6 +195,9 @@ function fit(col, value) {
   return col.max && typeof text === "string" && text.length > col.max ? text.slice(0, col.max).trim() : text;
 }
 
+// row.notesLines (optional): the row's notes, newest first, one text each ("2026-10-13 Boaz: Call with …").
+// D8: when Description has a limit, whole notes are left out from the oldest until it fits; the id line always stays.
+// Only when not even the newest note fits is that one cut short - a cut note says more than none.
 function descriptionText(kind, row, extra, table) {
   const lines = [...extra];
   for (const [label, field] of DESCRIPTION_LINES[kind]) {
@@ -197,8 +206,17 @@ function descriptionText(kind, row, extra, table) {
     if (v != null && String(v).trim() !== "") lines.push(`${label}: ${String(v).replace(/\s*[\r\n]+\s*/g, " ").trim()}`);
   }
   const id = kind === "accounts" ? row.companyId : row.contactId;
-  if (id) lines.push(`${SALESTEAM_ID}: ${id}`);
-  return lines.join("\n");
+  const idLine = id ? [`${SALESTEAM_ID}: ${id}`] : [];
+  const notes = (row.notesLines || []).map((l) => String(l ?? "").replace(/\s*[\r\n]+\s*/g, " ").trim()).filter(Boolean).map((l) => `- ${l}`);
+  const text = (kept) => [...lines, ...(kept.length ? [NOTES_HEADING, ...kept] : []), ...idLine].join("\n");
+  const max = table[kind].find((col) => col.key === "description")?.max || DESCRIPTION_MAX;
+  let kept = notes;
+  while (kept.length && text(kept).length > max) kept = kept.slice(0, -1);
+  if (!kept.length && notes.length) {
+    const room = max - text(["- "]).length;
+    if (room >= 40) kept = [`${notes[0].slice(0, room + 1).trim()}…`];
+  }
+  return text(kept);
 }
 
 // Salesforce's Account Type list: Customer, Partner, Prospect … (the samples hold Customer / Reseller); Dynamics'

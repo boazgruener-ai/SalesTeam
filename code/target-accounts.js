@@ -7623,6 +7623,10 @@ async function runExport(format, what) {
   }
   const stamp = exportStamp();
   const files = [];
+  // 1.2.4 Notes (R7.3): an exported account carries the notes of its timeline, an exported contact its own - newest
+  // first, one text per note. Where they go in each CRM's file: crm-files.js descriptionText, hubspot.js notesCell.
+  const accountNotesLines = (c) => notesExportLines(accountTimelineOf(allNotes, normalizeCompanyName(c.company)));
+  const contactNotesLines = (c) => notesExportLines(notesOn(allNotes, "contact", contactKeyFor(c.company, c.fullName)));
   if (format === "hubspot") {
     // The values the table shows - edits, LinkedIn and web research on top of the stored row (1.2.2.13 round-trip
     // test: the raw rows went out, so Galenica's 7,971 came back as the old 4,511) - and revenue in the display
@@ -7630,9 +7634,9 @@ async function runExport(format, what) {
     const companies = (accountRows || []).map((c) => {
       const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
       const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
-      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: accountPriorityInfo(c).priority }; // D4: exported as shown
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: accountPriorityInfo(c).priority, notesLines: accountNotesLines(c) }; // D4: exported as shown
     });
-    contactRows = contactRows && contactRows.map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    contactRows = contactRows && contactRows.map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}), notesLines: contactNotesLines(c) }));
     const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
     const statusOfContact = (c) => effectiveStatus(leadStatusBucket(findLeadsForContact(c, allLeads)), contactExtras[contactKeyFor(c.company, c.fullName)]?.manualStatus);
     const built = buildHubspotFiles(companies, contactRows || [], statusOfCompany, statusOfContact);
@@ -7644,9 +7648,9 @@ async function runExport(format, what) {
       const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
       const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
       const info = accountPriorityInfo(c);
-      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: info.priority, relationship: info.relationship };
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: info.priority, relationship: info.relationship, notesLines: accountNotesLines(c) };
     });
-    const contacts = (contactRows || []).map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    const contacts = (contactRows || []).map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}), notesLines: contactNotesLines(c) }));
     const built = buildCrmFiles(format, companies, contacts, { registryCountry: await singleTargetCountry() });
     if (accountRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-accounts-${stamp}.csv`, csv: built.accountsCsv, text: `${built.accountCount} accounts` });
     if (contactRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });

@@ -2870,6 +2870,7 @@ def main():
     test_country_names(ctx)
     test_notes(ctx)
     test_note_log_lines(ctx)
+    test_crm_notes(ctx)
 
     print()
     for f in _failures:
@@ -3035,6 +3036,59 @@ def test_note_log_lines(ctx):
     check("note log: edited on a contact names the account", e("NL({ kind: 'note', op: 'note', note: 'edited', on: 'contact', key: 'acme ag' })"), "edited a note on a contact of Acme AG")
     check("note log: deleted on a lead names the post's author", e("NL({ kind: 'note', op: 'note', note: 'deleted', on: 'lead', key: null, label: 'Anna Muster' })"), "deleted a note on the lead Anna Muster")
     check("note log: a lead not known here", e("NL({ kind: 'note', op: 'note', note: 'added', on: 'lead', key: null, label: null })"), "added a note on a lead")
+
+
+def test_crm_notes(ctx):
+    """1.2.4 Notes, build step 6 (NOTES_DESIGN.md 9.2): the notes in the Salesforce and Dynamics Description."""
+    e = ctx.eval
+    e("""
+      // A Description holds line breaks inside its quotes, so the file is read field by field, not line by line.
+      var parseCsvForTest = function (csv) {
+        var rows = [], row = [], cur = '', q = false, s = csv.replace(/^\\uFEFF/, '');
+        for (var i = 0; i < s.length; i++) {
+          var ch = s[i];
+          if (q) { if (ch === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+          else if (ch === '"') q = true;
+          else if (ch === ',') { row.push(cur); cur = ''; }
+          else if (ch === '\\n' || ch === '\\r') { if (ch === '\\r' && s[i + 1] === '\\n') i++; row.push(cur); cur = ''; rows.push(row); row = []; }
+          else cur += ch;
+        }
+        if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+        var head = rows[0];
+        return rows.slice(1).map(function (r) { var o = {}; head.forEach(function (h, j) { o[h] = r[j] === undefined ? '' : r[j]; }); return o; });
+      };
+      var descOf = function (crm, kind, row) {
+        var built = buildCrmFiles(crm, kind === 'accounts' ? [row] : [], kind === 'contacts' ? [row] : []);
+        var parsed = parseCsvForTest(kind === 'accounts' ? built.accountsCsv : built.contactsCsv);
+        return parsed[0].Description;
+      };
+      var ACC = { company: 'Acme AG', companyId: 'c-1', linkedinLink: 'https://www.linkedin.com/company/acme', salesTeamPriority: 'P1',
+        notesLines: ['2026-10-13 Boaz: Call with Anna Muster. Budget is frozen until January.', '2026-10-10 Edge Test (on Anna Muster): I messaged her.\\nSent the brochure.'] };
+    """)
+    check("crm notes: Salesforce account - after the lines, before the id; a note is one line",
+          e("descOf('salesforce', 'accounts', ACC)"),
+          "SalesTeam priority: P1\nLinkedIn: https://www.linkedin.com/company/acme\nNotes:\n- 2026-10-13 Boaz: Call with Anna Muster. Budget is frozen until January.\n"
+          "- 2026-10-10 Edge Test (on Anna Muster): I messaged her. Sent the brochure.\nSalesTeam id: c-1")
+    check("crm notes: a contact's own notes", e("descOf('salesforce', 'contacts', { fullName: 'Anna Muster', company: 'Acme AG', contactId: 'p-1', notesLines: ['2026-10-10 Boaz: Met at the fair.'] })"),
+          "Notes:\n- 2026-10-10 Boaz: Met at the fair.\nSalesTeam id: p-1")
+    check("crm notes: without notes the Description is what it was", e("descOf('salesforce', 'accounts', { company: 'Acme AG', companyId: 'c-1', salesTeamPriority: 'P1' })"),
+          "SalesTeam priority: P1\nSalesTeam id: c-1")
+    check("crm notes: read back - a note line is never taken for one of SalesTeam's own, even one that names them",
+          e("""var back = crmAccountRows('salesforce', parseCsvForTest(buildCrmFiles('salesforce', [Object.assign({}, ACC, {
+                 notesLines: ['2026-10-13 Boaz: LinkedIn: https://evil.example', 'SalesTeam id: c-999', 'HQ city: Nowhere'] })], []).accountsCsv))[0];
+               var backC = crmContactRows('salesforce', parseCsvForTest(buildCrmFiles('salesforce', [], [{ fullName: 'Anna Muster', company: 'Acme AG', contactId: 'p-1',
+                 notesLines: ['SalesTeam id: p-999', '2026-10-10 Boaz: LinkedIn: https://evil.example'] }]).contactsCsv))[0];
+               [back.linkedinLink, back.globalHqCity || '-', backC.contactId, backC.lastVerified2 || '-'].join('|')"""),
+          "https://www.linkedin.com/company/acme|-|p-1|-")
+    e("""var LONG = []; for (var i = 0; i < 30; i++) LONG.push('2026-10-' + (30 - i) + ' Boaz: ' + new Array(21).join('note ' + i + ' '));
+         var dyn = descOf('dynamics', 'accounts', Object.assign({}, ACC, { notesLines: LONG }));""")
+    check("crm notes: Dynamics (2,000 characters) - the newest notes whole, the oldest left out, the id line kept (D8)",
+          e("[dyn.length <= 2000, dyn.indexOf('- 2026-10-30 Boaz: note 0 ') > 0, dyn.indexOf('note 29') < 0, /\\nSalesTeam id: c-1$/.test(dyn), dyn.split('\\n').every(function (l) { return l.indexOf('- ') !== 0 || /note \\d+$/.test(l); })].join()"),
+          "true,true,true,true,true")
+    check("crm notes: not even the newest fits - that one is cut short, the id line still kept",
+          e("""var one = descOf('dynamics', 'accounts', Object.assign({}, ACC, { notesLines: ['2026-10-13 Boaz: ' + new Array(2500).join('x')] }));
+               [one.length <= 2000, one.length > 1900, one.indexOf('Notes:\\n- 2026-10-13 Boaz: xxx') > 0, /…\\nSalesTeam id: c-1$/.test(one)].join()"""),
+          "true,true,true,true")
 
 
 def test_team_invites(ctx):

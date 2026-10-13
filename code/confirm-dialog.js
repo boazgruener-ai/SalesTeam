@@ -196,6 +196,13 @@ export function showNotice(message, { working = false, error = false, title = ""
   if (!noticeEl.open) noticeEl.showModal();
 }
 
+// Takes a "Working…" pop-up away again when its action ends without a result of its own to show there (the user
+// cancelled, or the action reports through something else).
+export function closeNotice() {
+  hideProgress = false;
+  if (noticeEl && noticeEl.open) noticeEl.close();
+}
+
 // Mirrors the text an action writes into its status element(s) into a pop-up, so every action's progress and result is
 // shown the same way. Empty text (a status being cleared) shows nothing.
 export function mirrorStatusToPopup(ids) {
