@@ -1145,6 +1145,59 @@ def main():
     r, folder = mia.sync(folder)
     check("take-over: the new Team Lead can hand the role back", (back.get("ok"), back.get("reason"), mia.status()["lead"].get("lead")), (True, None, mia_id))
 
+    # 1.2.3.2 (Boaz, 2026-10-13): an edit hold ends soon after the edit is saved, and after a minute without a touch -
+    # not only when the account page is left or after five idle minutes.
+    folder = {}
+    pia = Member("pia")
+    pia.set_local({"targetAccountExtras": {"acme ag": {"status": "New"}, "beta ag": {"status": "New"}}})
+    r, folder = pia.call("createTeam({ name: 'Pia', teamName: 'Short holds' })", folder)
+    inv, folder = invite(pia, "Quin", folder)
+    quin = Member("quin", now_offset=7)
+    r, folder = quin.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    for m in (pia, quin, pia, quin):
+        r, folder = m.sync(folder)
+    quin_id = quin.status()["me"]["memberId"]
+    def wait(m, ms, folder):  # time passes on m's PC; what its timers write stays in the folder
+        m.e("FOLDER = %s;" % json.dumps(folder))
+        m.advance(ms)
+        return json.loads(m.e("JSON.stringify(FOLDER)"))
+    releases = lambda: [c for f in folder if f.startswith("members/%s/changes/" % quin_id) for c in json.loads(folder[f])["changes"] if c.get("op") == "release"]
+    r, folder = quin.call("claimAccount('acme ag')", folder)
+    x = quin.local("targetAccountExtras"); x["acme ag"]["status"] = "Contacted"; quin.set_local({"targetAccountExtras": x})
+    for m in (quin, pia, quin, pia):
+        r, folder = m.sync(folder)
+    r, folder = pia.call("getClaimStatus('acme ag')", folder)
+    check("short hold: right after the save the colleague still holds it", (r.get("state"), (r.get("holder") or {}).get("name")), ("other", "Quin"))
+    check("short hold: the saved edit arrived", ((pia.local("targetAccountExtras") or {}).get("acme ag") or {}).get("status"), "Contacted")
+    folder = wait(quin, 12000, folder)
+    r, folder = quin.sync(folder)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('acme ag')", folder)
+    check("short hold: about ten seconds after the save the account is free", (r.get("state"), len(releases())), ("free", 1))
+    r, folder = pia.call("claimAccount('acme ag')", folder)
+    check("short hold: the colleague can take it now", r.get("ok"), True)
+    # No edit at all: the hold ends after a minute without a touch.
+    pia.e("NOW = Math.max(NOW, %d);" % quin.e("NOW"))  # both PCs' clocks agree, as real ones do
+    r, folder = pia.sync(folder)
+    q, folder = quin.call("claimAccount('beta ag')", folder)
+    check("short hold: a second account is taken", (q.get("ok"), q.get("reason")), (True, None))
+    for m in (quin, pia, quin, pia):
+        r, folder = m.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("short hold: a touch without an edit holds the account", r.get("state"), "other")
+    folder = wait(quin, 30000, folder)
+    r, folder = quin.call("claimAccount('beta ag')", folder)  # still working on it: the page touches again
+    folder = wait(quin, 40000, folder)
+    r, folder = quin.sync(folder)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("short hold: a touch within the minute keeps it", r.get("state"), "other")
+    folder = wait(quin, 65000, folder)
+    r, folder = quin.sync(folder)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("short hold: a minute without a touch frees it", r.get("state"), "free")
+
     print()
     for f in _failures:
         print("FAIL  %s" % f)

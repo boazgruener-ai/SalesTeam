@@ -65,6 +65,11 @@ const ONLINE_MS = 3 * 60000; // a colleague with a SalesTeam page open writes at
 const ACTIVE_MS = 10 * 60000;
 const CLAIM_READ_EVERY_MS = 5000;
 const CLAIM_REFRESH_MS = 60000;
+// 1.2.3.2 (Boaz, 2026-10-13: "the update should not take more than 30 seconds"): a member's edit hold ends soon
+// after the edit is saved, and after a minute without a touch - not only when the account page is left or after the
+// 5-minute idle limit (which stays as the safety net for a browser that died mid-edit).
+const EDIT_DONE_RELEASE_MS = 10000;
+const EDIT_IDLE_RELEASE_MS = 60000;
 const NOT_IN_SYNC_AFTER_MS = 2 * 60000;
 const REREAD_VERSION = 1;
 
@@ -1179,6 +1184,7 @@ function holdOrSend(records) {
     const key = accountKeyOfChange(mem.state, r, normalizeCompanyName);
     let hold = false;
     if (key && claims.mine[key]) {
+      if (claims.mine[key].kind === "edit") claims.mine[key].doneAt = Date.now();
       if (claims.held[key]) hold = true;
       else {
         if (!views.has(key)) views.set(key, claimView(mem.state, key, ctx || (ctx = claimContext())).state);
@@ -1204,6 +1210,7 @@ function claimsPending() {
   if (Object.keys(claims.held).length || Object.keys(claims.assigning).length) return true;
   const keys = Object.keys(claims.mine);
   if (!keys.length || !membership) return false;
+  if (keys.some((k) => claims.mine[k].kind === "edit" && claims.mine[k].doneAt)) return true; // an edit hold about to end
   const ctx = claimContext();
   return keys.some((k) => claimView(mem.state, k, ctx).state === "checking");
 }
@@ -1260,6 +1267,14 @@ async function resolveClaims() {
       changed = true;
       continue;
     }
+    // 1.2.3.2: a hold that was only a touch (nothing saved, nothing waiting) ends after a minute without one, also
+    // while it is still being checked - a colleague who is slow to answer must not keep it alive for five minutes.
+    const own = claims.mine[key];
+    if (v.state === "checking" && !held && own && own.kind === "edit" && !own.doneAt && now - (own.touchedAt || own.at) >= EDIT_IDLE_RELEASE_MS) {
+      releaseOwn(key, now);
+      changed = true;
+      continue;
+    }
     if (v.state === "mine" || v.state === "free") {
       if (held) {
         mem.outbox.push(...held.records);
@@ -1267,7 +1282,11 @@ async function resolveClaims() {
         changed = true;
       }
       // Free with a claim of mine: it ran out (5 minutes without a sign of life) - nothing to hold any more.
-      if (claims.mine[key] && (claims.mine[key].releaseWhenDone || v.state === "free")) {
+      // An edit hold of mine also ends once the edit is saved and sent, or after a minute without a touch.
+      const m = claims.mine[key];
+      const editOver = m && m.kind === "edit" && !claims.held[key] &&
+        ((m.doneAt && now - m.doneAt >= EDIT_DONE_RELEASE_MS) || now - (m.touchedAt || m.at) >= EDIT_IDLE_RELEASE_MS);
+      if (claims.mine[key] && (claims.mine[key].releaseWhenDone || editOver || v.state === "free")) {
         if (v.state === "free") delete claims.mine[key];
         else releaseOwn(key, now);
         changed = true;
@@ -1333,6 +1352,9 @@ async function claimInner(key, kind) {
     m.releaseWhenDone = false;
     await save(["claims"]);
   }
+  // The member is working on it (again): the hold's idle minute starts anew, and a save before this touch no longer ends it.
+  const cur = mem.claims.mine[key];
+  if (cur) { cur.touchedAt = now; delete cur.doneAt; }
   return { ok: true, ...describeClaim(key) };
 }
 

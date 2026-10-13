@@ -2474,7 +2474,7 @@ async function teamReassign(companyKey) {
 
 const TEAM_REFUSAL_TEXT = {
   offline: "the team folder is not connected on this PC", not_in_sync: "not in sync with the team",
-  held: "a colleague is updating it", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
+  held: "a colleague is updating it right now; try again in a minute", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
 };
 
 // Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
@@ -2503,7 +2503,9 @@ async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess =
       "Add them to that group in Settings > Team first.");
   }
   for (const [why, n] of Object.entries(refused)) lines.push(`${plural(n)} not ${type === "TEAM_ASSIGN" ? "assigned" : "released"} - ${TEAM_REFUSAL_TEXT[why] || why}.`);
-  if (keys.length > 1 || lines.length > 1 || to) showNotice(lines.join("\n"), { error: done === 0 });
+  // 1.2.3.2: nothing "went wrong" when a colleague is simply on the account, or it is theirs.
+  const onlyBusy = done === 0 && !noAccess.length && Object.keys(refused).every((why) => why === "held" || why === "assigned");
+  if (keys.length > 1 || lines.length > 1 || to) showNotice(lines.join("\n"), { error: done === 0, title: onlyBusy ? (type === "TEAM_ASSIGN" ? "Not assigned" : "Not released") : "" });
   appendActivityLog({ actor: "user", action: type === "TEAM_ASSIGN" ? "team_assigned" : "team_released", label: `${done} account${done === 1 ? "" : "s"} ${verb}` });
 }
 
@@ -5226,7 +5228,14 @@ function buildEditForm(fields, effectiveRow, onSave, onCancel, statusOpts) {
   saveBtn.type = "button";
   saveBtn.className = "edit-save-btn";
   saveBtn.textContent = "Save changes";
-  saveBtn.addEventListener("click", () => {
+  // A save can take several seconds (team folder, reload of the workbook) before the page re-renders and this form
+  // goes away - "Saving…" beside the buttons says so meanwhile (Boaz, 2026-10-13). When onSave returns without
+  // re-rendering (the change was refused or cancelled), the form is still here and the buttons come back.
+  const savingNote = document.createElement("span");
+  savingNote.className = "edit-saving-note";
+  savingNote.textContent = "Saving…";
+  savingNote.hidden = true;
+  saveBtn.addEventListener("click", async () => {
     const values = {};
     for (const f of fields) {
       values[f.key] = f.type === "list"
@@ -5238,15 +5247,33 @@ function buildEditForm(fields, effectiveRow, onSave, onCancel, statusOpts) {
       const picked = statusSelect.value === MANUAL_STATUS_AUTO_OPTION ? null : statusSelect.value;
       if (picked !== (statusOpts.manualStatus || null)) statusChoice = picked;
     }
-    onSave(values, statusChoice);
+    saveBtn.disabled = cancelBtn.disabled = true;
+    savingNote.hidden = false;
+    try {
+      await onSave(values, statusChoice);
+    } finally {
+      saveBtn.disabled = cancelBtn.disabled = false;
+      savingNote.hidden = true;
+    }
   });
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.className = "edit-cancel-btn";
   cancelBtn.textContent = "Cancel";
   cancelBtn.addEventListener("click", onCancel);
-  actions.append(saveBtn, cancelBtn);
+  actions.append(saveBtn, cancelBtn, savingNote);
   form.appendChild(actions);
+
+  // 1.2.3.3: a value changed here and not yet saved marks the form data-unsaved - the team hold stays while it is
+  // (team-claims-ui.js editOpen), also when no field is in focus, and leaving the page asks first (beforeunload below).
+  const controls = [...Object.values(inputs), ...(statusSelect ? [statusSelect] : [])];
+  const opened = controls.map((c) => c.value);
+  const markUnsaved = () => {
+    if (controls.some((c, i) => c.value !== opened[i])) form.dataset.unsaved = "1";
+    else delete form.dataset.unsaved;
+  };
+  form.addEventListener("input", markUnsaved);
+  form.addEventListener("change", markUnsaved);
 
   return form;
 }

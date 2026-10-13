@@ -1564,6 +1564,18 @@ thead .actions-col {
   opacity: 0.9;
 }
 
+.overview-edit-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.edit-saving-note {
+  align-self: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--blue);
+}
+
 .edit-cancel-btn {
   background: none;
   border: 1px solid var(--border);

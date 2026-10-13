@@ -170,7 +170,8 @@ export function markSaved(el, text = "✓ Saved") {
 
 // A result / progress pop-up with a single OK (or Close, while the action is still running) button - used instead of a
 // small line of text somewhere on the page, which was easy to miss (reported 2026-09-21).
-export function showNotice(message, { working = false, error = false } = {}) {
+// `title`: the heading when "Done" / "Something went wrong" would mislead (a refusal that is nobody's fault).
+export function showNotice(message, { working = false, error = false, title = "" } = {}) {
   ensureStyle();
   if (working && hideProgress) return;
   if (!working) hideProgress = false;
@@ -187,7 +188,7 @@ export function showNotice(message, { working = false, error = false } = {}) {
   }
   noticeEl.classList.toggle("sn-error", error);
   noticeEl.querySelector(".sn-spinner").hidden = !working;
-  noticeEl.querySelector(".sn-title").textContent = working ? "Working…" : error ? "Something went wrong" : /^Nothing to do/i.test(message) ? "Nothing to do" : "Done";
+  noticeEl.querySelector(".sn-title").textContent = working ? "Working…" : title ? title : error ? "Something went wrong" : /^Nothing to do/i.test(message) ? "Nothing to do" : "Done";
   noticeEl.querySelector(".sn-message").textContent = working
     ? `${message}\n\nStill working - you can close this window; the work keeps running and its result appears when it is done.`
     : message;

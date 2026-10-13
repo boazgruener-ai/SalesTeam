@@ -12,7 +12,8 @@
 
 const MEMBERSHIP_KEY = "teamMembership"; // team-sync.js TEAM_MEMBERSHIP_KEY
 const POLL_MS = 5000;
-const CLAIM_AGAIN_MS = 30000; // the background renews at most once a minute anyway
+// 1.2.3.2: every 15 s while the member keeps working - the background ends an edit hold after a minute without a touch.
+const CLAIM_AGAIN_MS = 15000;
 const EDITABLE = "button, select, input, textarea, [contenteditable], [tabindex]";
 const REFUSALS = {
   offline: "The team folder is not connected on this PC - see the top bar.",
@@ -181,8 +182,21 @@ export function createClaimGuard({ viewEl, afterEl, regions }) {
     const forKey = key;
     try {
       const s = await send({ type: "TEAM_CLAIM_STATUS", key: forKey });
-      if (forKey === key) { status = s; paint(); }
+      if (forKey === key) {
+        status = s;
+        // 1.2.3.2: the hold ended by itself (the edit was saved, or a minute passed) - the next touch takes it again.
+        if (s && s.member && s.state === "free") claimedAt = 0;
+        paint();
+        // An edit still open (a field in focus, an unsaved value) keeps the hold while the member thinks.
+        if (editOpen() && !blocked()) claim();
+      }
     } catch { /* the next poll tries again */ }
+  }
+
+  function editOpen() {
+    const a = document.activeElement;
+    if (a instanceof Element && a.matches("input, select, textarea, [contenteditable]") && inRegion(a)) return true;
+    return [...viewEl.querySelectorAll("[data-unsaved]")].some((el) => el.isConnected && !el.closest("[hidden]"));
   }
 
   async function claim() {

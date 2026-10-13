@@ -290,7 +290,7 @@ const QA = [
     category: "Team",
     question: 'Why does an account say "Checking with the team" or that a colleague is updating it?',
     keywords: ["checking with the team", "updating", "is updating", "blocked", "only can edit", "kept aside", "apply my changes", "lost", "a few seconds before you", "conflict"],
-    answer: 'When you start changing an unassigned account, SalesTeam first checks that no colleague started on it at the same moment ("Checking with the team…", usually a few seconds). You can go on working; your changes stay on your computer until the check is done. If a colleague was a few seconds earlier, SalesTeam tells you, keeps your changes aside and offers "Apply my changes now" once the account is free again. While a colleague is updating an account, or it is assigned to them, you can read it but not change it. Nothing is ever silently overwritten.',
+    answer: 'When you start changing an unassigned account, SalesTeam first checks that no colleague started on it at the same moment ("Checking with the team…", usually a few seconds). You can go on working; your changes stay on your computer until the check is done. If a colleague was a few seconds earlier, SalesTeam tells you, keeps your changes aside and offers "Apply my changes now" once the account is free again. While a colleague is updating an account, or it is assigned to them, you can read it but not change it. An account a colleague is updating is free again a few seconds after they save, or after a minute if they changed nothing. Nothing is ever silently overwritten.',
   },
   {
     id: "team-reconnect",
