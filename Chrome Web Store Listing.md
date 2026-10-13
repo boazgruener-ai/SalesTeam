@@ -84,6 +84,19 @@ Answer: No. The extension makes data API calls to Anthropic (text in, text out) 
 
 ### 5. Data usage - what user data do you collect
 - From Data Usage Checkboxes - only check: PII, Authentication Information and Website content.
+
+The nine checkboxes, in the order they appear (the same answers in the Chrome Web Store and in Microsoft Edge Add-ons, Partner Center, "What user data do you plan to collect"):
+
+1. Personally identifiable information - YES. Names and job titles of contacts and post authors.
+2. Health information - NO.
+3. Financial and payment information - NO.
+4. Authentication information - YES. The user's own Anthropic API key is stored in the browser.
+5. Personal communications - NO. SalesTeam drafts messages but does not read the user's emails, chats or LinkedIn inbox.
+6. Location - NO.
+7. Web history - NO. It does not record which pages the user visits.
+8. User activity - NO. It does not log clicks, keystrokes or network traffic. (Its Activity Log records what was done inside SalesTeam, which is not what this box means.)
+9. Website content - YES. Text of LinkedIn posts, company and profile pages that SalesTeam reads.
+
 Does this extension collect or transmit user data (Personal Identifiable Information) ? Yes - lead (post) and target-account text, the notes the user wrote on them, and chat content, only when the optional AI features are used, sent directly to Anthropic's API using the user's own key. (Team use writes shared data only into a OneDrive folder on the user's own computer that the user's team owns; the extension sends it to no server.)
 
 ### 6. I certify that the following disclosures are true (tick all three)
