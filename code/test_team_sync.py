@@ -1398,8 +1398,39 @@ def main():
           (sorted(usage_file(umi)["sealed"]["keys"]), sorted(usage_file(wes)["sealed"]["keys"])), ([ids[wes]], [ids[umi]]))
     check("usage: the deputy can open a member's file now", opened(wes, vic), {"months": {month: {"usd": 2.75, "researches": 20}}})
     check("usage: no error on any PC", [m.status()["usage"]["error"] for m in (umi, vic, wes)], [None, None, None])
+    # Build step 1: the table, for the Team Lead and the deputy only.
+    line = lambda t, name: next(([x["state"], x["thisMonth"], x["researches"], bool(x["left"])] for x in t.get("rows", []) if x["name"] == name), None)
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: the Team Lead sees every member's month", (t.get("lead"), t.get("connected"), line(t, "Vic"), line(t, "Wes"), line(t, "Umi"), t["total"]["thisMonth"]),
+          (True, True, ["ok", 2.75, 20, False], ["ok", 0, 0, False], ["ok", 0, 0, False], 2.75))
+    check("table: every line has its join date", [bool(x["joined"]) for x in t["rows"]], [True, True, True])
+    t, folder = wes.call("getTeamUsage()", folder)
+    check("table: the deputy sees it too", (t.get("lead"), line(t, "Vic"), line(t, "Umi")), (True, ["ok", 2.75, 20, False], ["ok", 0, 0, False]))
+    t, folder = vic.call("getTeamUsage()", folder)
+    check("table: a member gets no table and keeps no copy", (t.get("lead"), "rows" in t, vic.local("teamUsageTable")), (False, False, None))
+    check("table: the Team Lead's copy holds the members' months", sorted(umi.local("teamUsageTable")["members"]), sorted([ids[vic], ids[wes]]))
+    # A colleague on an older build has no usage file.
+    saved = folder.pop("members/%s/usage.json" % ids[wes])
+    umi.e("STORE.teamUsageTable.members = { '%s': STORE.teamUsageTable.members['%s'] };" % (ids[vic], ids[vic]))
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: a colleague without a usage file is 'no figures yet'", line(t, "Wes"), ["none", 0, 0, False])
+    folder["members/%s/usage.json" % ids[wes]] = saved
+    # The folder cannot be reached: the last copy is shown.
+    umi.e("var realFolder = getTeamFolder; getTeamFolder = function () { return Promise.resolve(null); };")
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: without the folder the last copy is shown", (t.get("connected"), line(t, "Vic")), (False, ["ok", 2.75, 20, False]))
+    umi.e("getTeamFolder = realFolder;")
+    # The deputy role ends: that browser's copy goes within a minute.
+    r, folder = umi.call("setDeputy(null)", folder)
+    folder = all_round(folder, (umi, vic, wes))
+    folder = minute(folder, (wes,))
+    t, folder = wes.call("getTeamUsage()", folder)
+    check("table: a former deputy has no table and no copy", (t.get("lead"), wes.local("teamUsageTable")), (False, None))
     # Leaving: the member's own record goes, the file stays for the Team Lead's totals.
     r, folder = vic.call("leaveTeam()", folder)
+    folder = all_round(folder, (umi, wes))
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: a member who left keeps the line, marked as left", line(t, "Vic"), ["ok", 2.75, 20, True])
     check("usage: after leaving, the record is gone here and the file is still in the folder", (vic.local("teamUsageMonths"), usage_file(vic) is not None), (None, True))
 
     print()

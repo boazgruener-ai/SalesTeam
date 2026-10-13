@@ -44,3 +44,60 @@ export function mergeMonths(kept, fresh) {
 export function monthsKey(months) {
   return Object.keys(months || {}).sort().map((m) => `${m}:${roundUsd(months[m].usd)}:${months[m].researches || 0}`).join("|");
 }
+
+// ---- The Team usage table (design 5; R4) - what the Team Lead and the deputy see ----
+
+const usagePersonKey = (name) => String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+const usagePreviousMonth = (month) => {
+  const [y, m] = month.split("-").map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+};
+
+// members: [{ id, name, joined (ms), left (ms, or null while a member), months (or null), updated (ms), state }]
+//   state "ok"     - months are this member's figures
+//         "none"   - no usage file: their SalesTeam is older than 1.2.4 (R4.5)
+//         "locked" - a file that was not sealed for this reader (design 4: a member who left before a hand-over)
+// today: "YYYY-MM-DD".
+// One line per PERSON (D3): members with the same name are added up. -> { rows, total }
+export function usageTable(members, today) {
+  const month = today.slice(0, 7);
+  const last = usagePreviousMonth(month);
+  const year = Number(today.slice(0, 4));
+  const people = new Map();
+  for (const m of members || []) {
+    const key = usagePersonKey(m.name) || m.id;
+    if (!people.has(key)) people.set(key, []);
+    people.get(key).push(m);
+  }
+  const rows = [];
+  for (const group of people.values()) {
+    const left = group.every((m) => m.left) ? Math.max(...group.map((m) => m.left)) : null;
+    const withFigures = group.filter((m) => m.state === "ok" && m.months);
+    const state = withFigures.length ? "ok" : group.some((m) => m.state === "locked") ? "locked" : "none";
+    // Q4: a member who left stays until the end of the following calendar year. One who left without ever
+    // sharing a figure has nothing to keep.
+    if (left && (new Date(left).getFullYear() + 1 < year || state === "none")) continue;
+    const row = {
+      // "(2 browsers)" counts the browsers still in the team - an earlier membership that has left is not one of them
+      name: group[0].name || "A colleague", browsers: left ? group.length : group.filter((m) => !m.left).length, left, state,
+      // the figures count from the day of joining (D5): the first browser's, when a person has two
+      joined: Math.min(...group.map((m) => m.joined || Infinity)),
+      thisMonth: 0, lastMonth: 0, since: 0, researches: 0, updated: 0,
+    };
+    if (!Number.isFinite(row.joined)) row.joined = 0;
+    for (const m of withFigures) {
+      row.thisMonth += m.months[month]?.usd || 0;
+      row.lastMonth += m.months[last]?.usd || 0;
+      row.researches += m.months[month]?.researches || 0;
+      for (const v of Object.values(m.months)) row.since += v.usd || 0;
+      row.updated = Math.max(row.updated, m.updated || 0);
+    }
+    for (const f of ["thisMonth", "lastMonth", "since"]) row[f] = roundUsd(row[f]);
+    rows.push(row);
+  }
+  rows.sort((a, b) => b.thisMonth - a.thisMonth || a.name.localeCompare(b.name));
+  const total = { thisMonth: 0, lastMonth: 0, since: 0, researches: 0 };
+  for (const r of rows) if (r.state === "ok") for (const f of Object.keys(total)) total[f] += r[f];
+  for (const f of ["thisMonth", "lastMonth", "since"]) total[f] = roundUsd(total[f]);
+  return { rows, total };
+}

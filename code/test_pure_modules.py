@@ -2836,6 +2836,36 @@ def test_team_usage(ctx):
           ctx.eval("monthsKey({ b: { usd: 1, researches: 2 }, a: { usd: 0.5, researches: 0 } }) === monthsKey({ a: { usd: 0.5 }, b: { researches: 2, usd: 1.00001 } })"), True)
     check("usage: a changed month gives another key", ctx.eval("monthsKey({ a: { usd: 1 } }) === monthsKey({ a: { usd: 1.01 } })"), False)
     check("usage: the day key is the local calendar day", ctx.eval("usageDayKey(new Date(2026, 9, 3, 23, 59))"), "2026-10-03")
+    # The Team usage table: one line per person, the total, members who left, older builds.
+    ctx.eval("""
+      var LEFT_2026 = new Date(2026, 4, 2).getTime(), LEFT_2025 = new Date(2025, 11, 30).getTime();
+      var UMEMBERS = [
+        { id: 'm1', name: 'Boaz', left: null, state: 'ok', updated: 50, months: { '2026-12': { usd: 4, researches: 40 }, '2027-01': { usd: 1.5, researches: 10 } } },
+        { id: 'm2', name: ' boaz ', left: null, state: 'ok', updated: 90, months: { '2027-01': { usd: 0.25, researches: 2 } } },
+        { id: 'm3', name: 'Anna', left: null, state: 'ok', updated: 70, months: { '2026-11': { usd: 9, researches: 80 }, '2026-12': { usd: 2, researches: 5 }, '2027-01': { usd: 3, researches: 30 } } },
+        { id: 'm4', name: 'Old Build', left: null, state: 'none', months: null },
+        { id: 'm5', name: 'Gone', left: LEFT_2026, state: 'ok', updated: 10, months: { '2026-04': { usd: 7, researches: 70 } } },
+        { id: 'm6', name: 'Long Gone', left: LEFT_2025, state: 'ok', updated: 5, months: { '2025-12': { usd: 99, researches: 1 } } },
+        { id: 'm7', name: 'Sealed', left: LEFT_2026, state: 'locked', months: null },
+        { id: 'm8', name: 'Never', left: LEFT_2026, state: 'none', months: null } ];
+      var UT = usageTable(UMEMBERS, '2027-01-15');
+    """)
+    check("table: one line per person, highest this month first; long gone and never-shared leavers are dropped",
+          j("UT.rows.map(function (r) { return r.name; })"), ["Anna", "Boaz", "Gone", "Old Build", "Sealed"])
+    check("table: two browsers of one person are added up", j("UT.rows[1]"),
+          {"name": "Boaz", "browsers": 2, "left": None, "state": "ok", "joined": 0, "thisMonth": 1.75, "lastMonth": 4, "since": 5.75, "researches": 12, "updated": 90})
+    check("table: this month, last month (over the turn of the year), since joining",
+          j("[UT.rows[0].thisMonth, UT.rows[0].lastMonth, UT.rows[0].since, UT.rows[0].researches]"), [3, 2, 14, 30])
+    check("table: a member who left keeps the line; an older build and a sealed file say so",
+          j("UT.rows.slice(2).map(function (r) { return [r.state, Boolean(r.left), r.since]; })"), [["ok", True, 7], ["none", False, 0], ["locked", True, 0]])
+    check("table: the team total", j("UT.total"), {"thisMonth": 4.75, "lastMonth": 6, "since": 26.75, "researches": 42})
+    check("table: a person is 'left' only when every browser has left",
+          j("usageTable([{ id: 'a', name: 'X', left: 5, state: 'ok', months: {} }, { id: 'b', name: 'x', left: null, state: 'ok', months: {} }], '2027-01-15').rows[0].left"), None)
+    check("table: '(2 browsers)' counts only the browsers still in the team",
+          j("usageTable([{ id: 'a', name: 'X', left: 5, state: 'none', months: null }, { id: 'b', name: 'x', left: 6, state: 'none', months: null }, { id: 'c', name: 'X', left: null, state: 'ok', months: {} }], '2027-01-15').rows[0].browsers"), 1)
+    check("table: the join date is the first browser's",
+          j("usageTable([{ id: 'a', name: 'X', joined: 900, left: null, state: 'ok', months: {} }, { id: 'b', name: 'x', joined: 400, left: null, state: 'ok', months: {} }, { id: 'c', name: 'x', left: null, state: 'none', months: null }], '2027-01-15').rows[0].joined"), 400)
+    check("table: nobody", j("usageTable([], '2027-01-15')"), {"rows": [], "total": {"thisMonth": 0, "lastMonth": 0, "since": 0, "researches": 0}})
 
 
 def main():

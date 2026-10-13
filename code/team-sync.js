@@ -35,8 +35,8 @@ import {
 import { teamLogEntries, appendTeamLog } from "./team-log.js";
 import { joinOverlap, addBackValues, joinProposals, JOIN_PROPOSALS_KEY } from "./team-join.js";
 import { INVITES_DIR, inviteState, inviteRefusal } from "./team-invites.js";
-import { usageDayKey, monthsFromDays, mergeMonths, monthsKey } from "./team-usage.js";
-import { makeUsageKeyPair, usageKeyId, sealUsage } from "./team-usage-seal.js";
+import { usageDayKey, monthsFromDays, mergeMonths, monthsKey, usageTable } from "./team-usage.js";
+import { makeUsageKeyPair, usageKeyId, sealUsage, openUsage } from "./team-usage-seal.js";
 
 export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 // Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
@@ -822,6 +822,8 @@ async function publishUsage(root, me) {
   if (leaving || Date.now() - (mem.meta.usageCheckedAt || 0) < USAGE_EVERY_MS) return;
   mem.meta.usageCheckedAt = Date.now();
   try {
+    // R1.3: the copy of the team's figures stays only while this browser has the Team Lead's rights.
+    if (!hasLeadRights()) await chrome.storage.local.remove(TEAM_USAGE_TABLE_KEY);
     await ensureUsageKey(root, me);
     const data = await chrome.storage.local.get(["apiUsage", TEAM_USAGE_MONTHS_KEY]);
     const joinedDay = usageDayKey(new Date(membership.joinedAt));
@@ -851,6 +853,48 @@ async function publishUsage(root, me) {
   } catch (err) {
     mem.meta.usageError = errText(err); // the usage file must never stop the round that shares the team's data
   }
+}
+
+// The Team usage table (design 5, R4) - for the Team Lead and the deputy only, asked for by the Anthropic Usage page
+// while it is open (D7). Every member's usage.json is read and opened; what could be opened is kept in
+// teamUsageTable (personal), so the figures of a member who has left stay, and the table can be shown while the
+// folder is not connected.
+export const TEAM_USAGE_TABLE_KEY = "teamUsageTable";
+export async function getTeamUsage() {
+  const st = await getTeamSyncStatus();
+  if (!st.member) return { member: false };
+  const me = membership.memberId;
+  if (!hasLeadRights()) {
+    await chrome.storage.local.remove(TEAM_USAGE_TABLE_KEY);
+    return { member: true, lead: false };
+  }
+  const data = await chrome.storage.local.get([TEAM_USAGE_TABLE_KEY, TEAM_USAGE_MONTHS_KEY]);
+  const kept = data[TEAM_USAGE_TABLE_KEY]?.teamId === membership.teamId ? data[TEAM_USAGE_TABLE_KEY] : null;
+  const copy = { teamId: membership.teamId, readAt: kept?.readAt || 0, members: { ...(kept?.members || {}) } };
+  const fileOf = {};
+  const root = await connectedRoot().catch(() => null);
+  if (root) {
+    if (!usageKey) usageKey = (await teamDbGetAll(["usageKey"])).usageKey || null;
+    for (const m of st.members) {
+      const f = await readTeamJson(root, ["members", m.id], "usage.json").catch(() => ({ status: "error" }));
+      if (f.status === "missing") fileOf[m.id] = "none";
+      if (f.status !== "ok") continue;
+      const opened = usageKey ? await openUsage(f.data.sealed, me, usageKey.privateKey) : null;
+      if (opened?.months) copy.members[m.id] = { months: opened.months, updated: Date.parse(f.data.updated) || 0 };
+      else fileOf[m.id] = "locked";
+    }
+    copy.readAt = Date.now();
+    if (JSON.stringify(copy.members) !== JSON.stringify(kept?.members || {}) || !kept) await chrome.storage.local.set({ [TEAM_USAGE_TABLE_KEY]: copy });
+  }
+  const mine = data[TEAM_USAGE_MONTHS_KEY]?.teamId === membership.teamId ? data[TEAM_USAGE_MONTHS_KEY].months : {};
+  const members = [
+    { id: me, name: membership.name, joined: Date.parse(membership.joinedAt) || 0, left: null, months: mine, updated: Date.now(), state: "ok" },
+    ...st.members.map((m) => {
+      const c = copy.members[m.id];
+      return { id: m.id, name: m.name, joined: Date.parse(mem.meta.profiles[m.id]?.joinedAt) || 0, left: m.left || null, months: c?.months || null, updated: c?.updated || 0, state: c ? "ok" : fileOf[m.id] || "none" };
+    }),
+  ];
+  return { member: true, lead: true, connected: Boolean(root), readAt: copy.readAt, ...usageTable(members, usageDayKey(new Date())) };
 }
 
 // Design 3.3: once a day, this member's change files older than 7 days are folded into one snapshot.
@@ -2253,7 +2297,7 @@ function leaveLocally() {
     await teamDbClear();
     usageKey = null;
     await clearTeamFolder();
-    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY, TEAM_LOG_KEY, TEAM_USAGE_MONTHS_KEY]);
+    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY, TEAM_LOG_KEY, TEAM_USAGE_MONTHS_KEY, TEAM_USAGE_TABLE_KEY]);
     lastSummaryJson = null;
     mem = null;
     recentWriteBack.clear();
@@ -2389,6 +2433,7 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_CLOSE": return reply(closeTeam());
     case "TEAM_INVITE": return reply(inviteMember({ name: message.name, email: message.email }));
     case "TEAM_CANCEL_INVITE": return reply(cancelInvite(message.id));
+    case "TEAM_USAGE": return reply(getTeamUsage());
     default: return null;
   }
 }

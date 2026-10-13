@@ -333,6 +333,15 @@
       </p>
       <table id="billing-totals" class="billing-table"></table>
       <p id="billing-average" class="field-hint"></p>
+      <div id="team-usage" hidden>
+        <h4 class="billing-heading">Team usage</h4>
+        <p id="team-usage-status" class="field-hint"></p>
+        <table id="team-usage-table" class="billing-table"></table>
+        <p class="field-hint">
+          Estimates from Anthropic's published prices, counted by each member's SalesTeam. Each member's Anthropic Console shows the
+          official figure. Only you and the deputy Team Lead see this table.
+        </p>
+      </div>
       <h4 class="billing-heading">Day by day (last 31 days)</h4>
       <div class="billing-scroll"><table id="billing-days" class="billing-table"></table></div>
       <h4 class="billing-heading">By feature (all time)</h4>
@@ -360,9 +369,6 @@
         extraction, topic suggestions, search-quality analysis and the Advisors chats. Prices used: Claude Sonnet $2 in / $10 out per million
         tokens, Claude Haiku $1 / $5, and about $0.01 per web search.
       </p>
-      <div class="settings-buttons-row">
-        <button type="button" id="billing-reset-btn">Reset the counters…</button>
-      </div>
     </section>
 
     <!-- Team use 1.2.2, build step 3 (TEAM_USE_DESIGN.md 9, 10): create / join / leave and the team's state.

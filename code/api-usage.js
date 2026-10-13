@@ -103,9 +103,8 @@ export function sumDays(days, dayKeys) {
   return { ...out, total };
 }
 
-export async function clearApiUsage() {
-  await chrome.storage.local.remove(USAGE_KEY);
-}
+// 1.2.4 (Boaz, 2026-10-13): there is no reset. In a team the Team Lead sees each member's monthly totals, and a count
+// a member could zero would not be one to rely on; the days older than KEEP_DAYS drop out by themselves.
 
 // ---- Warning before an action that could cost a lot (the limit is set in Settings > Anthropic Usage; 0 switches it off) ----
 const COST_WARNING_KEY = "costWarningUsd";
