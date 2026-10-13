@@ -5,6 +5,7 @@
   <title>SalesTeam Target Accounts Dashboard</title>
   <link rel="icon" href="icons/icon16.png" />
   <link rel="stylesheet" href="target-accounts.css" />
+  <link rel="stylesheet" href="notes.css" />
 </head>
 <body>
   <!-- Reported directly, 2026-09-16: a native confirm()'s generic OK/Cancel
@@ -474,6 +475,10 @@
       <div id="account-overview" class="entity-overview"></div>
       <input type="date" id="account-due-date-input" hidden />
       <button id="account-due-date-clear-btn" class="text-link-btn" type="button" title="Clear the follow-up due date" hidden>Clear</button>
+
+      <!-- 1.2.4 Notes (NOTES_DESIGN.md 6.2): directly under the overview, and outside the parts a colleague's edit
+           blocks (account-overview, account-detail-lists, account-web-research). Filled by notes-ui.js. -->
+      <section id="account-notes" hidden></section>
 
       <div id="account-detail-lists"></div>
 

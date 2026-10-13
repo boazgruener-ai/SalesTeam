@@ -136,6 +136,7 @@ import {
 import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
+import { notesSection, notesUnsaved } from "./notes-ui.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
@@ -5448,7 +5449,8 @@ function fieldSaveButton(label = "Save") {
 
 window.addEventListener("beforeunload", (event) => {
   const pending = [...document.querySelectorAll("[data-unsaved]")].some((el) => el.isConnected && !el.closest("[hidden]"));
-  if (pending) { event.preventDefault(); event.returnValue = ""; }
+  // 1.2.4: a note typed and not added counts too (its own mark, so it never keeps the team's edit hold - notes-ui.js).
+  if (pending || notesUnsaved()) { event.preventDefault(); event.returnValue = ""; }
 });
 
 // autoLabel: what "no manual status" is called - an account's status comes from its contacts and leads (Boaz
@@ -6937,6 +6939,9 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
     (patch) => saveTargetAccountExtra(companyKey, patch),
     { entityLabel: company.company, relatedCompanyKey: companyKey }
   );
+
+  // 1.2.4 Notes, build step 1: the notes on the account itself (the timeline with contact and lead notes is step 2).
+  notesSection(document.getElementById("account-notes")).show({ on: "account", key: companyKey });
 
   const overviewEl = document.getElementById("account-overview");
   overviewEl.innerHTML = "";
