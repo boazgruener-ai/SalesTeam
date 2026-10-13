@@ -196,6 +196,29 @@ export function notesPromptBlock(list, max = NOTE_PROMPT_MAX) {
   return ["Notes written by the sales team (newest first):", ...shown.map((n) => `- ${notePlainLine(n, NOTE_PROMPT_CHARS)}`)].join("\n");
 }
 
+// The notes on several subjects together, newest first, each marked with what it is about where the caller says so.
+// subjects: [{ on, key, about? }] - an entry without a key is skipped. For the AI prompts (design 8): "on the lead,
+// on its contact, on its account".
+export function notesAbout(notes, subjects) {
+  const about = new Map();
+  for (const s of subjects || []) if (s && s.key && NOTE_SUBJECTS.includes(s.on)) about.set(`${s.on}|${s.key}`, s.about || null);
+  const out = [];
+  for (const n of liveNotes(notes)) {
+    const k = `${n.on}|${n.key}`;
+    if (about.has(k)) out.push(about.get(k) ? { ...n, about: about.get(k) } : n);
+  }
+  return out;
+}
+
+// What goes into an AI prompt: the block and one line on how to use it; "" when there are no notes, so a prompt for
+// an account without notes is exactly what it was before.
+export function notesPromptSection(list, max = NOTE_PROMPT_MAX) {
+  const block = notesPromptBlock(list, max);
+  if (!block) return "";
+  return `\n${block}\nThese notes say what the salesperson or a colleague already did and learned. Take them into account: ` +
+    "do not suggest or offer again what a note says was already done or sent, and do not contradict what a note says was agreed.\n";
+}
+
 // Section 9: every note of a row, whole, one per line.
 export function notesExportLines(list) {
   return (list || []).filter(isLiveNote).map((n) => notePlainLine(n, 0));

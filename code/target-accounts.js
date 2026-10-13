@@ -137,7 +137,7 @@ import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
-import { accountTimelineMarked, lastNoteByAccount, lastNoteByContact, noteSearchText, noteLine, leadNoteAbout } from "./notes.js";
+import { accountTimelineMarked, lastNoteByAccount, lastNoteByContact, noteSearchText, noteLine, leadNoteAbout, notesAbout, notesPromptSection } from "./notes.js";
 import { getNotes } from "./storage.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
@@ -1094,6 +1094,32 @@ function rebuildNotesIndex() {
   }
   notesIndex = { byAccount, byContact: lastNoteByContact(allNotes), text: noteSearchText(allNotes, accountOfLead) };
 }
+// R2.3: an account's timeline with every contact and lead note marked with what it is about - for the Notes section
+// of the account page and for the account's Sales Mentor.
+function accountTimelineOf(notes, companyKey) {
+  const contactNames = {};
+  for (const c of rawWorkbook.contacts || []) {
+    if (normalizeCompanyName(c.company) !== companyKey) continue;
+    const k = contactKeyFor(c.company, c.fullName);
+    if (k) contactNames[k] = c.fullName;
+  }
+  const seenLeads = allLeads.filter((l) => normalizeCompanyName(l.company) === companyKey && teamAccounts.canSeeLead(l));
+  return accountTimelineMarked(notes, companyKey, contactNames, seenLeads);
+}
+// R6.4 (D5): what the Sales Mentor chats on the account page and the contact page are given - the account's timeline;
+// the notes on the contact and on its account.
+function accountNotesForPrompt() {
+  return currentAccountKey ? notesPromptSection(accountTimelineOf(allNotes, currentAccountKey)) : "";
+}
+function contactNotesForPrompt() {
+  const contact = currentContactRow();
+  if (!currentContactKey || !contact) return "";
+  return notesPromptSection(notesAbout(allNotes, [
+    { on: "contact", key: currentContactKey },
+    { on: "account", key: normalizeCompanyName(contact.company), about: `the account ${contact.company}` },
+  ]));
+}
+
 // A contact row always has fullName, a company row never does (as in rawValue below).
 function lastNoteOf(row) {
   return (row.fullName != null ? notesIndex.byContact[contactKeyFor(row.company, row.fullName)] : notesIndex.byAccount[normalizeCompanyName(row.company)]) || null;
@@ -5858,7 +5884,7 @@ function createAgentChat({ buildSystemPrompt, historyEl, statusEl, inputEl, send
 }
 
 const accountMentorChat = createAgentChat({
-  buildSystemPrompt: () => buildAccountScopedMentorPrompt(currentAccountCompanyRow(), { mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
+  buildSystemPrompt: () => buildAccountScopedMentorPrompt(currentAccountCompanyRow(), { notes: accountNotesForPrompt(), mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
   historyEl: document.getElementById("account-mentor-history"),
   statusEl: document.getElementById("account-mentor-status"),
   inputEl: document.getElementById("account-mentor-input"),
@@ -5898,7 +5924,7 @@ const accountVoiceChat = createAgentChat({
 });
 
 const contactMentorChat = createAgentChat({
-  buildSystemPrompt: () => buildContactScopedMentorPrompt(currentContactRow(), currentContactAccountRow(), { mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
+  buildSystemPrompt: () => buildContactScopedMentorPrompt(currentContactRow(), currentContactAccountRow(), { notes: contactNotesForPrompt(), mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
   historyEl: document.getElementById("contact-mentor-history"),
   statusEl: document.getElementById("contact-mentor-status"),
   inputEl: document.getElementById("contact-mentor-input"),
@@ -7004,18 +7030,7 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
 
   // 1.2.4 Notes (R2.3): one timeline - the notes on the account, on its contacts and on its leads, each marked with
   // what it is about. A new note written here is on the account. Lead notes only for leads this member sees (5.3).
-  {
-    const contactNames = {};
-    for (const c of rawWorkbook.contacts || []) {
-      if (normalizeCompanyName(c.company) !== companyKey) continue;
-      const k = contactKeyFor(c.company, c.fullName);
-      if (k) contactNames[k] = c.fullName;
-    }
-    const seenLeads = companyLeads.filter((l) => teamAccounts.canSeeLead(l));
-    notesSection(document.getElementById("account-notes")).show({
-      on: "account", key: companyKey, select: (all) => accountTimelineMarked(all, companyKey, contactNames, seenLeads),
-    });
-  }
+  notesSection(document.getElementById("account-notes")).show({ on: "account", key: companyKey, select: (all) => accountTimelineOf(all, companyKey) });
 
   const overviewEl = document.getElementById("account-overview");
   overviewEl.innerHTML = "";

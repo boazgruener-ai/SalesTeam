@@ -4,7 +4,8 @@
 // panel) can reuse exactly the same logic instead of a second, drifting copy.
 // Every tool here reads chrome.storage.local fresh on each call - there is no
 // module-level cache - so it's safe to call from any page.
-import { getResults, updateResultDraft, computeCompanyDeterministicPreScore, bucketCompanyScore, getRelationshipMatcher } from "./storage.js";
+import { getResults, updateResultDraft, computeCompanyDeterministicPreScore, bucketCompanyScore, getRelationshipMatcher, getNotes, normalizeCompanyName, contactKeyFor } from "./storage.js";
+import { notesAbout, notesPromptSection } from "./notes.js";
 import { relationshipOf } from "./company-identity.js";
 import { relationshipPromptLine } from "./relationships.js";
 import { sortResultsByRelevance } from "./ranking.js";
@@ -226,7 +227,24 @@ export function buildCustomerSystemPrompt({ companyContext, customerPersona, out
 // prompt instead of relying on the list_leads/get_lead_details tools -
 // avoids a tool round-trip for a conversation that's already scoped to one
 // specific, known lead.
-export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage }) {
+// 1.2.4 Notes (R6, NOTES_DESIGN.md 8): for the Sales Mentor on a lead and for a message draft - the notes on the lead,
+// on its contact (the post's author) and on its account, the latest ten, as a block for the prompt ("" when there are
+// none). These two prompts get no other account data, so this is the first text about the account they are given
+// (decision D6; Help and the privacy text say so).
+export async function leadNotesSection(lead) {
+  if (!lead) return "";
+  try {
+    const isJob = lead.type === "job";
+    return notesPromptSection(notesAbout(await getNotes(), [
+      { on: "lead", key: lead.key, about: isJob ? "this job ad" : "this post" },
+      { on: "contact", key: isJob ? null : contactKeyFor(lead.company, lead.author), about: lead.author },
+      { on: "account", key: lead.company ? normalizeCompanyName(lead.company) : null, about: `the account ${lead.company}` },
+    ]));
+  } catch { return ""; }
+}
+
+// `notes` (here and in the builders below): a ready block from notesPromptSection, or nothing.
+export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContext, idealCustomerProfile, outputLanguage, notes = "" }) {
   const isJob = lead.type === "job";
   const leadBlock = isJob
     ? `Job listing: "${lead.title || "Untitled role"}" at ${lead.company || "unknown company"}` +
@@ -243,7 +261,7 @@ export function buildLeadScopedMentorPrompt(lead, { mentorPersona, companyContex
     `now. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
-    `\nThe lead being discussed:\n${leadBlock}\n${relLine ? relLine + "\n" : ""}\n` +
+    `\nThe lead being discussed:\n${leadBlock}\n${relLine ? relLine + "\n" : ""}${notes || ""}\n` +
     "Answer questions about this specific lead directly using the details above - never invent facts beyond " +
     "what's given. When asked to draft or write a message for this lead, use the draft_message tool (with " +
     `this lead's key: "${lead.key}") rather than writing one yourself directly, so it goes through the same ` +
@@ -310,7 +328,7 @@ function accountOverviewBlock(company) {
   return lines.join("\n");
 }
 
-export function buildAccountScopedMentorPrompt(company, { mentorPersona, companyContext, idealCustomerProfile, userProfile, outputLanguage }) {
+export function buildAccountScopedMentorPrompt(company, { mentorPersona, companyContext, idealCustomerProfile, userProfile, outputLanguage, notes = "" }) {
   return (
     `You are acting as a sales mentor to a salesperson, discussing ONE specific Target Account they're looking ` +
     `at right now - real, externally-researched company data, not a scanned lead. Your persona: ` +
@@ -318,7 +336,7 @@ export function buildAccountScopedMentorPrompt(company, { mentorPersona, company
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
     userProfileBlock(userProfile) +
-    `\nThe account being discussed:\n${accountOverviewBlock(company)}\n\n` +
+    `\nThe account being discussed:\n${accountOverviewBlock(company)}\n${notes || ""}\n` +
     "Answer questions about this account directly using the details above - never invent facts beyond what's " +
     "given. Ground advice in the company's actual initiatives/priority where relevant, not generic advice. " +
     "Be direct and specific. Keep answers focused.\n" +
@@ -356,7 +374,7 @@ function contactOverviewBlock(contact) {
   return lines.join("\n");
 }
 
-export function buildContactScopedMentorPrompt(contact, account, { mentorPersona, companyContext, idealCustomerProfile, userProfile, outputLanguage }) {
+export function buildContactScopedMentorPrompt(contact, account, { mentorPersona, companyContext, idealCustomerProfile, userProfile, outputLanguage, notes = "" }) {
   return (
     `You are acting as a sales mentor to a salesperson, discussing ONE specific Target Contact they're looking ` +
     `at right now. Your persona: ${(mentorPersona || "").trim() || "a senior, approachable B2B sales expert"}.` +
@@ -365,6 +383,7 @@ export function buildContactScopedMentorPrompt(contact, account, { mentorPersona
     userProfileBlock(userProfile) +
     `\nThe contact being discussed:\n${contactOverviewBlock(contact)}\n` +
     (account ? `\nTheir company (${account.company}):\n${accountOverviewBlock(account)}\n` : "") +
+    (notes || "") +
     "\nAnswer questions about this contact directly using the details above - never invent facts beyond " +
     "what's given. When drafting or suggesting outreach, ground it in the company's own real initiative(s) " +
     "where one is given (e.g. \"I read that you're doing a project to automate your customer support...\"), " +
@@ -467,7 +486,7 @@ export function pickDefaultTemplateId(result, messageTemplates) {
   return findTemplateId("warm-content");
 }
 
-function buildDraftPrompt(result, template, { valueAddOffers, companyContext, userProfile, outputLanguage }) {
+function buildDraftPrompt(result, template, { valueAddOffers, companyContext, userProfile, outputLanguage, notes = "" }) {
   // 1.2.3 (R5.2): an opener to an existing customer / partner is not a cold introduction.
   const relLine = relationshipPromptLine(result.relationship, result.company, "the salesperson's company");
   const context = `Name: ${result.author}\nHeadline: ${result.headline || "n/a"}\nTheir post: "${result.snippet || ""}"` +
@@ -489,7 +508,7 @@ ${companyLine ? "\n" + companyLine + "\n" : ""}${userProfileBlock(userProfile)}
 ${context}
 Matched on: ${topicNames}
 ${connectionLine}
-
+${notes || ""}
 Style instructions for this situation:
 ${template.instructions}
 
@@ -532,7 +551,7 @@ export async function generateDraft(result, templateId, settings) {
     body: JSON.stringify({
       model: DRAFT_MODEL,
       max_tokens: 300,
-      messages: [{ role: "user", content: buildDraftPrompt(await withLeadRelationship(result), template, settings) }],
+      messages: [{ role: "user", content: buildDraftPrompt(await withLeadRelationship(result), template, { ...settings, notes: await leadNotesSection(result) }) }],
     }),
   }, 45000);
 

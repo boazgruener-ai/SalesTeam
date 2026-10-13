@@ -3011,6 +3011,16 @@ def test_notes(ctx):
           e("""var many = []; for (var i = 0; i < 14; i++) many.push(noteEntry('account', 'k', new Array(801).join('b'), null, D(1) + i));
                var lines = notesPromptBlock(many).split('\\n'); [lines.length, lines[1].length, notesPromptBlock([]) === '', notesPromptBlock([del]) === ''].join()"""),
           "11,514,true,true")
+    check("notes: for a prompt about a lead - the notes on the lead, its contact and its account, marked, newest first",
+          e("""notesAbout(NOTES, [{ on: 'lead', key: 'https://x/post-1', about: 'this post' }, { on: 'contact', key: 'acme ag::anna muster', about: 'Anna Muster' },
+                 { on: 'account', key: 'acme ag' }, { on: 'contact', key: null, about: 'nobody' }])
+               .map(function (n) { return n.id + ':' + (n.about || '-'); }).join('|')"""),
+          "n4:-|n3:Anna Muster|n2:this post|n1:-")
+    check("notes: the prompt section - the block and how to use it; nothing at all without notes",
+          e("""var sec = notesPromptSection(notesAbout(NOTES, [{ on: 'lead', key: 'https://x/post-1', about: 'this post' }]));
+               [sec.indexOf('\\nNotes written by the sales team (newest first):\\n- 2026-10-03 Boaz (on this post): Liked and commented.\\nThese notes say') === 0,
+                sec.charAt(sec.length - 1) === '\\n', notesPromptSection([]) === '', notesPromptSection(notesAbout(NOTES, [{ on: 'lead', key: 'none' }])) === ''].join()"""),
+          "true,true,true,true")
     check("notes: export lines - every note whole", e("notesExportLines([NOTES.n4, many[0]]).map(function (l) { return l.length; }).join()"), "71,812")
 
 
