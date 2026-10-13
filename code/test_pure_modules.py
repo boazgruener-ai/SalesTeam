@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2868,6 +2868,7 @@ def main():
     test_person_identity(ctx)
     test_revenue_units(ctx)
     test_country_names(ctx)
+    test_notes(ctx)
 
     print()
     for f in _failures:
@@ -2919,6 +2920,81 @@ def test_country_names(ctx):
         ctx.eval('webCitationFor({ hqCountry: { value: "Schweiz", url: "https://example.com/a" } }, [], "globalHqCountry", "Switzerland").cited'),
         True,
     )
+
+
+def test_notes(ctx):
+    """1.2.4 Notes, build step 0 (NOTES_DESIGN.md 3.2): the rules about a note."""
+    e = ctx.eval
+    e("""
+      var D = function (day, h) { return new Date(2026, 9, day, h || 12).getTime(); };
+      var BOAZ = { memberId: 'm-1', name: 'Boaz' }, EDGE = { memberId: 'm-2', name: 'Edge Test' };
+      var NOTES = {
+        n1: noteEntry('account', 'acme ag', 'First call, spoke to the assistant.', BOAZ, D(1)),
+        n2: noteEntry('lead', 'https://x/post-1', 'Liked and commented.', BOAZ, D(3)),
+        n3: noteEntry('contact', 'acme ag::anna muster', 'I messaged her and sent our product brochure.', EDGE, D(10)),
+        n4: noteEntry('account', 'acme ag', 'Call with Anna Muster.\\nBudget is frozen until January.', BOAZ, D(13)),
+        n5: noteEntry('account', 'beta sa', 'Other account.', null, D(12)),
+        n6: noteEntry('contact', 'acme agency::bob', 'Not Acme AG.', BOAZ, D(14)),
+        n7: noteEntry('lead', 'https://x/post-9', 'A lead without an account.', BOAZ, D(15)),
+      };
+      var ids = function (list) { return list.map(function (n) { return n.id; }).join(); };
+    """)
+    check("notes: a new note - trimmed, signed, nothing else set",
+          e("JSON.stringify(noteEntry('account', 'acme ag', '  Hello\\r\\nthere  ', BOAZ, 5))"),
+          '{"on":"account","key":"acme ag","text":"Hello\\nthere","at":5,"by":"m-1","byName":"Boaz","editedAt":null,"deletedAt":null,"deletedBy":null}')
+    check("notes: without a team no author is stored", e("var s = noteEntry('account', 'acme ag', 'x', null, 5); [s.by, s.byName].join()"), ",")
+    check("notes: cut at 2,000 characters", e("noteEntry('account', 'acme ag', new Array(2502).join('a'), null, 5).text.length"), 2000)
+    check("notes: nothing to keep - empty text, unknown subject, no key",
+          e("[noteEntry('account', 'acme ag', '  \\n ', null, 5), noteEntry('initiative', 'k', 'x', null, 5), noteEntry('lead', '', 'x', null, 5)].join()"), ",,")
+    check("notes: one subject's notes, newest first", e("ids(notesOn(NOTES, 'account', 'acme ag'))"), "n4,n1")
+    check("notes: the contact page shows only the contact's own", e("ids(notesOn(NOTES, 'contact', 'acme ag::anna muster'))"), "n3")
+    check("notes: the account timeline - account, its contacts, its leads; not a similar account name",
+          e("ids(accountTimeline(NOTES, 'acme ag', ['https://x/post-1']))"), "n4,n3,n2,n1")
+    check("notes: the timeline without leads given", e("ids(accountTimeline(NOTES, 'acme ag'))"), "n4,n3,n1")
+    check("notes: written in the same millisecond - both kept, in a fixed order",
+          e("ids(liveNotes({ b: noteEntry('account', 'k', 'two', EDGE, 7), a: noteEntry('account', 'k', 'one', BOAZ, 7) }))"), "a,b")
+    check("notes: last note per account (R5.3) - a lead counts for its account",
+          e("var la = lastNoteByAccount(NOTES, { 'https://x/post-1': 'beta sa' }); [la['acme ag'].id, la['beta sa'].id, la['acme agency'].id, Object.keys(la).length].join()"), "n4,n5,n6,3")
+    check("notes: last note per contact and per lead",
+          e("[lastNoteByContact(NOTES)['acme ag::anna muster'].id, lastNoteByLead(NOTES)['https://x/post-1'].id, Object.keys(lastNoteByLead(NOTES)).length].join()"), "n3,n2,2")
+    # editing and deleting
+    check("notes: an edit keeps the date and is marked", e("var ed = editedNote(NOTES.n1, ' Spoke to Mr. Keller. ', D(20)); [ed.at === D(1), ed.editedAt === D(20), ed.text].join('|')"), "true|true|Spoke to Mr. Keller.")
+    check("notes: an edit without a change, or to nothing, changes nothing", e("[editedNote(NOTES.n1, NOTES.n1.text + ' ', D(20)) === NOTES.n1, editedNote(NOTES.n1, '  ', D(20)) === NOTES.n1].join()"), "true,true")
+    check("notes: a deleted note stays as an entry, without its text",
+          e("var del = deletedNote(NOTES.n1, 'm-9', D(21)); [del.text, del.deletedAt === D(21), del.deletedBy, del.key].join('|')"), "|true|m-9|acme ag")
+    check("notes: a deleted note is in no list", e("var N2 = Object.assign({}, NOTES, { n4: deletedNote(NOTES.n4, 'm-1', D(21)) }); [ids(notesOn(N2, 'account', 'acme ag')), lastNoteByAccount(N2)['acme ag'].id].join('|')"), "n1|n3")
+    check("notes: a colleague's later edit of a deleted note does not bring it back (D2)",
+          e("ids(notesOn(Object.assign({}, NOTES, { n4: Object.assign({}, deletedNote(NOTES.n4, 'm-1', D(21)), { text: 'edited later', editedAt: D(22) }) }), 'account', 'acme ag'))"), "n1")
+    # R3
+    check("notes: only the author edits", e("[mayEditNote(NOTES.n3, 'm-2'), mayEditNote(NOTES.n3, 'm-1'), mayEditNote(NOTES.n3, null)].join()"), "true,false,true")
+    check("notes: the author, the Team Lead and the deputy delete",
+          e("[mayDeleteNote(NOTES.n3, 'm-2'), mayDeleteNote(NOTES.n3, 'm-1'), mayDeleteNote(NOTES.n3, 'm-1', true), mayDeleteNote(NOTES.n3, null)].join()"), "true,false,true,true")
+    check("notes: a note from before the team has no author - in a team nobody edits it, only the Team Lead deletes it",
+          e("[mayEditNote(NOTES.n5, 'm-2'), mayDeleteNote(NOTES.n5, 'm-2'), mayDeleteNote(NOTES.n5, 'm-2', true), mayEditNote(NOTES.n5, null), mayDeleteNote(NOTES.n5, null)].join()"), "false,false,true,true,true")
+    check("notes: nothing is offered on a deleted note", e("[mayEditNote(del, 'm-1'), mayDeleteNote(del, 'm-1', true)].join()"), "false,false")
+    # merges
+    check("notes: merging two accounts moves the account's notes and its contacts' notes",
+          e("""var rk = rekeyNotes(NOTES, [{ on: 'account', from: 'acme ag', to: 'acme group' }]);
+               [rk.moved, rk.notes.n1.key, rk.notes.n3.key, rk.notes.n6.key, rk.notes.n2.key, NOTES.n1.key].join('|')"""),
+          "3|acme group|acme group::anna muster|acme agency::bob|https://x/post-1|acme ag")
+    check("notes: merging two contacts; a contact move given by name wins over its account's move",
+          e("""var rc = rekeyNotes(NOTES, [{ on: 'account', from: 'acme ag', to: 'acme group' }, { on: 'contact', from: 'acme ag::anna muster', to: 'acme group::anna m muster' }]);
+               [rc.notes.n3.key, rekeyNotes(NOTES, [{ on: 'contact', from: 'acme ag::anna muster', to: 'acme ag::muster' }]).moved, rekeyNotes(NOTES, []).moved].join('|')"""),
+          "acme group::anna m muster|1|0")
+    # shown, prompt, export
+    check("notes: the line in a team (R1.5)", e("noteLine(NOTES.n1, true)"), "Oct 1, 2026 — Boaz: First call, spoke to the assistant.")
+    check("notes: the line without a team leaves the author out", e("[noteLine(NOTES.n1, false), noteLine(NOTES.n5, true)].join('|')"),
+          "Oct 1, 2026 — First call, spoke to the assistant.|Oct 12, 2026 — Other account.")
+    check("notes: edited, and marked with what it is about", e("noteLine(Object.assign({}, ed, { about: 'Anna Muster' }), true)"), "Oct 1, 2026 (edited) — Boaz · on Anna Muster: Spoke to Mr. Keller.")
+    check("notes: the prompt block - newest first, one line each",
+          e("notesPromptBlock([NOTES.n4, Object.assign({}, NOTES.n3, { about: 'Anna Muster' }), NOTES.n5])"),
+          "Notes written by the sales team (newest first):\n- 2026-10-13 Boaz: Call with Anna Muster. Budget is frozen until January.\n"
+          "- 2026-10-10 Edge Test (on Anna Muster): I messaged her and sent our product brochure.\n- 2026-10-12: Other account.")
+    check("notes: the prompt block - ten at most, each cut at 500 characters, nothing for no notes",
+          e("""var many = []; for (var i = 0; i < 14; i++) many.push(noteEntry('account', 'k', new Array(801).join('b'), null, D(1) + i));
+               var lines = notesPromptBlock(many).split('\\n'); [lines.length, lines[1].length, notesPromptBlock([]) === '', notesPromptBlock([del]) === ''].join()"""),
+          "11,514,true,true")
+    check("notes: export lines - every note whole", e("notesExportLines([NOTES.n4, many[0]]).map(function (l) { return l.length; }).join()"), "71,812")
 
 
 def test_team_invites(ctx):

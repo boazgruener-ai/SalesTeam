@@ -101,6 +101,9 @@ export function teamLogEntries(records, state, normalize, priors = null) {
   }
   for (const r of records || []) {
     if (!r || SKIPPED_OPS.has(r.op)) continue;
+    // 1.2.4 Notes (R8.2): a note's text is never repeated in the log. Its own lines ("added a note on ...") come with
+    // build step 5; until then a note writes no line.
+    if (r.e === "account" && String(r.id).startsWith("note:")) continue;
     const m = stampMember(r.t);
     const at = stampWall(r.t);
     if (!m || !at) continue;

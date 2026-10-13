@@ -2,6 +2,8 @@
 import { pickTeamFolder, getTeamFolder, teamFolderPermission, requestTeamFolderPermission } from "./team-folder.js";
 import { classifyStorageKey } from "./team-keys.js";
 import { backupNow } from "./backup-restore.js";
+import { getNotes, addNote, editNote, deleteNote, normalizeCompanyName } from "./storage.js";
+import { noteLine } from "./notes.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id, text) => { $(id).textContent = typeof text === "string" ? text : JSON.stringify(text, null, 2); };
@@ -150,6 +152,50 @@ $("measure-groups").addEventListener("click", async () => {
     ].join("\n"));
   } catch (err) { show("groups-out", `Could not measure: ${err.message}`); }
 });
+
+// 1.2.4 Notes, build step 0: add, edit and delete notes on one account through the real storage functions, to measure
+// with two browsers what the harness checks (NOTES_DESIGN.md 11). Replaced by the Notes section in step 1.
+let notesShown = 0;
+async function showNotes() {
+  // Two calls can overlap (the button's own refresh and the storage change it caused): only the latest one draws.
+  const turn = ++notesShown;
+  const key = normalizeCompanyName($("note-account").value);
+  const box = $("notes-list");
+  if (!key) { box.textContent = ""; return; }
+  const inTeam = Boolean((await chrome.storage.local.get("teamMembership")).teamMembership);
+  const mine = Object.entries(await getNotes()).filter(([, n]) => n && n.on === "account" && n.key === key).sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+  if (turn !== notesShown) return;
+  box.textContent = "";
+  const table = document.createElement("table");
+  for (const [id, n] of mine) {
+    const tr = table.insertRow();
+    tr.insertCell().textContent = n.deletedAt ? `DELETED ${time(n.deletedAt)} - written ${time(n.at)} by ${n.byName || "-"}` : `${noteLine(n, inTeam)}   [${time(n.at)}]`;
+    const actions = tr.insertCell();
+    if (n.deletedAt) continue;
+    for (const [label, run] of [
+      ["Edit", () => { const text = prompt("Edit the note", n.text); return text === null ? null : editNote(id, text); }],
+      ["Delete", () => deleteNote(id)],
+    ]) {
+      const b = document.createElement("button");
+      b.className = "secondary";
+      b.textContent = label;
+      b.addEventListener("click", async () => { const r = await run(); if (r) show("notes-out", r); await showNotes(); });
+      actions.append(b);
+    }
+  }
+  if (mine.length) box.append(table);
+  else box.textContent = `No notes stored on "${key}".`;
+}
+
+$("note-add").addEventListener("click", async () => {
+  const key = normalizeCompanyName($("note-account").value);
+  if (!key) { show("notes-out", "Type the company name first."); return; }
+  show("notes-out", await addNote("account", key, $("note-text").value));
+  $("note-text").value = "";
+  await showNotes();
+});
+$("note-show").addEventListener("click", showNotes);
+chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && changes.notes) showNotes(); });
 
 $("keys").addEventListener("click", async () => {
   const all = await chrome.storage.local.get(null);

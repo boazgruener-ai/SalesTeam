@@ -164,12 +164,16 @@ def strip_module(name):
 class Member:
     """One browser profile: its own context, storage, timers and IndexedDB."""
 
-    def __init__(self, label, now_offset=0):
+    def __init__(self, label, now_offset=0, before_notes=False):
         self.label = label
         self.ctx = MiniRacer()
         self.ctx.eval(FAKES)
         self.ctx.eval("NOW += %d;" % now_offset)
         self.ctx.eval("\n".join("// ===== %s =====\n%s" % (n, strip_module(n)) for n in REAL))
+        if before_notes:
+            # A colleague who has not updated yet (1.2.3): the same sync layer, but "notes" is not a shared key.
+            self.ctx.eval("TEAM_MAP_KEYS.splice(TEAM_MAP_KEYS.findIndex(function (m) { return m.key === 'notes'; }), 1);"
+                          "TEAM_SHARED_KEYS.splice(TEAM_SHARED_KEYS.indexOf('notes'), 1);")
         self.ctx.eval("initTeamSync();")
         self.settle()
 
@@ -1201,6 +1205,110 @@ def main():
     r, folder = pia.sync(folder)
     r, folder = pia.call("getClaimStatus('beta ag')", folder)
     check("short hold: a minute without a touch frees it", r.get("state"), "free")
+
+    # 1.2.4 Notes, build step 0 (NOTES_DESIGN.md 3.3, 3.4, 5): every note is a row of its own.
+    pia_id = pia.status()["me"]["memberId"]
+
+    def note(on, key, text, by, name, at):
+        return {"on": on, "key": key, "text": text, "at": at, "by": by, "byName": name, "editedAt": None, "deletedAt": None, "deletedBy": None}
+
+    def put_note(m, note_id, value):
+        notes = m.local("notes") or {}
+        notes[note_id] = value
+        m.set_local({"notes": notes})
+
+    def note_changes(member_id, note_id):
+        return [c for k, v in sorted(folder.items()) if k.startswith("members/%s/changes/" % member_id) and v
+                for c in json.loads(v)["changes"] if c.get("id") == "note:%s" % note_id]
+
+    def all_round(folder, members):
+        for m in list(members) * 2:
+            r, folder = m.sync(folder)
+        return folder
+
+    def apart(m, member_id, ms, seen):
+        # Time passes on m's PC while it sees only the folder as it was (`seen`): OneDrive has not brought the
+        # colleague's newest file yet. What m writes meanwhile still reaches the real folder.
+        wrote = wait(m, ms, seen)
+        folder.update({k: v for k, v in wrote.items() if k.startswith("members/%s/" % member_id)})
+
+    # A. Two colleagues write a note on the same account at the same moment: both are kept (R1.4).
+    put_note(pia, "n-pia", note("account", "acme ag", "Pia called.", pia_id, "Pia", 1000))
+    put_note(quin, "n-quin", note("account", "acme ag", "Quin wrote.", quin_id, "Quin", 1000))
+    folder = all_round(folder, (pia, quin))
+    check("notes: two notes at the same moment - both on both PCs",
+          (sorted(pia.local("notes")), sorted(quin.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-pia", "n-quin"], ["n-pia", "n-quin"], True))
+    check("notes: a note travels as its own row, filed under the account type",
+          [(c.get("e"), c.get("op"), c["f"].get("text")) for c in note_changes(pia_id, "n-pia")], [("account", "set", "Pia called.")])
+    check("notes: no line in the team log yet, and never the text (R8.2)",
+          ["Pia called." in json.dumps(m.local("teamLog") or []) or "note:" in json.dumps(m.local("teamLog") or []) for m in (pia, quin)], [False, False])
+
+    # B. A delete against a colleague's later edit: the note stays deleted on every PC (D2).
+    gone = dict(pia.local("notes")["n-pia"], text="", deletedAt=2000, deletedBy=pia_id)
+    put_note(pia, "n-pia", gone)
+    seen = dict(folder)
+    r, folder = pia.sync(folder)                       # the delete is out; Quin has not read it
+    apart(quin, quin_id, 120000, seen)
+    check("notes: Quin has not read the delete yet", quin.local("notes")["n-pia"]["deletedAt"], None)
+    put_note(quin, "n-pia", dict(note("account", "acme ag", "Edited later.", pia_id, "Pia", 1000), editedAt=3000))
+    folder = all_round(folder, (quin, pia))
+    check("notes: deleted, then edited later by a colleague - still deleted on both PCs",
+          [(m.local("notes")["n-pia"]["deletedAt"], m.local("notes")["n-pia"]["deletedBy"]) for m in (pia, quin)], [(2000, pia_id), (2000, pia_id)])
+    # ... and the other way round: the edit is made first, the delete later.
+    put_note(quin, "n-quin", dict(quin.local("notes")["n-quin"], text="Quin edited.", editedAt=3000))
+    seen = dict(folder)
+    r, folder = quin.sync(folder)
+    apart(pia, pia_id, 400000, seen)
+    check("notes: Pia has not read the edit yet", pia.local("notes")["n-quin"]["text"], "Quin wrote.")
+    put_note(pia, "n-quin", dict(note("account", "acme ag", "", quin_id, "Quin", 1000), deletedAt=4000, deletedBy=pia_id))
+    folder = all_round(folder, (pia, quin))
+    check("notes: edited, then deleted later - deleted and without its text on both PCs",
+          [(m.local("notes")["n-quin"]["deletedAt"], m.local("notes")["n-quin"]["text"]) for m in (pia, quin)], [(4000, ""), (4000, "")])
+    check("notes: the entries stay (a removed entry could come back)", (sorted(pia.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-pia", "n-quin"], True))
+
+    # C. A note goes out while the account is held - the holder's and a colleague's (R4.4).
+    r, folder = quin.call("claimAccount('beta ag')", folder)
+    check("notes: Quin takes Beta for editing", r.get("ok"), True)
+    put_note(quin, "n-holder", note("account", "beta ag", "Holder's note.", quin_id, "Quin", 5000))
+    r, folder = quin.sync(folder)
+    check("notes: the holder's note is sent at once", len(note_changes(quin_id, "n-holder")), 1)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("notes: Pia sees Quin editing Beta", r.get("state"), "other")
+    put_note(pia, "n-colleague", note("account", "beta ag", "Written while Quin edits.", pia_id, "Pia", 6000))
+    r, folder = pia.sync(folder)
+    check("notes: a colleague's note is sent while the account is held", len(note_changes(pia_id, "n-colleague")), 1)
+    r, folder = quin.sync(folder)
+    r, folder = quin.call("getClaimStatus('beta ag')", folder)
+    check("notes: ... it arrives on the holder's PC, who still holds the account",
+          ((quin.local("notes").get("n-colleague") or {}).get("text"), r.get("state")), ("Written while Quin edits.", "mine"))
+    r, folder = quin.call("releaseAccount('beta ag')", folder)
+    folder = all_round(folder, (quin, pia))
+
+    # D. A colleague who has not updated yet (still on 1.2.3) is not disturbed, and gets the notes after updating.
+    inv, folder = invite(pia, "Rex", folder)
+    rex = Member("rex", now_offset=11, before_notes=True)
+    rex.set_local({"notes": {"n-own": note("account", "acme ag", "Not a shared key on this build.", None, None, 1)}})
+    r, folder = rex.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    check("notes, older build: joins", r.get("ok"), True)
+    folder = all_round(folder, (rex, pia, quin))
+    rex_id = rex.status()["me"]["memberId"]
+    x = rex.local("targetAccountExtras"); x["acme ag"]["status"] = "Responded"; rex.set_local({"targetAccountExtras": x})
+    put_note(pia, "n-after", note("account", "acme ag", "Written after Rex joined.", pia_id, "Pia", 7000))
+    folder = all_round(folder, (rex, pia, quin, rex))
+    check("notes, older build: syncs without an error", (rex.status().get("lastError"), r.get("ok")), (None, True))
+    check("notes, older build: its own change still reaches the team", ((pia.local("targetAccountExtras") or {}).get("acme ag") or {}).get("status"), "Responded")
+    check("notes, older build: it writes no note rows, and its own data is untouched",
+          ([k for k in folder if k.startswith("members/%s/changes/" % rex_id) and "note:" in folder[k]], sorted(rex.local("notes"))), ([], ["n-own"]))
+    check("notes, older build: the team's notes are all still there",
+          (sorted(pia.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-after", "n-colleague", "n-holder", "n-pia", "n-quin"], True))
+    # Rex updates: the notes read by the older build are written to this PC once; the note Rex had goes to the team.
+    rex.e("TEAM_MAP_KEYS.push({ key: 'notes', e: 'account', prefix: 'note:' }); TEAM_SHARED_KEYS.push('notes'); mem.meta.newKeysV = 0;")
+    folder = all_round(folder, (rex, pia, quin))
+    check("notes, after updating: the colleague has every note, and the team has theirs",
+          (sorted(rex.local("notes")), same(rex.local("notes"), pia.local("notes")), same(pia.local("notes"), quin.local("notes"))),
+          (["n-after", "n-colleague", "n-holder", "n-own", "n-pia", "n-quin"], True, True))
+    check("notes, after updating: a deleted note is still deleted there", rex.local("notes")["n-pia"]["deletedAt"], 2000)
 
     print()
     for f in _failures:

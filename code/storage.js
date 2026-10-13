@@ -15,6 +15,7 @@ import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, 
 import { createPersonIndex, contactDuplicatePairs, contactPairKey, fullerFirst, linkedinProfileSlug } from "./person-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 import { relationshipOf } from "./company-identity.js";
+import { noteEntry, editedNote, deletedNote, isLiveNote, mayEditNote, mayDeleteNote } from "./notes.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
 export { RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS, relationshipsMovedText };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
@@ -5026,6 +5027,64 @@ export async function saveTargetContactExtra(contactKey, patch) {
   extras[contactKey] = { ...emptyExtra(), ...(extras[contactKey] || {}), ...patch };
   await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: extras });
 }
+
+// --------------------------------------------------------------------------
+// Notes on accounts, contacts and leads (1.2.4, NOTES_DESIGN.md section 3)
+// --------------------------------------------------------------------------
+
+// One object keyed by the note's id; the rules are in notes.js. In a team every note is a row of its own
+// (team-keys.js), so the writers run inside the account write lock like every other read-modify-write of a shared
+// map - the sync layer writes colleagues' notes into the same object under that lock.
+const NOTES_KEY = "notes";
+
+export async function getNotes() {
+  const data = await chrome.storage.local.get(NOTES_KEY);
+  return data[NOTES_KEY] || {};
+}
+
+async function noteWriter() {
+  const got = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const m = got.teamMembership || null;
+  return { me: m?.memberId || null, author: m ? { memberId: m.memberId, name: m.name } : null, leadRights: leadRightsOf(m, got.teamAccountStates) };
+}
+
+// on: "account" | "contact" | "lead"; key: the account, contact or lead key. -> { ok, id, note } or { ok: false, reason }.
+export async function addNote(on, key, text) { return withAccountWriteLock(async () => {
+  const { author } = await noteWriter();
+  const note = noteEntry(on, key, text, author, Date.now());
+  if (!note) return { ok: false, reason: "empty" };
+  const notes = await getNotes();
+  const id = crypto.randomUUID(); // random and made once, so two PCs can never make the same one
+  notes[id] = note;
+  await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return { ok: true, id, note };
+}); }
+
+// R3.1: only the author. reason: "missing" (gone or deleted meanwhile), "not-yours", "empty".
+export async function editNote(id, text) { return withAccountWriteLock(async () => {
+  const { me } = await noteWriter();
+  const notes = await getNotes();
+  const note = notes[id];
+  if (!isLiveNote(note)) return { ok: false, reason: "missing" };
+  if (!mayEditNote(note, me)) return { ok: false, reason: "not-yours" };
+  const next = editedNote(note, text, Date.now());
+  if (next === note) return { ok: Boolean(String(text ?? "").trim()), reason: String(text ?? "").trim() ? null : "empty", id, note };
+  notes[id] = next;
+  await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return { ok: true, id, note: next };
+}); }
+
+// R3.1-R3.2: the author, the Team Lead and the deputy. The entry stays, marked deleted (design 3.3).
+export async function deleteNote(id) { return withAccountWriteLock(async () => {
+  const { me, leadRights } = await noteWriter();
+  const notes = await getNotes();
+  const note = notes[id];
+  if (!isLiveNote(note)) return { ok: true, id }; // already deleted (a colleague was faster)
+  if (!mayDeleteNote(note, me, leadRights)) return { ok: false, reason: "not-yours" };
+  notes[id] = deletedNote(note, me, Date.now());
+  await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return { ok: true, id };
+}); }
 
 // --------------------------------------------------------------------------
 // Bulk edit of account/contact extras (2026-09-22)

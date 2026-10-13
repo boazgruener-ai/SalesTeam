@@ -36,6 +36,10 @@ export const TEAM_MAP_KEYS = [
   // old groups until the Team Lead decides.
   { key: "teamGroups", e: "setting", prefix: "teamGroups:" },
   { key: "teamGroupPins", e: "setting", prefix: "teamGroupPins:" },
+  // 1.2.4 Notes (NOTES_DESIGN.md 3.4): one row per note, so two colleagues' notes written in the same second are both
+  // kept. Filed under "account" - a colleague still on 1.2.3 stores the rows without showing them - with a prefix the
+  // edit hold does not look at (team-claims.js accountKeyOfChange), so a note is never held back.
+  { key: "notes", e: "account", prefix: "note:" },
 ];
 
 export const TEAM_WHOLE_KEYS = [

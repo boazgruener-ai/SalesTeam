@@ -72,6 +72,11 @@ const EDIT_DONE_RELEASE_MS = 10000;
 const EDIT_IDLE_RELEASE_MS = 60000;
 const NOT_IN_SYNC_AFTER_MS = 2 * 60000;
 const REREAD_VERSION = 1;
+// Keys that became shared after 1.2.3. A colleague who was still on the older build has read their rows into the
+// merged state without a home for them on the PC; after the update they are written to local storage once
+// (backfillNewKeys). Raise the version when a key is added.
+const NEW_KEYS_VERSION = 1;
+const NEW_SHARED_KEYS = ["notes"];
 
 let membership = null;      // { memberId, name, teamId, teamName, role, joinedAt } or null
 let membershipLoaded = false;
@@ -673,8 +678,26 @@ async function readRound(root, me) {
     if (update.files < MAX_FILES_PER_ROUND) {
       mem.meta.replaying = false; // caught up: from here on, what is read is news
       if (mem.meta.shadowLost) await seedShadow();
+      if ((mem.meta.newKeysV || 0) < NEW_KEYS_VERSION) await backfillNewKeys();
     }
   });
+}
+
+// Inside the queue, once the folder is read up to date. Rows of NEW_SHARED_KEYS that are in the merged state but not
+// known on this PC (read by the build before the update, which had nowhere to put them) are written to local storage.
+async function backfillNewKeys() {
+  const rks = new Set();
+  for (const [e, byId] of Object.entries(mem.state.entities || {})) {
+    for (const id of Object.keys(byId)) {
+      const target = rowTarget(e, id);
+      if (!target || !NEW_SHARED_KEYS.includes(target.key)) continue;
+      const rk = rowKey(e, id);
+      if (!mem.shadow[target.key]?.[rk] && projectRow(mem.state, e, id)) rks.add(rk);
+    }
+  }
+  if (rks.size) await writeBack(rks);
+  mem.meta.newKeysV = NEW_KEYS_VERSION;
+  await save([]);
 }
 
 // 1.2.2.27: one of my own change files holds no readable content (zero bytes after a crash or an interrupted OneDrive
