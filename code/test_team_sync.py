@@ -684,6 +684,10 @@ def main():
     group_notes = lambda m: [n["text"] for n in (m.local("teamNotices") or []) if n.get("kind") == "group"]
     check("groups: Eli is told that groups were set up, and which are his", group_notes(eli), ["Dora set up account groups. You now see the accounts of your group: Swiss."])
     check("groups: the Team Lead is told nothing", group_notes(dora), [])
+    # 1.2.3.5 (Boaz, 2026-10-13): "Eli joined the team. Add Eli to groups…" is done once Eli is in a group.
+    r, folder = dora.sync(folder)
+    check("joined: the 'add Eli to groups' sentence goes by itself once Eli is in a group",
+          [n["text"] for n in (dora.local("teamNotices") or []) if n.get("kind") == "joined"], [])
     eli.set_local({"teamGroups": {"g-ch": {"name": "Eli renamed it", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id]},
                                   "g-eli": {"name": "Eli's own", "kind": "named", "accounts": [], "members": [eli_id]}}})
     r, folder = eli.sync(folder)

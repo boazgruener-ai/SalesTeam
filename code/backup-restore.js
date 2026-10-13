@@ -394,7 +394,7 @@ export async function runAutoBackupIfDue({ force = false, gesture = false } = {}
       const result = await performBackup("daily", { gesture });
       if (!result.ok) {
         await chrome.storage.local.set({ [LAST_AUTO_BACKUP_KEY]: last });
-        showBanner("SalesTeam backups are paused: Chrome needs your OK to write to your backup folder again.", "Allow and back up now", async () => {
+        showBanner("SalesTeam backups are paused: your browser needs your OK to write to your backup folder again.", "Allow and back up now", async () => {
           const again = await performBackup("daily", { gesture: true });
           await chrome.storage.local.set({ [LAST_AUTO_BACKUP_KEY]: Date.now() });
           appendActivityLog({ actor: "extension", action: "auto_backup", label: `Automatic daily full backup saved to ${again.where}` });
@@ -694,7 +694,7 @@ async function renderBackupCard() {
   if (handle) {
     // Chrome only tells an extension a folder's NAME, never its full path; the path shown is what the user typed.
     folderText = prefs.folderPathNote ? `${prefs.folderPathNote}  (folder: ${handle.name})` : handle.name;
-    if ((await folderPermission(handle)) !== "granted") permissionNote = " - Chrome will ask for permission again; click \"Back up now\" or the banner to allow it.";
+    if ((await folderPermission(handle)) !== "granted") permissionNote = " - your browser will ask for permission again; click \"Back up now\" or the banner to allow it.";
   }
   el("backup-folder-name").textContent = folderText + permissionNote;
   el("backup-folder-path-row").hidden = !handle;
@@ -857,7 +857,7 @@ function wireBackupCard() {
         // Chrome only reveals the folder's NAME; ask once for the full path so the card can show which folder it is
         if (!same || !(await getBackupPrefs()).folderPathNote) {
           const typed = cleanPath(window.prompt(
-            `Chrome only tells SalesTeam the folder's name ("${handle.name}"), not where it is.\n\n` +
+            `Your browser only tells SalesTeam the folder's name ("${handle.name}"), not where it is.\n\n` +
             "To show the full path on this page, paste it here.\n" +
             "(In File Explorer: hold Shift, right-click the folder, choose \"Copy as path\".)\n\nLeave empty to skip.", ""));
           if (typed) await saveBackupPrefs({ ...(await getBackupPrefs()), folderPathNote: typed });

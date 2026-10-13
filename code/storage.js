@@ -1,7 +1,7 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
 import { leadRightsOf, mayImportFor, canSeeAccount } from "./team-groups.js";
-import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum, withWholeEmployees, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
+import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum, withWholeEmployees, wholeEmployees, HEADCOUNT_FIELDS, sameCountry } from "./value-normalize.js";
 import { joinProposalItems, applyJoinProposal, groupMoveItems, applyGroupMove } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, sizeBucketKey } from "./web-findings-arbitration.js";
@@ -6031,6 +6031,7 @@ function isDismissedWebFinding(dismissed, proposal) {
   if (!dismissed || !Object.prototype.hasOwnProperty.call(dismissed, proposal.key)) return false;
   const a = dismissed[proposal.key];
   const b = proposal.found;
+  if (proposal.key === "globalHqCountry" && sameCountry(a, b)) return true;
   if (typeof a === "number" || typeof b === "number") {
     const x = Number(a), y = Number(b);
     return Number.isFinite(x) && Number.isFinite(y) && x === y;

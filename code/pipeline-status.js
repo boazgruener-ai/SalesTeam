@@ -235,7 +235,7 @@ export async function pipelineStatusLine() {
   }
   if (idle && idle.reason === "nothing_left") return await nothingLeftText();
   if (idle && idle.reason === "no_backup") return "Waiting for today's backup before starting. It is made while a SalesTeam page is open.";
-  return "Automatic preparation is on. It starts on its own while Chrome is open.";
+  return "Automatic preparation is on. It starts on its own while your browser is open.";
 }
 
 // Build step 5 (W6, R12.7.3): the web research line, under the pie and in Settings > Automation. A zero

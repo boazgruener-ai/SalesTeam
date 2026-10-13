@@ -2867,6 +2867,7 @@ def main():
     test_whole_employees(ctx)
     test_person_identity(ctx)
     test_revenue_units(ctx)
+    test_country_names(ctx)
 
     print()
     for f in _failures:
@@ -2877,6 +2878,47 @@ def main():
         return 1
     print("%d checks passed." % _passes)
     return 0
+
+
+def test_country_names(ctx):
+    """1.2.3.4 (Boaz, 2026-10-13): "Schweiz" found against a current "Switzerland" is not a finding."""
+    check("German name", ctx.eval('canonicalCountryName("Schweiz")'), "Switzerland")
+    check("accents and case", ctx.eval('canonicalCountryName(" ÖSTERREICH ")'), "Austria")
+    check("punctuation", ctx.eval('canonicalCountryName("U.S.A.")'), "United States")
+    check("hyphen", ctx.eval('canonicalCountryName("Royaume-Uni")'), "United Kingdom")
+    check("English name gets its own spelling", ctx.eval('canonicalCountryName("switzerland")'), "Switzerland")
+    check("an unknown name is returned as it came", ctx.eval('canonicalCountryName(" Atlantis ")'), "Atlantis")
+    check("same country across languages", ctx.eval('sameCountry("Suisse", "Schweiz")'), True)
+    check("different countries", ctx.eval('sameCountry("Schweiz", "Deutschland")'), False)
+    check("two blanks are not a country", ctx.eval('sameCountry("", null)'), False)
+    # Every canonical name must be one the country picker lists, or location priorities and groups would miss it.
+    check(
+        "every canonical name is a picker country",
+        ctx.eval('Object.keys(COUNTRY_NAME_ALIASES).filter((c) => !Object.values(CONTINENT_COUNTRIES).flat().includes(c)).join(",")'),
+        "",
+    )
+    # No alias may point at two countries.
+    check(
+        "no alias is listed twice",
+        ctx.eval('(() => { var all = Object.values(COUNTRY_NAME_ALIASES).flat(); return all.filter((a, i) => all.indexOf(a) !== i).join(","); })()'),
+        "",
+    )
+    ctx.eval("""
+      var chSame = computeFindingProposals({ globalHqCountry: "Switzerland" }, {}, { hqCountry: "Schweiz" });
+      var chOther = computeFindingProposals({ globalHqCountry: "Switzerland" }, {}, { hqCountry: "Deutschland" });
+      var chNew = computeFindingProposals({}, {}, { hqCountry: { value: "Suisse", url: "https://example.com/a" } });
+      var chStored = computeFindingProposals({ globalHqCountry: "Schweiz" }, {}, { hqCountry: "Switzerland" });
+    """)
+    check("the same country in German is no finding", ctx.eval("chSame.length"), 0)
+    check("a current value in German against the English name is no finding", ctx.eval("chStored.length"), 0)
+    check("a different country is proposed under its English name", ctx.eval("chOther[0].found"), "Germany")
+    check("a new country is proposed under its English name", ctx.eval("chNew[0].found"), "Switzerland")
+    check("the research confirms the current country", ctx.eval('researchConfirms({ globalHqCountry: "Switzerland" }, {}, { hqCountry: "Schweiz" }).join(",")'), "globalHqCountry")
+    check(
+        "its source counts for the current country",
+        ctx.eval('webCitationFor({ hqCountry: { value: "Schweiz", url: "https://example.com/a" } }, [], "globalHqCountry", "Switzerland").cited'),
+        True,
+    )
 
 
 def test_team_invites(ctx):

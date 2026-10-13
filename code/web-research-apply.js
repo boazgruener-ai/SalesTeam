@@ -1,6 +1,6 @@
 // What a web research can propose for an account, and how it is compared with what the account already has.
 // Shared by the Target Accounts page and the background bulk research.
-import { parseLooseNumber, normalizeMoney, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
+import { parseLooseNumber, normalizeMoney, wholeEmployees, HEADCOUNT_FIELDS, canonicalCountryName, sameCountry } from "./value-normalize.js";
 
 // Revenue fields carry a currency in a SEPARATE field, so two figures can only be compared once
 // both are expressed in the same one. Without this, a stored 113,530,000,000 USD and a found
@@ -87,8 +87,13 @@ export function webCitationFor(data, sources, key, current) {
   return Array.isArray(sources) && sources.length > 0 ? { cited: true, link: null } : null;
 }
 
+// 1.2.3.4: a country is compared, and proposed, under its English name - "Schweiz" found against a current
+// "Switzerland" is no finding at all, and a different country found as "Deutschland" is proposed as "Germany".
+const COUNTRY_FIELDS = ["globalHqCountry"];
+
 function valuesAgree(f, found, current) {
   if (isBlankFinding(found) || isBlankFinding(current)) return false;
+  if (COUNTRY_FIELDS.includes(f.key)) return sameCountry(current, found);
   if (f.numeric) {
     const a = parseLooseNumber(current);
     const b = parseLooseNumber(found);
@@ -135,6 +140,7 @@ export function computeFindingProposals(company, overrides, data, money = null) 
     // in a way Number() throws away entirely.
     if (f.numeric) { found = parseLooseNumber(found); if (found === null) continue; } else found = String(found).trim();
     if (HEADCOUNT_FIELDS.includes(f.key)) found = wholeEmployees(found);
+    if (COUNTRY_FIELDS.includes(f.key)) found = canonicalCountryName(found);
     const current = effective[f.key];
     if (isBlankFinding(current)) { out.push({ key: f.key, label: f.label, found, current: null, state: "new" }); continue; }
     if (f.numeric) {
@@ -153,7 +159,7 @@ export function computeFindingProposals(company, overrides, data, money = null) 
       }
       const tolerance = converted ? CROSS_CURRENCY_TOLERANCE : SAME_CURRENCY_TOLERANCE;
       if (a !== null && Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1) <= tolerance) continue;
-    } else if (String(current).trim().toLowerCase() === String(found).toLowerCase()) continue;
+    } else if (COUNTRY_FIELDS.includes(f.key) ? sameCountry(current, found) : String(current).trim().toLowerCase() === String(found).toLowerCase()) continue;
     out.push({ key: f.key, label: f.label, found, current, state: "different" });
   }
   return out;

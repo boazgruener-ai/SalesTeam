@@ -18,7 +18,7 @@ export const PIPELINE_KICK_EVERY_MS = 10 * 60 * 1000;
 export const CONSENT_TITLE = "Keep my accounts ready automatically";
 export const CONSENT_TEXT =
   "SalesTeam links accounts to LinkedIn, finds their size and their key contacts, within your daily LinkedIn " +
-  "limit. You start it once; it carries on each time Chrome is open, in its own small window. It makes way " +
+  "limit. You start it once; it carries on each time your browser is open, in its own small window. It makes way " +
   "whenever you start something yourself, and you can turn it off at any time in Settings > Automation.";
 
 // Build step 5 (W3, W4): web research has its own consent and a monthly budget, separate from the

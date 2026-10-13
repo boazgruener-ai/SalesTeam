@@ -109,7 +109,7 @@ import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
-import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
+import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber, wholeEmployees, HEADCOUNT_FIELDS, sameCountry } from "./value-normalize.js";
 import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES, sizeBucketKey } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -462,6 +462,13 @@ window.addEventListener("message", (event) => {
 });
 
 document.getElementById("embedded-page-close-btn").addEventListener("click", hideEmbeddedPage);
+
+// 1.2.3.5: the page itself never scrolls - only #app-nav and #app-main do (target-accounts.css). An embedded page
+// going to its #section could still push <html>, <body> or #app-shell up under the top bar; put them back.
+document.addEventListener("scroll", (event) => {
+  const el = event.target === document ? document.scrollingElement : event.target;
+  if (el && el.scrollTop && [document.documentElement, document.body, document.getElementById("app-shell")].includes(el)) el.scrollTop = 0;
+}, true);
 document.getElementById("app-nav-brand-name").addEventListener("click", hideEmbeddedPage);
 
 // This page's OWN half of the embedding scheme above: when SOMETHING ELSE
@@ -1035,6 +1042,8 @@ function findingValuesMatch(a, b) {
 
 function isDismissedFinding(dismissed, proposal) {
   if (!dismissed || !Object.prototype.hasOwnProperty.call(dismissed, proposal.key)) return false;
+  // 1.2.3.4: "Schweiz" turned down before the finding was shown as "Switzerland" stays turned down.
+  if (proposal.key === "globalHqCountry" && sameCountry(dismissed[proposal.key], proposal.found)) return true;
   return findingValuesMatch(dismissed[proposal.key], proposal.found);
 }
 

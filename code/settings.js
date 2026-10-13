@@ -427,7 +427,7 @@ async function runCompanyDiscoveryDebug() {
     companyDiscoveryStatusEl.textContent = summary.ranAnything
       ? `Done. ${JSON.stringify({ stoppedByAbort: summary.stoppedByAbort, stoppedByTouchBudget: summary.stoppedByTouchBudget, reachedCap: summary.reachedCap })}` +
         (noContentScriptResponse
-          ? " WARNING: no page ever reported back - reload the extension in chrome://extensions and try again."
+          ? " WARNING: no page ever reported back - reload SalesTeam on your browser's Extensions page and try again."
           : "")
       : `Did not run: ${summary.reason}`;
     companyDiscoveryResultsEl.textContent = JSON.stringify(summary, null, 2);

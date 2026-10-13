@@ -890,3 +890,28 @@ textarea {
 .team-preview-list { margin: 4px 0 0; padding-left: 20px; columns: 2; font-size: 12px; }
 .team-dialog-actions { justify-content: flex-end; margin-top: 14px; }
 .team-group-dialog .team-primary-btn { background: #1155cc; border-color: #1155cc; color: #fff; }
+
+/* 1.2.3.6 (Boaz, 2026-10-13: the top bar covered the page title): the same layout as target-accounts.css - the top
+   bar puts a spacer above #app-shell, which was one full viewport tall by itself, so the page could be pushed up by
+   the bar's height (a jump to a #section did it). The body is one viewport tall and #app-shell, the menu and an
+   embedded page take what the spacer leaves. */
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+#app-shell {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
+#app-nav {
+  height: 100%;
+}
+#status-bar-spacer {
+  flex-shrink: 0;
+}
+#embedded-page-wrap {
+  height: 100%;
+}

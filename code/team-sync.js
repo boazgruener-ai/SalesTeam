@@ -473,12 +473,28 @@ async function noteInvitesAccepted(before) {
   const texts = [];
   for (const [id, inv] of Object.entries(mem.meta.invites || {})) {
     if (inviteState(before[id]) !== "open" || inviteState(inv) !== "accepted") continue;
-    texts.push(`${inv.name} joined the team. Add ${inv.name} to groups in Settings > Team (⋮ next to the name > Groups…).`);
+    texts.push({ member: inv.acceptedBy || null, text: `${inv.name} joined the team. Add ${inv.name} to groups in Settings > Team (⋮ next to the name > Groups…).` });
   }
   if (!texts.length) return;
   const now = Date.now();
   const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
-  await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((text) => ({ kind: "joined", text, at: now }))].slice(-50) });
+  await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((t) => ({ kind: "joined", ...t, at: now }))].slice(-50) });
+}
+
+// 1.2.3.5 (Boaz, 2026-10-13: the sentence was still in the top bar an hour after Edge Test was in a group): "Add Anna
+// to groups" is a to-do - once Anna is in a group it is done and goes by itself, without OK. A sentence stored before
+// 1.2.3.5 carries no member; it is matched through the accepted invitation of that name.
+async function dropDoneJoinedNotices() {
+  const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
+  if (!prev.some((n) => n.kind === "joined")) return;
+  const groups = patchValue("teamGroups", undefined, projectKey(mem.state, "teamGroups")) || {};
+  if (!groupsOn(groups)) return;
+  const index = groupIndex(groups, currentTeam());
+  const invites = Object.values(mem.meta.invites || {});
+  const memberOf = (n) => n.member || invites.find((i) => i && i.acceptedBy && String(n.text || "").startsWith(`${i.name} joined the team.`))?.acceptedBy;
+  const done = (n) => { const m = memberOf(n); return Boolean(m) && memberGroups(m, index).some((id) => id !== OTHER_GROUP); };
+  const next = prev.filter((n) => !(n.kind === "joined" && done(n)));
+  if (next.length !== prev.length) await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: next });
 }
 
 // Outside the queue (file reading is slow). Reads base files and every colleague's new change files in order.
@@ -644,6 +660,7 @@ async function readRound(root, me) {
     commitReadUpdate(update);
     await noteCreator();
     await noteInvitesAccepted(invitesBefore);
+    await dropDoneJoinedNotices();
     for (const [id, r] of Object.entries(update.removed || {})) if (r.by && r.by !== me) await logMemberRemoved(id, r.by, r.at);
     // My own records read back are already in the log (written when they went out).
     const logged = records.slice(update.baseRecords).filter((r) => stampMember(r && r.t) !== me);

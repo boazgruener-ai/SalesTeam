@@ -217,7 +217,7 @@ async function discoveryNextSteps() {
       "An account is Ready once SalesTeam has its LinkedIn company page and a contact.");
     lines.push(auto.enabled
       ? "Next: nothing to do - automatic preparation now looks these up, first on the web, then in a small LinkedIn " +
-        `window of its own. Keep Chrome open and logged in to LinkedIn; the top bar shows its progress. About ${minutes} ` +
+        `window of its own. Keep your browser open and logged in to LinkedIn; the top bar shows its progress. About ${minutes} ` +
         `minutes to the first ${MIN_READY_TO_SCAN} Ready accounts.`
       : "Next: turn on Automatic preparation in Settings > Automation - it looks up each account's LinkedIn page and " +
         "contacts, which makes accounts Ready.");
