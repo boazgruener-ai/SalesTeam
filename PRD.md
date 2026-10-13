@@ -2139,6 +2139,23 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 - **Tests** - test_pure_modules.py (996 checks: lead chain in any order, null facts, Other, pins, candidates) and test_team_sync.py (242 checks: hand-over, take-over after 30 days, a non-lead’s group record ignored, invitations, pinned move approved, disjoint shares per group, a zeroed file repaired).
 - **Not in 1.2.3** - a company-wide Admin role above the teams; sign-in with Microsoft; Setup and rules enforced in the merge (they keep the screen lock, D2); a reader skipping a damaged file whose writer never returns; “The team already has this company” on add, scan and import duplicates.
 
+### 6.27 Notes on accounts, contacts and leads (v1.2.4)
+
+1.2.4 adds notes: a short free text that SalesTeam dates and signs by itself, kept on the account, the contact or the lead (post) it is about, and shared with everyone in the team who sees that account. The requirements (R1-R9) are in NOTES_REQUIREMENTS.md; the design and its decisions (D1-D8) in NOTES_DESIGN.md.
+
+- **What a note is** - a text of up to 2,000 characters, the time it was written and, in a team, the author. It belongs to exactly one account, contact or lead (post), and changes nothing else: not the Status, not Follow-up due, not the priority.
+- **One stored entry per note** - a stored list, notes, keyed by a random id: { on, key, text, at, by, byName, editedAt, deletedAt, deletedBy }. Nothing is added to the account, contact or lead records (D1). Every rule is in the pure module notes.js; storage.js has getNotes, addNote, editNote and deleteNote.
+- **The Notes section** - one component (notes-ui.js, notes.css) on the account page and the contact page, under the overview, and on the lead detail, under the content. A box with Add note, then the list, newest first: four notes high and scrolling, a note cut at two lines and opened by a click, ⋮ with Edit… and Delete…. Nothing is saved until Add note is pressed. A note typed and not added is kept while another account is opened, and leaving the page asks first.
+- **The account’s timeline** - the account page lists the notes on the account, on its contacts and on its leads, each marked with what it is about (“on Anna Muster”, “on the post of Oct 3”). The contact page and the lead detail show their own notes only.
+- **Rights** - the author edits and deletes their own notes; the Team Lead and the deputy delete any note; an edited note keeps its date and is marked “(edited)”. A note written before its PC joined a team has no author: in a team nobody edits it, and only the Team Lead or the deputy deletes it. Applied by what the page offers, as visibility is (D3).
+- **In a team** - every note is a row of its own in the team’s data (team-keys.js, prefix note:), so two colleagues’ notes written at the same moment are both kept. Deleting marks the note deleted and empties its text; the entry stays, so a colleague’s later edit cannot bring it back (D2). A note is never held back by a colleague’s edit hold, and writing one does not take the account. A note is shown only where its account is. A colleague who updates from 1.2.3 gets the notes written before the update put on the PC once (backfillNewKeys).
+- **Last note column** - in Target Accounts (shown by default: the latest note of the account’s timeline), Target Contacts and Leads (hidden by default). It sorts by the note’s time, rows without a note last. The three search boxes also find text inside the notes of a row.
+- **Sales Mentor and message drafts** - the latest ten notes, each cut at 500 characters, are given to the AI. On a lead and for a draft: the notes on the lead, its contact and its account. On the account page: the timeline. On the contact page: the contact’s notes and its account’s (D5, D7). For the Mentor on a lead and for drafts, notes are the first text about the account that is sent to the AI service; Help and the privacy text say so (D6).
+- **Export, backup, merging** - SalesTeam’s own CSV files carry Last note and an export-only Notes column. The Salesforce and Microsoft Dynamics files carry the notes in Description, between the existing lines and the SalesTeam id line; within Dynamics’ 2,000 characters the newest notes are written whole and the oldest left out (D8). The HubSpot files carry them in a SalesTeam Notes column. A backup holds the notes in its “Accounts, contacts and initiatives” part. Merging two accounts or two contacts moves the notes to the kept one. Import does not read notes.
+- **Logs** - the Activity Log and the team log say that a note was added, edited or deleted, and on what - never the note’s text.
+- **Tests** - test_pure_modules.py (1,058 checks) and test_team_sync.py (275 checks: two notes at the same moment, a delete against a later edit in both orders, a note while the account is held, a colleague still on 1.2.3, a restore that removes a note).
+- **Not in 1.2.4** - reminders and tasks, attachments, mentioning a colleague, private notes, notes on initiatives, reading notes from a CRM file on import, real HubSpot notes in the HubSpot files.
+
 ## 7. Non-functional requirements
 
 - **No timers, one standing consent** — the only `alarms` use is team sync (1.2.2, team members only; it never starts LinkedIn work). Scans are manual; the 1.2.0 account pipeline runs by itself only after the user's one consent (Settings > Automation, withdrawable), started by kicks (Chrome start, page open, import, scan end), only while Chrome is open and within the daily LinkedIn limit.
@@ -3218,4 +3235,4 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.3.17**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.4**.

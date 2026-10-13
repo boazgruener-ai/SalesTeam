@@ -108,7 +108,7 @@ const QA = [
     category: "Setup & Target Accounts",
     question: "How do I move my accounts and contacts into Salesforce?",
     keywords: ["salesforce", "crm", "export", "data import wizard", "accounts", "contacts", "duplicate", "import twice", "update existing"],
-    answer: 'Use "Export…", choose Salesforce and "Both". You get an accounts file and a contacts file with Salesforce\'s own column names. In Salesforce, open the Data Import Wizard and import the accounts file first, then the contacts file - each contact is linked to its account by Account Name, and every column is mapped by itself. Type is Customer, Partner or Prospect; the priority, the LinkedIn page and SalesTeam\'s id are in Description. Annual Revenue is in your default currency, which the export pop-up names. Import each file once: a second import of the same file is refused by Salesforce\'s own duplicate rules. To bring in later changes, choose "Update existing records" in the wizard. Salesforce may also skip a person who has the same name at two accounts - that is a duplicate rule of your Salesforce organisation, not an error in the file. To go the other way, export accounts or contacts from Salesforce as CSV and use "Import…" with Salesforce.',
+    answer: 'Use "Export…", choose Salesforce and "Both". You get an accounts file and a contacts file with Salesforce\'s own column names. In Salesforce, open the Data Import Wizard and import the accounts file first, then the contacts file - each contact is linked to its account by Account Name, and every column is mapped by itself. Type is Customer, Partner or Prospect; the priority, the LinkedIn page, your notes and SalesTeam\'s id are in Description. Annual Revenue is in your default currency, which the export pop-up names. Import each file once: a second import of the same file is refused by Salesforce\'s own duplicate rules. To bring in later changes - new notes, for example - choose "Update existing records" where your Salesforce offers it; the short import on the Accounts list only adds accounts that are new and skips the ones it already has. Salesforce may also skip a person who has the same name at two accounts - that is a duplicate rule of your Salesforce organisation, not an error in the file. To go the other way, export accounts or contacts from Salesforce as CSV and use "Import…" with Salesforce.',
   },
   {
     id: "crm-dynamics",
@@ -251,11 +251,32 @@ const QA = [
     answer: 'For a question about ONE lead (post) you\'re looking at, use "Consult Sales Mentor" on that lead\'s own detail page on the Leads Dashboard - it already knows that lead\'s details. For strategy questions not tied to one lead, use the Sales Mentor on the Advisors page - it can look up any lead by name if a question needs it.',
   },
   {
+    id: "notes",
+    category: "Setup & Target Accounts",
+    question: "Where can I write down what I did or learned about an account, a contact or a lead?",
+    keywords: ["notes", "note", "write down", "comment", "comments", "remark", "history", "what happened", "last contact", "timeline", "last note", "journal", "log a call", "add note", "edit note", "delete note"],
+    answer: 'In the Notes section: on an account\'s page and a contact\'s page it is directly under the overview, on a lead\'s (post\'s) page under its content. Type the text and press "Add note"; SalesTeam adds the date and, in a team, your name. Nothing is saved until you press the button. The list shows the newest note first, four notes at a time, and scrolls; a long note is cut at two lines and opens with a click. The account page shows one timeline: the notes on the account, on its contacts and on its leads, each marked with what it is about. To change or remove a note, use the ⋮ next to it: you can edit and delete your own notes, and an edited note keeps its date and shows "(edited)". The Target Accounts, Target Contacts and Leads tables have a "Last note" column (on Contacts and Leads, switch it on under Columns); click its title to sort by it. The search box above each table also finds text inside notes. Notes are part of every backup and of the CSV and CRM export files; an import does not read notes.',
+  },
+  {
+    id: "notes-team",
+    category: "Team",
+    question: "Who sees my notes in a team, and who can change them?",
+    keywords: ["notes", "note", "team notes", "shared notes", "colleague notes", "who sees notes", "delete note", "edit note", "team lead notes", "private note"],
+    answer: 'Notes are shared: everyone who can see an account sees its notes and the notes on its contacts and leads (posts), with the author\'s name. Anyone who can see an account can add a note, also on an account assigned to a colleague or one a colleague is editing at that moment - writing a note does not take the account. Two notes written at the same moment are both kept. Only the author can edit a note; the author, the Team Lead and the deputy can delete it, and a deleted note is gone for the whole team. There are no private notes. A note you wrote before joining the team carries no name: in the team it can no longer be edited, and only the Team Lead or the deputy can delete it.',
+  },
+  {
+    id: "notes-ai",
+    category: "Advisors (AI)",
+    question: "Do the Sales Mentor and the message drafts use my notes?",
+    keywords: ["notes", "note", "mentor notes", "draft notes", "ai notes", "sent to ai", "privacy", "what is sent", "anthropic", "brochure already sent"],
+    answer: 'Yes. When you ask the Sales Mentor about a lead (post) or let SalesTeam draft a message, it is given the latest ten notes on that lead, on its contact and on its account, so a draft does not offer what you already sent and the Mentor knows what was said. The Sales Mentor on an account\'s page reads the account\'s notes (with those on its contacts and leads), and on a contact\'s page the contact\'s and the account\'s notes. Notes are sent to the AI service only at that moment - when you use the Sales Mentor or a message draft - with your own Anthropic API key. Nothing is sent when you only write or read notes.',
+  },
+  {
     id: "team-what",
     category: "Team",
     question: "Can my whole sales team work with the same accounts and leads?",
     keywords: ["team", "colleagues", "share", "shared", "sharing", "together", "several users", "multiple users", "onedrive", "team use", "collaborate"],
-    answer: 'Yes. In a team, colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder your team owns. Every member\'s SalesTeam reads and writes that folder; changes you make reach your colleagues by themselves, usually within a minute or two, depending on OneDrive, and theirs arrive on your computer. There is no SalesTeam server and no sign-in. One person creates the team and becomes its Team Lead; the others join. Each member still scans LinkedIn with their own LinkedIn account and their own daily limit. Start under Settings > Team.',
+    answer: 'Yes. In a team, colleagues share one set of accounts, contacts and leads (posts) through a OneDrive folder your team owns. Every member\'s SalesTeam reads and writes that folder; changes you make reach your colleagues by themselves, usually within a minute or two, depending on OneDrive, and theirs arrive on your computer. There is no SalesTeam server and no sign-in. One person creates the team and becomes its Team Lead; the others join. Each member still scans LinkedIn with their own LinkedIn account and their own daily limit. Notes on accounts, contacts and leads are shared too, so a colleague who opens an account sees what was already done. Start under Settings > Team.',
   },
   {
     id: "team-create",
@@ -276,7 +297,7 @@ const QA = [
     category: "Team",
     question: "What is shared with my team, and what stays on my computer?",
     keywords: ["shared", "personal", "private", "what is shared", "api key", "drafts", "visible to colleagues", "who contacted whom", "privacy", "team data"],
-    answer: 'Shared with the whole team: accounts, contacts, leads (posts) and their statuses, the Setup (what you sell, ideal customer, target contacts, message templates) and the rules (exclusions, Negative Topics, prioritization). Everyone in the team sees the shared data, including who contacted whom and who changed what. Personal, never written to the team folder: your Anthropic API key, User Profile, drafts, Advisors chats, scanner settings (Topics, timeframe, job search), LinkedIn limits and counters, web budget and your Activity Log. The team folder lives in your team\'s own OneDrive; SalesTeam has no server and never sees it.',
+    answer: 'Shared with the whole team: accounts, contacts, leads (posts) and their statuses, the notes on them, the Setup (what you sell, ideal customer, target contacts, message templates) and the rules (exclusions, Negative Topics, prioritization). Everyone in the team sees the shared data, including who contacted whom and who changed what. Personal, never written to the team folder: your Anthropic API key, User Profile, drafts, Advisors chats, scanner settings (Topics, timeframe, job search), LinkedIn limits and counters, web budget and your Activity Log. The team folder lives in your team\'s own OneDrive; SalesTeam has no server and never sees it.',
   },
   {
     id: "team-assign",
