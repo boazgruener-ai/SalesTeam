@@ -210,7 +210,8 @@ export function entryFields(entry) {
 
 // One line for the Activity Log: "changed UBS: status, notes", "assigned UBS to Anna", ...
 // `name(key)`: the account's display name; `who(member)`: a member's name.
-export function teamLogText(entry, name, who) {
+// `self`: the line's subject is "You" (the reader made the change) - "… to yourself", not "… to themselves".
+export function teamLogText(entry, name, who, self = false) {
   const what = entry.key ? name(entry.key) : entry.kind === "lead" ? `the lead ${entry.label || entry.ref}` : entry.ref;
   const shown = shownFields(entryFields(entry)).map(fieldName);
   const fields = shown.length ? `: ${shown.slice(0, 8).join(", ")}${shown.length > 8 ? ` +${shown.length - 8}` : ""}` : "";
@@ -244,7 +245,7 @@ export function teamLogText(entry, name, who) {
     if (entry.ref === "takeover") return "took over as Team Lead";
   }
   switch (entry.op) {
-    case "assign": return entry.to === entry.m ? `assigned ${what} to themselves` : `assigned ${what} to ${who(entry.to)}`;
+    case "assign": return entry.to === entry.m ? `assigned ${what} to ${self ? "yourself" : "themselves"}` : `assigned ${what} to ${who(entry.to)}`;
     case "unassign":
       if (entry.why === "groups") return `released ${what} from ${who(entry.to)} (${entry.into ? `moved to ${entry.into} - ` : ""}no longer in their groups)`;
       return entry.to === entry.m ? `released ${what}` : `released ${what} from ${who(entry.to)}`;
