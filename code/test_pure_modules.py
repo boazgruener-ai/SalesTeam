@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2813,9 +2813,35 @@ def test_revenue_units(ctx):
     check("kind sorted last", e("sortDecisions([{ kind: 'revenue_units', company: 'A' }, { kind: 'finding', company: 'B' }])[0].kind"), "finding")
 
 
+def test_team_usage(ctx):
+    """1.2.4 Billing "Team usage" (BILLING_TEAM_USAGE_DESIGN.md 3.1): the monthly totals a member shares."""
+    j = lambda expr: json.loads(ctx.eval("JSON.stringify(%s)" % expr))
+    ctx.eval("""
+      var UDAYS = {
+        '2026-09-30': { webResearch: { calls: 4, usd: 0.5 }, other: { usd: 0.25 } },
+        '2026-10-01': { webResearch: { calls: 2, usd: 0.3 }, other: { usd: 0.1 } },
+        '2026-10-13': { webResearch: { calls: 5, usd: 0.6 }, other: { usd: 0 } },
+        '2026-11-02': { other: { usd: 0.0123456 } },
+        'rubbish': { webResearch: { calls: 9, usd: 9 } } };
+    """)
+    check("usage: every day counts without a join day", j("monthsFromDays(UDAYS)"),
+          {"2026-09": {"usd": 0.75, "researches": 4}, "2026-10": {"usd": 1, "researches": 7}, "2026-11": {"usd": 0.0123, "researches": 0}})
+    check("usage: only the days from the join day on", j("monthsFromDays(UDAYS, '2026-10-13')"),
+          {"2026-10": {"usd": 0.6, "researches": 5}, "2026-11": {"usd": 0.0123, "researches": 0}})
+    check("usage: no count at all", j("monthsFromDays(undefined, '2026-10-13')"), {})
+    check("usage: a month is never lowered, a new month is added",
+          j("mergeMonths({ '2026-09': { usd: 3, researches: 30 }, '2026-10': { usd: 0.2, researches: 9 } }, monthsFromDays(UDAYS, '2026-10-01'))"),
+          {"2026-09": {"usd": 3, "researches": 30}, "2026-10": {"usd": 1, "researches": 9}, "2026-11": {"usd": 0.0123, "researches": 0}})
+    check("usage: the same months give the same key, whatever the order",
+          ctx.eval("monthsKey({ b: { usd: 1, researches: 2 }, a: { usd: 0.5, researches: 0 } }) === monthsKey({ a: { usd: 0.5 }, b: { researches: 2, usd: 1.00001 } })"), True)
+    check("usage: a changed month gives another key", ctx.eval("monthsKey({ a: { usd: 1 } }) === monthsKey({ a: { usd: 1.01 } })"), False)
+    check("usage: the day key is the local calendar day", ctx.eval("usageDayKey(new Date(2026, 9, 3, 23, 59))"), "2026-10-03")
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
+    test_team_usage(ctx)
     test_parse_loose_number(ctx)
     test_currency(ctx)
     test_arbitration(ctx)

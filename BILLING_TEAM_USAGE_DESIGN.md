@@ -193,6 +193,11 @@ If D1 is declined, `sealed` becomes plain `months` and everything else in this d
 
 Also in step 3: the Edge package and the Edge listing text, so 1.2.4 can go to both stores.
 
+Also in step 3 (Boaz, 2026-10-13): a Help entry that recommends **one browser per person**, and says what to do
+for a second one - the Team Lead invites it under the same name and puts it into the same groups; the person copies
+their own settings with Backup in the first browser and Restore in the second. It stays until the sign-in item of
+the roadmap makes one person one member.
+
 ---
 
 ## 9. Decisions — agreed 2026-10-13

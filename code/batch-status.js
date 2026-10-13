@@ -51,7 +51,7 @@ function resultText(s) {
     `${s.failed ? `, ${s.failed} failed` : ""}${notStarted > 0 ? `, ${notStarted} not started` : ""}.\n` +
     `${s.initiatives} initiative${s.initiatives === 1 ? "" : "s"} added, ${s.filled} empty field${s.filled === 1 ? "" : "s"} filled in.\n` +
     (s.toReview > 0 ? `${s.toReview} account${s.toReview === 1 ? " has" : "s have"} findings that differ from your data - open them in Target Accounts and use "Review findings…".\n` : "") +
-    `Estimated cost: about ${usd(s.spent)} (see Settings > Billing).` + (why ? `\n\n${why}` : "");
+    `Estimated cost: about ${usd(s.spent)} (see Settings > Anthropic Usage).` + (why ? `\n\n${why}` : "");
 }
 
 let stopping = false;

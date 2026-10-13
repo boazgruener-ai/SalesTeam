@@ -107,7 +107,7 @@ export async function clearApiUsage() {
   await chrome.storage.local.remove(USAGE_KEY);
 }
 
-// ---- Warning before an action that could cost a lot (the limit is set in Settings > Billing; 0 switches it off) ----
+// ---- Warning before an action that could cost a lot (the limit is set in Settings > Anthropic Usage; 0 switches it off) ----
 const COST_WARNING_KEY = "costWarningUsd";
 export const DEFAULT_COST_WARNING_USD = 2;
 
@@ -134,7 +134,7 @@ export async function confirmIfCostly(kind, count, actionLabel, askConfirm) {
   if (limit <= 0 || estimate < limit) return true;
   return askConfirm(
     `${actionLabel} could cost about $${estimate.toFixed(2)} on your Anthropic API key - more than your warning limit of $${limit.toFixed(2)}.\n\n` +
-    "This is a rough estimate; your Anthropic Console shows the real cost. You can change or switch off this warning in Settings > Billing.\n\nContinue?",
+    "This is a rough estimate; your Anthropic Console shows the real cost. You can change or switch off this warning in Settings > Anthropic Usage.\n\nContinue?",
     { okLabel: "Continue", cancelLabel: "Cancel" });
 }
 

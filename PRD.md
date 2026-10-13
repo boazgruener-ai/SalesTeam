@@ -1951,7 +1951,7 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 - **Research this account on the web** - a button on every Account page. Searches the company website, official registers and news, saves a short briefing with its sources, adds initiatives found to the account's Initiatives list, and has a Stop button that keeps what was found. Up to 3 accounts at once. No new permission.
 - **Research Accounts on the Web…** - the same for many accounts in one background run: pick priorities (P1-P5, not scored), only what is missing or everything, and whether empty fields are filled in automatically. Shows the estimated cost first, runs two accounts at a time, stops at a cost limit, and persists each account as it finishes. Measured: about US$0.08 and 18 s per account; all 454 researched accounts done 2026-09-22.
 - **One batch process at a time** - a scan, discovery, bulk research, AI prioritization or look-up run each block the others; starting a second one names the running one and offers to stop it or wait.
-- **Billing page and cost warning** - Settings → Billing shows tokens, web searches and an estimated US$ cost of every AI call on the user's key (today, month, all time, per feature). Any AI action estimated above a set limit (default US$2.00, 0 = off) asks for confirmation first.
+- **Anthropic Usage page and cost warning** - Settings → Anthropic Usage (called "Billing" until 1.2.4) shows tokens, web searches and an estimated US$ cost of every AI call on the user's key (today, month, all time, per feature). Any AI action estimated above a set limit (default US$2.00, 0 = off) asks for confirmation first.
 
 **Findings**
 
@@ -3235,4 +3235,4 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 
 ## 9. Version history
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.4**.
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the full, dated changelog. Current version: **1.2.3.18**.

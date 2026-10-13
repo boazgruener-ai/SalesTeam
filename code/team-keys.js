@@ -87,6 +87,9 @@ export const TEAM_PERSONAL_KEYS = [
   "teamMembership", "teamSyncStatus", "teamAccountStates", "teamNotices", "teamLog", "teamGroupNoticesSeen",
   // 1.2.3 step 5 (advanced-mode design 9, D7): the Team Lead's "My pipeline researches" - published with the heartbeat
   "teamLeadResearch",
+  // 1.2.4 Billing "Team usage": this member's monthly totals (shared as a sealed file of their own, not as rows), and
+  // the copy the Team Lead / deputy last read. The usage count itself has always been personal.
+  "teamUsageMonths", "teamUsageTable", "apiUsage", "costWarningUsd",
 ];
 
 export function teamKeyKind(key) {

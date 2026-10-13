@@ -6670,7 +6670,7 @@ document.getElementById("bulk-research-start-btn").addEventListener("click", asy
   if (!(await askConfirm(
     `Research ${items.length} account${items.length === 1 ? "" : "s"} on the web?\n\n` +
     `Estimated cost: about ${formatUsd(estimate)} on your Anthropic API key (up to about ${formatUsd(estimate * 1.5)}).` +
-    (overLimit ? ` This is more than your warning limit of ${formatUsd(limit)} (Settings > Billing).` : "") +
+    (overLimit ? ` This is more than your warning limit of ${formatUsd(limit)} (Settings > Anthropic Usage).` : "") +
     (budget > 0 ? `\nIt stops by itself when the cost reaches ${formatUsd(budget)}.` : "") +
     "\n\nIt runs in the background: you can move to any other SalesTeam page and keep working. A bar at the top shows the progress and has a Stop button; everything found so far is kept, and a pop-up tells you when it is finished.",
     { okLabel: "Start", cancelLabel: "Cancel" }))) return;

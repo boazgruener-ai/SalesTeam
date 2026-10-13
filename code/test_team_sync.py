@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-sync.js"]
+REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-usage.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -136,6 +136,18 @@ function listTeamFolderTop() {
   var names = {};
   Object.keys(FOLDER).forEach(function (p) { names[p.split('/')[0]] = true; });
   return Promise.resolve(Object.keys(names).sort());
+}
+// team-usage-seal.js stub (Web Crypto): a "sealed" value opens only with the private key of a reader it was sealed for.
+function makeUsageKeyPair() { var id = Math.random().toString(36).slice(2, 10); return Promise.resolve({ privateKey: 'priv:' + id, publicJwk: { n: 'pub:' + id } }); }
+function usageKeyId(jwk) { return String(jwk && jwk.n || ''); }
+function sealUsage(value, readers) {
+  var keys = {};
+  Object.keys(readers || {}).forEach(function (m) { keys[m] = readers[m].n; });
+  return Promise.resolve({ iv: '', data: JSON.stringify(value), keys: keys });
+}
+function openUsage(sealed, member, privateKey) {
+  var ok = sealed && sealed.keys && sealed.keys[member] === 'pub:' + String(privateKey).slice(5);
+  return Promise.resolve(ok ? JSON.parse(sealed.data) : null);
 }
 var LAST = null;
 function run(p) { LAST = { pending: true }; p.then(function (r) { LAST = r; }, function (e) { LAST = { error: String(e && e.message || e) }; }); }
@@ -1325,6 +1337,70 @@ def main():
           (sorted(rex.local("notes")), same(rex.local("notes"), pia.local("notes")), same(pia.local("notes"), quin.local("notes"))),
           (["n-after", "n-colleague", "n-holder", "n-own", "n-pia", "n-quin"], True, True))
     check("notes, after updating: a deleted note is still deleted there", rex.local("notes")["n-pia"]["deletedAt"], 2000)
+
+    # 1.2.4 Billing "Team usage", build step 0 (BILLING_TEAM_USAGE_DESIGN.md 3, 4): each member's monthly totals go to
+    # the folder as a file of their own, sealed for the Team Lead and the deputy.
+    folder = {}
+    umi = Member("umi")
+    r, folder = umi.call("createTeam({ name: 'Umi', teamName: 'Usage' })", folder)
+    inv_v, folder = invite(umi, "Vic", folder)
+    inv_w, folder = invite(umi, "Wes", folder)
+    vic = Member("vic", now_offset=5)
+    wes = Member("wes", now_offset=9)
+    today = vic.e("usageDayKey(new Date(NOW))")
+    month = today[:7]
+    day = lambda usd, calls, other: {"webResearch": {"calls": calls, "usd": usd}, "other": {"usd": other}, "byFeature": {}}
+    # Vic used SalesTeam alone before joining: none of that is the team's business (R3.4, D5).
+    vic.set_local({"apiUsage": {"days": {"2020-01-15": day(50, 400, 9), today: day(1.5, 12, 0.25)}}})
+    r, folder = vic.call("joinTeam({ inviteId: '%s' })" % inv_v, folder)
+    r, folder = wes.call("joinTeam({ inviteId: '%s' })" % inv_w, folder)
+    ids = {m: m.status()["me"]["memberId"] for m in (umi, vic, wes)}
+    usage_file = lambda m: json.loads(folder.get("members/%s/usage.json" % ids[m]) or "null")
+
+    def minute(folder, members):  # the usage file is looked at once a minute
+        for m in members:
+            folder = wait(m, 61000, folder)
+            r, folder = m.sync(folder)
+        return folder
+
+    folder = all_round(folder, (umi, vic, wes))
+    folder = minute(folder, (umi, vic, wes))
+    check("usage: every member wrote a key and a usage file",
+          sorted(k.split("/")[2] for k in folder if k.startswith("members/") and "/usage" in k), ["usage-key.json"] * 3 + ["usage.json"] * 3)
+    f = usage_file(vic)
+    check("usage: a member's file is sealed for the Team Lead only", sorted(f["sealed"]["keys"]), [ids[umi]])
+    check("usage: only the days from joining on count", json.loads(f["sealed"]["data"]), {"months": {month: {"usd": 1.75, "researches": 12}}})
+    check("usage: the member's own record", vic.local("teamUsageMonths")["months"], {month: {"usd": 1.75, "researches": 12}})
+    opened = lambda reader, m: reader.call("teamDbGetAll(['usageKey']).then(function (k) { return openUsage(%s, '%s', k.usageKey.privateKey); })"
+                                           % (json.dumps(usage_file(m)["sealed"]), ids[reader]), folder)[0]
+    check("usage: the Team Lead can open it, a colleague cannot", (opened(umi, vic), opened(wes, vic)), ({"months": {month: {"usd": 1.75, "researches": 12}}}, None))
+    check("usage: the Team Lead's own file has no reader yet", usage_file(umi)["sealed"]["keys"], {})
+    check("usage: no figures in any shared change, none on a colleague's PC",
+          ([k for k in folder if "/changes/" in k and "researches" in folder[k]], umi.local("teamUsageMonths")["months"], wes.local("teamUsageMonths")["months"]), ([], {}, {}))
+    # Nothing new: the file is left alone.
+    before = f["updated"]
+    folder = minute(folder, (vic,))
+    check("usage: an unchanged month is not written again", usage_file(vic)["updated"], before)
+    # More usage: written again. Then the count loses its old days (400-day limit): the month is not lowered (D4).
+    vic.set_local({"apiUsage": {"days": {today: day(2.5, 20, 0.25)}}})
+    folder = minute(folder, (vic,))
+    check("usage: new usage reaches the file", json.loads(usage_file(vic)["sealed"]["data"])["months"][month], {"usd": 2.75, "researches": 20})
+    vic.set_local({"apiUsage": {"days": {}}})
+    folder = minute(folder, (vic,))
+    check("usage: a month is never lowered", (vic.local("teamUsageMonths")["months"][month], json.loads(usage_file(vic)["sealed"]["data"])["months"][month]),
+          ({"usd": 2.75, "researches": 20}, {"usd": 2.75, "researches": 20}))
+    # A deputy: every file is sealed again, for both; the Team Lead's own file for the deputy.
+    r, folder = umi.call("setDeputy('%s')" % ids[wes], folder)
+    folder = all_round(folder, (umi, vic, wes))
+    folder = minute(folder, (umi, vic, wes))
+    check("usage: with a deputy, a member's file is sealed for both", sorted(usage_file(vic)["sealed"]["keys"]), sorted([ids[umi], ids[wes]]))
+    check("usage: the Team Lead's file is sealed for the deputy, the deputy's for the Team Lead",
+          (sorted(usage_file(umi)["sealed"]["keys"]), sorted(usage_file(wes)["sealed"]["keys"])), ([ids[wes]], [ids[umi]]))
+    check("usage: the deputy can open a member's file now", opened(wes, vic), {"months": {month: {"usd": 2.75, "researches": 20}}})
+    check("usage: no error on any PC", [m.status()["usage"]["error"] for m in (umi, vic, wes)], [None, None, None])
+    # Leaving: the member's own record goes, the file stays for the Team Lead's totals.
+    r, folder = vic.call("leaveTeam()", folder)
+    check("usage: after leaving, the record is gone here and the file is still in the folder", (vic.local("teamUsageMonths"), usage_file(vic) is not None), (None, True))
 
     print()
     for f in _failures:

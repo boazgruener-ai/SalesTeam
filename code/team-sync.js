@@ -35,6 +35,8 @@ import {
 import { teamLogEntries, appendTeamLog } from "./team-log.js";
 import { joinOverlap, addBackValues, joinProposals, JOIN_PROPOSALS_KEY } from "./team-join.js";
 import { INVITES_DIR, inviteState, inviteRefusal } from "./team-invites.js";
+import { usageDayKey, monthsFromDays, mergeMonths, monthsKey } from "./team-usage.js";
+import { makeUsageKeyPair, usageKeyId, sealUsage } from "./team-usage-seal.js";
 
 export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 // Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
@@ -796,6 +798,61 @@ async function heartbeat(root, me) {
   ackDue = false;
 }
 
+// Billing "Team usage" (BILLING_TEAM_USAGE_DESIGN.md 3, 4): this member's monthly totals - US$ and web researches,
+// from the day of joining - kept here (personal, never lowered: D4) and written to members/<me>/usage.json, sealed
+// for the Team Lead and the deputy. A file of its own, NOT a shared key: shared rows land in every colleague's
+// storage and backup (D2). Checked once a minute; written only when the months or the readers' keys changed.
+export const TEAM_USAGE_MONTHS_KEY = "teamUsageMonths";
+const USAGE_EVERY_MS = 60000;
+let usageKey = null; // { privateKey, publicJwk } - this browser's key pair, kept in the sync layer's IndexedDB
+
+async function ensureUsageKey(root, me) {
+  if (!usageKey) usageKey = (await teamDbGetAll(["usageKey"])).usageKey || null;
+  if (!usageKey) {
+    usageKey = await makeUsageKeyPair();
+    await teamDbPutAll({ usageKey });
+  }
+  if (mem.meta.usageKeyWritten !== usageKeyId(usageKey.publicJwk)) {
+    await writeTeamJson(root, ["members", me], "usage-key.json", { member: me, v: 1, at: new Date().toISOString(), jwk: usageKey.publicJwk });
+    mem.meta.usageKeyWritten = usageKeyId(usageKey.publicJwk);
+  }
+}
+
+async function publishUsage(root, me) {
+  if (leaving || Date.now() - (mem.meta.usageCheckedAt || 0) < USAGE_EVERY_MS) return;
+  mem.meta.usageCheckedAt = Date.now();
+  try {
+    await ensureUsageKey(root, me);
+    const data = await chrome.storage.local.get(["apiUsage", TEAM_USAGE_MONTHS_KEY]);
+    const joinedDay = usageDayKey(new Date(membership.joinedAt));
+    const record = data[TEAM_USAGE_MONTHS_KEY]?.teamId === membership.teamId ? data[TEAM_USAGE_MONTHS_KEY] : null;
+    const months = mergeMonths(record?.months, monthsFromDays(data.apiUsage?.days, joinedDay));
+    if (!record || monthsKey(record.months) !== monthsKey(months)) {
+      await chrome.storage.local.set({ [TEAM_USAGE_MONTHS_KEY]: { teamId: membership.teamId, joinedDay, months } });
+    }
+    // The readers: the Team Lead and the deputy, each with the key their own SalesTeam wrote. One who is still on a
+    // build without a key is left out until they update - the file is rewritten then.
+    const l = leadNow();
+    const readers = {};
+    for (const m of new Set([l.lead, l.deputy])) {
+      if (!m || m === me) continue;
+      const k = await readTeamJson(root, ["members", m], "usage-key.json");
+      if (k.status === "ok" && k.data?.jwk) readers[m] = k.data.jwk;
+    }
+    const sig = `${monthsKey(months)}#${Object.keys(readers).sort().map((m) => `${m}=${usageKeyId(readers[m])}`).join(",")}`;
+    if (mem.meta.usageSig !== sig) {
+      await writeTeamJson(root, ["members", me], "usage.json",
+        { member: me, updated: new Date().toISOString(), v: 1, sealed: await sealUsage({ months }, readers) });
+      mem.meta.usageSig = sig;
+      mem.meta.usageWrittenAt = Date.now();
+    }
+    mem.meta.usageReaders = Object.keys(readers).sort();
+    mem.meta.usageError = null;
+  } catch (err) {
+    mem.meta.usageError = errText(err); // the usage file must never stop the round that shares the team's data
+  }
+}
+
 // Design 3.3: once a day, this member's change files older than 7 days are folded into one snapshot.
 async function compact(root, me) {
   const meta = mem.meta;
@@ -882,6 +939,7 @@ export async function runTick(reason = "alarm") {
     }
     // Answer a colleague's claim at once: their claim is confirmed when we have written something after it (6.3).
     if (ackDue || now - Math.max(mem.meta.lastHeartbeatAt, mem.meta.lastFlushAt) >= HEARTBEAT_EVERY_MS) await heartbeat(root, me);
+    await publishUsage(root, me);
     await enqueue(resolveClaims);
     while (await flush(root, me)) { /* held edits of a confirmed claim, and our releases, go out at once */ }
     const today = new Date().toISOString().slice(0, 10);
@@ -1906,6 +1964,7 @@ async function requireRoot() {
 
 async function startFresh(memberId) {
   await teamDbClear();
+  usageKey = null;
   mem = { state: newState(), shadow: {}, outbox: [], inflight: null, meta: emptyMeta(), claims: emptyClaims() };
   mem.clock = createClock(memberId);
   mem.meta.rereadV = REREAD_VERSION; // a new state reads everything anyway
@@ -2192,8 +2251,9 @@ function leaveLocally() {
     await chrome.alarms.clear(ALARM);
     await setMembership(null);
     await teamDbClear();
+    usageKey = null;
     await clearTeamFolder();
-    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY, TEAM_LOG_KEY]);
+    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY, TEAM_LOG_KEY, TEAM_USAGE_MONTHS_KEY]);
     lastSummaryJson = null;
     mem = null;
     recentWriteBack.clear();
@@ -2254,6 +2314,8 @@ export async function getTeamSyncStatus() {
     errorSince,
     entities: Object.fromEntries(Object.entries(mem.state.entities).map(([e, byId]) => [e, Object.keys(byId).length])),
     measures: meta.measures,
+    // Billing "Team usage": what this browser last wrote to members/<me>/usage.json, and for whom (dev page).
+    usage: { writtenAt: meta.usageWrittenAt || 0, readers: meta.usageReaders || [], sig: meta.usageSig || "", error: meta.usageError || null },
     lastError,
   };
 }

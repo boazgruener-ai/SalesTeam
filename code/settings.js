@@ -897,7 +897,7 @@ init();
 startAutoBackup();
 
 
-// ---- Billing page: usage and estimated cost of the AI calls made on the user's own API key ----
+// ---- Anthropic Usage page (called "Billing" until 1.2.4; the ids keep that name): usage and estimated cost of the AI calls made on the user's own API key ----
 function fmtUsd(n) {
   if (!n) return "$0.00";
   return n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`;
