@@ -1,3 +1,76 @@
+# SalesTeam — v1.2.4
+
+## Notes on accounts, contacts and leads (builds 1.2.3.10-1.2.3.17)
+
+- **Notes** - a place for what you did and what you learned: "I messaged her and sent the brochure", "budget is frozen
+  until January". You type the text; SalesTeam adds the date and, in a team, your name. A note belongs to an account, a
+  contact or a lead (post), and changes nothing else.
+- **Where** - a **Notes** section on the account page, the contact page and the lead's page: a box, **Add note**, and
+  the list below it, newest first. The list shows four notes and scrolls; a long note is cut at two lines and opens with
+  a click.
+- **One timeline per account** - the account page shows the notes on the account, on its contacts and on its leads
+  together, each marked with what it is about ("on Anna Muster", "on the post of Oct 3"). So one look at the account
+  tells you what happened last.
+- **Edit and delete** - each note's ⋮ menu. You edit and delete your own notes; an edited note keeps its date and shows
+  "(edited)". In a team the Team Lead and the deputy can delete any note.
+- **In a team** - notes are shared like the accounts: everyone who can see an account sees its notes and can add one,
+  also on an account assigned to a colleague or one a colleague is editing right now. Two colleagues' notes written at
+  the same moment are both kept.
+- **Last note column** - in Target Accounts (shown), Target Contacts and Leads (switch it on under Columns). Click the
+  title to sort by it: the accounts you touched last, or the ones with no note yet. The search box above each list now
+  also finds text inside notes.
+- **Sales Mentor and message drafts read your notes** - the latest ten notes on the lead, its contact and its account
+  are given to the AI, so a draft does not offer the brochure you already sent and the Mentor knows what was said. The
+  Sales Mentor on the account page and the contact page reads them too. Notes are sent to the AI service only when you
+  use the Sales Mentor or a draft, with your own API key.
+- **Export** - the CSV files get a **Last note** and a **Notes** column. The Salesforce and Microsoft Dynamics files
+  carry the notes in Description, the HubSpot files in a "SalesTeam Notes" column. Import does not read notes.
+- **Backup, merging, logs** - a backup includes the notes (with "Accounts, contacts and initiatives"). Merging two
+  accounts or two contacts keeps the notes of both. The Activity Log says that a note was added, edited or deleted,
+  never its text.
+
+## Team usage: what the team spends on AI (builds 1.2.3.18-1.2.3.20)
+
+- **Team usage** - the Team Lead and the deputy see what each member's SalesTeam has used on that member's own
+  Anthropic API key: one line per member with the day they joined, this month, last month, the total since joining, the
+  number of web researches this month and when the figures last arrived, plus a team total. It is a section of
+  Settings → Anthropic Usage; click a column title to sort.
+- **Members never see each other's figures** - a member sees only their own usage, and is told what the Team Lead
+  sees: the monthly total and the number of web researches. Nothing about days, features or accounts is shared.
+- **Encrypted for the Team Lead and the deputy** - each member's totals are written to the team folder in a file of
+  their own, encrypted so that only the Team Lead's and the deputy's SalesTeam can open it.
+- **From the day of joining** - only usage since a member joined the team is counted. A person who uses SalesTeam in
+  two browsers under the same name is one line, marked "(2 browsers)".
+- **"Billing" is now "Anthropic Usage"** - the page shows usage on your Anthropic API key, not a bill from SalesTeam.
+  The menu entry, the page and the messages that point to it use the new name.
+- **No "Reset the counters…" button** - the count is no longer reset by hand. Days older than 400 drop out by
+  themselves.
+- **A restore no longer brings in another browser's usage** - a backup remembers which browser made it. The "Usage
+  and cost count" is offered on restore only in that browser; from another browser, or from a backup made before
+  1.2.4, it is left out and the result says so.
+- **Web research** - a research that read a very long document failed with "prompt is too long" and was tried again in
+  every run; it is now repeated once with web search only. A failed research is marked as an error in the Activity
+  Log. The top bar says "LinkedIn limit reached" only when it was, and the web research line says "paused for today"
+  while automation is paused.
+- **Help** - "What does the team spend on AI? (Team usage)" and "Can I use SalesTeam in two browsers, for example
+  Chrome and Edge?" (we recommend one browser per person).
+
+## Microsoft Edge wording and smaller improvements (builds 1.2.3.1-1.2.3.9, 1.2.3.17)
+
+- **Texts that fit every browser** - SalesTeam's texts say "your browser" where they said "Chrome", and the team
+  folder steps say "Allow", or "Allow on every visit" where the browser offers it, so they read correctly in Microsoft
+  Edge too.
+- **Editing an account frees it sooner** - in a team, an account you edited is free for colleagues about ten seconds
+  after you save, and after one minute without a touch. An edit in progress keeps it, also while no field is selected.
+  The edit form shows "Saving…" while a save runs.
+- **Countries in one language** - a web finding's country is compared and proposed under its English name:
+  "Schweiz" against "Switzerland" is no longer a finding, and "Deutschland" is proposed as "Germany".
+- **Backup and restore say that they are working** - a "Working…" window shows while a backup or a restore runs, and
+  the backup's result appears in it.
+- **Small fixes** - "X joined the team. Add X to groups" leaves the top bar once X is in a group; the page can no
+  longer slide up under the top bar; the usage tables are shown in full width; the Activity Log says "You assigned X
+  to yourself".
+
 # SalesTeam — v1.2.3
 
 ## Account groups and the Team Lead: each member works their own part of the list (builds 1.2.2.5-1.2.2.9, 1.2.2.24-1.2.2.39)

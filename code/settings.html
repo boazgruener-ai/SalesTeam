@@ -92,7 +92,7 @@
         <a href="#team-section" class="nav-item" id="nav-team-section" title="Share accounts, contacts and leads with colleagues through a OneDrive folder">Team <span id="nav-team-badge" class="nav-item-badge"></span></a>
         <a href="#backup-section" class="nav-item" id="nav-backup-section">Backup</a>
         <a href="#restore-section" class="nav-item" id="nav-restore-section">Restore</a>
-        <a href="#billing-section" class="nav-item" id="nav-billing-section" title="What SalesTeam's AI features and web research have used on your Anthropic API key">Billing</a>
+        <a href="#billing-section" class="nav-item" id="nav-billing-section" title="What SalesTeam's AI features and web research have used on your Anthropic API key">Anthropic Usage</a>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
@@ -325,14 +325,26 @@
     </section>
 
     <section class="settings-card" id="billing-section">
-      <h3>Billing</h3>
+      <h3>Anthropic Usage</h3>
       <p class="field-hint">
-        What SalesTeam's AI features have used on <strong>your own Anthropic API key</strong>: tokens, web searches and an
+        What SalesTeam's AI features have used on <strong>your own Anthropic API key in this browser</strong>: tokens, web searches and an
         <strong>estimated</strong> cost in US dollars, worked out from Anthropic's published prices. Your Anthropic Console is the
         official figure. Only calls made by this extension are counted, from the day this page started keeping count.
       </p>
+      <p id="usage-shared-note" class="field-hint" hidden>
+        Your Team Lead sees your monthly total and your number of web researches. Nothing else is shared.
+      </p>
       <table id="billing-totals" class="billing-table"></table>
       <p id="billing-average" class="field-hint"></p>
+      <div id="team-usage" hidden>
+        <h4 class="billing-heading">Team usage</h4>
+        <p id="team-usage-status" class="field-hint"></p>
+        <table id="team-usage-table" class="billing-table"></table>
+        <p class="field-hint">
+          Estimates from Anthropic's published prices, counted by each member's SalesTeam. Each member's Anthropic Console shows the
+          official figure. Only you and the deputy Team Lead see this table.
+        </p>
+      </div>
       <h4 class="billing-heading">Day by day (last 31 days)</h4>
       <div class="billing-scroll"><table id="billing-days" class="billing-table"></table></div>
       <h4 class="billing-heading">By feature (all time)</h4>
@@ -360,9 +372,6 @@
         extraction, topic suggestions, search-quality analysis and the Advisors chats. Prices used: Claude Sonnet $2 in / $10 out per million
         tokens, Claude Haiku $1 / $5, and about $0.01 per web search.
       </p>
-      <div class="settings-buttons-row">
-        <button type="button" id="billing-reset-btn">Reset the counters…</button>
-      </div>
     </section>
 
     <!-- Team use 1.2.2, build step 3 (TEAM_USE_DESIGN.md 9, 10): create / join / leave and the team's state.
@@ -406,7 +415,7 @@
         </div>
         <p class="field-hint" id="team-create-onedrive-hint">The team needs a new folder inside OneDrive. In the window that
           opens: click <b>OneDrive</b> on the left, then <b>New folder</b>, type the team's name and press Enter. Then click
-          <b>Select Folder</b>, and <b>Allow on every visit</b> if Chrome asks.</p>
+          <b>Select Folder</b>, and, if your browser asks, <b>Allow</b> (or <b>Allow on every visit</b> where it is offered).</p>
         <label for="team-create-name">Your name</label>
         <input type="text" id="team-create-name" placeholder="e.g. Jane Doe" />
         <label for="team-create-team">Team name</label>
@@ -431,8 +440,8 @@
           <li><b>On the OneDrive website:</b> click <b>Add shortcut to My files</b> in the bar at the top. After a minute the
             folder is on your PC too.</li>
           <li><b>Back here in SalesTeam:</b> click <b>Choose your team's folder…</b> below. In the window that opens, click
-            <b>OneDrive</b> on the left, then your team's folder, then <b>Select Folder</b> - and <b>Allow on every visit</b>
-            if Chrome asks.</li>
+            <b>OneDrive</b> on the left, then your team's folder, then <b>Select Folder</b> - and, if your browser asks, <b>Allow</b>
+            (or <b>Allow on every visit</b> where it is offered).</li>
         </ol>
         <div class="settings-buttons-row" id="team-find-row">
           <button type="button" id="team-find-btn" class="team-primary-btn">Choose your team's folder…</button>
@@ -538,7 +547,7 @@
       <div id="backup-folder-path-row" hidden>
         <label for="backup-folder-path-note">Folder's full path (optional)</label>
         <input type="text" id="backup-folder-path-note" placeholder="Paste the full path here to show it above" />
-        <p class="field-hint">Chrome only tells SalesTeam the folder's name, never its full path. If you want the path shown here, paste it once - it is for display only and is cleared if you pick a different folder.</p>
+        <p class="field-hint">Your browser only tells SalesTeam the folder's name, never its full path. If you want the path shown here, paste it once - it is for display only and is cleared if you pick a different folder.</p>
       </div>
       <button id="backup-choose-folder-btn" type="button" title="Pick the folder backups are saved into (Daily, Manual and Before-restore subfolders are created inside it)">Choose folder…</button>
       <button id="backup-use-downloads-btn" type="button" hidden title="Save backups to the browser's Downloads folder again">Use Downloads folder</button>
@@ -550,7 +559,7 @@
       <label for="backup-time-input">Daily backup time</label>
       <input type="time" id="backup-time-input" value="02:00" />
       <p class="field-hint">
-        SalesTeam makes the daily backup the first time it is open at or after this time - it cannot run while Chrome
+        SalesTeam makes the daily backup the first time it is open at or after this time - it cannot run while your browser
         or the extension is closed. Daily backups are saved in a folder per month.
       </p>
 

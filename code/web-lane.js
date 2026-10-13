@@ -105,7 +105,9 @@ export function isWebLaneRunning() {
 // kickPipeline). Such a run is paid from the monthly web budget like the pipeline's own research (each account's
 // cost is recorded there), stops when that budget, automatic preparation or today's pause says so, and ends
 // without a pop-up - its summary goes to the Activity Log only.
-export async function startWebLane({ limit, budget, auto = false }) {
+// linkedinLimit: started because the day's LinkedIn visits are used up (the top bar says so) - not when the
+// LinkedIn work is simply switched off.
+export async function startWebLane({ limit, budget, auto = false, linkedinLimit = false }) {
   if (runner) throw new Error("The web research lane is already running.");
   const bulk = (await chrome.storage.local.get(BULK_STATE_KEY))[BULK_STATE_KEY];
   if (bulk && bulk.status === "running") throw new Error("A bulk web research is running - wait for it to finish, or stop it, first.");
@@ -123,7 +125,7 @@ export async function startWebLane({ limit, budget, auto = false }) {
     // leaves them to the lane until it is done with them (pipeline-plan.js heldForWebLane).
     pendingKeys: items.map((item) => item.key),
     budget: Number(budget) || 0, startedAt: Date.now(), heartbeatAt: Date.now(), pausedUntil: null, finishedAt: null,
-    auto: Boolean(auto), acknowledged: Boolean(auto), lastError: null, results: [],
+    auto: Boolean(auto), linkedinLimit: Boolean(linkedinLimit), acknowledged: Boolean(auto), lastError: null, results: [],
   };
   const save = () => chrome.storage.local.set({ [WEB_LANE_STATE_KEY]: { ...state, heartbeatAt: Date.now() } }).catch(() => {});
   await save();
@@ -274,7 +276,7 @@ async function run(items, { apiKey, state, save, controllers, isStopping, stop, 
           state.failed++;
           state.lastError = err.message;
           state.results.push({ key: item.key, company: item.company, isPublic: item.isPublic, topics: item.topics, error: String(err.message || err).slice(0, 200) });
-          appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: `Web research - ${item.company}: failed - ${String(err.message || err).slice(0, 200)}` }).catch(() => {});
+          appendActivityLog({ actor: "extension", action: "web_lane_account", relatedCompanyKey: item.key, label: `Web research - ${item.company}: failed - ${String(err.message || err).slice(0, 200)}`, error: true, errorMessage: String(err.message || err) }).catch(() => {});
           consecutiveFailures++;
           const blocked = apiBlockedReason(err);
           // An automatic run tells the pipeline too, so neither tries again today with this key (W6).

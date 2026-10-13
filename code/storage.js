@@ -1,7 +1,7 @@
 import { geoUrnForCountry } from "./geo-urn-map.js";
 import { CONTINENT_COUNTRIES, CONTINENT_LABELS } from "./geo-regions.js";
 import { leadRightsOf, mayImportFor, canSeeAccount } from "./team-groups.js";
-import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum, withWholeEmployees, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
+import { parseLooseNumber, DEFAULT_EXCHANGE_RATES, revenueUnitsCheck, targetingMinimum, withWholeEmployees, wholeEmployees, HEADCOUNT_FIELDS, sameCountry } from "./value-normalize.js";
 import { joinProposalItems, applyJoinProposal, groupMoveItems, applyGroupMove } from "./team-proposals.js";
 import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, sizeBucketKey } from "./web-findings-arbitration.js";
@@ -15,6 +15,7 @@ import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, 
 import { createPersonIndex, contactDuplicatePairs, contactPairKey, fullerFirst, linkedinProfileSlug } from "./person-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 import { relationshipOf } from "./company-identity.js";
+import { noteEntry, editedNote, deletedNote, isLiveNote, mayEditNote, mayDeleteNote, rekeyNotes } from "./notes.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
 export { RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS, relationshipsMovedText };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
@@ -2549,7 +2550,7 @@ export async function exportTargetAccountsBackup() {
       getTargetAccountsWorkbookMeta(),
       getTargetAccountScoreThreshold(),
       chrome.storage.local.get([DISCOVERED_COMPANIES_KEY, DISCOVERED_CONTACTS_KEY]),
-      chrome.storage.local.get([TARGET_ACCOUNT_EXTRAS_KEY, TARGET_CONTACT_EXTRAS_KEY]),
+      chrome.storage.local.get([TARGET_ACCOUNT_EXTRAS_KEY, TARGET_CONTACT_EXTRAS_KEY, "notes"]),
     ]);
   return {
     exportedAt: new Date().toISOString(),
@@ -2568,6 +2569,8 @@ export async function exportTargetAccountsBackup() {
     // removals, and Sales Mentor / Customer Voice chats. Keyed by normalized company name / contact key.
     targetAccountExtras: extras[TARGET_ACCOUNT_EXTRAS_KEY] || {},
     targetContactExtras: extras[TARGET_CONTACT_EXTRAS_KEY] || {},
+    // 1.2.4 (R7.1): the notes on accounts, contacts and leads. Restored with the "accounts" part (design 9.4).
+    notes: extras.notes || {},
   };
 }
 
@@ -2602,6 +2605,8 @@ async function importTargetAccountsBackupUnlocked(data, sections = null) {
     if (typeof data.targetAccountScoreThreshold === "number") {
       await saveTargetAccountScoreThreshold(data.targetAccountScoreThreshold);
     }
+    // 1.2.4 Notes: only when the backup carries them - a backup made before notes existed leaves today's notes alone.
+    if (isPlainObject(data.notes)) await chrome.storage.local.set({ notes: data.notes });
   }
   // Your own edits per account/contact - only when the backup carries them (an older backup has none).
   if (has("edits") && (isPlainObject(data.targetAccountExtras) || isPlainObject(data.targetContactExtras))) {
@@ -4825,6 +4830,7 @@ export async function mergeTargetContacts(keepKey, dropKey) { return withAccount
   };
   extras[dropKey] = { ...dropExtra, deletedAt: Date.now(), mergedInto: keepKey };
   await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: extras });
+  await moveNotesUnlocked([{ on: "contact", from: dropKey, to: keepKey }]); // 1.2.4 (R7.5): the notes of both are kept
   return { keep: keepRow.fullName, drop: dropRow.fullName };
 }); }
 
@@ -4983,6 +4989,14 @@ async function mergeTargetAccountsUnlocked(keepKey, dropKey, { keepId = null, dr
     await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: contactExtras });
   }
 
+  // 1.2.4 Notes (R7.5): the dropped account's notes move to the kept one, and each contact's notes follow the contact
+  // to its new key - also a contact that was already on the kept account under another spelling. Lead notes stay:
+  // a lead keeps its key.
+  await moveNotesUnlocked([
+    ...(sameKey ? [] : [{ on: "account", from: dropKey, to: keepKey }]),
+    ...movedContactKeys.filter((m) => m.oldKey !== m.newKey).map((m) => ({ on: "contact", from: m.oldKey, to: m.newKey })),
+  ]);
+
   // Post leads are tied to an account by company name.
   const results = await getResults();
   let leadsMoved = 0;
@@ -5026,6 +5040,72 @@ export async function saveTargetContactExtra(contactKey, patch) {
   extras[contactKey] = { ...emptyExtra(), ...(extras[contactKey] || {}), ...patch };
   await chrome.storage.local.set({ [TARGET_CONTACT_EXTRAS_KEY]: extras });
 }
+
+// --------------------------------------------------------------------------
+// Notes on accounts, contacts and leads (1.2.4, NOTES_DESIGN.md section 3)
+// --------------------------------------------------------------------------
+
+// One object keyed by the note's id; the rules are in notes.js. In a team every note is a row of its own
+// (team-keys.js), so the writers run inside the account write lock like every other read-modify-write of a shared
+// map - the sync layer writes colleagues' notes into the same object under that lock.
+const NOTES_KEY = "notes";
+
+export async function getNotes() {
+  const data = await chrome.storage.local.get(NOTES_KEY);
+  return data[NOTES_KEY] || {};
+}
+
+// R7.5 (design 10): notes follow a merge to the kept account or contact. For a caller already inside the account
+// write lock. moves: [{ on, from, to }] (notes.js rekeyNotes).
+async function moveNotesUnlocked(moves) {
+  const { notes, moved } = rekeyNotes(await getNotes(), moves);
+  if (moved > 0) await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return moved;
+}
+
+async function noteWriter() {
+  const got = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const m = got.teamMembership || null;
+  return { me: m?.memberId || null, author: m ? { memberId: m.memberId, name: m.name } : null, leadRights: leadRightsOf(m, got.teamAccountStates) };
+}
+
+// on: "account" | "contact" | "lead"; key: the account, contact or lead key. -> { ok, id, note } or { ok: false, reason }.
+export async function addNote(on, key, text) { return withAccountWriteLock(async () => {
+  const { author } = await noteWriter();
+  const note = noteEntry(on, key, text, author, Date.now());
+  if (!note) return { ok: false, reason: "empty" };
+  const notes = await getNotes();
+  const id = crypto.randomUUID(); // random and made once, so two PCs can never make the same one
+  notes[id] = note;
+  await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return { ok: true, id, note };
+}); }
+
+// R3.1: only the author. reason: "missing" (gone or deleted meanwhile), "not-yours", "empty".
+export async function editNote(id, text) { return withAccountWriteLock(async () => {
+  const { me } = await noteWriter();
+  const notes = await getNotes();
+  const note = notes[id];
+  if (!isLiveNote(note)) return { ok: false, reason: "missing" };
+  if (!mayEditNote(note, me)) return { ok: false, reason: "not-yours" };
+  const next = editedNote(note, text, Date.now());
+  if (next === note) return { ok: Boolean(String(text ?? "").trim()), reason: String(text ?? "").trim() ? null : "empty", id, note };
+  notes[id] = next;
+  await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return { ok: true, id, note: next };
+}); }
+
+// R3.1-R3.2: the author, the Team Lead and the deputy. The entry stays, marked deleted (design 3.3).
+export async function deleteNote(id) { return withAccountWriteLock(async () => {
+  const { me, leadRights } = await noteWriter();
+  const notes = await getNotes();
+  const note = notes[id];
+  if (!isLiveNote(note)) return { ok: true, id }; // already deleted (a colleague was faster)
+  if (!mayDeleteNote(note, me, leadRights)) return { ok: false, reason: "not-yours" };
+  notes[id] = deletedNote(note, me, Date.now());
+  await chrome.storage.local.set({ [NOTES_KEY]: notes });
+  return { ok: true, id };
+}); }
 
 // --------------------------------------------------------------------------
 // Bulk edit of account/contact extras (2026-09-22)
@@ -6031,6 +6111,7 @@ function isDismissedWebFinding(dismissed, proposal) {
   if (!dismissed || !Object.prototype.hasOwnProperty.call(dismissed, proposal.key)) return false;
   const a = dismissed[proposal.key];
   const b = proposal.found;
+  if (proposal.key === "globalHqCountry" && sameCountry(a, b)) return true;
   if (typeof a === "number" || typeof b === "number") {
     const x = Number(a), y = Number(b);
     return Number.isFinite(x) && Number.isFinite(y) && x === y;

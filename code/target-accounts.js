@@ -109,7 +109,7 @@ import { parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { IMPORT_COLUMNS } from "./import-columns.js";
 import { confirmIfCostly, getCostWarningUsd, getApiUsage, sumDays } from "./api-usage.js";
 import { isBlankFinding, computeFindingProposals as computeProposalsFor, WEB_FINDING_FIELDS } from "./web-research-apply.js";
-import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber, wholeEmployees, HEADCOUNT_FIELDS } from "./value-normalize.js";
+import { DEFAULT_EXCHANGE_RATES, SUPPORTED_CURRENCIES, normalizeMoney, parseLooseNumber, wholeEmployees, HEADCOUNT_FIELDS, sameCountry } from "./value-normalize.js";
 import { arbitrateAccount, arbitrationContext, illogicalReasons, summarize as summarizeArbitration, RULES as ARBITRATION_RULES, sizeBucketKey } from "./web-findings-arbitration.js";
 import { guardBatchStart, getRunningBatch, busyMessage, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -136,6 +136,9 @@ import {
 import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
+import { notesSection, notesUnsaved } from "./notes-ui.js";
+import { accountTimelineMarked, lastNoteByAccount, lastNoteByContact, noteSearchText, noteLine, leadNoteAbout, notesAbout, notesPromptSection, notesOn, notesExportLines } from "./notes.js";
+import { getNotes } from "./storage.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
@@ -462,6 +465,13 @@ window.addEventListener("message", (event) => {
 });
 
 document.getElementById("embedded-page-close-btn").addEventListener("click", hideEmbeddedPage);
+
+// 1.2.3.5: the page itself never scrolls - only #app-nav and #app-main do (target-accounts.css). An embedded page
+// going to its #section could still push <html>, <body> or #app-shell up under the top bar; put them back.
+document.addEventListener("scroll", (event) => {
+  const el = event.target === document ? document.scrollingElement : event.target;
+  if (el && el.scrollTop && [document.documentElement, document.body, document.getElementById("app-shell")].includes(el)) el.scrollTop = 0;
+}, true);
 document.getElementById("app-nav-brand-name").addEventListener("click", hideEmbeddedPage);
 
 // This page's OWN half of the embedding scheme above: when SOMETHING ELSE
@@ -734,6 +744,9 @@ const COMPANY_COLUMNS = [
   },
   { id: "salesTeamPriorityScore", label: "Priority Score", visible: true, numeric: true },
   { id: "salesTeamPriorityReason", label: "Priority Reason", visible: true, longText: true },
+  // 1.2.4 Notes (R5): the latest note of the account's timeline - on the account, its contacts or its leads. Not a
+  // stored field (lastNoteOf below); sorts by the note's time, rows without a note last.
+  { id: "lastNote", label: "Last note", visible: true, longText: true },
   // Not a stored field - computed live from every lead matched to this company by
   // name (see accountStatusPillClass/renderCellContent), same rollup the pie uses.
   { id: "accountStatus", label: "Status", visible: true, pill: true },
@@ -1035,6 +1048,8 @@ function findingValuesMatch(a, b) {
 
 function isDismissedFinding(dismissed, proposal) {
   if (!dismissed || !Object.prototype.hasOwnProperty.call(dismissed, proposal.key)) return false;
+  // 1.2.3.4: "Schweiz" turned down before the finding was shown as "Switzerland" stays turned down.
+  if (proposal.key === "globalHqCountry" && sameCountry(dismissed[proposal.key], proposal.found)) return true;
   return findingValuesMatch(dismissed[proposal.key], proposal.found);
 }
 
@@ -1054,7 +1069,70 @@ function contactLinkLabel(url) {
   try { return `${new URL(url).hostname.replace(/^www\./, "")} ↗`; } catch { return "Open ↗"; }
 }
 
+// 1.2.4 Notes (design 7): what the Last note column and the search boxes read. Rebuilt when the workbook, the leads
+// or the notes change - never per cell. An account's entry covers its timeline; a lead counts only where this member
+// sees it (design 5.3).
+let allNotes = {};
+let notesIndex = { byAccount: {}, byContact: {}, text: { account: new Map(), contact: new Map() } };
+function rebuildNotesIndex() {
+  const accountOfLead = {};
+  const leadByKey = new Map();
+  for (const l of allLeads) {
+    if (!l.key || !l.company || !teamAccounts.canSeeLead(l)) continue;
+    accountOfLead[l.key] = normalizeCompanyName(l.company);
+    leadByKey.set(l.key, l);
+  }
+  const contactNames = {};
+  for (const c of rawWorkbook.contacts || []) {
+    const k = contactKeyFor(c.company, c.fullName);
+    if (k) contactNames[k] = c.fullName;
+  }
+  const byAccount = lastNoteByAccount(allNotes, accountOfLead);
+  for (const [key, n] of Object.entries(byAccount)) {
+    if (n.on === "contact") byAccount[key] = { ...n, about: contactNames[n.key] || "a contact" };
+    else if (n.on === "lead") byAccount[key] = { ...n, about: leadNoteAbout(leadByKey.get(n.key)) };
+  }
+  notesIndex = { byAccount, byContact: lastNoteByContact(allNotes), text: noteSearchText(allNotes, accountOfLead) };
+}
+// R2.3: an account's timeline with every contact and lead note marked with what it is about - for the Notes section
+// of the account page and for the account's Sales Mentor.
+function accountTimelineOf(notes, companyKey) {
+  const contactNames = {};
+  for (const c of rawWorkbook.contacts || []) {
+    if (normalizeCompanyName(c.company) !== companyKey) continue;
+    const k = contactKeyFor(c.company, c.fullName);
+    if (k) contactNames[k] = c.fullName;
+  }
+  const seenLeads = allLeads.filter((l) => normalizeCompanyName(l.company) === companyKey && teamAccounts.canSeeLead(l));
+  return accountTimelineMarked(notes, companyKey, contactNames, seenLeads);
+}
+// R6.4 (D5): what the Sales Mentor chats on the account page and the contact page are given - the account's timeline;
+// the notes on the contact and on its account.
+function accountNotesForPrompt() {
+  return currentAccountKey ? notesPromptSection(accountTimelineOf(allNotes, currentAccountKey)) : "";
+}
+function contactNotesForPrompt() {
+  const contact = currentContactRow();
+  if (!currentContactKey || !contact) return "";
+  return notesPromptSection(notesAbout(allNotes, [
+    { on: "contact", key: currentContactKey },
+    { on: "account", key: normalizeCompanyName(contact.company), about: `the account ${contact.company}` },
+  ]));
+}
+
+// A contact row always has fullName, a company row never does (as in rawValue below).
+function lastNoteOf(row) {
+  return (row.fullName != null ? notesIndex.byContact[contactKeyFor(row.company, row.fullName)] : notesIndex.byAccount[normalizeCompanyName(row.company)]) || null;
+}
+function noteTextOf(row) {
+  return (row.fullName != null ? notesIndex.text.contact.get(contactKeyFor(row.company, row.fullName)) : notesIndex.text.account.get(normalizeCompanyName(row.company))) || "";
+}
+
 function rawValue(company, column) {
+  if (column.id === "lastNote") {
+    const note = lastNoteOf(company);
+    return note ? noteLine(note, teamAccounts.inTeam()) : null;
+  }
   if (column.id === "readiness") {
     if (company.fullName != null) return null;
     const a = readinessByCompanyId.get(company.companyId);
@@ -1179,6 +1257,7 @@ function localizeTypeWording(value) {
 }
 
 function sortValue(company, column) {
+  if (column.id === "lastNote") return lastNoteOf(company)?.at ?? null; // by the note's time; no note sorts last
   // Sorted by the COUNT, not by the label - "12 to review" belongs above "3 to review", which is
   // not what a lexical sort of the cell text does. Researched-with-nothing-open sorts below both,
   // never-researched below that.
@@ -1208,7 +1287,7 @@ function filterText(company, column) {
 function matchesGlobalSearch(company, query) {
   if (!query) return true;
   const haystack = `${company.company || ""} ${company.industry || ""}`.toLowerCase();
-  return haystack.includes(query);
+  return haystack.includes(query) || noteTextOf(company).includes(query); // 1.2.4 (R5.5): also inside the notes
 }
 
 function matchesColumnFilters(company) {
@@ -2474,7 +2553,7 @@ async function teamReassign(companyKey) {
 
 const TEAM_REFUSAL_TEXT = {
   offline: "the team folder is not connected on this PC", not_in_sync: "not in sync with the team",
-  held: "a colleague is updating it", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
+  held: "a colleague is updating it right now; try again in a minute", assigned: "a colleague already has it", not_lead: "only the Team Lead can release a colleague's account",
 };
 
 // Assign or release one or many accounts, one at a time (each is its own claim-then-confirm, R6.1).
@@ -2503,7 +2582,9 @@ async function teamAssignKeys(keys, type, { to = null, toName = null, noAccess =
       "Add them to that group in Settings > Team first.");
   }
   for (const [why, n] of Object.entries(refused)) lines.push(`${plural(n)} not ${type === "TEAM_ASSIGN" ? "assigned" : "released"} - ${TEAM_REFUSAL_TEXT[why] || why}.`);
-  if (keys.length > 1 || lines.length > 1 || to) showNotice(lines.join("\n"), { error: done === 0 });
+  // 1.2.3.2: nothing "went wrong" when a colleague is simply on the account, or it is theirs.
+  const onlyBusy = done === 0 && !noAccess.length && Object.keys(refused).every((why) => why === "held" || why === "assigned");
+  if (keys.length > 1 || lines.length > 1 || to) showNotice(lines.join("\n"), { error: done === 0, title: onlyBusy ? (type === "TEAM_ASSIGN" ? "Not assigned" : "Not released") : "" });
   appendActivityLog({ actor: "user", action: type === "TEAM_ASSIGN" ? "team_assigned" : "team_released", label: `${done} account${done === 1 ? "" : "s"} ${verb}` });
 }
 
@@ -2814,6 +2895,8 @@ const CONTACT_LIST_COLUMNS = [
   { id: "sourceUrl", label: "Source", link: true },
   { id: "lastVerified", label: "Source Last Verified", date: true },
   { id: "evidenceQuality", label: "Source Evidence Quality" },
+  // 1.2.4 Notes (R5.2): the latest note on the contact; hidden by default here.
+  { id: "lastNote", label: "Last note", longText: true },
 ];
 
 const CONTACT_HIDDEN_COLUMNS_STORAGE_KEY = "salesteam-target-contacts-hidden-columns-v2";
@@ -2841,6 +2924,12 @@ function loadContactHiddenColumns() {
     if (!localStorage.getItem("salesteam-target-contacts-groups-column-v1")) {
       localStorage.setItem("salesteam-target-contacts-groups-column-v1", "1");
       contactHiddenColumns.add("teamGroups");
+      saveContactHiddenColumns();
+    }
+    // 1.2.4: the same for Last note (R5.2: hidden by default on Target Contacts).
+    if (!localStorage.getItem("salesteam-target-contacts-lastnote-column-v1")) {
+      localStorage.setItem("salesteam-target-contacts-lastnote-column-v1", "1");
+      contactHiddenColumns.add("lastNote");
       saveContactHiddenColumns();
     }
   } catch { /* best-effort only */ }
@@ -2894,7 +2983,7 @@ function loadContactFilterSortState() {
 function matchesContactGlobalSearch(contact, query) {
   if (!query) return true;
   const haystack = `${contact.fullName || ""} ${contact.company || ""} ${contact.jobTitle || ""}`.toLowerCase();
-  return haystack.includes(query);
+  return haystack.includes(query) || noteTextOf(contact).includes(query); // 1.2.4 (R5.5): also inside the notes
 }
 
 function matchesContactColumnFilters(contact) {
@@ -3416,7 +3505,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
   // the list view's flag column depends on these; an open Account/Contact
   // view already reflects the storage write that caused it directly.
   if ("results" in changes) {
-    getResults().then((results) => { allLeads = Object.values(results); if (!listViewEl.hidden) renderTable(); });
+    getResults().then((results) => { allLeads = Object.values(results); rebuildNotesIndex(); if (!listViewEl.hidden) renderTable(); });
+  }
+  // 1.2.4: a note added here or arriving from a colleague - the Last note column of whichever list is open.
+  if ("notes" in changes) {
+    getNotes().then((notes) => {
+      allNotes = notes;
+      rebuildNotesIndex();
+      // A list that is not on screen now (the note was written on an account's or contact's page) is redrawn when it
+      // is shown again (route) - without this it kept its old Last note until something else redrew it.
+      if (!listViewEl.hidden) renderTable(); else teamListsStale.accounts = true;
+      if (!contactsListViewEl.hidden) renderContactsTable(); else teamListsStale.contacts = true;
+    });
   }
   if ("targetAccountExtras" in changes) {
     getTargetAccountExtras().then((extras) => { accountExtras = extras; if (!listViewEl.hidden) renderTable(); });
@@ -3823,6 +3923,8 @@ async function loadWorkbook() {
   accountExtras = extras;
   contactExtras = cExtras;
   rawWorkbook = wb; // the Removed dialog needs the rows the lists hide
+  allNotes = await getNotes();
+  rebuildNotesIndex();
   // Excluded (added 2026-09-17, the user's own confirmed design: "Hide from
   // Dashboard entirely, which is what we do for our own excluded
   // companies") - a company the workbook's own Excluded column marks "Yes",
@@ -5226,7 +5328,14 @@ function buildEditForm(fields, effectiveRow, onSave, onCancel, statusOpts) {
   saveBtn.type = "button";
   saveBtn.className = "edit-save-btn";
   saveBtn.textContent = "Save changes";
-  saveBtn.addEventListener("click", () => {
+  // A save can take several seconds (team folder, reload of the workbook) before the page re-renders and this form
+  // goes away - "Saving…" beside the buttons says so meanwhile (Boaz, 2026-10-13). When onSave returns without
+  // re-rendering (the change was refused or cancelled), the form is still here and the buttons come back.
+  const savingNote = document.createElement("span");
+  savingNote.className = "edit-saving-note";
+  savingNote.textContent = "Saving…";
+  savingNote.hidden = true;
+  saveBtn.addEventListener("click", async () => {
     const values = {};
     for (const f of fields) {
       values[f.key] = f.type === "list"
@@ -5238,15 +5347,33 @@ function buildEditForm(fields, effectiveRow, onSave, onCancel, statusOpts) {
       const picked = statusSelect.value === MANUAL_STATUS_AUTO_OPTION ? null : statusSelect.value;
       if (picked !== (statusOpts.manualStatus || null)) statusChoice = picked;
     }
-    onSave(values, statusChoice);
+    saveBtn.disabled = cancelBtn.disabled = true;
+    savingNote.hidden = false;
+    try {
+      await onSave(values, statusChoice);
+    } finally {
+      saveBtn.disabled = cancelBtn.disabled = false;
+      savingNote.hidden = true;
+    }
   });
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.className = "edit-cancel-btn";
   cancelBtn.textContent = "Cancel";
   cancelBtn.addEventListener("click", onCancel);
-  actions.append(saveBtn, cancelBtn);
+  actions.append(saveBtn, cancelBtn, savingNote);
   form.appendChild(actions);
+
+  // 1.2.3.3: a value changed here and not yet saved marks the form data-unsaved - the team hold stays while it is
+  // (team-claims-ui.js editOpen), also when no field is in focus, and leaving the page asks first (beforeunload below).
+  const controls = [...Object.values(inputs), ...(statusSelect ? [statusSelect] : [])];
+  const opened = controls.map((c) => c.value);
+  const markUnsaved = () => {
+    if (controls.some((c, i) => c.value !== opened[i])) form.dataset.unsaved = "1";
+    else delete form.dataset.unsaved;
+  };
+  form.addEventListener("input", markUnsaved);
+  form.addEventListener("change", markUnsaved);
 
   return form;
 }
@@ -5412,7 +5539,8 @@ function fieldSaveButton(label = "Save") {
 
 window.addEventListener("beforeunload", (event) => {
   const pending = [...document.querySelectorAll("[data-unsaved]")].some((el) => el.isConnected && !el.closest("[hidden]"));
-  if (pending) { event.preventDefault(); event.returnValue = ""; }
+  // 1.2.4: a note typed and not added counts too (its own mark, so it never keeps the team's edit hold - notes-ui.js).
+  if (pending || notesUnsaved()) { event.preventDefault(); event.returnValue = ""; }
 });
 
 // autoLabel: what "no manual status" is called - an account's status comes from its contacts and leads (Boaz
@@ -5758,7 +5886,7 @@ function createAgentChat({ buildSystemPrompt, historyEl, statusEl, inputEl, send
 }
 
 const accountMentorChat = createAgentChat({
-  buildSystemPrompt: () => buildAccountScopedMentorPrompt(currentAccountCompanyRow(), { mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
+  buildSystemPrompt: () => buildAccountScopedMentorPrompt(currentAccountCompanyRow(), { notes: accountNotesForPrompt(), mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
   historyEl: document.getElementById("account-mentor-history"),
   statusEl: document.getElementById("account-mentor-status"),
   inputEl: document.getElementById("account-mentor-input"),
@@ -5798,7 +5926,7 @@ const accountVoiceChat = createAgentChat({
 });
 
 const contactMentorChat = createAgentChat({
-  buildSystemPrompt: () => buildContactScopedMentorPrompt(currentContactRow(), currentContactAccountRow(), { mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
+  buildSystemPrompt: () => buildContactScopedMentorPrompt(currentContactRow(), currentContactAccountRow(), { notes: contactNotesForPrompt(), mentorPersona: currentSettingsCache.mentorPersona, companyContext: currentSettingsCache.companyContext, idealCustomerProfile: currentSettingsCache.idealCustomerProfile, userProfile: currentSettingsCache.userProfile, outputLanguage: currentSettingsCache.outputLanguage }),
   historyEl: document.getElementById("contact-mentor-history"),
   statusEl: document.getElementById("contact-mentor-status"),
   inputEl: document.getElementById("contact-mentor-input"),
@@ -6542,7 +6670,7 @@ document.getElementById("bulk-research-start-btn").addEventListener("click", asy
   if (!(await askConfirm(
     `Research ${items.length} account${items.length === 1 ? "" : "s"} on the web?\n\n` +
     `Estimated cost: about ${formatUsd(estimate)} on your Anthropic API key (up to about ${formatUsd(estimate * 1.5)}).` +
-    (overLimit ? ` This is more than your warning limit of ${formatUsd(limit)} (Settings > Billing).` : "") +
+    (overLimit ? ` This is more than your warning limit of ${formatUsd(limit)} (Settings > Anthropic Usage).` : "") +
     (budget > 0 ? `\nIt stops by itself when the cost reaches ${formatUsd(budget)}.` : "") +
     "\n\nIt runs in the background: you can move to any other SalesTeam page and keep working. A bar at the top shows the progress and has a Stop button; everything found so far is kept, and a pop-up tells you when it is finished.",
     { okLabel: "Start", cancelLabel: "Cancel" }))) return;
@@ -6902,6 +7030,12 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
     { entityLabel: company.company, relatedCompanyKey: companyKey }
   );
 
+  // 1.2.4 Notes (R2.3): one timeline - the notes on the account, on its contacts and on its leads, each marked with
+  // what it is about. A new note written here is on the account. Lead notes only for leads this member sees (5.3).
+  notesSection(document.getElementById("account-notes")).show({
+    on: "account", key: companyKey, name: company.company || companyKey, select: (all) => accountTimelineOf(all, companyKey),
+  });
+
   const overviewEl = document.getElementById("account-overview");
   overviewEl.innerHTML = "";
   if (accountEditMode) {
@@ -7058,6 +7192,11 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
   const contact = currentContactRow();
   document.getElementById("contact-title").textContent = contact.fullName || "(unknown contact)";
   paintContactBackLink();
+
+  // 1.2.4 Notes (R2.4): the contact page shows the notes on this contact only.
+  notesSection(document.getElementById("contact-notes")).show({
+    on: "contact", key: contactKey, name: `${contact.fullName || "a contact"}${contact.company ? ` (${contact.company})` : ""}`,
+  });
 
   const contactLeads = findLeadsForContact(contact, allLeads);
   const contactOverrides = contactExtras[contactKey]?.overrides || {};
@@ -7337,8 +7476,15 @@ function tableCsv(columns, rows) {
       if (column.id === "seniorityPriority" && v != null && v !== "") v = SENIORITY_PRIORITY_LABELS[v] || v;
       cells.push(v == null ? "" : v);
     }
+    // 1.2.4 (R7.2, design 9.1): every note of the row, one per line - an account's whole timeline, a contact's own.
+    // An export-only column: it is in no list and not in the Columns menu.
+    const rowNotes = row.fullName != null
+      ? notesOn(allNotes, "contact", contactKeyFor(row.company, row.fullName))
+      : accountTimelineOf(allNotes, normalizeCompanyName(row.company));
+    cells.push(notesExportLines(rowNotes).join("\n"));
     return cells;
   });
+  headers.push("Notes");
   const compact = compactCsvColumns(headers, lines);
   return toCsv(compact.headers, compact.rows);
 }
@@ -7477,6 +7623,10 @@ async function runExport(format, what) {
   }
   const stamp = exportStamp();
   const files = [];
+  // 1.2.4 Notes (R7.3): an exported account carries the notes of its timeline, an exported contact its own - newest
+  // first, one text per note. Where they go in each CRM's file: crm-files.js descriptionText, hubspot.js notesCell.
+  const accountNotesLines = (c) => notesExportLines(accountTimelineOf(allNotes, normalizeCompanyName(c.company)));
+  const contactNotesLines = (c) => notesExportLines(notesOn(allNotes, "contact", contactKeyFor(c.company, c.fullName)));
   if (format === "hubspot") {
     // The values the table shows - edits, LinkedIn and web research on top of the stored row (1.2.2.13 round-trip
     // test: the raw rows went out, so Galenica's 7,971 came back as the old 4,511) - and revenue in the display
@@ -7484,9 +7634,9 @@ async function runExport(format, what) {
     const companies = (accountRows || []).map((c) => {
       const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
       const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
-      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: accountPriorityInfo(c).priority }; // D4: exported as shown
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: accountPriorityInfo(c).priority, notesLines: accountNotesLines(c) }; // D4: exported as shown
     });
-    contactRows = contactRows && contactRows.map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    contactRows = contactRows && contactRows.map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}), notesLines: contactNotesLines(c) }));
     const statusOfCompany = (c) => effectiveStatus(accountLeadBucket(allLeads.filter((l) => normalizeCompanyName(l.company) === normalizeCompanyName(c.company)), normalizeCompanyName(c.company)), accountExtras[normalizeCompanyName(c.company)]?.manualStatus);
     const statusOfContact = (c) => effectiveStatus(leadStatusBucket(findLeadsForContact(c, allLeads)), contactExtras[contactKeyFor(c.company, c.fullName)]?.manualStatus);
     const built = buildHubspotFiles(companies, contactRows || [], statusOfCompany, statusOfContact);
@@ -7498,9 +7648,9 @@ async function runExport(format, what) {
       const view = { ...c, ...(accountExtras[normalizeCompanyName(c.company)]?.overrides || {}) };
       const money = normalizeMoney(view.globalRevenue, view.revenueCurrency, moneySettings.targetCurrency, moneySettings.rates);
       const info = accountPriorityInfo(c);
-      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: info.priority, relationship: info.relationship };
+      return { ...view, globalRevenue: money.amount === null ? null : Math.round(money.amount), salesTeamPriority: info.priority, relationship: info.relationship, notesLines: accountNotesLines(c) };
     });
-    const contacts = (contactRows || []).map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}) }));
+    const contacts = (contactRows || []).map((c) => ({ ...c, ...(contactExtras[contactKeyFor(c.company, c.fullName)]?.overrides || {}), notesLines: contactNotesLines(c) }));
     const built = buildCrmFiles(format, companies, contacts, { registryCountry: await singleTargetCountry() });
     if (accountRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-accounts-${stamp}.csv`, csv: built.accountsCsv, text: `${built.accountCount} accounts` });
     if (contactRows) files.push({ name: `SalesTeam-${CRM_SHORT_NAMES[format]}-contacts-${stamp}.csv`, csv: built.contactsCsv, text: `${built.contactCount} contacts` });

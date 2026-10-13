@@ -10,7 +10,7 @@
 // (import/export, confidence threshold, Resolve LinkedIn Company IDs) moved
 // to target-accounts.js instead (2026-09-16, reported directly: it belongs
 // next to the data it actually affects, not on a separate settings page).
-import { getApiUsage, sumDays, clearApiUsage, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
+import { getApiUsage, sumDays, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
 import { askConfirm, markSaved } from "./confirm-dialog.js";
 import { leadRightsOf } from "./team-groups.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -427,7 +427,7 @@ async function runCompanyDiscoveryDebug() {
     companyDiscoveryStatusEl.textContent = summary.ranAnything
       ? `Done. ${JSON.stringify({ stoppedByAbort: summary.stoppedByAbort, stoppedByTouchBudget: summary.stoppedByTouchBudget, reachedCap: summary.reachedCap })}` +
         (noContentScriptResponse
-          ? " WARNING: no page ever reported back - reload the extension in chrome://extensions and try again."
+          ? " WARNING: no page ever reported back - reload SalesTeam on your browser's Extensions page and try again."
           : "")
       : `Did not run: ${summary.reason}`;
     companyDiscoveryResultsEl.textContent = JSON.stringify(summary, null, 2);
@@ -897,7 +897,7 @@ init();
 startAutoBackup();
 
 
-// ---- Billing page: usage and estimated cost of the AI calls made on the user's own API key ----
+// ---- Anthropic Usage page (called "Billing" until 1.2.4; the ids keep that name): usage and estimated cost of the AI calls made on the user's own API key ----
 function fmtUsd(n) {
   if (!n) return "$0.00";
   return n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`;
@@ -997,11 +997,86 @@ async function renderBilling() {
   }
 }
 
-document.getElementById("billing-reset-btn").addEventListener("click", async () => {
-  if (!(await askConfirm("Reset the usage and cost counters to zero?\n\nThis only clears SalesTeam's own count. Nothing changes on your Anthropic account.", { okLabel: "Reset", cancelLabel: "Cancel", danger: true }))) return;
-  await clearApiUsage();
-  await renderBilling();
-});
+// ---- Team usage (BILLING_TEAM_USAGE_DESIGN.md 5): the Team Lead and the deputy see one line per person ----
+// The background worker reads the members' usage files and answers with the finished lines; this page only draws
+// them, on opening and once a minute while it is in front (D7).
+const TEAM_USAGE_COLUMNS = [
+  { key: "name", label: "Member" },
+  { key: "joined", label: "Joined" },
+  { key: "thisMonth", label: "This month US$" },
+  { key: "lastMonth", label: "Last month US$" },
+  { key: "since", label: "Since joining US$" },
+  { key: "researches", label: "Web researches this month" },
+  { key: "updated", label: "Updated" },
+];
+let teamUsageSort = { key: "thisMonth", down: true };
+let teamUsageLast = null;
+
+function drawTeamUsage() {
+  const r = teamUsageLast;
+  const box = document.getElementById("team-usage");
+  // R2.2: a member is told what the Team Lead sees of their usage; the Team Lead and the deputy see the table instead.
+  document.getElementById("usage-shared-note").hidden = !(r?.member && !r.lead);
+  box.hidden = !r?.lead;
+  if (!r?.lead) return;
+  const when = (ms) => (ms ? new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
+  document.getElementById("team-usage-status").textContent = r.connected
+    ? "What each member's SalesTeam has used on their own Anthropic API key since the day they joined the team. Usage from before that day is not counted here."
+    : `Team folder not connected - figures as of ${when(r.readAt) || "never"}.`;
+  const table = document.getElementById("team-usage-table");
+  table.innerHTML = "";
+  const head = document.createElement("tr");
+  for (const c of TEAM_USAGE_COLUMNS) {
+    const th = document.createElement("th");
+    th.textContent = c.label + (teamUsageSort.key === c.key ? (teamUsageSort.down ? " \u25BC" : " \u25B2") : "");
+    th.style.cursor = "pointer";
+    th.title = "Sort by this column";
+    th.addEventListener("click", () => {
+      teamUsageSort = { key: c.key, down: teamUsageSort.key === c.key ? !teamUsageSort.down : c.key !== "name" };
+      drawTeamUsage();
+    });
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+  const { key, down } = teamUsageSort;
+  const rows = [...r.rows].sort((a, b) => {
+    const d = key === "name" ? a.name.localeCompare(b.name) : (a[key] || 0) - (b[key] || 0);
+    return (down ? -d : d) || a.name.localeCompare(b.name);
+  });
+  const addRow = (cells, bold) => {
+    const tr = document.createElement("tr");
+    if (bold) tr.className = "billing-total-row";
+    for (const c of cells) {
+      const td = document.createElement("td");
+      td.textContent = c.text ?? c;
+      if (c.span) { td.colSpan = c.span; td.style.textAlign = "left"; }
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  };
+  const day = (ms) => (ms ? new Date(ms).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }) : "");
+  for (const row of rows) {
+    const name = row.name + (row.browsers > 1 ? ` (${row.browsers} browsers)` : "") + (row.left ? " (left)" : "");
+    if (row.state === "none") addRow([name, day(row.joined), { text: "No figures yet - needs SalesTeam 1.2.4", span: 5 }]);
+    else if (row.state === "locked") addRow([name, day(row.joined), { text: "Figures not available", span: 5 }]);
+    else addRow([name, day(row.joined), fmtUsd(row.thisMonth), fmtUsd(row.lastMonth), fmtUsd(row.since), fmtNum(row.researches), when(row.updated)]);
+  }
+  addRow(["Team total", "", fmtUsd(r.total.thisMonth), fmtUsd(r.total.lastMonth), fmtUsd(r.total.since), fmtNum(r.total.researches), ""], true);
+}
+
+async function renderTeamUsage() {
+  if (!document.getElementById("billing-section") || document.visibilityState !== "visible") return;
+  try {
+    teamUsageLast = await chrome.runtime.sendMessage({ type: "TEAM_USAGE" });
+  } catch {
+    return; // the background worker is restarting: the next minute asks again
+  }
+  drawTeamUsage();
+}
+renderTeamUsage();
+setInterval(renderTeamUsage, 60000);
+document.addEventListener("visibilitychange", renderTeamUsage);
+
 chrome.storage.onChanged.addListener((changes) => { if (changes.apiUsage) renderBilling(); });
 renderBilling();
 

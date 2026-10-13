@@ -206,7 +206,7 @@ export async function kickPipeline(source) {
       const linkedinDone = reason === "budget" ? stats.last24h >= PIPELINE_TOUCH_CEILING : reason === "nothing_left" && !auto.enabled;
       if (linkedinDone && !web.reason && !isWebLaneRunning()) {
         const left = Math.max(0, (Number(web.monthlyUsd) || 0) - (Number(web.spentUsd) || 0));
-        const lane = await startWebLane({ limit: AUTO_WEB_LANE_ACCOUNTS, budget: left, auto: true }).catch(() => null);
+        const lane = await startWebLane({ limit: AUTO_WEB_LANE_ACCOUNTS, budget: left, auto: true, linkedinLimit: reason === "budget" }).catch(() => null);
         if (lane && lane.ok) return { started: false, reason, webLane: true };
       }
       return { started: false, reason };

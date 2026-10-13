@@ -5,6 +5,7 @@
   <title>SalesTeam Leads Dashboard</title>
   <link rel="icon" href="icons/icon16.png" />
   <link rel="stylesheet" href="dashboard.css" />
+  <link rel="stylesheet" href="notes.css" />
 </head>
 <body>
   <!-- PRD 6.20 Phase 10 (2026-09-18) - left-nav shell, same shape as
@@ -113,7 +114,7 @@
         <button id="open-settings-backup-btn" type="button" class="nav-item" title="Open Settings - Backup">Backup</button>
         <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
         <button id="open-settings-team-btn" type="button" class="nav-item" title="Share accounts, contacts and leads with colleagues through a OneDrive folder - create, join or leave a team">Team</button>
-        <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Billing</button>
+        <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Anthropic Usage</button>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
@@ -339,6 +340,9 @@
       <p id="detail-full-content"></p>
       <div id="detail-links"></div>
     </section>
+
+    <!-- 1.2.4 Notes (NOTES_DESIGN.md 6.2): the notes on this lead, under the content and above the draft. -->
+    <section id="detail-notes" hidden></section>
 
     <section id="detail-draft-section">
       <h3>Draft Message</h3>

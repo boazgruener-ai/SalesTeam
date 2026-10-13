@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-sync.js"]
+REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-usage.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -137,6 +137,18 @@ function listTeamFolderTop() {
   Object.keys(FOLDER).forEach(function (p) { names[p.split('/')[0]] = true; });
   return Promise.resolve(Object.keys(names).sort());
 }
+// team-usage-seal.js stub (Web Crypto): a "sealed" value opens only with the private key of a reader it was sealed for.
+function makeUsageKeyPair() { var id = Math.random().toString(36).slice(2, 10); return Promise.resolve({ privateKey: 'priv:' + id, publicJwk: { n: 'pub:' + id } }); }
+function usageKeyId(jwk) { return String(jwk && jwk.n || ''); }
+function sealUsage(value, readers) {
+  var keys = {};
+  Object.keys(readers || {}).forEach(function (m) { keys[m] = readers[m].n; });
+  return Promise.resolve({ iv: '', data: JSON.stringify(value), keys: keys });
+}
+function openUsage(sealed, member, privateKey) {
+  var ok = sealed && sealed.keys && sealed.keys[member] === 'pub:' + String(privateKey).slice(5);
+  return Promise.resolve(ok ? JSON.parse(sealed.data) : null);
+}
 var LAST = null;
 function run(p) { LAST = { pending: true }; p.then(function (r) { LAST = r; }, function (e) { LAST = { error: String(e && e.message || e) }; }); }
 """
@@ -164,12 +176,16 @@ def strip_module(name):
 class Member:
     """One browser profile: its own context, storage, timers and IndexedDB."""
 
-    def __init__(self, label, now_offset=0):
+    def __init__(self, label, now_offset=0, before_notes=False):
         self.label = label
         self.ctx = MiniRacer()
         self.ctx.eval(FAKES)
         self.ctx.eval("NOW += %d;" % now_offset)
         self.ctx.eval("\n".join("// ===== %s =====\n%s" % (n, strip_module(n)) for n in REAL))
+        if before_notes:
+            # A colleague who has not updated yet (1.2.3): the same sync layer, but "notes" is not a shared key.
+            self.ctx.eval("TEAM_MAP_KEYS.splice(TEAM_MAP_KEYS.findIndex(function (m) { return m.key === 'notes'; }), 1);"
+                          "TEAM_SHARED_KEYS.splice(TEAM_SHARED_KEYS.indexOf('notes'), 1);")
         self.ctx.eval("initTeamSync();")
         self.settle()
 
@@ -684,6 +700,10 @@ def main():
     group_notes = lambda m: [n["text"] for n in (m.local("teamNotices") or []) if n.get("kind") == "group"]
     check("groups: Eli is told that groups were set up, and which are his", group_notes(eli), ["Dora set up account groups. You now see the accounts of your group: Swiss."])
     check("groups: the Team Lead is told nothing", group_notes(dora), [])
+    # 1.2.3.5 (Boaz, 2026-10-13): "Eli joined the team. Add Eli to groups…" is done once Eli is in a group.
+    r, folder = dora.sync(folder)
+    check("joined: the 'add Eli to groups' sentence goes by itself once Eli is in a group",
+          [n["text"] for n in (dora.local("teamNotices") or []) if n.get("kind") == "joined"], [])
     eli.set_local({"teamGroups": {"g-ch": {"name": "Eli renamed it", "kind": "filter", "filter": {"country": ["Switzerland"]}, "members": [eli_id]},
                                   "g-eli": {"name": "Eli's own", "kind": "named", "accounts": [], "members": [eli_id]}}})
     r, folder = eli.sync(folder)
@@ -1144,6 +1164,274 @@ def main():
     r, folder = noa.sync(folder)
     r, folder = mia.sync(folder)
     check("take-over: the new Team Lead can hand the role back", (back.get("ok"), back.get("reason"), mia.status()["lead"].get("lead")), (True, None, mia_id))
+
+    # 1.2.3.2 (Boaz, 2026-10-13): an edit hold ends soon after the edit is saved, and after a minute without a touch -
+    # not only when the account page is left or after five idle minutes.
+    folder = {}
+    pia = Member("pia")
+    pia.set_local({"targetAccountExtras": {"acme ag": {"status": "New"}, "beta ag": {"status": "New"}}})
+    r, folder = pia.call("createTeam({ name: 'Pia', teamName: 'Short holds' })", folder)
+    inv, folder = invite(pia, "Quin", folder)
+    quin = Member("quin", now_offset=7)
+    r, folder = quin.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    for m in (pia, quin, pia, quin):
+        r, folder = m.sync(folder)
+    quin_id = quin.status()["me"]["memberId"]
+    def wait(m, ms, folder):  # time passes on m's PC; what its timers write stays in the folder
+        m.e("FOLDER = %s;" % json.dumps(folder))
+        m.advance(ms)
+        return json.loads(m.e("JSON.stringify(FOLDER)"))
+    releases = lambda: [c for f in folder if f.startswith("members/%s/changes/" % quin_id) for c in json.loads(folder[f])["changes"] if c.get("op") == "release"]
+    r, folder = quin.call("claimAccount('acme ag')", folder)
+    x = quin.local("targetAccountExtras"); x["acme ag"]["status"] = "Contacted"; quin.set_local({"targetAccountExtras": x})
+    for m in (quin, pia, quin, pia):
+        r, folder = m.sync(folder)
+    r, folder = pia.call("getClaimStatus('acme ag')", folder)
+    check("short hold: right after the save the colleague still holds it", (r.get("state"), (r.get("holder") or {}).get("name")), ("other", "Quin"))
+    check("short hold: the saved edit arrived", ((pia.local("targetAccountExtras") or {}).get("acme ag") or {}).get("status"), "Contacted")
+    folder = wait(quin, 12000, folder)
+    r, folder = quin.sync(folder)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('acme ag')", folder)
+    check("short hold: about ten seconds after the save the account is free", (r.get("state"), len(releases())), ("free", 1))
+    r, folder = pia.call("claimAccount('acme ag')", folder)
+    check("short hold: the colleague can take it now", r.get("ok"), True)
+    # No edit at all: the hold ends after a minute without a touch.
+    pia.e("NOW = Math.max(NOW, %d);" % quin.e("NOW"))  # both PCs' clocks agree, as real ones do
+    r, folder = pia.sync(folder)
+    q, folder = quin.call("claimAccount('beta ag')", folder)
+    check("short hold: a second account is taken", (q.get("ok"), q.get("reason")), (True, None))
+    for m in (quin, pia, quin, pia):
+        r, folder = m.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("short hold: a touch without an edit holds the account", r.get("state"), "other")
+    folder = wait(quin, 30000, folder)
+    r, folder = quin.call("claimAccount('beta ag')", folder)  # still working on it: the page touches again
+    folder = wait(quin, 40000, folder)
+    r, folder = quin.sync(folder)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("short hold: a touch within the minute keeps it", r.get("state"), "other")
+    folder = wait(quin, 65000, folder)
+    r, folder = quin.sync(folder)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("short hold: a minute without a touch frees it", r.get("state"), "free")
+
+    # 1.2.4 Notes, build step 0 (NOTES_DESIGN.md 3.3, 3.4, 5): every note is a row of its own.
+    pia_id = pia.status()["me"]["memberId"]
+
+    def note(on, key, text, by, name, at):
+        return {"on": on, "key": key, "text": text, "at": at, "by": by, "byName": name, "editedAt": None, "deletedAt": None, "deletedBy": None}
+
+    def put_note(m, note_id, value):
+        notes = m.local("notes") or {}
+        notes[note_id] = value
+        m.set_local({"notes": notes})
+
+    def note_changes(member_id, note_id):
+        return [c for k, v in sorted(folder.items()) if k.startswith("members/%s/changes/" % member_id) and v
+                for c in json.loads(v)["changes"] if c.get("id") == "note:%s" % note_id]
+
+    def all_round(folder, members):
+        for m in list(members) * 2:
+            r, folder = m.sync(folder)
+        return folder
+
+    def apart(m, member_id, ms, seen):
+        # Time passes on m's PC while it sees only the folder as it was (`seen`): OneDrive has not brought the
+        # colleague's newest file yet. What m writes meanwhile still reaches the real folder.
+        wrote = wait(m, ms, seen)
+        folder.update({k: v for k, v in wrote.items() if k.startswith("members/%s/" % member_id)})
+
+    # A. Two colleagues write a note on the same account at the same moment: both are kept (R1.4).
+    put_note(pia, "n-pia", note("account", "acme ag", "Pia called.", pia_id, "Pia", 1000))
+    put_note(quin, "n-quin", note("account", "acme ag", "Quin wrote.", quin_id, "Quin", 1000))
+    folder = all_round(folder, (pia, quin))
+    check("notes: two notes at the same moment - both on both PCs",
+          (sorted(pia.local("notes")), sorted(quin.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-pia", "n-quin"], ["n-pia", "n-quin"], True))
+    check("notes: a note travels as its own row, filed under the account type",
+          [(c.get("e"), c.get("op"), c["f"].get("text")) for c in note_changes(pia_id, "n-pia")], [("account", "set", "Pia called.")])
+    check("notes: the text is never in the team log (R8.2)", ["Pia called." in json.dumps(m.local("teamLog") or []) for m in (pia, quin)], [False, False])
+    note_lines = lambda m: sorted((x.get("mn"), x.get("note"), x.get("on"), x.get("key")) for x in (m.local("teamLog") or []) if x.get("kind") == "note")
+    check("notes: one team log line per note added, with the author's name, on both PCs (R8.1)",
+          (note_lines(pia), note_lines(quin)), ([("Pia", "added", "account", "acme ag"), ("Quin", "added", "account", "acme ag")],) * 2)
+
+    # B. A delete against a colleague's later edit: the note stays deleted on every PC (D2).
+    gone = dict(pia.local("notes")["n-pia"], text="", deletedAt=2000, deletedBy=pia_id)
+    put_note(pia, "n-pia", gone)
+    seen = dict(folder)
+    r, folder = pia.sync(folder)                       # the delete is out; Quin has not read it
+    apart(quin, quin_id, 120000, seen)
+    check("notes: Quin has not read the delete yet", quin.local("notes")["n-pia"]["deletedAt"], None)
+    put_note(quin, "n-pia", dict(note("account", "acme ag", "Edited later.", pia_id, "Pia", 1000), editedAt=3000))
+    folder = all_round(folder, (quin, pia))
+    check("notes: deleted, then edited later by a colleague - still deleted on both PCs",
+          [(m.local("notes")["n-pia"]["deletedAt"], m.local("notes")["n-pia"]["deletedBy"]) for m in (pia, quin)], [(2000, pia_id), (2000, pia_id)])
+    # ... and the other way round: the edit is made first, the delete later.
+    put_note(quin, "n-quin", dict(quin.local("notes")["n-quin"], text="Quin edited.", editedAt=3000))
+    seen = dict(folder)
+    r, folder = quin.sync(folder)
+    apart(pia, pia_id, 400000, seen)
+    check("notes: Pia has not read the edit yet", pia.local("notes")["n-quin"]["text"], "Quin wrote.")
+    put_note(pia, "n-quin", dict(note("account", "acme ag", "", quin_id, "Quin", 1000), deletedAt=4000, deletedBy=pia_id))
+    folder = all_round(folder, (pia, quin))
+    check("notes: edited, then deleted later - deleted and without its text on both PCs",
+          [(m.local("notes")["n-quin"]["deletedAt"], m.local("notes")["n-quin"]["text"]) for m in (pia, quin)], [(4000, ""), (4000, "")])
+    check("notes: the team log says who deleted and who edited - each once",
+          sorted((x.get("mn"), x.get("note")) for x in (quin.local("teamLog") or []) if x.get("kind") == "note" and x.get("note") != "added"),
+          [("Pia", "deleted"), ("Pia", "deleted"), ("Quin", "edited"), ("Quin", "edited")])
+    check("notes: the entries stay (a removed entry could come back)", (sorted(pia.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-pia", "n-quin"], True))
+
+    # C. A note goes out while the account is held - the holder's and a colleague's (R4.4).
+    r, folder = quin.call("claimAccount('beta ag')", folder)
+    check("notes: Quin takes Beta for editing", r.get("ok"), True)
+    put_note(quin, "n-holder", note("account", "beta ag", "Holder's note.", quin_id, "Quin", 5000))
+    r, folder = quin.sync(folder)
+    check("notes: the holder's note is sent at once", len(note_changes(quin_id, "n-holder")), 1)
+    r, folder = pia.sync(folder)
+    r, folder = pia.call("getClaimStatus('beta ag')", folder)
+    check("notes: Pia sees Quin editing Beta", r.get("state"), "other")
+    put_note(pia, "n-colleague", note("account", "beta ag", "Written while Quin edits.", pia_id, "Pia", 6000))
+    r, folder = pia.sync(folder)
+    check("notes: a colleague's note is sent while the account is held", len(note_changes(pia_id, "n-colleague")), 1)
+    r, folder = quin.sync(folder)
+    r, folder = quin.call("getClaimStatus('beta ag')", folder)
+    check("notes: ... it arrives on the holder's PC, who still holds the account",
+          ((quin.local("notes").get("n-colleague") or {}).get("text"), r.get("state")), ("Written while Quin edits.", "mine"))
+    r, folder = quin.call("releaseAccount('beta ag')", folder)
+    folder = all_round(folder, (quin, pia))
+
+    # Restore (R7.1): a backup made before a note was written is restored - the note is gone on every PC and stays gone.
+    before_restore = pia.local("notes")
+    put_note(pia, "n-late", note("account", "acme ag", "Written after the backup.", pia_id, "Pia", 6500))
+    folder = all_round(folder, (pia, quin))
+    check("notes, restore: the later note is on both PCs first", ("n-late" in pia.local("notes"), "n-late" in quin.local("notes")), (True, True))
+    pia.set_local({"notes": before_restore})
+    folder = all_round(folder, (pia, quin))
+    folder = all_round(folder, (pia, quin))
+    check("notes, restore: the note written after the backup is gone on both PCs, and stays gone",
+          ("n-late" in pia.local("notes"), "n-late" in quin.local("notes"), same(pia.local("notes"), before_restore)), (False, False, True))
+
+    # D. A colleague who has not updated yet (still on 1.2.3) is not disturbed, and gets the notes after updating.
+    inv, folder = invite(pia, "Rex", folder)
+    rex = Member("rex", now_offset=11, before_notes=True)
+    rex.set_local({"notes": {"n-own": note("account", "acme ag", "Not a shared key on this build.", None, None, 1)}})
+    r, folder = rex.call("joinTeam({ inviteId: '%s' })" % inv, folder)
+    check("notes, older build: joins", r.get("ok"), True)
+    folder = all_round(folder, (rex, pia, quin))
+    rex_id = rex.status()["me"]["memberId"]
+    x = rex.local("targetAccountExtras"); x["acme ag"]["status"] = "Responded"; rex.set_local({"targetAccountExtras": x})
+    put_note(pia, "n-after", note("account", "acme ag", "Written after Rex joined.", pia_id, "Pia", 7000))
+    folder = all_round(folder, (rex, pia, quin, rex))
+    check("notes, older build: syncs without an error", (rex.status().get("lastError"), r.get("ok")), (None, True))
+    check("notes, older build: its own change still reaches the team", ((pia.local("targetAccountExtras") or {}).get("acme ag") or {}).get("status"), "Responded")
+    check("notes, older build: it writes no note rows, and its own data is untouched",
+          ([k for k in folder if k.startswith("members/%s/changes/" % rex_id) and "note:" in folder[k]], sorted(rex.local("notes"))), ([], ["n-own"]))
+    check("notes, older build: the team's notes are all still there",
+          (sorted(pia.local("notes")), same(pia.local("notes"), quin.local("notes"))), (["n-after", "n-colleague", "n-holder", "n-pia", "n-quin"], True))
+    # Rex updates: the notes read by the older build are written to this PC once; the note Rex had goes to the team.
+    rex.e("TEAM_MAP_KEYS.push({ key: 'notes', e: 'account', prefix: 'note:' }); TEAM_SHARED_KEYS.push('notes'); mem.meta.newKeysV = 0;")
+    folder = all_round(folder, (rex, pia, quin))
+    check("notes, after updating: the colleague has every note, and the team has theirs",
+          (sorted(rex.local("notes")), same(rex.local("notes"), pia.local("notes")), same(pia.local("notes"), quin.local("notes"))),
+          (["n-after", "n-colleague", "n-holder", "n-own", "n-pia", "n-quin"], True, True))
+    check("notes, after updating: a deleted note is still deleted there", rex.local("notes")["n-pia"]["deletedAt"], 2000)
+
+    # 1.2.4 Billing "Team usage", build step 0 (BILLING_TEAM_USAGE_DESIGN.md 3, 4): each member's monthly totals go to
+    # the folder as a file of their own, sealed for the Team Lead and the deputy.
+    folder = {}
+    umi = Member("umi")
+    r, folder = umi.call("createTeam({ name: 'Umi', teamName: 'Usage' })", folder)
+    inv_v, folder = invite(umi, "Vic", folder)
+    inv_w, folder = invite(umi, "Wes", folder)
+    vic = Member("vic", now_offset=5)
+    wes = Member("wes", now_offset=9)
+    today = vic.e("usageDayKey(new Date(NOW))")
+    month = today[:7]
+    day = lambda usd, calls, other: {"webResearch": {"calls": calls, "usd": usd}, "other": {"usd": other}, "byFeature": {}}
+    # Vic used SalesTeam alone before joining: none of that is the team's business (R3.4, D5).
+    vic.set_local({"apiUsage": {"days": {"2020-01-15": day(50, 400, 9), today: day(1.5, 12, 0.25)}}})
+    r, folder = vic.call("joinTeam({ inviteId: '%s' })" % inv_v, folder)
+    r, folder = wes.call("joinTeam({ inviteId: '%s' })" % inv_w, folder)
+    ids = {m: m.status()["me"]["memberId"] for m in (umi, vic, wes)}
+    usage_file = lambda m: json.loads(folder.get("members/%s/usage.json" % ids[m]) or "null")
+
+    def minute(folder, members):  # the usage file is looked at once a minute
+        for m in members:
+            folder = wait(m, 61000, folder)
+            r, folder = m.sync(folder)
+        return folder
+
+    folder = all_round(folder, (umi, vic, wes))
+    folder = minute(folder, (umi, vic, wes))
+    check("usage: every member wrote a key and a usage file",
+          sorted(k.split("/")[2] for k in folder if k.startswith("members/") and "/usage" in k), ["usage-key.json"] * 3 + ["usage.json"] * 3)
+    f = usage_file(vic)
+    check("usage: a member's file is sealed for the Team Lead only", sorted(f["sealed"]["keys"]), [ids[umi]])
+    check("usage: only the days from joining on count", json.loads(f["sealed"]["data"]), {"months": {month: {"usd": 1.75, "researches": 12}}})
+    check("usage: the member's own record", vic.local("teamUsageMonths")["months"], {month: {"usd": 1.75, "researches": 12}})
+    opened = lambda reader, m: reader.call("teamDbGetAll(['usageKey']).then(function (k) { return openUsage(%s, '%s', k.usageKey.privateKey); })"
+                                           % (json.dumps(usage_file(m)["sealed"]), ids[reader]), folder)[0]
+    check("usage: the Team Lead can open it, a colleague cannot", (opened(umi, vic), opened(wes, vic)), ({"months": {month: {"usd": 1.75, "researches": 12}}}, None))
+    check("usage: the Team Lead's own file has no reader yet", usage_file(umi)["sealed"]["keys"], {})
+    check("usage: no figures in any shared change, none on a colleague's PC",
+          ([k for k in folder if "/changes/" in k and "researches" in folder[k]], umi.local("teamUsageMonths")["months"], wes.local("teamUsageMonths")["months"]), ([], {}, {}))
+    # Nothing new: the file is left alone.
+    before = f["updated"]
+    folder = minute(folder, (vic,))
+    check("usage: an unchanged month is not written again", usage_file(vic)["updated"], before)
+    # More usage: written again. Then the count loses its old days (400-day limit): the month is not lowered (D4).
+    vic.set_local({"apiUsage": {"days": {today: day(2.5, 20, 0.25)}}})
+    folder = minute(folder, (vic,))
+    check("usage: new usage reaches the file", json.loads(usage_file(vic)["sealed"]["data"])["months"][month], {"usd": 2.75, "researches": 20})
+    vic.set_local({"apiUsage": {"days": {}}})
+    folder = minute(folder, (vic,))
+    check("usage: a month is never lowered", (vic.local("teamUsageMonths")["months"][month], json.loads(usage_file(vic)["sealed"]["data"])["months"][month]),
+          ({"usd": 2.75, "researches": 20}, {"usd": 2.75, "researches": 20}))
+    # A deputy: every file is sealed again, for both; the Team Lead's own file for the deputy.
+    r, folder = umi.call("setDeputy('%s')" % ids[wes], folder)
+    folder = all_round(folder, (umi, vic, wes))
+    folder = minute(folder, (umi, vic, wes))
+    check("usage: with a deputy, a member's file is sealed for both", sorted(usage_file(vic)["sealed"]["keys"]), sorted([ids[umi], ids[wes]]))
+    check("usage: the Team Lead's file is sealed for the deputy, the deputy's for the Team Lead",
+          (sorted(usage_file(umi)["sealed"]["keys"]), sorted(usage_file(wes)["sealed"]["keys"])), ([ids[wes]], [ids[umi]]))
+    check("usage: the deputy can open a member's file now", opened(wes, vic), {"months": {month: {"usd": 2.75, "researches": 20}}})
+    check("usage: no error on any PC", [m.status()["usage"]["error"] for m in (umi, vic, wes)], [None, None, None])
+    # Build step 1: the table, for the Team Lead and the deputy only.
+    line = lambda t, name: next(([x["state"], x["thisMonth"], x["researches"], bool(x["left"])] for x in t.get("rows", []) if x["name"] == name), None)
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: the Team Lead sees every member's month", (t.get("lead"), t.get("connected"), line(t, "Vic"), line(t, "Wes"), line(t, "Umi"), t["total"]["thisMonth"]),
+          (True, True, ["ok", 2.75, 20, False], ["ok", 0, 0, False], ["ok", 0, 0, False], 2.75))
+    check("table: every line has its join date", [bool(x["joined"]) for x in t["rows"]], [True, True, True])
+    t, folder = wes.call("getTeamUsage()", folder)
+    check("table: the deputy sees it too", (t.get("lead"), line(t, "Vic"), line(t, "Umi")), (True, ["ok", 2.75, 20, False], ["ok", 0, 0, False]))
+    t, folder = vic.call("getTeamUsage()", folder)
+    check("table: a member gets no table and keeps no copy", (t.get("lead"), "rows" in t, vic.local("teamUsageTable")), (False, False, None))
+    check("table: the Team Lead's copy holds the members' months", sorted(umi.local("teamUsageTable")["members"]), sorted([ids[vic], ids[wes]]))
+    # A colleague on an older build has no usage file.
+    saved = folder.pop("members/%s/usage.json" % ids[wes])
+    umi.e("STORE.teamUsageTable.members = { '%s': STORE.teamUsageTable.members['%s'] };" % (ids[vic], ids[vic]))
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: a colleague without a usage file is 'no figures yet'", line(t, "Wes"), ["none", 0, 0, False])
+    folder["members/%s/usage.json" % ids[wes]] = saved
+    # The folder cannot be reached: the last copy is shown.
+    umi.e("var realFolder = getTeamFolder; getTeamFolder = function () { return Promise.resolve(null); };")
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: without the folder the last copy is shown", (t.get("connected"), line(t, "Vic")), (False, ["ok", 2.75, 20, False]))
+    umi.e("getTeamFolder = realFolder;")
+    # The deputy role ends: that browser's copy goes within a minute.
+    r, folder = umi.call("setDeputy(null)", folder)
+    folder = all_round(folder, (umi, vic, wes))
+    folder = minute(folder, (wes,))
+    t, folder = wes.call("getTeamUsage()", folder)
+    check("table: a former deputy has no table and no copy", (t.get("lead"), wes.local("teamUsageTable")), (False, None))
+    # Leaving: the member's own record goes, the file stays for the Team Lead's totals.
+    r, folder = vic.call("leaveTeam()", folder)
+    folder = all_round(folder, (umi, wes))
+    t, folder = umi.call("getTeamUsage()", folder)
+    check("table: a member who left keeps the line, marked as left", line(t, "Vic"), ["ok", 2.75, 20, True])
+    check("usage: after leaving, the record is gone here and the file is still in the folder", (vic.local("teamUsageMonths"), usage_file(vic) is not None), (None, True))
 
     print()
     for f in _failures:

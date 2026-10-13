@@ -53,6 +53,9 @@ async function refresh() {
       `Last sent: ${time(st.lastFlushAt)}   last read: ${time(st.lastReadAt)}   last heartbeat: ${time(st.lastHeartbeatAt)}`,
       `Team picture: ${Object.entries(st.entities).map(([e, n]) => `${n} ${e}`).join(", ")}`,
       st.lastError ? `LAST ERROR: ${st.lastError}` : "No error.",
+      // Billing "Team usage": members/<me>/usage.json - when it was last written, who can open it, and my months.
+      `Usage file: ${st.usage?.writtenAt ? `written ${time(st.usage.writtenAt)}` : "not written yet"} - readers: ${(st.usage?.readers || []).map((id) => st.members.find((m) => m.id === id)?.name || id).join(", ") || "nobody"}`
+        + ` - months: ${(st.usage?.sig || "").split("#")[0] || "none"}${st.usage?.error ? ` - ERROR: ${st.usage.error}` : ""}`,
       "",
       "Recent work (newest first; ms = time taken):",
       ...measures,

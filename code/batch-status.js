@@ -51,7 +51,7 @@ function resultText(s) {
     `${s.failed ? `, ${s.failed} failed` : ""}${notStarted > 0 ? `, ${notStarted} not started` : ""}.\n` +
     `${s.initiatives} initiative${s.initiatives === 1 ? "" : "s"} added, ${s.filled} empty field${s.filled === 1 ? "" : "s"} filled in.\n` +
     (s.toReview > 0 ? `${s.toReview} account${s.toReview === 1 ? " has" : "s have"} findings that differ from your data - open them in Target Accounts and use "Review findings…".\n` : "") +
-    `Estimated cost: about ${usd(s.spent)} (see Settings > Billing).` + (why ? `\n\n${why}` : "");
+    `Estimated cost: about ${usd(s.spent)} (see Settings > Anthropic Usage).` + (why ? `\n\n${why}` : "");
 }
 
 let stopping = false;
@@ -134,7 +134,7 @@ async function renderLane(state) {
   if (state && state.status === "running") {
     const waitSec = state.pausedUntil ? Math.max(0, Math.round((state.pausedUntil - Date.now()) / 1000)) : 0;
     setStatusMessage("lane", {
-      text: `${state.auto ? "Automatic web research (LinkedIn limit reached, so the web goes on)" : "Web research in the background"}: ${state.done} of ${state.total} accounts done${state.failed ? `, ${state.failed} failed` : ""} - ${(state.spent || 0) < 0.005 ? "nothing spent yet" : `about ${usd(state.spent)} so far`}.` +
+      text: `${state.auto ? (state.linkedinLimit ? "Automatic web research (LinkedIn limit reached, so the web goes on)" : "Automatic web research") : "Web research in the background"}: ${state.done} of ${state.total} accounts done${state.failed ? `, ${state.failed} failed` : ""} - ${(state.spent || 0) < 0.005 ? "nothing spent yet" : `about ${usd(state.spent)} so far`}.` +
         `${waitSec > 0 ? ` Paused - Anthropic asked us to slow down; resuming in about ${waitSec} s.` : ""} You can keep using SalesTeam.`,
       action: {
         label: laneStopping ? "Stopping…" : "Stop", disabled: laneStopping,
@@ -217,7 +217,7 @@ async function discoveryNextSteps() {
       "An account is Ready once SalesTeam has its LinkedIn company page and a contact.");
     lines.push(auto.enabled
       ? "Next: nothing to do - automatic preparation now looks these up, first on the web, then in a small LinkedIn " +
-        `window of its own. Keep Chrome open and logged in to LinkedIn; the top bar shows its progress. About ${minutes} ` +
+        `window of its own. Keep your browser open and logged in to LinkedIn; the top bar shows its progress. About ${minutes} ` +
         `minutes to the first ${MIN_READY_TO_SCAN} Ready accounts.`
       : "Next: turn on Automatic preparation in Settings > Automation - it looks up each account's LinkedIn page and " +
         "contacts, which makes accounts Ready.");

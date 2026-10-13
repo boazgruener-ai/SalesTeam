@@ -25,7 +25,7 @@ const NOT_IN_SYNC_AFTER_MS = 2 * 60000;
 
 async function send(msg) {
   const r = await chrome.runtime.sendMessage(msg);
-  if (r === undefined) throw new Error("SalesTeam's background did not answer - reload the extension on chrome://extensions.");
+  if (r === undefined) throw new Error("SalesTeam's background did not answer - reload SalesTeam on your browser's Extensions page.");
   return r;
 }
 
@@ -197,7 +197,7 @@ async function paintTeamInvitation() {
   const oneDrive = await oneDriveFolderIfAllowed();
   if (!oneDrive) {
     setStatusMessage(INVITE_BAR_ID, { priority: true,
-      text: "You are not in a team. To look for your team invitation, Chrome needs your permission again for the team's folder.",
+      text: "You are not in a team. To look for your team invitation, your browser needs your permission again for the team's folder.",
       action: { label: "Allow…", onClick: async () => { await requestTeamFolderPermission(saved); inviteLookedAt = 0; paintTeamInvitation().catch(() => {}); } },
     });
     return;
@@ -389,7 +389,7 @@ async function onCreate() {
   const handle = createFolder;
   // Chrome's permission question needs the click itself, so it comes first.
   if ((await teamFolderPermission(handle)) !== "granted" && (await requestTeamFolderPermission(handle)) !== "granted") {
-    setText(status, "Chrome did not allow SalesTeam to use the folder. Click Create the team… again and choose Allow.", true);
+    setText(status, "Your browser did not allow SalesTeam to use the folder. Click Create the team… again and choose Allow.", true);
     return;
   }
   picked.create = handle;
@@ -1224,7 +1224,7 @@ export function initTeamSettings() {
   $("team-repick-btn").addEventListener("click", onRepick);
   $("team-reconnect-btn").addEventListener("click", async () => {
     const p = await reconnect();
-    setText("team-member-status", p === "granted" ? "Reconnected." : "Not reconnected - Chrome did not allow it.", p !== "granted");
+    setText("team-member-status", p === "granted" ? "Reconnected." : "Not reconnected - your browser did not allow it.", p !== "granted");
     renderTeamSettings();
     paintTeamBar().catch(() => {});
   });

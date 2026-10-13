@@ -256,3 +256,83 @@ export function revenueUnitsCheck(value, currency, employees, minimum, money) {
 export function revenueUnitWord(factor) {
   return factor === 1e9 ? "billions" : factor === 1e6 ? "millions" : factor === 1e3 ? "thousands" : "";
 }
+
+// 1.2.3.4 (Boaz, 2026-10-13: a Decisions card asked "Switzerland" against "Schweiz"): a country a web research names
+// in German, French or Italian, or by a common short form, is the SAME country as its English name - the name the
+// country picker, the location priorities and the group filters use (geo-regions.js CONTINENT_COUNTRIES). Keys are
+// folded: lower case, accents dropped, punctuation to a space. A name not listed here is returned as it came.
+const COUNTRY_NAME_ALIASES = {
+  Switzerland: ["schweiz", "die schweiz", "suisse", "la suisse", "svizzera", "svizra", "ch", "che", "swiss confederation", "schweizerische eidgenossenschaft"],
+  Germany: ["deutschland", "allemagne", "germania", "bundesrepublik deutschland", "federal republic of germany"],
+  Austria: ["osterreich", "oesterreich", "autriche"],
+  France: ["frankreich", "francia"],
+  Italy: ["italien", "italie", "italia"],
+  Spain: ["spanien", "espagne", "spagna", "espana"],
+  Portugal: ["portogallo"],
+  Netherlands: ["niederlande", "die niederlande", "pays bas", "paesi bassi", "holland", "the netherlands", "nederland"],
+  Belgium: ["belgien", "belgique", "belgio", "belgie"],
+  Luxembourg: ["luxemburg", "lussemburgo"],
+  Liechtenstein: ["furstentum liechtenstein", "fuerstentum liechtenstein", "principality of liechtenstein"],
+  "United Kingdom": ["uk", "u k", "great britain", "britain", "england", "vereinigtes konigreich", "vereinigtes koenigreich", "grossbritannien", "royaume uni", "regno unito"],
+  Ireland: ["irland", "irlande", "irlanda", "republic of ireland"],
+  "United States": ["usa", "us", "u s", "u s a", "united states of america", "america", "vereinigte staaten", "vereinigte staaten von amerika", "etats unis", "stati uniti"],
+  Canada: ["kanada"],
+  Sweden: ["schweden", "suede", "svezia"],
+  Norway: ["norwegen", "norvege", "norvegia"],
+  Denmark: ["danemark", "daenemark", "danimarca"],
+  Finland: ["finnland", "finlande", "finlandia"],
+  Iceland: ["islande", "islanda"],
+  Poland: ["polen", "pologne", "polonia"],
+  "Czech Republic": ["czechia", "tschechien", "tschechische republik", "republique tcheque", "repubblica ceca"],
+  Slovakia: ["slowakei", "slovaquie", "slovacchia"],
+  Slovenia: ["slowenien", "slovenie"],
+  Hungary: ["ungarn", "hongrie", "ungheria"],
+  Romania: ["rumanien", "rumaenien", "roumanie"],
+  Bulgaria: ["bulgarien", "bulgarie"],
+  Croatia: ["kroatien", "croatie", "croazia"],
+  Greece: ["griechenland", "grece", "grecia"],
+  Cyprus: ["zypern", "chypre", "cipro"],
+  Turkey: ["turkei", "tuerkei", "turquie", "turchia", "turkiye"],
+  Russia: ["russland", "russie", "russian federation"],
+  Japan: ["japon", "giappone"],
+  China: ["chine", "cina", "people s republic of china"],
+  India: ["indien", "inde"],
+  "South Korea": ["sudkorea", "suedkorea", "coree du sud", "corea del sud", "republic of korea", "korea"],
+  Singapore: ["singapur", "singapour"],
+  "Hong Kong": ["hongkong"],
+  Australia: ["australien", "australie"],
+  "New Zealand": ["neuseeland", "nouvelle zelande", "nuova zelanda"],
+  Brazil: ["brasilien", "bresil", "brasile", "brasil"],
+  Mexico: ["mexiko", "mexique", "messico"],
+  Argentina: ["argentinien", "argentine"],
+  Colombia: ["kolumbien", "colombie"],
+  Chile: ["chili", "cile"],
+  "United Arab Emirates": ["uae", "vereinigte arabische emirate", "emirats arabes unis", "emirati arabi uniti"],
+  "Saudi Arabia": ["saudi arabien", "arabie saoudite", "arabia saudita"],
+  "South Africa": ["sudafrika", "suedafrika", "afrique du sud", "sudafrica"],
+  Egypt: ["agypten", "aegypten", "egypte", "egitto"],
+  Morocco: ["marokko", "maroc", "marocco"],
+};
+
+// The accents are mapped by hand as well: normalize("NFD") does nothing in an engine built without ICU (the test harness).
+const COUNTRY_ACCENTS = { à: "a", á: "a", â: "a", ä: "a", ç: "c", è: "e", é: "e", ê: "e", ë: "e", ì: "i", í: "i", î: "i", ï: "i", ñ: "n", ò: "o", ó: "o", ô: "o", ö: "o", ù: "u", ú: "u", û: "u", ü: "u", ß: "ss" };
+const foldCountryName = (v) => String(v ?? "").toLowerCase().replace(/[àáâäçèéêëìíîïñòóôöùúûüß]/g, (c) => COUNTRY_ACCENTS[c])
+  .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+
+const COUNTRY_BY_ALIAS = new Map();
+for (const [country, aliases] of Object.entries(COUNTRY_NAME_ALIASES)) {
+  COUNTRY_BY_ALIAS.set(foldCountryName(country), country);
+  for (const a of aliases) COUNTRY_BY_ALIAS.set(a, country);
+}
+
+// "Schweiz" -> "Switzerland"; "switzerland" -> "Switzerland"; an unknown name -> itself, trimmed.
+export function canonicalCountryName(v) {
+  const text = String(v ?? "").trim();
+  return COUNTRY_BY_ALIAS.get(foldCountryName(text)) || text;
+}
+
+// The same country, whatever language either side names it in.
+export function sameCountry(a, b) {
+  const x = foldCountryName(canonicalCountryName(a));
+  return x !== "" && x === foldCountryName(canonicalCountryName(b));
+}

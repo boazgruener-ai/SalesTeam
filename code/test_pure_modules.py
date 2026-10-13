@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2813,9 +2813,65 @@ def test_revenue_units(ctx):
     check("kind sorted last", e("sortDecisions([{ kind: 'revenue_units', company: 'A' }, { kind: 'finding', company: 'B' }])[0].kind"), "finding")
 
 
+def test_team_usage(ctx):
+    """1.2.4 Billing "Team usage" (BILLING_TEAM_USAGE_DESIGN.md 3.1): the monthly totals a member shares."""
+    j = lambda expr: json.loads(ctx.eval("JSON.stringify(%s)" % expr))
+    ctx.eval("""
+      var UDAYS = {
+        '2026-09-30': { webResearch: { calls: 4, usd: 0.5 }, other: { usd: 0.25 } },
+        '2026-10-01': { webResearch: { calls: 2, usd: 0.3 }, other: { usd: 0.1 } },
+        '2026-10-13': { webResearch: { calls: 5, usd: 0.6 }, other: { usd: 0 } },
+        '2026-11-02': { other: { usd: 0.0123456 } },
+        'rubbish': { webResearch: { calls: 9, usd: 9 } } };
+    """)
+    check("usage: every day counts without a join day", j("monthsFromDays(UDAYS)"),
+          {"2026-09": {"usd": 0.75, "researches": 4}, "2026-10": {"usd": 1, "researches": 7}, "2026-11": {"usd": 0.0123, "researches": 0}})
+    check("usage: only the days from the join day on", j("monthsFromDays(UDAYS, '2026-10-13')"),
+          {"2026-10": {"usd": 0.6, "researches": 5}, "2026-11": {"usd": 0.0123, "researches": 0}})
+    check("usage: no count at all", j("monthsFromDays(undefined, '2026-10-13')"), {})
+    check("usage: a month is never lowered, a new month is added",
+          j("mergeMonths({ '2026-09': { usd: 3, researches: 30 }, '2026-10': { usd: 0.2, researches: 9 } }, monthsFromDays(UDAYS, '2026-10-01'))"),
+          {"2026-09": {"usd": 3, "researches": 30}, "2026-10": {"usd": 1, "researches": 9}, "2026-11": {"usd": 0.0123, "researches": 0}})
+    check("usage: the same months give the same key, whatever the order",
+          ctx.eval("monthsKey({ b: { usd: 1, researches: 2 }, a: { usd: 0.5, researches: 0 } }) === monthsKey({ a: { usd: 0.5 }, b: { researches: 2, usd: 1.00001 } })"), True)
+    check("usage: a changed month gives another key", ctx.eval("monthsKey({ a: { usd: 1 } }) === monthsKey({ a: { usd: 1.01 } })"), False)
+    check("usage: the day key is the local calendar day", ctx.eval("usageDayKey(new Date(2026, 9, 3, 23, 59))"), "2026-10-03")
+    # The Team usage table: one line per person, the total, members who left, older builds.
+    ctx.eval("""
+      var LEFT_2026 = new Date(2026, 4, 2).getTime(), LEFT_2025 = new Date(2025, 11, 30).getTime();
+      var UMEMBERS = [
+        { id: 'm1', name: 'Boaz', left: null, state: 'ok', updated: 50, months: { '2026-12': { usd: 4, researches: 40 }, '2027-01': { usd: 1.5, researches: 10 } } },
+        { id: 'm2', name: ' boaz ', left: null, state: 'ok', updated: 90, months: { '2027-01': { usd: 0.25, researches: 2 } } },
+        { id: 'm3', name: 'Anna', left: null, state: 'ok', updated: 70, months: { '2026-11': { usd: 9, researches: 80 }, '2026-12': { usd: 2, researches: 5 }, '2027-01': { usd: 3, researches: 30 } } },
+        { id: 'm4', name: 'Old Build', left: null, state: 'none', months: null },
+        { id: 'm5', name: 'Gone', left: LEFT_2026, state: 'ok', updated: 10, months: { '2026-04': { usd: 7, researches: 70 } } },
+        { id: 'm6', name: 'Long Gone', left: LEFT_2025, state: 'ok', updated: 5, months: { '2025-12': { usd: 99, researches: 1 } } },
+        { id: 'm7', name: 'Sealed', left: LEFT_2026, state: 'locked', months: null },
+        { id: 'm8', name: 'Never', left: LEFT_2026, state: 'none', months: null } ];
+      var UT = usageTable(UMEMBERS, '2027-01-15');
+    """)
+    check("table: one line per person, highest this month first; long gone and never-shared leavers are dropped",
+          j("UT.rows.map(function (r) { return r.name; })"), ["Anna", "Boaz", "Gone", "Old Build", "Sealed"])
+    check("table: two browsers of one person are added up", j("UT.rows[1]"),
+          {"name": "Boaz", "browsers": 2, "left": None, "state": "ok", "joined": 0, "thisMonth": 1.75, "lastMonth": 4, "since": 5.75, "researches": 12, "updated": 90})
+    check("table: this month, last month (over the turn of the year), since joining",
+          j("[UT.rows[0].thisMonth, UT.rows[0].lastMonth, UT.rows[0].since, UT.rows[0].researches]"), [3, 2, 14, 30])
+    check("table: a member who left keeps the line; an older build and a sealed file say so",
+          j("UT.rows.slice(2).map(function (r) { return [r.state, Boolean(r.left), r.since]; })"), [["ok", True, 7], ["none", False, 0], ["locked", True, 0]])
+    check("table: the team total", j("UT.total"), {"thisMonth": 4.75, "lastMonth": 6, "since": 26.75, "researches": 42})
+    check("table: a person is 'left' only when every browser has left",
+          j("usageTable([{ id: 'a', name: 'X', left: 5, state: 'ok', months: {} }, { id: 'b', name: 'x', left: null, state: 'ok', months: {} }], '2027-01-15').rows[0].left"), None)
+    check("table: '(2 browsers)' counts only the browsers still in the team",
+          j("usageTable([{ id: 'a', name: 'X', left: 5, state: 'none', months: null }, { id: 'b', name: 'x', left: 6, state: 'none', months: null }, { id: 'c', name: 'X', left: null, state: 'ok', months: {} }], '2027-01-15').rows[0].browsers"), 1)
+    check("table: the join date is the first browser's",
+          j("usageTable([{ id: 'a', name: 'X', joined: 900, left: null, state: 'ok', months: {} }, { id: 'b', name: 'x', joined: 400, left: null, state: 'ok', months: {} }, { id: 'c', name: 'x', left: null, state: 'none', months: null }], '2027-01-15').rows[0].joined"), 400)
+    check("table: nobody", j("usageTable([], '2027-01-15')"), {"rows": [], "total": {"thisMonth": 0, "lastMonth": 0, "since": 0, "researches": 0}})
+
+
 def main():
     ctx = MiniRacer()
     load_modules(ctx)
+    test_team_usage(ctx)
     test_parse_loose_number(ctx)
     test_currency(ctx)
     test_arbitration(ctx)
@@ -2867,6 +2923,10 @@ def main():
     test_whole_employees(ctx)
     test_person_identity(ctx)
     test_revenue_units(ctx)
+    test_country_names(ctx)
+    test_notes(ctx)
+    test_note_log_lines(ctx)
+    test_crm_notes(ctx)
 
     print()
     for f in _failures:
@@ -2877,6 +2937,214 @@ def main():
         return 1
     print("%d checks passed." % _passes)
     return 0
+
+
+def test_country_names(ctx):
+    """1.2.3.4 (Boaz, 2026-10-13): "Schweiz" found against a current "Switzerland" is not a finding."""
+    check("German name", ctx.eval('canonicalCountryName("Schweiz")'), "Switzerland")
+    check("accents and case", ctx.eval('canonicalCountryName(" ÖSTERREICH ")'), "Austria")
+    check("punctuation", ctx.eval('canonicalCountryName("U.S.A.")'), "United States")
+    check("hyphen", ctx.eval('canonicalCountryName("Royaume-Uni")'), "United Kingdom")
+    check("English name gets its own spelling", ctx.eval('canonicalCountryName("switzerland")'), "Switzerland")
+    check("an unknown name is returned as it came", ctx.eval('canonicalCountryName(" Atlantis ")'), "Atlantis")
+    check("same country across languages", ctx.eval('sameCountry("Suisse", "Schweiz")'), True)
+    check("different countries", ctx.eval('sameCountry("Schweiz", "Deutschland")'), False)
+    check("two blanks are not a country", ctx.eval('sameCountry("", null)'), False)
+    # Every canonical name must be one the country picker lists, or location priorities and groups would miss it.
+    check(
+        "every canonical name is a picker country",
+        ctx.eval('Object.keys(COUNTRY_NAME_ALIASES).filter((c) => !Object.values(CONTINENT_COUNTRIES).flat().includes(c)).join(",")'),
+        "",
+    )
+    # No alias may point at two countries.
+    check(
+        "no alias is listed twice",
+        ctx.eval('(() => { var all = Object.values(COUNTRY_NAME_ALIASES).flat(); return all.filter((a, i) => all.indexOf(a) !== i).join(","); })()'),
+        "",
+    )
+    ctx.eval("""
+      var chSame = computeFindingProposals({ globalHqCountry: "Switzerland" }, {}, { hqCountry: "Schweiz" });
+      var chOther = computeFindingProposals({ globalHqCountry: "Switzerland" }, {}, { hqCountry: "Deutschland" });
+      var chNew = computeFindingProposals({}, {}, { hqCountry: { value: "Suisse", url: "https://example.com/a" } });
+      var chStored = computeFindingProposals({ globalHqCountry: "Schweiz" }, {}, { hqCountry: "Switzerland" });
+    """)
+    check("the same country in German is no finding", ctx.eval("chSame.length"), 0)
+    check("a current value in German against the English name is no finding", ctx.eval("chStored.length"), 0)
+    check("a different country is proposed under its English name", ctx.eval("chOther[0].found"), "Germany")
+    check("a new country is proposed under its English name", ctx.eval("chNew[0].found"), "Switzerland")
+    check("the research confirms the current country", ctx.eval('researchConfirms({ globalHqCountry: "Switzerland" }, {}, { hqCountry: "Schweiz" }).join(",")'), "globalHqCountry")
+    check(
+        "its source counts for the current country",
+        ctx.eval('webCitationFor({ hqCountry: { value: "Schweiz", url: "https://example.com/a" } }, [], "globalHqCountry", "Switzerland").cited'),
+        True,
+    )
+
+
+def test_notes(ctx):
+    """1.2.4 Notes, build step 0 (NOTES_DESIGN.md 3.2): the rules about a note."""
+    e = ctx.eval
+    e("""
+      var D = function (day, h) { return new Date(2026, 9, day, h || 12).getTime(); };
+      var BOAZ = { memberId: 'm-1', name: 'Boaz' }, EDGE = { memberId: 'm-2', name: 'Edge Test' };
+      var NOTES = {
+        n1: noteEntry('account', 'acme ag', 'First call, spoke to the assistant.', BOAZ, D(1)),
+        n2: noteEntry('lead', 'https://x/post-1', 'Liked and commented.', BOAZ, D(3)),
+        n3: noteEntry('contact', 'acme ag::anna muster', 'I messaged her and sent our product brochure.', EDGE, D(10)),
+        n4: noteEntry('account', 'acme ag', 'Call with Anna Muster.\\nBudget is frozen until January.', BOAZ, D(13)),
+        n5: noteEntry('account', 'beta sa', 'Other account.', null, D(12)),
+        n6: noteEntry('contact', 'acme agency::bob', 'Not Acme AG.', BOAZ, D(14)),
+        n7: noteEntry('lead', 'https://x/post-9', 'A lead without an account.', BOAZ, D(15)),
+      };
+      var ids = function (list) { return list.map(function (n) { return n.id; }).join(); };
+    """)
+    check("notes: a new note - trimmed, signed, nothing else set",
+          e("JSON.stringify(noteEntry('account', 'acme ag', '  Hello\\r\\nthere  ', BOAZ, 5))"),
+          '{"on":"account","key":"acme ag","text":"Hello\\nthere","at":5,"by":"m-1","byName":"Boaz","editedAt":null,"deletedAt":null,"deletedBy":null}')
+    check("notes: without a team no author is stored", e("var s = noteEntry('account', 'acme ag', 'x', null, 5); [s.by, s.byName].join()"), ",")
+    check("notes: cut at 2,000 characters", e("noteEntry('account', 'acme ag', new Array(2502).join('a'), null, 5).text.length"), 2000)
+    check("notes: nothing to keep - empty text, unknown subject, no key",
+          e("[noteEntry('account', 'acme ag', '  \\n ', null, 5), noteEntry('initiative', 'k', 'x', null, 5), noteEntry('lead', '', 'x', null, 5)].join()"), ",,")
+    check("notes: one subject's notes, newest first", e("ids(notesOn(NOTES, 'account', 'acme ag'))"), "n4,n1")
+    check("notes: the contact page shows only the contact's own", e("ids(notesOn(NOTES, 'contact', 'acme ag::anna muster'))"), "n3")
+    check("notes: the account timeline - account, its contacts, its leads; not a similar account name",
+          e("ids(accountTimeline(NOTES, 'acme ag', ['https://x/post-1']))"), "n4,n3,n2,n1")
+    check("notes: the timeline without leads given", e("ids(accountTimeline(NOTES, 'acme ag'))"), "n4,n3,n1")
+    check("notes: written in the same millisecond - both kept, in a fixed order",
+          e("ids(liveNotes({ b: noteEntry('account', 'k', 'two', EDGE, 7), a: noteEntry('account', 'k', 'one', BOAZ, 7) }))"), "a,b")
+    check("notes: last note per account (R5.3) - a lead counts for its account",
+          e("var la = lastNoteByAccount(NOTES, { 'https://x/post-1': 'beta sa' }); [la['acme ag'].id, la['beta sa'].id, la['acme agency'].id, Object.keys(la).length].join()"), "n4,n5,n6,3")
+    check("notes: last note per contact and per lead",
+          e("[lastNoteByContact(NOTES)['acme ag::anna muster'].id, lastNoteByLead(NOTES)['https://x/post-1'].id, Object.keys(lastNoteByLead(NOTES)).length].join()"), "n3,n2,2")
+    check("notes: the timeline marks what a note is about - the contact's name, the post or job ad and its day",
+          e("""accountTimelineMarked(NOTES, 'acme ag', { 'acme ag::anna muster': 'Anna Muster' },
+                 [{ key: 'https://x/post-1', postedAt: D(3) }, { key: 'https://x/other', type: 'job', firstSeenAt: D(4) }])
+               .map(function (n) { return n.id + ':' + (n.about || '-'); }).join('|')"""),
+          "n4:-|n3:Anna Muster|n2:the post of Oct 3|n1:-")
+    check("notes: about - a job ad, an unknown contact, a lead without a date",
+          e("[leadNoteAbout({ type: 'job', firstSeenAt: D(4) }), leadNoteAbout({ isJobAd: true }), leadNoteAbout(null), accountTimelineMarked(NOTES, 'acme ag')[1].about].join('|')"),
+          "the job ad of Oct 4|a job ad|a post|a contact")
+    check("notes: the timeline line of a lead note", e("noteLine(accountTimelineMarked(NOTES, 'acme ag', {}, [{ key: 'https://x/post-1', postedAt: D(3) }])[2], true)"),
+          "Oct 3, 2026 — Boaz · on the post of Oct 3: Liked and commented.")
+    check("notes: search text (R5.5) - an account's row finds its contacts' and leads' notes; a contact and a lead their own",
+          e("""var st = noteSearchText(NOTES, { 'https://x/post-1': 'acme ag' });
+               [st.account.get('acme ag').indexOf('brochure') > 0, st.account.get('acme ag').indexOf('liked and commented') > 0, st.account.get('beta sa').indexOf('brochure') > 0,
+                st.contact.get('acme ag::anna muster').indexOf('brochure') > 0, st.contact.get('acme ag::anna muster').indexOf('first call') > 0,
+                st.lead.get('https://x/post-1').indexOf('liked') > 0, st.account.has('acme agency'), st.lead.size].join()"""),
+          "true,true,false,true,false,true,true,2")
+    check("notes: a deleted note is not found by the search", e("noteSearchText({ n: deletedNote(NOTES.n1, 'm-1', D(21)) }).account.size"), 0)
+    # editing and deleting
+    check("notes: an edit keeps the date and is marked", e("var ed = editedNote(NOTES.n1, ' Spoke to Mr. Keller. ', D(20)); [ed.at === D(1), ed.editedAt === D(20), ed.text].join('|')"), "true|true|Spoke to Mr. Keller.")
+    check("notes: an edit without a change, or to nothing, changes nothing", e("[editedNote(NOTES.n1, NOTES.n1.text + ' ', D(20)) === NOTES.n1, editedNote(NOTES.n1, '  ', D(20)) === NOTES.n1].join()"), "true,true")
+    check("notes: a deleted note stays as an entry, without its text",
+          e("var del = deletedNote(NOTES.n1, 'm-9', D(21)); [del.text, del.deletedAt === D(21), del.deletedBy, del.key].join('|')"), "|true|m-9|acme ag")
+    check("notes: a deleted note is in no list", e("var N2 = Object.assign({}, NOTES, { n4: deletedNote(NOTES.n4, 'm-1', D(21)) }); [ids(notesOn(N2, 'account', 'acme ag')), lastNoteByAccount(N2)['acme ag'].id].join('|')"), "n1|n3")
+    check("notes: a colleague's later edit of a deleted note does not bring it back (D2)",
+          e("ids(notesOn(Object.assign({}, NOTES, { n4: Object.assign({}, deletedNote(NOTES.n4, 'm-1', D(21)), { text: 'edited later', editedAt: D(22) }) }), 'account', 'acme ag'))"), "n1")
+    # R3
+    check("notes: only the author edits", e("[mayEditNote(NOTES.n3, 'm-2'), mayEditNote(NOTES.n3, 'm-1'), mayEditNote(NOTES.n3, null)].join()"), "true,false,true")
+    check("notes: the author, the Team Lead and the deputy delete",
+          e("[mayDeleteNote(NOTES.n3, 'm-2'), mayDeleteNote(NOTES.n3, 'm-1'), mayDeleteNote(NOTES.n3, 'm-1', true), mayDeleteNote(NOTES.n3, null)].join()"), "true,false,true,true")
+    check("notes: a note from before the team has no author - in a team nobody edits it, only the Team Lead deletes it",
+          e("[mayEditNote(NOTES.n5, 'm-2'), mayDeleteNote(NOTES.n5, 'm-2'), mayDeleteNote(NOTES.n5, 'm-2', true), mayEditNote(NOTES.n5, null), mayDeleteNote(NOTES.n5, null)].join()"), "false,false,true,true,true")
+    check("notes: nothing is offered on a deleted note", e("[mayEditNote(del, 'm-1'), mayDeleteNote(del, 'm-1', true)].join()"), "false,false")
+    # merges
+    check("notes: merging two accounts moves the account's notes and its contacts' notes",
+          e("""var rk = rekeyNotes(NOTES, [{ on: 'account', from: 'acme ag', to: 'acme group' }]);
+               [rk.moved, rk.notes.n1.key, rk.notes.n3.key, rk.notes.n6.key, rk.notes.n2.key, NOTES.n1.key].join('|')"""),
+          "3|acme group|acme group::anna muster|acme agency::bob|https://x/post-1|acme ag")
+    check("notes: merging two contacts; a contact move given by name wins over its account's move",
+          e("""var rc = rekeyNotes(NOTES, [{ on: 'account', from: 'acme ag', to: 'acme group' }, { on: 'contact', from: 'acme ag::anna muster', to: 'acme group::anna m muster' }]);
+               [rc.notes.n3.key, rekeyNotes(NOTES, [{ on: 'contact', from: 'acme ag::anna muster', to: 'acme ag::muster' }]).moved, rekeyNotes(NOTES, []).moved].join('|')"""),
+          "acme group::anna m muster|1|0")
+    # shown, prompt, export
+    check("notes: the line in a team (R1.5)", e("noteLine(NOTES.n1, true)"), "Oct 1, 2026 — Boaz: First call, spoke to the assistant.")
+    check("notes: the line without a team leaves the author out", e("[noteLine(NOTES.n1, false), noteLine(NOTES.n5, true)].join('|')"),
+          "Oct 1, 2026 — First call, spoke to the assistant.|Oct 12, 2026 — Other account.")
+    check("notes: edited, and marked with what it is about", e("noteLine(Object.assign({}, ed, { about: 'Anna Muster' }), true)"), "Oct 1, 2026 (edited) — Boaz · on Anna Muster: Spoke to Mr. Keller.")
+    check("notes: the prompt block - newest first, one line each",
+          e("notesPromptBlock([NOTES.n4, Object.assign({}, NOTES.n3, { about: 'Anna Muster' }), NOTES.n5])"),
+          "Notes written by the sales team (newest first):\n- 2026-10-13 Boaz: Call with Anna Muster. Budget is frozen until January.\n"
+          "- 2026-10-10 Edge Test (on Anna Muster): I messaged her and sent our product brochure.\n- 2026-10-12: Other account.")
+    check("notes: the prompt block - ten at most, each cut at 500 characters, nothing for no notes",
+          e("""var many = []; for (var i = 0; i < 14; i++) many.push(noteEntry('account', 'k', new Array(801).join('b'), null, D(1) + i));
+               var lines = notesPromptBlock(many).split('\\n'); [lines.length, lines[1].length, notesPromptBlock([]) === '', notesPromptBlock([del]) === ''].join()"""),
+          "11,514,true,true")
+    check("notes: for a prompt about a lead - the notes on the lead, its contact and its account, marked, newest first",
+          e("""notesAbout(NOTES, [{ on: 'lead', key: 'https://x/post-1', about: 'this post' }, { on: 'contact', key: 'acme ag::anna muster', about: 'Anna Muster' },
+                 { on: 'account', key: 'acme ag' }, { on: 'contact', key: null, about: 'nobody' }])
+               .map(function (n) { return n.id + ':' + (n.about || '-'); }).join('|')"""),
+          "n4:-|n3:Anna Muster|n2:this post|n1:-")
+    check("notes: the prompt section - the block and how to use it; nothing at all without notes",
+          e("""var sec = notesPromptSection(notesAbout(NOTES, [{ on: 'lead', key: 'https://x/post-1', about: 'this post' }]));
+               [sec.indexOf('\\nNotes written by the sales team (newest first):\\n- 2026-10-03 Boaz (on this post): Liked and commented.\\nThese notes say') === 0,
+                sec.charAt(sec.length - 1) === '\\n', notesPromptSection([]) === '', notesPromptSection(notesAbout(NOTES, [{ on: 'lead', key: 'none' }])) === ''].join()"""),
+          "true,true,true,true")
+    check("notes: export lines - every note whole", e("notesExportLines([NOTES.n4, many[0]]).map(function (l) { return l.length; }).join()"), "71,812")
+
+
+def test_note_log_lines(ctx):
+    """1.2.4 Notes, build step 5 (R8): the team log's lines for notes."""
+    e = ctx.eval
+    e("""
+      var NL = function (entry) { return teamLogText(entry, function (k) { return k === 'acme ag' ? 'Acme AG' : k; }, function (m) { return m; }); };
+    """)
+    check("note log: added on an account", e("NL({ kind: 'note', op: 'note', note: 'added', on: 'account', key: 'acme ag' })"), "added a note on Acme AG")
+    check("note log: edited on a contact names the account", e("NL({ kind: 'note', op: 'note', note: 'edited', on: 'contact', key: 'acme ag' })"), "edited a note on a contact of Acme AG")
+    check("note log: deleted on a lead names the post's author", e("NL({ kind: 'note', op: 'note', note: 'deleted', on: 'lead', key: null, label: 'Anna Muster' })"), "deleted a note on the lead Anna Muster")
+    check("note log: a lead not known here", e("NL({ kind: 'note', op: 'note', note: 'added', on: 'lead', key: null, label: null })"), "added a note on a lead")
+
+
+def test_crm_notes(ctx):
+    """1.2.4 Notes, build step 6 (NOTES_DESIGN.md 9.2): the notes in the Salesforce and Dynamics Description."""
+    e = ctx.eval
+    e("""
+      // A Description holds line breaks inside its quotes, so the file is read field by field, not line by line.
+      var parseCsvForTest = function (csv) {
+        var rows = [], row = [], cur = '', q = false, s = csv.replace(/^\\uFEFF/, '');
+        for (var i = 0; i < s.length; i++) {
+          var ch = s[i];
+          if (q) { if (ch === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+          else if (ch === '"') q = true;
+          else if (ch === ',') { row.push(cur); cur = ''; }
+          else if (ch === '\\n' || ch === '\\r') { if (ch === '\\r' && s[i + 1] === '\\n') i++; row.push(cur); cur = ''; rows.push(row); row = []; }
+          else cur += ch;
+        }
+        if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+        var head = rows[0];
+        return rows.slice(1).map(function (r) { var o = {}; head.forEach(function (h, j) { o[h] = r[j] === undefined ? '' : r[j]; }); return o; });
+      };
+      var descOf = function (crm, kind, row) {
+        var built = buildCrmFiles(crm, kind === 'accounts' ? [row] : [], kind === 'contacts' ? [row] : []);
+        var parsed = parseCsvForTest(kind === 'accounts' ? built.accountsCsv : built.contactsCsv);
+        return parsed[0].Description;
+      };
+      var ACC = { company: 'Acme AG', companyId: 'c-1', linkedinLink: 'https://www.linkedin.com/company/acme', salesTeamPriority: 'P1',
+        notesLines: ['2026-10-13 Boaz: Call with Anna Muster. Budget is frozen until January.', '2026-10-10 Edge Test (on Anna Muster): I messaged her.\\nSent the brochure.'] };
+    """)
+    check("crm notes: Salesforce account - after the lines, before the id; a note is one line",
+          e("descOf('salesforce', 'accounts', ACC)"),
+          "SalesTeam priority: P1\nLinkedIn: https://www.linkedin.com/company/acme\nNotes:\n- 2026-10-13 Boaz: Call with Anna Muster. Budget is frozen until January.\n"
+          "- 2026-10-10 Edge Test (on Anna Muster): I messaged her. Sent the brochure.\nSalesTeam id: c-1")
+    check("crm notes: a contact's own notes", e("descOf('salesforce', 'contacts', { fullName: 'Anna Muster', company: 'Acme AG', contactId: 'p-1', notesLines: ['2026-10-10 Boaz: Met at the fair.'] })"),
+          "Notes:\n- 2026-10-10 Boaz: Met at the fair.\nSalesTeam id: p-1")
+    check("crm notes: without notes the Description is what it was", e("descOf('salesforce', 'accounts', { company: 'Acme AG', companyId: 'c-1', salesTeamPriority: 'P1' })"),
+          "SalesTeam priority: P1\nSalesTeam id: c-1")
+    check("crm notes: read back - a note line is never taken for one of SalesTeam's own, even one that names them",
+          e("""var back = crmAccountRows('salesforce', parseCsvForTest(buildCrmFiles('salesforce', [Object.assign({}, ACC, {
+                 notesLines: ['2026-10-13 Boaz: LinkedIn: https://evil.example', 'SalesTeam id: c-999', 'HQ city: Nowhere'] })], []).accountsCsv))[0];
+               var backC = crmContactRows('salesforce', parseCsvForTest(buildCrmFiles('salesforce', [], [{ fullName: 'Anna Muster', company: 'Acme AG', contactId: 'p-1',
+                 notesLines: ['SalesTeam id: p-999', '2026-10-10 Boaz: LinkedIn: https://evil.example'] }]).contactsCsv))[0];
+               [back.linkedinLink, back.globalHqCity || '-', backC.contactId, backC.lastVerified2 || '-'].join('|')"""),
+          "https://www.linkedin.com/company/acme|-|p-1|-")
+    e("""var LONG = []; for (var i = 0; i < 30; i++) LONG.push('2026-10-' + (30 - i) + ' Boaz: ' + new Array(21).join('note ' + i + ' '));
+         var dyn = descOf('dynamics', 'accounts', Object.assign({}, ACC, { notesLines: LONG }));""")
+    check("crm notes: Dynamics (2,000 characters) - the newest notes whole, the oldest left out, the id line kept (D8)",
+          e("[dyn.length <= 2000, dyn.indexOf('- 2026-10-30 Boaz: note 0 ') > 0, dyn.indexOf('note 29') < 0, /\\nSalesTeam id: c-1$/.test(dyn), dyn.split('\\n').every(function (l) { return l.indexOf('- ') !== 0 || /note \\d+$/.test(l); })].join()"),
+          "true,true,true,true,true")
+    check("crm notes: not even the newest fits - that one is cut short, the id line still kept",
+          e("""var one = descOf('dynamics', 'accounts', Object.assign({}, ACC, { notesLines: ['2026-10-13 Boaz: ' + new Array(2500).join('x')] }));
+               [one.length <= 2000, one.length > 1900, one.indexOf('Notes:\\n- 2026-10-13 Boaz: xxx') > 0, /…\\nSalesTeam id: c-1$/.test(one)].join()"""),
+          "true,true,true,true")
 
 
 def test_team_invites(ctx):

@@ -12,6 +12,7 @@ import {
   importSettings, importTargetAccountsBackup, importLeads, mayImport, IMPORT_REFUSED,
 } from "./storage.js";
 import { buildFullBackupZip, parseFullBackup, restoreFullBackup } from "./full-backup.js";
+import { showNotice, closeNotice } from "./confirm-dialog.js";
 import {
   folderPickerSupported, getStoredFolder, clearStoredFolder, pickBackupFolder, folderPermission,
   requestFolderPermission, writeToFolder,
@@ -27,7 +28,7 @@ const SETTINGS_SECTION_INFO = {
 };
 
 const TARGET_ACCOUNTS_SECTION_INFO = {
-  accounts: { label: "Accounts, contacts and initiatives", detail: "The imported research workbook as it was, including discovered companies already merged in." },
+  accounts: { label: "Accounts, contacts and initiatives", detail: "The imported research workbook as it was, including discovered companies already merged in, and the notes on accounts, contacts and leads." },
   edits: { label: "Your edits to accounts and contacts", detail: "Manual overrides and priorities, follow-up dates, removed accounts, and Sales Mentor / Customer Voice chats." },
   staged: { label: "Discovery results waiting to be merged", detail: "Companies and contacts found by Discovery that have not gone through Review & Merge yet." },
 };
@@ -394,7 +395,7 @@ export async function runAutoBackupIfDue({ force = false, gesture = false } = {}
       const result = await performBackup("daily", { gesture });
       if (!result.ok) {
         await chrome.storage.local.set({ [LAST_AUTO_BACKUP_KEY]: last });
-        showBanner("SalesTeam backups are paused: Chrome needs your OK to write to your backup folder again.", "Allow and back up now", async () => {
+        showBanner("SalesTeam backups are paused: your browser needs your OK to write to your backup folder again.", "Allow and back up now", async () => {
           const again = await performBackup("daily", { gesture: true });
           await chrome.storage.local.set({ [LAST_AUTO_BACKUP_KEY]: Date.now() });
           appendActivityLog({ actor: "extension", action: "auto_backup", label: `Automatic daily full backup saved to ${again.where}` });
@@ -447,15 +448,31 @@ export async function restoreFromFile(file) {
   if (team && !confirm(`You are in the team "${team.teamName}". Restoring changes the team's data too: the accounts, contacts, ` +
     "leads and settings you restore are sent to every colleague and replace what they have now. As Team Lead you decide " +
     "this for the whole team, so make sure the backup is the one the team should have.\n\nRestore anyway?")) return null;
+  // 1.2.3.17 (Boaz, 2026-10-13): reading a backup, saving the safety copy and restoring can each take a while, and
+  // nothing on the page said so. A "Working…" pop-up is shown while they run; it is taken away for the questions in
+  // between and when the restore ends (the caller shows the result).
+  const RESTORE_WORKING = "Working on the restore… A safety copy of your current data is saved first.";
+  try {
+    return await restoreFromFileInner(file, RESTORE_WORKING);
+  } finally {
+    closeNotice();
+  }
+}
+
+async function restoreFromFileInner(file, RESTORE_WORKING) {
   if (file.name.toLowerCase().endsWith(".zip")) {
+    showNotice("Reading the backup…", { working: true });
     const parsed = await parseFullBackup(await file.arrayBuffer());
+    closeNotice();
     const sections = await chooseRestoreSections("full", parsed.manifest);
     if (!sections) return null;
+    showNotice(RESTORE_WORKING, { working: true });
     if (!(await safetyCopyBefore("before-restore"))) return null;
     await restoreFullBackup(parsed, sections);
     if (sections.has("leadsMerge") && parsed.data.leads) await importLeads(parsed.data.leads);
     appendActivityLog({ actor: "user", action: "full_backup_restored", label: `Restored backup ${file.name} (${[...sections].join(", ")})` });
-    return `Restored ${[...sections].join(", ")} from ${file.name}.`;
+    return `Restored ${[...sections].join(", ")} from ${file.name}.`
+      + (parsed.usageLeftOut ? " The usage and cost count was not restored - this backup is from another browser, or was made before SalesTeam 1.2.4." : "");
   }
 
   // older single-purpose JSON backups
@@ -478,19 +495,23 @@ export async function restoreFromFile(file) {
   if (parts.includes("settings")) {
     const sections = await chooseRestoreSections("settings", settings);
     if (sections) {
+      showNotice(RESTORE_WORKING, { working: true });
       if (!(await safetyCopyBefore("before-restore"))) return null;
       await importSettings(settings, sections);
       done.push(`settings (${[...sections].join(", ")})`);
     }
   }
   if (parts.includes("targetAccounts")) {
+    closeNotice();
     const sections = await chooseRestoreSections("targetAccounts", accounts);
     if (sections) {
+      showNotice(RESTORE_WORKING, { working: true });
       if (!done.length && !(await safetyCopyBefore("before-restore"))) return null;
       await importTargetAccountsBackup(accounts, sections);
       done.push(`Target Accounts (${[...sections].join(", ")})`);
     }
   }
+  closeNotice();
   if (parts.includes("leads")) {
     if (confirm("Add any leads from this backup that are missing locally? Leads you already have are never overwritten.")) {
       const restored = await importLeads(data);
@@ -694,7 +715,7 @@ async function renderBackupCard() {
   if (handle) {
     // Chrome only tells an extension a folder's NAME, never its full path; the path shown is what the user typed.
     folderText = prefs.folderPathNote ? `${prefs.folderPathNote}  (folder: ${handle.name})` : handle.name;
-    if ((await folderPermission(handle)) !== "granted") permissionNote = " - Chrome will ask for permission again; click \"Back up now\" or the banner to allow it.";
+    if ((await folderPermission(handle)) !== "granted") permissionNote = " - your browser will ask for permission again; click \"Back up now\" or the banner to allow it.";
   }
   el("backup-folder-name").textContent = folderText + permissionNote;
   el("backup-folder-path-row").hidden = !handle;
@@ -779,11 +800,14 @@ function wireBackupCard() {
     if (includeKey && !confirm("This backup will contain your Anthropic API key in plain text. Only keep or share the file with people you trust with that key's spending. Continue?")) return;
     el("backup-now-btn").disabled = true;
     el("backup-action-status").textContent = "Backing up…";
+    showNotice("Working on the backup…", { working: true }); // 1.2.3.17: the small line beside the button was easy to miss
     try {
       const r = await backupNow({ includeApiKey: includeKey });
       el("backup-action-status").textContent = `Saved ${r.fileName} to ${await prettyWhere(r.where)}.`;
+      showNotice(el("backup-action-status").textContent);
     } catch (err) {
       el("backup-action-status").textContent = `Backup failed: ${err.message}`;
+      showNotice(el("backup-action-status").textContent, { error: true });
     }
     el("backup-now-btn").disabled = false;
     renderBackupCard();
@@ -857,7 +881,7 @@ function wireBackupCard() {
         // Chrome only reveals the folder's NAME; ask once for the full path so the card can show which folder it is
         if (!same || !(await getBackupPrefs()).folderPathNote) {
           const typed = cleanPath(window.prompt(
-            `Chrome only tells SalesTeam the folder's name ("${handle.name}"), not where it is.\n\n` +
+            `Your browser only tells SalesTeam the folder's name ("${handle.name}"), not where it is.\n\n` +
             "To show the full path on this page, paste it here.\n" +
             "(In File Explorer: hold Shift, right-click the folder, choose \"Copy as path\".)\n\nLeave empty to skip.", ""));
           if (typed) await saveBackupPrefs({ ...(await getBackupPrefs()), folderPathNote: typed });

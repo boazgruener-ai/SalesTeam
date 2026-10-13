@@ -5,6 +5,7 @@
   <title>SalesTeam Target Accounts Dashboard</title>
   <link rel="icon" href="icons/icon16.png" />
   <link rel="stylesheet" href="target-accounts.css" />
+  <link rel="stylesheet" href="notes.css" />
 </head>
 <body>
   <!-- Reported directly, 2026-09-16: a native confirm()'s generic OK/Cancel
@@ -244,7 +245,7 @@
         <button id="open-settings-backup-btn" type="button" class="nav-item" title="Open Settings - Backup">Backup</button>
         <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
         <button id="open-settings-team-btn" type="button" class="nav-item" title="Share accounts, contacts and leads with colleagues through a OneDrive folder - create, join or leave a team">Team</button>
-        <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Billing</button>
+        <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Anthropic Usage</button>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round of direct
@@ -475,6 +476,10 @@
       <input type="date" id="account-due-date-input" hidden />
       <button id="account-due-date-clear-btn" class="text-link-btn" type="button" title="Clear the follow-up due date" hidden>Clear</button>
 
+      <!-- 1.2.4 Notes (NOTES_DESIGN.md 6.2): directly under the overview, and outside the parts a colleague's edit
+           blocks (account-overview, account-detail-lists, account-web-research). Filled by notes-ui.js. -->
+      <section id="account-notes" hidden></section>
+
       <div id="account-detail-lists"></div>
 
       <section id="account-web-research" class="web-research-card">
@@ -542,6 +547,9 @@
       <div id="contact-overview" class="entity-overview"></div>
       <input type="date" id="contact-due-date-input" hidden />
       <button id="contact-due-date-clear-btn" class="text-link-btn" type="button" title="Clear the follow-up due date" hidden>Clear</button>
+
+      <!-- 1.2.4 Notes: the notes on this contact, outside the part a colleague's edit blocks (contact-overview). -->
+      <section id="contact-notes" hidden></section>
 
       <section>
         <h3 id="contact-posts-toggle">Posts by this contact</h3>
@@ -805,10 +813,10 @@
     <fieldset class="io-choice">
       <legend>Save to</legend>
       <div class="export-folder-row">
-        <input type="text" id="export-folder-name" readonly placeholder="No folder chosen yet - files go to Downloads" title="Chrome shows SalesTeam only the folder's name, not its full path. Choose folder… opens in this same folder." />
+        <input type="text" id="export-folder-name" readonly placeholder="No folder chosen yet - files go to Downloads" title="Your browser shows SalesTeam only the folder's name, not its full path. Choose folder… opens in this same folder." />
         <button id="export-folder-btn" type="button" title="Choose the folder exports are saved in - remembered for next time">Choose folder…</button>
       </div>
-      <p class="export-folder-hint">Chrome shows only the folder's name. Choose folder… opens in that folder, so you can see where it is.</p>
+      <p class="export-folder-hint">Your browser shows only the folder's name. Choose folder… opens in that folder, so you can see where it is.</p>
     </fieldset>
     <p id="export-note" class="page-subtitle"></p>
     <div class="action-dialog-actions">

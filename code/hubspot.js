@@ -109,12 +109,17 @@ export function hubspotContactRows(records) {
 // ------------------------------------------------------------------ export
 const COMPANY_HEADERS = [
   "Company name", "Industry", "City", "Country/Region", "Number of Employees", "Annual Revenue", "LinkedIn Company Page",
-  "Description", "SalesTeam Priority", "SalesTeam Priority Score", "SalesTeam Status",
+  "Description", "SalesTeam Priority", "SalesTeam Priority Score", "SalesTeam Status", "SalesTeam Notes",
 ];
 const CONTACT_HEADERS = [
   "First Name", "Last Name", "Email", "Phone Number", "Job Title", "Company name", "LinkedIn URL",
-  "SalesTeam Seniority", "SalesTeam Function", "SalesTeam Status",
+  "SalesTeam Seniority", "SalesTeam Function", "SalesTeam Status", "SalesTeam Notes",
 ];
+// 1.2.4 Notes (NOTES_DESIGN.md 9.3): the row's notes (row.notesLines, newest first) in a column of their own,
+// "SalesTeam Notes", one note per line - like the other SalesTeam columns, HubSpot offers to create it as a property.
+// Not as HubSpot's own notes: its import takes those one note per row, so a company with three notes would be three
+// rows of the same company, which HubSpot adds three times when the file has no company domain to match on.
+const notesCell = (row) => (row.notesLines || []).join("\n");
 
 function splitName(fullName) {
   const parts = String(fullName || "").trim().split(/\s+/);
@@ -129,13 +134,13 @@ export function buildHubspotFiles(companies, contacts, statusOfCompany, statusOf
     c.globalEmployees ?? "", c.globalRevenue ?? "", c.linkedinLink || "",
     [].concat(c.topAiInitiatives || c.topInitiatives || "").join("; "),
     c.salesTeamPriority || "", c.salesTeamPriorityScore != null ? Math.round(c.salesTeamPriorityScore) : "",
-    statusOfCompany(c),
+    statusOfCompany(c), notesCell(c),
   ]);
   const contactRows = contacts.map((c) => {
     const [first, last] = splitName(c.fullName);
     return [
       first, last, c.publicBusinessEmail || "", c.publicBusinessPhone || "", c.jobTitle || "", c.company || "",
-      c.lastVerified2 || "", c.seniorityLevel || c.seniority || "", c.function || "", statusOfContact(c),
+      c.lastVerified2 || "", c.seniorityLevel || c.seniority || "", c.function || "", statusOfContact(c), notesCell(c),
     ];
   });
   return {

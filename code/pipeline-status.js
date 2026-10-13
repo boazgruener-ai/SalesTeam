@@ -235,7 +235,7 @@ export async function pipelineStatusLine() {
   }
   if (idle && idle.reason === "nothing_left") return await nothingLeftText();
   if (idle && idle.reason === "no_backup") return "Waiting for today's backup before starting. It is made while a SalesTeam page is open.";
-  return "Automatic preparation is on. It starts on its own while Chrome is open.";
+  return "Automatic preparation is on. It starts on its own while your browser is open.";
 }
 
 // Build step 5 (W6, R12.7.3): the web research line, under the pie and in Settings > Automation. A zero
@@ -257,7 +257,12 @@ export async function webStatusLine() {
     case "used_up": return `Web research is paused: this month's budget of ${usd(w.monthlyUsd)} is used up. ${without} Raise the budget to continue.`;
     case "credit": return `Web research is paused for today: the Anthropic API credit balance is empty. ${without} Add credits in the Anthropic Console under Plans & Billing; it tries again tomorrow, or at once when the key or the budget changes.`;
     case "limit": return `Web research is paused for today: the spending limit set in the Anthropic Console is reached. ${without} Raise it there under Settings > Limits; it tries again tomorrow, or at once when the key or the budget changes.`;
-    default: return `Web research is on: ${usd(w.spentUsd)} of ${usd(w.monthlyUsd)} used this month (${w.researches} research${w.researches === 1 ? "" : "es"}).`;
+    default: {
+      const used = `${usd(w.spentUsd)} of ${usd(w.monthlyUsd)} used this month (${w.researches} research${w.researches === 1 ? "" : "es"}).`;
+      // 1.2.3.19 (Boaz): "paused for today" stops the web research too - "is on" under that ribbon read as "is running".
+      if (auto.pausedDay === localDay()) return `Web research is paused for today. Resume it in Settings > Automation. ${used}`;
+      return `Web research is on: ${used}`;
+    }
   }
 }
 

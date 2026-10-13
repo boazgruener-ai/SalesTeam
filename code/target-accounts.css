@@ -1564,6 +1564,18 @@ thead .actions-col {
   opacity: 0.9;
 }
 
+.overview-edit-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.edit-saving-note {
+  align-self: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--blue);
+}
+
 .edit-cancel-btn {
   background: none;
   border: 1px solid var(--border);
@@ -2177,6 +2189,12 @@ body {
   flex: 1 1 0;
   min-height: 0;
   height: auto;
+}
+/* 1.2.3.5 (Boaz, 2026-10-13: the top bar covered the page title after opening Settings > Backup): the menu was still
+   one full viewport tall inside the shorter #app-shell, so the shell could be pushed up by the bar's height - which
+   an embedded page going to its #section did. The menu is as tall as the shell, so nothing is left to push. */
+#app-nav {
+  height: 100%;
 }
 /* The status bar's spacer is an empty div: as a flex item it would shrink to nothing and the bar would cover the top
    of the page (Boaz, 2026-10-06). */

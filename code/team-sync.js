@@ -35,6 +35,8 @@ import {
 import { teamLogEntries, appendTeamLog } from "./team-log.js";
 import { joinOverlap, addBackValues, joinProposals, JOIN_PROPOSALS_KEY } from "./team-join.js";
 import { INVITES_DIR, inviteState, inviteRefusal } from "./team-invites.js";
+import { usageDayKey, monthsFromDays, mergeMonths, monthsKey, usageTable } from "./team-usage.js";
+import { makeUsageKeyPair, usageKeyId, sealUsage, openUsage } from "./team-usage-seal.js";
 
 export const TEAM_MEMBERSHIP_KEY = "teamMembership";
 // Step 5: assignments and active claims of every account, for the pages' badges, filter and list checks
@@ -65,8 +67,18 @@ const ONLINE_MS = 3 * 60000; // a colleague with a SalesTeam page open writes at
 const ACTIVE_MS = 10 * 60000;
 const CLAIM_READ_EVERY_MS = 5000;
 const CLAIM_REFRESH_MS = 60000;
+// 1.2.3.2 (Boaz, 2026-10-13: "the update should not take more than 30 seconds"): a member's edit hold ends soon
+// after the edit is saved, and after a minute without a touch - not only when the account page is left or after the
+// 5-minute idle limit (which stays as the safety net for a browser that died mid-edit).
+const EDIT_DONE_RELEASE_MS = 10000;
+const EDIT_IDLE_RELEASE_MS = 60000;
 const NOT_IN_SYNC_AFTER_MS = 2 * 60000;
 const REREAD_VERSION = 1;
+// Keys that became shared after 1.2.3. A colleague who was still on the older build has read their rows into the
+// merged state without a home for them on the PC; after the update they are written to local storage once
+// (backfillNewKeys). Raise the version when a key is added.
+const NEW_KEYS_VERSION = 1;
+const NEW_SHARED_KEYS = ["notes"];
 
 let membership = null;      // { memberId, name, teamId, teamName, role, joinedAt } or null
 let membershipLoaded = false;
@@ -468,12 +480,28 @@ async function noteInvitesAccepted(before) {
   const texts = [];
   for (const [id, inv] of Object.entries(mem.meta.invites || {})) {
     if (inviteState(before[id]) !== "open" || inviteState(inv) !== "accepted") continue;
-    texts.push(`${inv.name} joined the team. Add ${inv.name} to groups in Settings > Team (⋮ next to the name > Groups…).`);
+    texts.push({ member: inv.acceptedBy || null, text: `${inv.name} joined the team. Add ${inv.name} to groups in Settings > Team (⋮ next to the name > Groups…).` });
   }
   if (!texts.length) return;
   const now = Date.now();
   const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
-  await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((text) => ({ kind: "joined", text, at: now }))].slice(-50) });
+  await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: [...prev, ...texts.map((t) => ({ kind: "joined", ...t, at: now }))].slice(-50) });
+}
+
+// 1.2.3.5 (Boaz, 2026-10-13: the sentence was still in the top bar an hour after Edge Test was in a group): "Add Anna
+// to groups" is a to-do - once Anna is in a group it is done and goes by itself, without OK. A sentence stored before
+// 1.2.3.5 carries no member; it is matched through the accepted invitation of that name.
+async function dropDoneJoinedNotices() {
+  const prev = (await chrome.storage.local.get(TEAM_NOTICES_KEY))[TEAM_NOTICES_KEY] || [];
+  if (!prev.some((n) => n.kind === "joined")) return;
+  const groups = patchValue("teamGroups", undefined, projectKey(mem.state, "teamGroups")) || {};
+  if (!groupsOn(groups)) return;
+  const index = groupIndex(groups, currentTeam());
+  const invites = Object.values(mem.meta.invites || {});
+  const memberOf = (n) => n.member || invites.find((i) => i && i.acceptedBy && String(n.text || "").startsWith(`${i.name} joined the team.`))?.acceptedBy;
+  const done = (n) => { const m = memberOf(n); return Boolean(m) && memberGroups(m, index).some((id) => id !== OTHER_GROUP); };
+  const next = prev.filter((n) => !(n.kind === "joined" && done(n)));
+  if (next.length !== prev.length) await chrome.storage.local.set({ [TEAM_NOTICES_KEY]: next });
 }
 
 // Outside the queue (file reading is slow). Reads base files and every colleague's new change files in order.
@@ -639,6 +667,7 @@ async function readRound(root, me) {
     commitReadUpdate(update);
     await noteCreator();
     await noteInvitesAccepted(invitesBefore);
+    await dropDoneJoinedNotices();
     for (const [id, r] of Object.entries(update.removed || {})) if (r.by && r.by !== me) await logMemberRemoved(id, r.by, r.at);
     // My own records read back are already in the log (written when they went out).
     const logged = records.slice(update.baseRecords).filter((r) => stampMember(r && r.t) !== me);
@@ -651,8 +680,26 @@ async function readRound(root, me) {
     if (update.files < MAX_FILES_PER_ROUND) {
       mem.meta.replaying = false; // caught up: from here on, what is read is news
       if (mem.meta.shadowLost) await seedShadow();
+      if ((mem.meta.newKeysV || 0) < NEW_KEYS_VERSION) await backfillNewKeys();
     }
   });
+}
+
+// Inside the queue, once the folder is read up to date. Rows of NEW_SHARED_KEYS that are in the merged state but not
+// known on this PC (read by the build before the update, which had nowhere to put them) are written to local storage.
+async function backfillNewKeys() {
+  const rks = new Set();
+  for (const [e, byId] of Object.entries(mem.state.entities || {})) {
+    for (const id of Object.keys(byId)) {
+      const target = rowTarget(e, id);
+      if (!target || !NEW_SHARED_KEYS.includes(target.key)) continue;
+      const rk = rowKey(e, id);
+      if (!mem.shadow[target.key]?.[rk] && projectRow(mem.state, e, id)) rks.add(rk);
+    }
+  }
+  if (rks.size) await writeBack(rks);
+  mem.meta.newKeysV = NEW_KEYS_VERSION;
+  await save([]);
 }
 
 // 1.2.2.27: one of my own change files holds no readable content (zero bytes after a crash or an interrupted OneDrive
@@ -751,6 +798,105 @@ async function heartbeat(root, me) {
   ackDue = false;
 }
 
+// Billing "Team usage" (BILLING_TEAM_USAGE_DESIGN.md 3, 4): this member's monthly totals - US$ and web researches,
+// from the day of joining - kept here (personal, never lowered: D4) and written to members/<me>/usage.json, sealed
+// for the Team Lead and the deputy. A file of its own, NOT a shared key: shared rows land in every colleague's
+// storage and backup (D2). Checked once a minute; written only when the months or the readers' keys changed.
+export const TEAM_USAGE_MONTHS_KEY = "teamUsageMonths";
+const USAGE_EVERY_MS = 60000;
+let usageKey = null; // { privateKey, publicJwk } - this browser's key pair, kept in the sync layer's IndexedDB
+
+async function ensureUsageKey(root, me) {
+  if (!usageKey) usageKey = (await teamDbGetAll(["usageKey"])).usageKey || null;
+  if (!usageKey) {
+    usageKey = await makeUsageKeyPair();
+    await teamDbPutAll({ usageKey });
+  }
+  if (mem.meta.usageKeyWritten !== usageKeyId(usageKey.publicJwk)) {
+    await writeTeamJson(root, ["members", me], "usage-key.json", { member: me, v: 1, at: new Date().toISOString(), jwk: usageKey.publicJwk });
+    mem.meta.usageKeyWritten = usageKeyId(usageKey.publicJwk);
+  }
+}
+
+async function publishUsage(root, me) {
+  if (leaving || Date.now() - (mem.meta.usageCheckedAt || 0) < USAGE_EVERY_MS) return;
+  mem.meta.usageCheckedAt = Date.now();
+  try {
+    // R1.3: the copy of the team's figures stays only while this browser has the Team Lead's rights.
+    if (!hasLeadRights()) await chrome.storage.local.remove(TEAM_USAGE_TABLE_KEY);
+    await ensureUsageKey(root, me);
+    const data = await chrome.storage.local.get(["apiUsage", TEAM_USAGE_MONTHS_KEY]);
+    const joinedDay = usageDayKey(new Date(membership.joinedAt));
+    const record = data[TEAM_USAGE_MONTHS_KEY]?.teamId === membership.teamId ? data[TEAM_USAGE_MONTHS_KEY] : null;
+    const months = mergeMonths(record?.months, monthsFromDays(data.apiUsage?.days, joinedDay));
+    if (!record || monthsKey(record.months) !== monthsKey(months)) {
+      await chrome.storage.local.set({ [TEAM_USAGE_MONTHS_KEY]: { teamId: membership.teamId, joinedDay, months } });
+    }
+    // The readers: the Team Lead and the deputy, each with the key their own SalesTeam wrote. One who is still on a
+    // build without a key is left out until they update - the file is rewritten then.
+    const l = leadNow();
+    const readers = {};
+    for (const m of new Set([l.lead, l.deputy])) {
+      if (!m || m === me) continue;
+      const k = await readTeamJson(root, ["members", m], "usage-key.json");
+      if (k.status === "ok" && k.data?.jwk) readers[m] = k.data.jwk;
+    }
+    const sig = `${monthsKey(months)}#${Object.keys(readers).sort().map((m) => `${m}=${usageKeyId(readers[m])}`).join(",")}`;
+    if (mem.meta.usageSig !== sig) {
+      await writeTeamJson(root, ["members", me], "usage.json",
+        { member: me, updated: new Date().toISOString(), v: 1, sealed: await sealUsage({ months }, readers) });
+      mem.meta.usageSig = sig;
+      mem.meta.usageWrittenAt = Date.now();
+    }
+    mem.meta.usageReaders = Object.keys(readers).sort();
+    mem.meta.usageError = null;
+  } catch (err) {
+    mem.meta.usageError = errText(err); // the usage file must never stop the round that shares the team's data
+  }
+}
+
+// The Team usage table (design 5, R4) - for the Team Lead and the deputy only, asked for by the Anthropic Usage page
+// while it is open (D7). Every member's usage.json is read and opened; what could be opened is kept in
+// teamUsageTable (personal), so the figures of a member who has left stay, and the table can be shown while the
+// folder is not connected.
+export const TEAM_USAGE_TABLE_KEY = "teamUsageTable";
+export async function getTeamUsage() {
+  const st = await getTeamSyncStatus();
+  if (!st.member) return { member: false };
+  const me = membership.memberId;
+  if (!hasLeadRights()) {
+    await chrome.storage.local.remove(TEAM_USAGE_TABLE_KEY);
+    return { member: true, lead: false };
+  }
+  const data = await chrome.storage.local.get([TEAM_USAGE_TABLE_KEY, TEAM_USAGE_MONTHS_KEY]);
+  const kept = data[TEAM_USAGE_TABLE_KEY]?.teamId === membership.teamId ? data[TEAM_USAGE_TABLE_KEY] : null;
+  const copy = { teamId: membership.teamId, readAt: kept?.readAt || 0, members: { ...(kept?.members || {}) } };
+  const fileOf = {};
+  const root = await connectedRoot().catch(() => null);
+  if (root) {
+    if (!usageKey) usageKey = (await teamDbGetAll(["usageKey"])).usageKey || null;
+    for (const m of st.members) {
+      const f = await readTeamJson(root, ["members", m.id], "usage.json").catch(() => ({ status: "error" }));
+      if (f.status === "missing") fileOf[m.id] = "none";
+      if (f.status !== "ok") continue;
+      const opened = usageKey ? await openUsage(f.data.sealed, me, usageKey.privateKey) : null;
+      if (opened?.months) copy.members[m.id] = { months: opened.months, updated: Date.parse(f.data.updated) || 0 };
+      else fileOf[m.id] = "locked";
+    }
+    copy.readAt = Date.now();
+    if (JSON.stringify(copy.members) !== JSON.stringify(kept?.members || {}) || !kept) await chrome.storage.local.set({ [TEAM_USAGE_TABLE_KEY]: copy });
+  }
+  const mine = data[TEAM_USAGE_MONTHS_KEY]?.teamId === membership.teamId ? data[TEAM_USAGE_MONTHS_KEY].months : {};
+  const members = [
+    { id: me, name: membership.name, joined: Date.parse(membership.joinedAt) || 0, left: null, months: mine, updated: Date.now(), state: "ok" },
+    ...st.members.map((m) => {
+      const c = copy.members[m.id];
+      return { id: m.id, name: m.name, joined: Date.parse(mem.meta.profiles[m.id]?.joinedAt) || 0, left: m.left || null, months: c?.months || null, updated: c?.updated || 0, state: c ? "ok" : fileOf[m.id] || "none" };
+    }),
+  ];
+  return { member: true, lead: true, connected: Boolean(root), readAt: copy.readAt, ...usageTable(members, usageDayKey(new Date())) };
+}
+
 // Design 3.3: once a day, this member's change files older than 7 days are folded into one snapshot.
 async function compact(root, me) {
   const meta = mem.meta;
@@ -837,6 +983,7 @@ export async function runTick(reason = "alarm") {
     }
     // Answer a colleague's claim at once: their claim is confirmed when we have written something after it (6.3).
     if (ackDue || now - Math.max(mem.meta.lastHeartbeatAt, mem.meta.lastFlushAt) >= HEARTBEAT_EVERY_MS) await heartbeat(root, me);
+    await publishUsage(root, me);
     await enqueue(resolveClaims);
     while (await flush(root, me)) { /* held edits of a confirmed claim, and our releases, go out at once */ }
     const today = new Date().toISOString().slice(0, 10);
@@ -1179,6 +1326,7 @@ function holdOrSend(records) {
     const key = accountKeyOfChange(mem.state, r, normalizeCompanyName);
     let hold = false;
     if (key && claims.mine[key]) {
+      if (claims.mine[key].kind === "edit") claims.mine[key].doneAt = Date.now();
       if (claims.held[key]) hold = true;
       else {
         if (!views.has(key)) views.set(key, claimView(mem.state, key, ctx || (ctx = claimContext())).state);
@@ -1204,6 +1352,7 @@ function claimsPending() {
   if (Object.keys(claims.held).length || Object.keys(claims.assigning).length) return true;
   const keys = Object.keys(claims.mine);
   if (!keys.length || !membership) return false;
+  if (keys.some((k) => claims.mine[k].kind === "edit" && claims.mine[k].doneAt)) return true; // an edit hold about to end
   const ctx = claimContext();
   return keys.some((k) => claimView(mem.state, k, ctx).state === "checking");
 }
@@ -1260,6 +1409,14 @@ async function resolveClaims() {
       changed = true;
       continue;
     }
+    // 1.2.3.2: a hold that was only a touch (nothing saved, nothing waiting) ends after a minute without one, also
+    // while it is still being checked - a colleague who is slow to answer must not keep it alive for five minutes.
+    const own = claims.mine[key];
+    if (v.state === "checking" && !held && own && own.kind === "edit" && !own.doneAt && now - (own.touchedAt || own.at) >= EDIT_IDLE_RELEASE_MS) {
+      releaseOwn(key, now);
+      changed = true;
+      continue;
+    }
     if (v.state === "mine" || v.state === "free") {
       if (held) {
         mem.outbox.push(...held.records);
@@ -1267,7 +1424,11 @@ async function resolveClaims() {
         changed = true;
       }
       // Free with a claim of mine: it ran out (5 minutes without a sign of life) - nothing to hold any more.
-      if (claims.mine[key] && (claims.mine[key].releaseWhenDone || v.state === "free")) {
+      // An edit hold of mine also ends once the edit is saved and sent, or after a minute without a touch.
+      const m = claims.mine[key];
+      const editOver = m && m.kind === "edit" && !claims.held[key] &&
+        ((m.doneAt && now - m.doneAt >= EDIT_DONE_RELEASE_MS) || now - (m.touchedAt || m.at) >= EDIT_IDLE_RELEASE_MS);
+      if (claims.mine[key] && (claims.mine[key].releaseWhenDone || editOver || v.state === "free")) {
         if (v.state === "free") delete claims.mine[key];
         else releaseOwn(key, now);
         changed = true;
@@ -1333,6 +1494,9 @@ async function claimInner(key, kind) {
     m.releaseWhenDone = false;
     await save(["claims"]);
   }
+  // The member is working on it (again): the hold's idle minute starts anew, and a save before this touch no longer ends it.
+  const cur = mem.claims.mine[key];
+  if (cur) { cur.touchedAt = now; delete cur.doneAt; }
   return { ok: true, ...describeClaim(key) };
 }
 
@@ -1844,6 +2008,7 @@ async function requireRoot() {
 
 async function startFresh(memberId) {
   await teamDbClear();
+  usageKey = null;
   mem = { state: newState(), shadow: {}, outbox: [], inflight: null, meta: emptyMeta(), claims: emptyClaims() };
   mem.clock = createClock(memberId);
   mem.meta.rereadV = REREAD_VERSION; // a new state reads everything anyway
@@ -2130,8 +2295,9 @@ function leaveLocally() {
     await chrome.alarms.clear(ALARM);
     await setMembership(null);
     await teamDbClear();
+    usageKey = null;
     await clearTeamFolder();
-    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY, TEAM_LOG_KEY]);
+    await chrome.storage.local.remove([TEAM_ACCOUNTS_KEY, TEAM_NOTICES_KEY, TEAM_LOG_KEY, TEAM_USAGE_MONTHS_KEY, TEAM_USAGE_TABLE_KEY]);
     lastSummaryJson = null;
     mem = null;
     recentWriteBack.clear();
@@ -2192,6 +2358,8 @@ export async function getTeamSyncStatus() {
     errorSince,
     entities: Object.fromEntries(Object.entries(mem.state.entities).map(([e, byId]) => [e, Object.keys(byId).length])),
     measures: meta.measures,
+    // Billing "Team usage": what this browser last wrote to members/<me>/usage.json, and for whom (dev page).
+    usage: { writtenAt: meta.usageWrittenAt || 0, readers: meta.usageReaders || [], sig: meta.usageSig || "", error: meta.usageError || null },
     lastError,
   };
 }
@@ -2265,6 +2433,7 @@ export function handleTeamMessage(message, sendResponse) {
     case "TEAM_CLOSE": return reply(closeTeam());
     case "TEAM_INVITE": return reply(inviteMember({ name: message.name, email: message.email }));
     case "TEAM_CANCEL_INVITE": return reply(cancelInvite(message.id));
+    case "TEAM_USAGE": return reply(getTeamUsage());
     default: return null;
   }
 }
