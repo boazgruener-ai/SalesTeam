@@ -105,8 +105,13 @@ Boaz's example: *"Oct-10-2026: I messaged <contact> and sent him our product bro
    its contact and its account are given to the AI together with the other account data — the latest
    ten notes at most.
 2. So a draft does not offer the brochure that was already sent, and the Mentor knows what was said.
-3. Notes are sent to the AI service only in these two cases, with the user's own API key, exactly like
-   the account data that is already sent today. Help and the privacy text say so.
+3. Notes are sent to the AI service only when the user uses the Sales Mentor or a message draft, with the
+   user's own API key. For the Mentor on a lead and for drafts, notes are the first text about the account
+   that is sent (today they are given only the lead itself). Help and the privacy text say so.
+   (Corrected 2026-10-13 after the code review; design decision D6.)
+4. The Sales Mentor chats on the **account page** and the **contact page** read the notes too (design
+   decision D5, agreed 2026-10-13).
+5. In a prompt a note is cut at 500 characters (design decision D7).
 
 ### R7 — Export, backup, removal, merging
 
