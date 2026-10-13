@@ -2957,6 +2957,16 @@ def test_notes(ctx):
           e("var la = lastNoteByAccount(NOTES, { 'https://x/post-1': 'beta sa' }); [la['acme ag'].id, la['beta sa'].id, la['acme agency'].id, Object.keys(la).length].join()"), "n4,n5,n6,3")
     check("notes: last note per contact and per lead",
           e("[lastNoteByContact(NOTES)['acme ag::anna muster'].id, lastNoteByLead(NOTES)['https://x/post-1'].id, Object.keys(lastNoteByLead(NOTES)).length].join()"), "n3,n2,2")
+    check("notes: the timeline marks what a note is about - the contact's name, the post or job ad and its day",
+          e("""accountTimelineMarked(NOTES, 'acme ag', { 'acme ag::anna muster': 'Anna Muster' },
+                 [{ key: 'https://x/post-1', postedAt: D(3) }, { key: 'https://x/other', type: 'job', firstSeenAt: D(4) }])
+               .map(function (n) { return n.id + ':' + (n.about || '-'); }).join('|')"""),
+          "n4:-|n3:Anna Muster|n2:the post of Oct 3|n1:-")
+    check("notes: about - a job ad, an unknown contact, a lead without a date",
+          e("[leadNoteAbout({ type: 'job', firstSeenAt: D(4) }), leadNoteAbout({ isJobAd: true }), leadNoteAbout(null), accountTimelineMarked(NOTES, 'acme ag')[1].about].join('|')"),
+          "the job ad of Oct 4|a job ad|a post|a contact")
+    check("notes: the timeline line of a lead note", e("noteLine(accountTimelineMarked(NOTES, 'acme ag', {}, [{ key: 'https://x/post-1', postedAt: D(3) }])[2], true)"),
+          "Oct 3, 2026 — Boaz · on the post of Oct 3: Liked and commented.")
     # editing and deleting
     check("notes: an edit keeps the date and is marked", e("var ed = editedNote(NOTES.n1, ' Spoke to Mr. Keller. ', D(20)); [ed.at === D(1), ed.editedAt === D(20), ed.text].join('|')"), "true|true|Spoke to Mr. Keller.")
     check("notes: an edit without a change, or to nothing, changes nothing", e("[editedNote(NOTES.n1, NOTES.n1.text + ' ', D(20)) === NOTES.n1, editedNote(NOTES.n1, '  ', D(20)) === NOTES.n1].join()"), "true,true")

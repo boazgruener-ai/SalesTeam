@@ -137,6 +137,7 @@ import { initDecisionsDot } from "./decisions-dot.js";
 import { createClaimGuard } from "./team-claims-ui.js";
 import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
+import { accountTimelineMarked } from "./notes.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
@@ -6940,8 +6941,20 @@ async function renderAccountView(companyKey, { startInEdit = false } = {}) {
     { entityLabel: company.company, relatedCompanyKey: companyKey }
   );
 
-  // 1.2.4 Notes, build step 1: the notes on the account itself (the timeline with contact and lead notes is step 2).
-  notesSection(document.getElementById("account-notes")).show({ on: "account", key: companyKey });
+  // 1.2.4 Notes (R2.3): one timeline - the notes on the account, on its contacts and on its leads, each marked with
+  // what it is about. A new note written here is on the account. Lead notes only for leads this member sees (5.3).
+  {
+    const contactNames = {};
+    for (const c of rawWorkbook.contacts || []) {
+      if (normalizeCompanyName(c.company) !== companyKey) continue;
+      const k = contactKeyFor(c.company, c.fullName);
+      if (k) contactNames[k] = c.fullName;
+    }
+    const seenLeads = companyLeads.filter((l) => teamAccounts.canSeeLead(l));
+    notesSection(document.getElementById("account-notes")).show({
+      on: "account", key: companyKey, select: (all) => accountTimelineMarked(all, companyKey, contactNames, seenLeads),
+    });
+  }
 
   const overviewEl = document.getElementById("account-overview");
   overviewEl.innerHTML = "";
@@ -7099,6 +7112,9 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
   const contact = currentContactRow();
   document.getElementById("contact-title").textContent = contact.fullName || "(unknown contact)";
   paintContactBackLink();
+
+  // 1.2.4 Notes (R2.4): the contact page shows the notes on this contact only.
+  notesSection(document.getElementById("contact-notes")).show({ on: "contact", key: contactKey });
 
   const contactLeads = findLeadsForContact(contact, allLeads);
   const contactOverrides = contactExtras[contactKey]?.overrides || {};

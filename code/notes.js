@@ -138,6 +138,25 @@ export function noteDate(at) {
   const d = new Date(at);
   return `${NOTE_MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
+export function noteShortDate(at) {
+  const d = new Date(at);
+  return `${NOTE_MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+// What a note on a lead is about, for the account timeline (R2.3): "the post of Oct 3", "the job ad of Oct 3".
+export function leadNoteAbout(lead) {
+  const what = lead && (lead.type === "job" || lead.isJobAd) ? "job ad" : "post";
+  const at = lead && (lead.postedAt || lead.firstSeenAt);
+  return at ? `the ${what} of ${noteShortDate(at)}` : `a ${what}`;
+}
+// The account timeline with every contact and lead note marked with what it is about. contactNames: { contact key:
+// name }; leads: the account's leads the viewer may see ({ key, type, postedAt, ... }).
+export function accountTimelineMarked(notes, accountKey, contactNames = {}, leads = []) {
+  const leadByKey = new Map((leads || []).filter((l) => l && l.key).map((l) => [l.key, l]));
+  return accountTimeline(notes, accountKey, [...leadByKey.keys()]).map((n) => (
+    n.on === "contact" ? { ...n, about: contactNames?.[n.key] || "a contact" }
+      : n.on === "lead" ? { ...n, about: leadNoteAbout(leadByKey.get(n.key)) }
+        : n));
+}
 export function noteIsoDate(at) {
   const d = new Date(at);
   return `${d.getFullYear()}-${noteTwo(d.getMonth() + 1)}-${noteTwo(d.getDate())}`;

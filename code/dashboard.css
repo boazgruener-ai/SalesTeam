@@ -1109,6 +1109,9 @@ thead th.actions-col {
   margin-bottom: 16px;
 }
 
+/* 1.2.4 Notes: the Notes section (notes.css) spaced and rounded like the other cards of the lead detail. */
+#detail-notes { margin: 0 0 16px; padding: 18px 20px; border-radius: 10px; }
+
 #detail-title {
   font-size: 20px;
   margin: 0 0 6px;

@@ -75,6 +75,7 @@ import { leadsMissingProfileData, uniqueProfileCount, profileVisitConfirmText, r
 import { appendActionsCol, appendActionsTh, appendActionsTd } from "./actions-column.js";
 import { initDecisionsDot } from "./decisions-dot.js";
 import { teamAccounts } from "./team-accounts-ui.js";
+import { notesSection, notesUnsaved } from "./notes-ui.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const STATUS_COLORS = {
@@ -1916,6 +1917,7 @@ function showListView() {
 function renderDetail(lead) {
   currentDetailLead = lead;
   mentorHistory = lead.mentorHistory || [];
+  notesSection(document.getElementById("detail-notes")).show({ on: "lead", key: lead.key }); // 1.2.4 Notes (R2.4)
 
   document.getElementById("detail-title").textContent = leadTitle(lead);
   document.getElementById("detail-meta").textContent =
@@ -2039,7 +2041,7 @@ async function saveTemplateEdits() {
 templatesSaveBtn.addEventListener("click", saveTemplateEdits);
 
 window.addEventListener("beforeunload", (event) => {
-  if (templatesDirty()) { event.preventDefault(); event.returnValue = ""; }
+  if (templatesDirty() || notesUnsaved()) { event.preventDefault(); event.returnValue = ""; } // 1.2.4: or a note not added yet
 });
 
 document.getElementById("detail-edit-templates-btn").addEventListener("click", () => {
