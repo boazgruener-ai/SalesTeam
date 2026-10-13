@@ -63,8 +63,9 @@ Boaz's example: *"Oct-10-2026: I messaged <contact> and sent him our product bro
    and its leads, each marked with what it is about ("on Anna Muster", "on the post of 3 Oct"). So the
    account page answers "what was the last thing that happened here?" in one place.
 4. The contact page and the lead detail show only their own notes.
-5. The Notes section never takes over the page (Boaz, 2026-10-13): the list is about **five lines high**
-   and **scrolls** to show older notes.
+5. The Notes section never takes over the page (Boaz, 2026-10-13): the list is high enough to
+   show **the four latest notes without scrolling** (about eight lines, as a note takes up to two) and
+   **scrolls** to show older notes.
 6. A single note takes **at most two lines** in the list. A longer note is cut off there, and a **click
    shows the whole note** — the same way the long text fields in the dashboard tables open.
 
