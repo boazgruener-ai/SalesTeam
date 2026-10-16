@@ -1424,6 +1424,8 @@ thead .actions-col {
 
 #account-view, #contact-view {
   max-width: 1200px;
+  /* 1.2.4.1 (Boaz): room below the two Advisor chat boxes, which ended exactly at the window edge */
+  padding-bottom: 48px;
 }
 
 #account-back-link, #contact-back-link {

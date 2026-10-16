@@ -1678,6 +1678,12 @@ function buildRow(lead) {
     tr.appendChild(td);
   }
   appendActionsTd(tr, (kebabBtn) => openRowMenu(kebabBtn, lead.key, buildLeadActionsMenu(lead)));
+  // 1.2.4.1 (Boaz): a click on the row opens the lead, as on Target Accounts and Target Contacts. Links, buttons, the
+  // row menu and a long text that expands on click keep their own click.
+  tr.addEventListener("click", (event) => {
+    if (event.target.closest("a, button, input, select, textarea, label, .kebab-btn, .content-cell[title]")) return;
+    openDetail(lead.key);
+  });
   return tr;
 }
 

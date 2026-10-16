@@ -364,7 +364,6 @@ details.nav-group > div > .nav-item {
   font-size: 20px;
 }
 
-#detail-status-select,
 #status-filter-select,
 #sort-select,
 #search-input,
@@ -469,6 +468,19 @@ details.nav-group > div > .nav-item {
 #search-input {
   flex: 1;
   min-width: 220px;
+}
+
+/* 1.2.4.1 (Boaz): the lead page's Status and Priority are one compact size - Status was a big button-sized box. */
+#detail-status-select,
+#detail-priority-select {
+  font-family: inherit;
+  font-size: 13px;
+  width: 130px;
+  padding: 2px 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
 }
 
 .control-label {
@@ -789,6 +801,11 @@ th.col-filtered {
   border-bottom: 1px solid #f0f0f0;
   vertical-align: top;
   overflow: hidden;
+}
+
+/* 1.2.4.1: a row opens its lead on click (as .company-row on Target Accounts) */
+#results-table tbody tr {
+  cursor: pointer;
 }
 
 #results-table tr:hover td {
