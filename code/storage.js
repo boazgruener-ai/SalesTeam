@@ -293,6 +293,17 @@ export async function saveInitiativeStagePreference(stages) {
   await chrome.storage.local.set({ [INITIATIVE_STAGE_PREFERENCE_KEY]: normalizeInitiativeStages(stages) });
 }
 
+// 1.2.4.2 (projects design D2): the user's last "Only these stages" list, kept while "Any stage" is chosen so switching
+// back restores it. Personal (this browser), not a team setting; null when there is none.
+const INITIATIVE_STAGE_CUSTOM_KEY = "initiativeStageCustom";
+export async function getInitiativeStageCustom() {
+  const data = await chrome.storage.local.get(INITIATIVE_STAGE_CUSTOM_KEY);
+  return data[INITIATIVE_STAGE_CUSTOM_KEY] ? normalizeInitiativeStages(data[INITIATIVE_STAGE_CUSTOM_KEY]) : null;
+}
+export async function saveInitiativeStageCustom(stages) {
+  await chrome.storage.local.set({ [INITIATIVE_STAGE_CUSTOM_KEY]: normalizeInitiativeStages(stages) });
+}
+
 // Design 3.8: companies the user wants in the list whatever their size or industry - [{ name, website }]. Web
 // Discovery adds them first; an exclusion still wins.
 const INCLUDED_COMPANIES_KEY = "includedCompanies";
@@ -4638,6 +4649,15 @@ export async function updateLeadMentorHistory(key, history) {
   }
 }
 
+// 1.2.4.4: the lead page's Customer Voice conversation - like the Mentor's, personal (team-keys.js PERSONAL_LEAD_FIELDS).
+export async function updateLeadCustomerVoiceHistory(key, history) {
+  const results = await getResults();
+  if (results[key]) {
+    results[key].customerVoiceHistory = history;
+    await saveResults(results);
+  }
+}
+
 // Conversation history for the Sales Advisor agent, persisted so it
 // survives closing/reopening the side panel. Stores raw Anthropic API
 // message objects (including tool_use/tool_result blocks), not just display
@@ -6882,6 +6902,7 @@ function wizardSettingsBackupKeys() {
     SETUP_RESEARCH_KEY,
     COMPLETION_TARGETS_KEY,
     INITIATIVE_STAGE_PREFERENCE_KEY,
+    INITIATIVE_STAGE_CUSTOM_KEY,
     INCLUDED_COMPANIES_KEY,
     ONBOARDING_COMPLETED_AT_KEY,
     ONBOARDING_PROGRESS_STEP_KEY,

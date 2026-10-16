@@ -23,7 +23,7 @@ const NEEDED_HEADER_ALIASES = {
   AI_Priority_Score: ["Priority_Score", "AI_Priority_Score"],
   AI_Priority: ["Priority", "AI_Priority"],
   Research_Status: ["Research_Status"],
-  Top_AI_Initiatives: ["Top_Initiatives", "Top_AI_Initiatives"],
+  Top_AI_Initiatives: ["Top_Projects", "Top_Initiatives", "Top_AI_Initiatives"],
 };
 const NEEDED_HEADERS = Object.values(NEEDED_HEADER_ALIASES).flat();
 
@@ -347,7 +347,21 @@ export const HOME_FIELD_ALIASES = {
   homeBased: "swissBased",
 };
 
+// 1.2.4.3 (projects design section 4): the "Projects" names of a workbook or export from 1.2.4.3 on -> the stored
+// names, which keep "initiative" (R3). One way only, and the new key is dropped, so stored rows look as before.
+const PROJECT_FIELD_ALIASES = {
+  projectId: "initiativeId",
+  projectName: "initiativeName",
+  topProjects: "topInitiatives",
+  adoptionFitScore: "maturityFitScore", // 1.2.4.4 (R6): Adoption_Fit_Score, was Maturity_Fit_Score
+};
+
 function applyAiFieldAliases(row) {
+  for (const [newKey, storedKey] of Object.entries(PROJECT_FIELD_ALIASES)) {
+    if (row[newKey] === undefined) continue;
+    if (row[storedKey] === undefined) row[storedKey] = row[newKey];
+    delete row[newKey];
+  }
   for (const [homeKey, legacyKey] of Object.entries(HOME_FIELD_ALIASES)) {
     if (row[legacyKey] === undefined && row[homeKey] !== undefined) row[legacyKey] = row[homeKey];
   }
@@ -476,7 +490,7 @@ export async function parseFirstSheetRecords(arrayBuffer) {
 const RELATIONAL_SHEETS = {
   companies: ["Companies"],
   contacts: ["Contacts"],
-  aiInitiatives: ["Initiatives", "AI_Initiatives"],
+  aiInitiatives: ["Projects", "Initiatives", "AI_Initiatives"],
   aiInvestment: ["Investment", "AI_Investment"],
   sources: ["Sources"],
   exclusionList: ["Exclusion_List", "Exclusion List", "ExclusionList"],

@@ -93,7 +93,7 @@ function knownFacts(view, initiatives, relevantContacts) {
   if (emp) add(emp === "globalEmployees" ? "Employees (worldwide)" : "Employees (local)", emp);
   add("Industry", "industry");
   if (relevantContacts.length) out.push({ label: "Contacts already known", value: relevantContacts.map((c) => c.fullName).join(", ") });
-  if (initiatives.length) out.push({ label: "Initiatives already known", value: initiatives.map((i) => i.initiativeName).filter(Boolean).slice(0, 8).join("; ") });
+  if (initiatives.length) out.push({ label: "Projects already known", value: initiatives.map((i) => i.initiativeName).filter(Boolean).slice(0, 8).join("; ") });
   return out;
 }
 
@@ -343,7 +343,7 @@ export function measureText(s) {
   const line = (label, g) => g
     ? `${label}: ${g.accounts} account${g.accounts === 1 ? "" : "s"}, about US$${g.usdEach.toFixed(3)} and ${Math.round(g.secondsEach)} s each ` +
       `(${g.searchesEach.toFixed(1)} searches, ${g.fetchesEach.toFixed(1)} pages read); ${g.contacts} people added from company websites and reports, ` +
-      `${g.initiatives} initiatives, ${g.filled} empty fields filled, ${g.pages} LinkedIn company pages found; ` +
+      `${g.initiatives} projects, ${g.filled} empty fields filled, ${g.pages} LinkedIn company pages found; ` +
       `LinkedIn profiles found from web search results for ${g.profileFound + g.profiles} of ${g.profileAsked + g.profiles} people without one (the rest: a LinkedIn name search later)` +
       (g.cutOff ? `; ${g.cutOff} cut off at the 4-minute limit` : "") + (g.noData ? `; ${g.noData} without a data line` : "")
     : null;
@@ -364,7 +364,7 @@ export function measureShortText(s) {
   return [
     `${completed} of ${s.total} accounts researched${s.failed ? ` (${s.failed} could not be)` : ""}` +
       `${s.stoppedReason ? ` - stopped: ${s.stoppedReason}` : ""}.`,
-    `Found: ${sum("contacts")} people, ${sum("initiatives")} initiatives, ${sum("filled")} missing facts filled in.`,
+    `Found: ${sum("contacts")} people, ${sum("initiatives")} projects, ${sum("filled")} missing facts filled in.`,
     `Total cost: about US$${(s.spent || 0).toFixed(2)}.`,
   ].join("\n");
 }
@@ -389,7 +389,7 @@ export function accountLine(r) {
   if (r.stopped === "timeout") bits.push("CUT OFF at 4 minutes");
   if (r.dataLine === false && r.searches + r.fetches > 0) bits.push("no data line in the answer"); // older records have no dataLine
   if (r.contacts) bits.push(`${r.contacts} contacts added`);
-  if (r.initiatives) bits.push(`${r.initiatives} initiatives`);
+  if (r.initiatives) bits.push(`${r.initiatives} projects`);
   if (r.filled) bits.push(`${r.filled} fields filled`);
   if (r.profileAsked) bits.push(`profiles: ${r.profileFound} of ${r.profileAsked} found`);
   return `Web research (new) - ${r.company} [${(r.topics || []).join(", ")}]: ${bits.join("; ")}`;

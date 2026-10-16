@@ -49,7 +49,7 @@
     <!-- Boaz (1.2.2.8 test): "Advanced tools → <tool>", and only what this tool does - no version history. -->
     <h3>Advanced tools → Research accounts on the web</h3>
     <p>
-      Fills in what each account still lacks - HQ, employees, industry, initiatives, senior people and a short summary -
+      Fills in what each account still lacks - HQ, employees, industry, projects, senior people and a short summary -
       from the company's own pages and web searches. People found are added as contacts; no LinkedIn page is visited.
     </p>
     <p>Listed companies go first, then by priority. It costs money on your Anthropic API key; the report at the end shows
@@ -101,7 +101,7 @@
     <h3>Advanced tools → Find &amp; Merge Duplicates</h3>
     <p id="find-duplicates-intro">
       Accounts that look like the same company (same name or same LinkedIn page). Pick the one to keep and press Merge -
-      its contacts, initiatives, sources and leads move over. Different companies: press Keep separate and they are not
+      its contacts, projects, sources and leads move over. Different companies: press Keep separate and they are not
       proposed again.
     </p>
     <div id="find-duplicates-list"></div>
@@ -134,7 +134,7 @@
   <dialog id="merge-accounts-dialog">
     <h3>Merge duplicate accounts</h3>
     <p>
-      Combine two entries for the same company into one. The other account's contacts, initiatives, sources and
+      Combine two entries for the same company into one. The other account's contacts, projects, sources and
       Post leads move to the account you keep, and its name is kept as an alternative name.
     </p>
     <label class="merge-accounts-field">
@@ -192,17 +192,16 @@
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <a href="#" id="tab-accounts" class="nav-item active">Target Accounts</a>
-        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="export-page-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
-        <button id="auto-findings-page-btn" type="button" class="nav-item" title="Settle the web findings that cannot change anything - two figures in the same size band, fields no score ever reads - and leave only the ones that genuinely need your judgement. Shows you exactly what it will do before it does it, and can be undone.">Resolve Web Findings Automatically…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
       </details>
 
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
-        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="export-contacts-page-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
       </details>
 
@@ -217,8 +216,7 @@
              existing confirm() gates (Re-score All Priorities) still run
              normally. -->
         <button id="open-dashboard-btn" type="button" class="nav-item" title="Open the leads (posts) your scans found">Open Leads Dashboard</button>
-        <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
-        <button id="nav-export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
+        <button id="nav-export-csv-all-btn" type="button" class="nav-item" title="Download the leads as a CSV file. If a search or filter is on, you are asked whether to export all leads or only the filtered ones.">Export… (CSV)</button>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 7th round - see
@@ -312,7 +310,7 @@
         <h1><span id="page-title-text">SalesTeam Target Accounts Dashboard</span></h1>
         <p class="page-subtitle">
           The full externally-researched company and contact workbook - every account, plus its known contacts and
-          initiatives, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
+          projects, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
           unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
           automatic lead (post) prioritization (see the Leads Dashboard's Priority column).
         </p>
@@ -330,7 +328,7 @@
       <p id="empty-state" class="empty-state" hidden>
         No Target Accounts data imported yet.
         <button id="empty-import-btn" type="button">Import…</button>
-        Choose your research workbook (.xlsx), a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export.
+        Choose your research workbook (.xlsx), a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export.
       </p>
 
       <section id="accounts-stats-section" hidden>
@@ -755,7 +753,7 @@
     <h3>Research accounts on the web</h3>
     <p class="page-subtitle">
       Searches the public web for each chosen account (website, registers, reports, news) with your own Anthropic API key and
-      saves a briefing with sources on the account, adds the initiatives it finds to the Initiatives list, and fills in empty fields.
+      saves a briefing with sources on the account, adds the projects it finds to the Projects list, and fills in empty fields.
       It runs in the background: you can keep using this page while it works. No LinkedIn activity is used.
     </p>
     <fieldset class="bulk-research-group">
@@ -776,7 +774,7 @@
       <label><input type="checkbox" class="bulk-topic" value="revenue" checked /> Revenue</label>
       <label><input type="checkbox" class="bulk-topic" value="headquarters" checked /> Headquarters</label>
       <label><input type="checkbox" class="bulk-topic" value="registry" /> Registry data</label>
-      <label><input type="checkbox" class="bulk-topic" value="initiatives" checked /> Initiatives</label>
+      <label><input type="checkbox" class="bulk-topic" value="initiatives" checked /> Projects</label>
       <label class="bulk-research-wide"><input type="checkbox" id="bulk-autofill" checked /> Fill in empty fields automatically (existing values are never replaced; different values are left for you to review)</label>
     </fieldset>
     <label class="hubspot-field">Stop automatically when the cost reaches (US$)
@@ -799,16 +797,11 @@
     <h3>Export</h3>
     <fieldset class="io-choice">
       <legend>Format</legend>
-      <label><input type="radio" name="export-format" value="csv" checked /> CSV - SalesTeam's own columns (opens in Excel)</label>
-      <label><input type="radio" name="export-format" value="hubspot" /> HubSpot - files HubSpot can import</label>
-      <label><input type="radio" name="export-format" value="salesforce" /> Salesforce - files Salesforce's Data Import Wizard can import</label>
-      <label><input type="radio" name="export-format" value="dynamics" /> Microsoft Dynamics - files Dynamics 365 Sales can import</label>
-    </fieldset>
-    <fieldset class="io-choice">
-      <legend>Accounts or contacts?</legend>
-      <label><input type="radio" name="export-what" value="accounts" checked /> Accounts</label>
-      <label><input type="radio" name="export-what" value="contacts" /> Contacts</label>
-      <label><input type="radio" name="export-what" value="both" /> Both - accounts and their contacts, two files</label>
+      <!-- 1.2.4.3 (Boaz): one SalesTeam format, the Excel file, for Export and Import; a CRM always gets both files. -->
+      <label><input type="radio" name="export-format" value="xlsx" checked /> SalesTeam Excel - accounts, contacts and projects in one file (Import… reads it back)</label>
+      <label><input type="radio" name="export-format" value="hubspot" /> HubSpot - two files: companies and contacts</label>
+      <label><input type="radio" name="export-format" value="salesforce" /> Salesforce - two files: accounts and contacts</label>
+      <label><input type="radio" name="export-format" value="dynamics" /> Microsoft Dynamics - two files: accounts and contacts</label>
     </fieldset>
     <fieldset class="io-choice">
       <legend>Save to</legend>
@@ -848,7 +841,7 @@
     <h3>Import</h3>
     <fieldset class="io-choice">
       <legend>File type</legend>
-      <label><input type="radio" name="import-format" value="salesteam" checked /> SalesTeam CSV - a file exported with Export…</label>
+      <label><input type="radio" name="import-format" value="salesteam" checked /> SalesTeam Excel - a file saved with Export…</label>
       <label><input type="radio" name="import-format" value="hubspot" /> HubSpot export (CSV) - companies or contacts</label>
       <label><input type="radio" name="import-format" value="salesforce" /> Salesforce export (CSV) - accounts or contacts</label>
       <label><input type="radio" name="import-format" value="dynamics" /> Microsoft Dynamics export (Excel or CSV) - accounts or contacts</label>
@@ -856,7 +849,7 @@
       <label><input type="radio" name="import-format" value="workbook" /> Research workbook (.xlsx) - research done outside SalesTeam</label>
     </fieldset>
     <p class="page-subtitle">
-      An import <strong>only adds and fills in</strong>: companies, contacts and initiatives you do not have yet are
+      An import <strong>only adds and fills in</strong>: companies, contacts and projects you do not have yet are
       added, empty fields are filled, and nothing you have is replaced or removed. Where the file and an account
       disagree by more than 10%, the same rules as for web findings decide; what could change a priority comes to
       Decisions. You see what it will do before anything is saved.
@@ -891,7 +884,7 @@
   <dialog id="restore-accounts-dialog" class="action-dialog">
     <h3>Restore Accounts &amp; Contacts from Backup</h3>
     <p class="page-subtitle">
-      Bring back accounts, contacts and initiatives from a SalesTeam backup - the backup zip made by Backup &amp;
+      Bring back accounts, contacts and projects from a SalesTeam backup - the backup zip made by Backup &amp;
       Restore, or an older .json file. You choose what to restore; the parts you tick <strong>replace</strong> what
       is loaded now, and a safety copy of your current data is saved first. (To load a research workbook or a CSV
       file, use "Import…" instead.)

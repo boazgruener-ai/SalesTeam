@@ -1,8 +1,10 @@
-# GENERIC B2B TARGET ACCOUNT RESEARCH MASTER PROMPT V1.35
+# GENERIC B2B TARGET ACCOUNT RESEARCH MASTER PROMPT V1.36
 
-Prompt_Version: V1.35
+Prompt_Version: V1.36
 
 Import_Schema_Version: 1.1
+
+Change in V1.36: "Initiatives" are now "Projects" (sheet Projects; Project_ID, Project_Name, Top_Projects), the stage is the "adoption stage", and Maturity_Fit_Score is Adoption_Fit_Score. Relevant projects are the ones where the seller's own offer could help, whatever the technology. SalesTeam still imports workbooks with the older names.
 
 ## ROLE AND PURPOSE
 
@@ -117,7 +119,7 @@ Scoring-model actions
 
 ·
 
-Initiative-stage choices
+Adoption-stage choices
 
 ·
 
@@ -569,7 +571,7 @@ Contacts
 
 ·
 
-Initiatives
+Projects
 
 ·
 
@@ -1712,9 +1714,9 @@ Company size — 15%
 
 Industry / use-case fit — 20%
 
-Relevant strategic initiatives — 20%
+Relevant projects — 20%
 
-Initiative stage — 15%
+Adoption stage — 15%
 
 Buying potential / budget — 10%
 
@@ -1777,7 +1779,7 @@ Medium >= 50
 
 Low < 50
 
-# 14. STEP 12: INITIATIVE STAGE PREFERENCE
+# 14. STEP 12: ADOPTION STAGE PREFERENCE
 
 Do not ask for numerical scores.
 
@@ -1833,7 +1835,7 @@ Company size in employees/FTE, exact or range — Keep
 
 ·
 
-At least one verified relevant initiative — Keep
+At least one verified relevant project — Keep
 
 ·
 
@@ -1871,7 +1873,7 @@ Employee/FTE size evidence = 50%
 
 ·
 
-Relevant initiative = +20%
+Relevant project = +20%
 
 ·
 
@@ -1900,7 +1902,7 @@ Employee/FTE evidence: 90%
 
 ·
 
-At least 1 relevant initiative: 50%
+At least 1 relevant project: 50%
 
 ·
 
@@ -2023,7 +2025,7 @@ Prioritization model
 
 ·
 
-Initiative-stage order
+Adoption-stage order
 
 ·
 
@@ -2064,7 +2066,7 @@ When you start it, I will:
 
 3\. Verify company size
 
-4\. Research relevant initiatives
+4\. Research relevant projects
 
 5\. Identify target personas/contacts
 
@@ -2798,7 +2800,7 @@ User-curated companies
 
 ·
 
-Companies surfaced through relevant initiatives
+Companies surfaced through relevant projects
 
 ·
 
@@ -2823,7 +2825,7 @@ Specification
 
 → Size/company enrichment
 
-→ Initiative enrichment
+→ Project enrichment
 
 → Scoring
 
@@ -2868,11 +2870,11 @@ Total verified contacts
 
 ·
 
-Accounts with >=1 initiative
+Accounts with >=1 project
 
 ·
 
-Total initiative records
+Total project records
 
 ·
 
@@ -2981,7 +2983,7 @@ Aliases
 
 Contacts
 
-Initiatives
+Projects
 
 Investment / Budget
 
@@ -3025,7 +3027,7 @@ Equivalent names are acceptable for the internal/working sheets if
 the same state is preserved.
 
 EXCEPTION: the seven import sheets defined in Section 45 (Companies,
-Contacts, Initiatives, Investment, Sources, Exclusion_List, Aliases) MUST use
+Contacts, Projects, Investment, Sources, Exclusion_List, Aliases) MUST use
 exactly the sheet names and column headers given there, because downstream
 software reads them by name.
 
@@ -3075,7 +3077,7 @@ Contact coverage
 
 ·
 
-Initiative coverage
+Project coverage
 
 ·
 
@@ -3137,7 +3139,7 @@ Net new contacts
 
 ·
 
-Net new initiatives
+Net new projects
 
 ·
 
@@ -3167,7 +3169,7 @@ Contacts
 
 ·
 
-Initiatives
+Projects
 
 ·
 
@@ -3203,7 +3205,7 @@ stronger/newer evidence where appropriate.
 # 33. CONFIGURATION CHANGES
 
 The user may change geography, industries, size thresholds, universe
-size, organization types, scoring factors/weights, initiative ranking, contact
+size, organization types, scoring factors/weights, project ranking, contact
 personas/count, inclusion/exclusion lists, evidence targets, completion targets
 or source rules.
 
@@ -3247,7 +3249,7 @@ ENRICH — research missing company evidence
 
 CONTACTS — research relevant contacts
 
-INITIATIVES — research strategic/technology initiatives
+PROJECTS — research projects that matter to the seller's offer
 
 GAP CLOSE — research against completion gaps
 
@@ -3406,7 +3408,7 @@ Duplicate contacts
 
 ·
 
-Duplicate initiatives
+Duplicate projects
 
 ·
 
@@ -3585,7 +3587,7 @@ Accounts with >=2 contacts
 
 ·
 
-Initiative accounts
+Project accounts
 
 ·
 
@@ -3896,7 +3898,7 @@ Employee/FTE coverage: [X]
 
 Contact coverage: [X]
 
-Initiative coverage: [X]
+Project coverage: [X]
 
 Important remaining gaps: [X]
 
@@ -3977,7 +3979,7 @@ The seven import sheets are:
 
 2\. Contacts
 
-3\. Initiatives
+3\. Projects
 
 4\. Investment
 
@@ -4039,7 +4041,7 @@ cross-sheet company key.
 
 ·
 
-Every Company_ID used in Contacts, Initiatives, Investment, Aliases and
+Every Company_ID used in Contacts, Projects, Investment, Aliases and
 Exclusion_List MUST exist in Companies.
 
 ·
@@ -4073,7 +4075,7 @@ remain in the original/source language.
 ·
 
 Narrative fields intended for the user, such as Research_Status,
-Priority_Rationale, Portfolio_Profile and initiative descriptions, should use
+Priority_Rationale, Portfolio_Profile and project descriptions, should use
 the configured OUTPUT LANGUAGE unless preserving the source language is
 necessary for accuracy.
 
@@ -4374,8 +4376,8 @@ Investment_Confidence [recommended] — Verified, Reported, Estimated...
 
 ·
 
-Top_Initiatives [recommended] — Short text list of the main relevant
-initiatives
+Top_Projects [recommended] — Short text list of the main relevant
+projects
 
 ·
 
@@ -4393,7 +4395,7 @@ Decision_Authority_Score [recommended] — 0-100 sub-score
 
 ·
 
-Maturity_Fit_Score [recommended] — 0-100 sub-score
+Adoption_Fit_Score [recommended] — 0-100 sub-score
 
 ·
 
@@ -4501,11 +4503,11 @@ Last_Verified [recommended] — Date YYYY-MM-DD
 Evidence_Quality [recommended] — How well the contact is evidenced
 
 SHEET
-"Initiatives" — one row per relevant initiative
+"Projects" — one row per relevant project
 
 ·
 
-Initiative_ID [REQUIRED] — Unique initiative ID
+Project_ID [REQUIRED] — Unique project ID
 
 ·
 
@@ -4517,7 +4519,7 @@ Company [REQUIRED] — Company name
 
 ·
 
-Initiative_Name [REQUIRED] — Short name of the initiative
+Project_Name [REQUIRED] — Short name of the project
 
 ·
 
@@ -4537,7 +4539,7 @@ Description [recommended]
 
 ·
 
-Status [recommended] — Stage of the initiative, e.g. Pilot, Production, Scaling
+Status [recommended] — Stage of the project, e.g. Pilot, Production, Scaling
 
 ·
 
@@ -4935,7 +4937,7 @@ Evidence_Status and Priority use only the allowed exact labels.
 
 ·
 
-No duplicate Contact_ID, Initiative_ID, Investment_ID or Source_ID exists.
+No duplicate Contact_ID, Project_ID, Investment_ID or Source_ID exists.
 
 ·
 
@@ -4980,7 +4982,7 @@ and one has
 Evidence_Status = Insufficient
 Evidence with no Priority_Score; 4 fictional contacts across two companies, 2
 
-initiatives, 1 investment row,
+projects, 1 investment row,
 3 sources, 1 exclusion row and 8 or more aliases covering at least four
 Alias_Type values.
 

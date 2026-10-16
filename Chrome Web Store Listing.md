@@ -33,7 +33,7 @@ YOUR AI SALES TEAM (optional, needs your own Anthropic API key)
 - AI-drafted opening messages for any lead (post) - editable, and only ever copied for you to paste and send yourself. Nothing is auto-sent.
 - Sales Mentor: an AI agent you can ask "Which lead should I approach first?" or general sales-strategy questions. It looks up your real lead data only when a question actually needs it.
 - Customer Voice: an AI agent that roleplays as a realistic buyer, so you can pressure-test a message or approach before you send it.
-- Web research: researches your accounts on the public web, with sources you can open and check. Click to research an account, or let account preparation do it within a monthly budget you set, never above it.
+- Web research: researches your accounts on the public web - size, headquarters and recent projects where what you sell could help - with sources you can open and check. Click to research an account, or let account preparation do it within a monthly budget you set, never above it.
 The core scanning, filtering, and Dashboard features work with no AI key at all. The AI Sales Team features (prioritization, drafting, Sales Mentor, Customer Voice) are entirely optional, and require you to provide your own Anthropic API key, which is stored only on your device.
 
 PRIVACY
@@ -53,7 +53,7 @@ Stores the user's search Topics, filters, leads, target account/contact lists, a
 
 unlimitedStorage justification:
 
-Lets the extension keep the data a user builds up - imported research workbooks (thousands of contacts and initiatives), searched leads (posts) and conversation history - in the browser's local storage without hitting Chrome's default 10 MB limit, after which saving new data would start to fail. Nothing is uploaded; the data stays on the user's device.
+Lets the extension keep the data a user builds up - imported research workbooks (thousands of contacts and projects), searched leads (posts) and conversation history - in the browser's local storage without hitting Chrome's default 10 MB limit, after which saving new data would start to fail. Nothing is uploaded; the data stays on the user's device.
 
 sidePanel justification:
 
@@ -84,6 +84,19 @@ Answer: No. The extension makes data API calls to Anthropic (text in, text out) 
 
 ### 5. Data usage - what user data do you collect
 - From Data Usage Checkboxes - only check: PII, Authentication Information and Website content.
+
+The nine checkboxes, in the order they appear (the same answers in the Chrome Web Store and in Microsoft Edge Add-ons, Partner Center, "What user data do you plan to collect"):
+
+1. Personally identifiable information - YES. Names and job titles of contacts and post authors.
+2. Health information - NO.
+3. Financial and payment information - NO.
+4. Authentication information - YES. The user's own Anthropic API key is stored in the browser.
+5. Personal communications - NO. SalesTeam drafts messages but does not read the user's emails, chats or LinkedIn inbox.
+6. Location - NO.
+7. Web history - NO. It does not record which pages the user visits.
+8. User activity - NO. It does not log clicks, keystrokes or network traffic. (Its Activity Log records what was done inside SalesTeam, which is not what this box means.)
+9. Website content - YES. Text of LinkedIn posts, company and profile pages that SalesTeam reads.
+
 Does this extension collect or transmit user data (Personal Identifiable Information) ? Yes - lead (post) and target-account text, the notes the user wrote on them, and chat content, only when the optional AI features are used, sent directly to Anthropic's API using the user's own key. (Team use writes shared data only into a OneDrive folder on the user's own computer that the user's team owns; the extension sends it to no server.)
 
 ### 6. I certify that the following disclosures are true (tick all three)

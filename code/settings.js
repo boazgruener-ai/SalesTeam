@@ -239,7 +239,12 @@ function showEmbeddedPage(page, title) {
     // Identical URL (same action pressed again, e.g. after Cancel): a fragment-only "navigation" to it would do
     // nothing, so reload; a URL that differs only by #hash is routed by the page's own hashchange handler.
     const frameWindow = embeddedPageFrameEl.contentWindow;
-    if (frameWindow.location.href === resolvedUrl) {
+    if (frameWindow.location.href === resolvedUrl && /[#&]action=/.test(resolvedUrl)) {
+      // 1.2.4.3: the same pop-up action again (Export… after Cancel) - the page's own hashchange routing opens it
+      // again, instead of a reload of the whole page, which took about 10 s on a large list.
+      frameWindow.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: resolvedUrl, newURL: resolvedUrl }));
+      willLoad = false;
+    } else if (frameWindow.location.href === resolvedUrl) {
       frameWindow.location.reload();
     } else {
       frameWindow.location.replace(resolvedUrl);
@@ -306,7 +311,6 @@ document.getElementById("nav-extract-companies-btn").addEventListener("click", (
 document.getElementById("nav-extract-companies-profiles-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=extract-companies-profiles", "Leads Dashboard"));
 document.getElementById("nav-apply-location-filter-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=apply-location-filter", "Leads Dashboard"));
 document.getElementById("nav-export-csv-all-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-all", "Leads Dashboard"));
-document.getElementById("nav-export-csv-filtered-btn").addEventListener("click", () => showEmbeddedPage("dashboard.html#action=export-csv-filtered", "Leads Dashboard"));
 document.getElementById("open-scanner-page-btn").addEventListener("click", () => showEmbeddedPage("scanner.html", "Scanner"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));

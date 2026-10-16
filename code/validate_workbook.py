@@ -7,7 +7,7 @@ Read-only: never modifies the workbook.
 import sys
 import openpyxl
 from sheet_contract import (SHEETS, EVIDENCE_STATUS_VALUES, PRIORITY_BASE, PRIORITY_EXTRA,
-                            ALIAS_TYPES, EXCLUSION_REASONS, LEGACY_HEADERS)
+                            ALIAS_TYPES, EXCLUSION_REASONS, LEGACY_HEADERS, LEGACY_SHEETS)
 
 errors, warnings, notes = [], [], []
 
@@ -43,15 +43,23 @@ def main(path):
     names = wb.sheetnames
     data = {}
     for sheet, cols in SHEETS:
-        if sheet not in names:
+        if sheet not in names and LEGACY_SHEETS.get(sheet) in names:
+            warn(f"Sheet '{LEGACY_SHEETS[sheet]}' has the older name - accepted, but call it '{sheet}'")
+            headers, rows = read_sheet(wb, LEGACY_SHEETS[sheet])
+        elif sheet not in names:
             (err if sheet in ("Companies",) else warn)(f"Sheet '{sheet}' is missing"
                 + (" - importer will silently import nothing for it" if sheet != "Companies" else ""))
             continue
-        headers, rows = read_sheet(wb, sheet)
-        data[sheet] = rows
+        else:
+            headers, rows = read_sheet(wb, sheet)
         legacy_used = [h for h in headers if h in LEGACY_HEADERS.values()]
         if legacy_used:
-            warn(f"{sheet}: legacy country-specific header(s) {legacy_used} - accepted, but use the generic names")
+            warn(f"{sheet}: older header name(s) {legacy_used} - accepted, but use the current names")
+            # Read an older header under its current name, so every check below sees one spelling.
+            current = {old: new for new, old in LEGACY_HEADERS.items()}
+            headers = [current.get(h, h) for h in headers]
+            rows = [{current.get(k, k): v for k, v in r.items()} for r in rows]
+        data[sheet] = rows
         for h, required, _ in cols:
             legacy = LEGACY_HEADERS.get(h)
             if h not in headers and not (legacy and legacy in headers):
@@ -112,16 +120,16 @@ def main(path):
         (err if len(untyped) == len(active) else warn)(msg)
 
     name_by_id = {cell(r.get("Company_ID")): cell(r.get("Company")) for r in comp}
-    for sheet in ("Contacts", "Initiatives", "Investment", "Sources", "Exclusion_List", "Aliases"):
+    for sheet in ("Contacts", "Projects", "Investment", "Sources", "Exclusion_List", "Aliases"):
         for r in data.get(sheet, []):
             cid = cell(r.get("Company_ID"))
             if cid and cid not in idset:
                 err(f"{sheet}: Company_ID '{cid}' does not exist in Companies")
-            elif sheet in ("Contacts", "Initiatives", "Investment", "Exclusion_List") and cid:
+            elif sheet in ("Contacts", "Projects", "Investment", "Exclusion_List") and cid:
                 nm = cell(r.get("Company"))
                 if nm and nm != name_by_id.get(cid):
                     warn(f"{sheet}: Company '{nm}' differs from Companies name '{name_by_id.get(cid)}' for {cid}")
-        col = {"Contacts": "Contact_ID", "Initiatives": "Initiative_ID",
+        col = {"Contacts": "Contact_ID", "Projects": "Project_ID",
                "Investment": "Investment_ID", "Sources": "Source_ID"}.get(sheet)
         if col:
             vals = [cell(r.get(col)) for r in data.get(sheet, [])]
@@ -156,13 +164,13 @@ def main(path):
 
     # coverage summary
     with_c = {cell(r.get("Company_ID")) for r in data.get("Contacts", [])}
-    with_i = {cell(r.get("Company_ID")) for r in data.get("Initiatives", [])}
+    with_i = {cell(r.get("Company_ID")) for r in data.get("Projects", [])}
     with_a = {cell(r.get("Company_ID")) for r in data.get("Aliases", [])}
     n = len(comp) or 1
     print(f"Workbook: {path}")
     print("Rows: " + ", ".join(f"{s}={len(data.get(s, []))}" for s, _ in SHEETS))
     print(f"Companies with contacts {len(with_c & idset)}/{len(comp)} ({100*len(with_c & idset)//n}%), "
-          f"initiatives {len(with_i & idset)}/{len(comp)}, aliases {len(with_a & idset)}/{len(comp)}")
+          f"projects {len(with_i & idset)}/{len(comp)}, aliases {len(with_a & idset)}/{len(comp)}")
     for m in notes:
         print("NOTE:", m)
     for w in warnings[:40]:

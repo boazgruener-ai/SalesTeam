@@ -54,15 +54,15 @@
            always be visually dead anyway. -->
       <details class="nav-group">
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
-        <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts, and AI initiatives">Target Accounts Dashboard</button>
-        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts and projects">Target Accounts Dashboard</button>
+        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="nav-export-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot can import">Export…</button>
       </details>
 
       <details class="nav-group">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
-        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam CSV or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="nav-export-contacts-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot can import">Export…</button>
       </details>
 
@@ -86,8 +86,7 @@
              to Leads Dashboard's own real content once something else got
              embedded over it (only the brand-name click, not obvious). -->
         <button id="open-posts-dashboard-self-btn" type="button" class="nav-item active" title="Return to Leads Dashboard">Leads Dashboard</button>
-        <button id="export-csv-all-btn" type="button" class="nav-item" title="Download every lead as a CSV file">Export All (CSV)</button>
-        <button id="export-csv-filtered-btn" type="button" class="nav-item" title="Download only the leads currently shown by your filters as a CSV file">Export Filtered (CSV)</button>
+        <button id="export-csv-all-btn" type="button" class="nav-item" title="Download the leads as a CSV file. If a search or filter is on, you are asked whether to export all leads or only the filtered ones.">Export… (CSV)</button>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 7th round - see
@@ -370,6 +369,8 @@
       </div>
     </section>
 
+    <!-- 1.2.4.4: Sales Mentor and Customer Voice side by side, as on the account and contact pages. -->
+    <div class="detail-advisors-row">
     <section id="detail-mentor-section">
       <div class="section-title-row">
         <h3>Consult Sales Mentor about this lead</h3>
@@ -386,6 +387,19 @@
         <button id="detail-mentor-send-btn" class="agent-send-btn" type="button" title="Send your message to the Sales Mentor">Send</button>
       </div>
     </section>
+    <section id="detail-voice-section">
+      <div class="section-title-row">
+        <h3>Consult Customer Voice about this lead</h3>
+        <button id="detail-voice-clear-btn" class="text-link-btn" type="button" title="Permanently clear this lead's Customer Voice conversation history">Clear conversation</button>
+      </div>
+      <div id="detail-voice-history" class="agent-history"></div>
+      <span id="detail-voice-status" class="status-text"></span>
+      <div class="agent-input-row">
+        <textarea id="detail-voice-input" class="agent-input" placeholder="Try a message on this person, e.g. “How would this land?”"></textarea>
+        <button id="detail-voice-send-btn" class="agent-send-btn" type="button" title="Send your message to Customer Voice">Send</button>
+      </div>
+    </section>
+    </div>
   </div>
       </div>
 

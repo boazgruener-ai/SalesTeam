@@ -812,6 +812,7 @@ html:not(.wizard-ready) #wizard-nav-bar { visibility: hidden; }
 #research-cost { font-size: 13px; color: var(--gray); }
 #research-progress { max-width: 600px; margin: 12px 0 6px; }
 #research-progress[hidden] { display: none; }
+.priority-item-list.stages-disabled { opacity: 0.45; }
 #research-progress-track { height: 10px; background: #e3e8ef; border-radius: 5px; overflow: hidden; }
 #research-progress-fill { height: 100%; width: 0; background: #1155cc; border-radius: 5px; transition: width 1s linear; }
 #research-eta { margin: 6px 0 0; font-size: 14px; font-weight: 600; color: var(--ink); }

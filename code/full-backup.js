@@ -6,7 +6,7 @@
 //   salesteam-backup-2026-09-19.zip
 //     README.txt          what is inside and how to use it
 //     manifest.json       date, extension version, what each category holds (read by the restore dialog)
-//     spreadsheets/*.csv  the accounts workbook (Companies, Contacts, Initiatives, ...) and Leads, ready to
+//     spreadsheets/*.csv  the accounts workbook (Companies, Contacts, Projects, ...) and Leads, ready to
 //                         upload to another system or open in Excel
 //     data/<category>.json the raw stored data, grouped by category, for restoring
 import { createZip, readZip, bytesToText } from "./backup-zip.js";
@@ -64,7 +64,7 @@ export const BACKUP_CATEGORIES = [
       "targetAccountScoreThreshold", "jobRulesMinConfidence"],
   },
   {
-    id: "accounts", label: "Accounts, contacts and initiatives",
+    id: "accounts", label: "Accounts, contacts and projects",
     detail: "The imported research workbook as it was, including discovered companies already merged in, and the notes on accounts, contacts and leads. Replaces your current accounts, contacts and notes.",
     // 1.2.4 (NOTES_DESIGN.md 9.4): "notes" belongs here, so restoring the accounts brings the notes too. A zip made by
     // 1.2.3.15 or earlier holds them under "Other data" instead.
@@ -138,7 +138,7 @@ function summarize(id, data) {
     case "scanner": return `${count(data.topics)} topics, ${count(data.jobTopics)} job topics`;
     case "accounts": {
       const wb = data.targetAccountsWorkbook || {};
-      return `${count(wb.companies)} companies, ${count(wb.contacts)} contacts, ${count(wb.aiInitiatives)} initiatives`;
+      return `${count(wb.companies)} companies, ${count(wb.contacts)} contacts, ${count(wb.aiInitiatives)} projects`;
     }
     case "edits": return `${count(data.targetAccountExtras)} account edits, ${count(data.targetContactExtras)} contact edits`;
     case "staged": return `${count(data.discoveredCompanies)} companies, ${count(data.discoveredContacts)} contacts`;
@@ -175,7 +175,7 @@ function readmeText(createdAt, version, categories) {
     "",
     "WHAT IS IN THIS ZIP",
     "  spreadsheets/   Your data as CSV files - open in Excel, or import into Salesforce or another CRM:",
-    "                    Companies.csv, Contacts.csv, Initiatives.csv, Investment.csv, Sources.csv, Aliases.csv,",
+    "                    Companies.csv, Contacts.csv, Projects.csv, Investment.csv, Sources.csv, Aliases.csv,",
     "                    Exclusion_List.csv (the accounts workbook) and Leads.csv (Posts and Job listings).",
     "                  Share the accounts files with or without Leads.csv.",
     "  data/           The raw data SalesTeam restores from, one file per category. Do not edit.",

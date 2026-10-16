@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "field-names.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1855,6 +1855,24 @@ def test_targets_and_estimate(ctx):
     check("stage counts: unticked stage does not count", v("initiativeCounts('poc', [{id:'poc', checked:false}])"), False)
     check("stage counts: no stage counts", v("initiativeCounts(null, [{id:'poc', checked:false}])"), True)
     check("stage counts: ticked counts", v("initiativeCounts('scaling', [])"), True)
+    # 1.2.4.2 (projects design D2): "Any stage" = all seven ticked in the default order
+    check("any stage: nothing saved", v("isAnyStage(null)"), True)
+    check("any stage: default order all ticked", v("isAnyStage(INITIATIVE_STAGE_IDS.map((id) => ({ id, checked: true })))"), True)
+    check("any stage: one unticked", v("isAnyStage([{id:'poc', checked:false}])"), False)
+    check("any stage: reordered", v("isAnyStage(['pilot'])"), False)
+    # 1.2.4.4 (R6): no "AI" in what users read for a customer field
+    check("field name: maturity", v("fieldName('aiMaturityFitScore')"), "Adoption fit score")
+    check("field name: local investment", v("fieldName('aiInvestmentSwitzerland')"), "Investment (local)")
+    check("field name: own AI priority unchanged", v("fieldName('aiPriority')"), "Priority")
+    check("field name: no AI left", v("Object.keys(CUSTOMER_FIELD_NAMES).filter((k) => /\bai\b/i.test(fieldName(k)))"), [])
+    # 1.2.4.3: the Excel workbook of Export… (xlsx-write.js)
+    check("xlsx column names", v("[0, 25, 26, 701, 702].map(columnName)"), ["A", "Z", "AA", "ZZ", "AAA"])
+    parts = v("xlsxParts([{ name: 'Pro/jects', headers: ['A', 'B'], rows: [[1, 'x<&>\u0001y'], [null, '']] }])")
+    check("xlsx parts", [p["name"] for p in parts], ["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/worksheets/sheet1.xml"])
+    check("xlsx sheet name made legal", 'name="Pro jects"' in parts[2]["data"], True)
+    check("xlsx number cell", '<c r="A2"><v>1</v></c>' in parts[4]["data"], True)
+    check("xlsx text escaped, control character dropped", "x&lt;&amp;&gt;y</t>" in parts[4]["data"], True)
+    check("xlsx empty cells written as nothing", '<row r="3"></row>' in parts[4]["data"], True)
     # targetsStatus
     ctx.eval("""var TS_E = [
       {state:'ready', relevantContacts:3, initiatives:1}, {state:'usable', relevantContacts:1, initiatives:2},
@@ -1874,7 +1892,7 @@ def test_targets_and_estimate(ctx):
     check("discovery: a week later -> may", v("discoveryMayRun({accountsTarget:100, at:0}, 100, 7*86400000)"), True)
     # coverage lines
     lines = v("coverageLines(targetsStatus(TS_E, {accounts: 10, contactsPerAccount: 3, initiativesPerAccount: 1}))")
-    check("coverage lines", lines, ["Accounts: 3 of 10 in the list.", "Contacts: 1 of 3 accounts have 3.", "Initiatives: 2 of 3 accounts have 1 relevant initiative."])
+    check("coverage lines", lines, ["Accounts: 3 of 10 in the list.", "Contacts: 1 of 3 accounts have 3.", "Projects: 2 of 3 accounts have 1 relevant project."])
     lines = v("coverageLines({ targets: { accounts: 100, contactsPerAccount: 3, initiativesPerAccount: 0 }, accounts: 108, contactsMet: 54 })")
     check("coverage lines over target", lines[0], "Accounts: 108 in the list, target 100 ✓.")
     check("coverage: no initiative line at target 0", len(v("coverageLines(targetsStatus([], {accounts: 10, initiativesPerAccount: 0}))")), 2)

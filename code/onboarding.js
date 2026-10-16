@@ -54,9 +54,10 @@ import {
   getAnthropicApiKey, saveAnthropicApiKey, getSellerCompanyName, saveSellerCompanyName,
   getSetupResearch, saveSetupResearch, getOnboardingCompletedAt, appendActivityLog,
   getCompletionTargets, saveCompletionTargets, getInitiativeStagePreference, saveInitiativeStagePreference,
+  getInitiativeStageCustom, saveInitiativeStageCustom,
   getIncludedCompanies, saveIncludedCompanies, getOnboardingMeasures, getTargetsStatus,
 } from "./storage.js";
-import { INITIATIVE_STAGE_LABELS, normalizeInitiativeStages, normalizeCompletionTargets, TARGET_LIMITS } from "./pipeline-plan.js";
+import { INITIATIVE_STAGE_LABELS, normalizeInitiativeStages, isAnyStage, normalizeCompletionTargets, TARGET_LIMITS } from "./pipeline-plan.js";
 import { onboardingEstimate } from "./onboarding-estimate.js";
 import { researchSeller, SELLER_RESEARCH_ESTIMATE_USD, sanitizeApiKey } from "./agent-shared.js";
 import { RULES as ARBITRATION_RULES } from "./web-findings-arbitration.js";
@@ -97,7 +98,7 @@ const STEP_TITLES = {
   "leads-prioritization": "Leads Prioritization",
   "company-context": "What you sell", "value-add-offers": "Things you can offer",
   icp: "Ideal customer", contacts: "Target contacts",
-  "initiative-stages": "Initiative stages", included: "Companies to include",
+  "initiative-stages": "Adoption stages", included: "Companies to include",
   exclusions: "Companies to exclude",
   relationships: "Customers and partners",
   aliases: "Company aliases",
@@ -156,6 +157,9 @@ let companyExclusions = [];
 let companyAliases = [];
 // 1.2.1 step 6: [{ id, checked }] in the user's order; [{ name, website }]; { accounts, contactsPerAccount, initiativesPerAccount }.
 let initiativeStages = normalizeInitiativeStages(null);
+// 1.2.4.2 (projects design D1/D2): "Any stage" or "Only these stages". initiativeStages holds the list shown under
+// "Only these stages" either way; Save stores the seven-in-order list for "Any stage".
+let anyStage = true;
 let includedCompanies = [];
 let completionTargets = normalizeCompletionTargets(null);
 let organizationTypeEligibility = {};
@@ -1117,7 +1121,11 @@ const STAGE_TIPS = {
 };
 
 function renderInitiativeStages() {
+  el("stage-mode-any").checked = anyStage;
+  el("stage-mode-only").checked = !anyStage;
+  // Boaz 1.2.4.2: the stages always show; under "Any stage" they are greyed out and cannot be changed.
   const wrap = el("initiative-stages-list");
+  wrap.classList.toggle("stages-disabled", anyStage);
   wrap.innerHTML = "";
   initiativeStages.forEach((stage, i) => {
     const row = document.createElement("div");
@@ -1125,6 +1133,7 @@ function renderInitiativeStages() {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.checked = stage.checked;
+    box.disabled = anyStage;
     box.id = `initiative-stage-${stage.id}`;
     box.addEventListener("change", () => { stage.checked = box.checked; row.classList.toggle("priority-item-unchecked", !box.checked); });
     const name = document.createElement("label");
@@ -1140,7 +1149,7 @@ function renderInitiativeStages() {
       b.className = "stage-move-btn";
       b.textContent = text;
       b.title = label;
-      b.disabled = i + delta < 0 || i + delta >= initiativeStages.length;
+      b.disabled = anyStage || i + delta < 0 || i + delta >= initiativeStages.length;
       b.addEventListener("click", () => {
         const [moved] = initiativeStages.splice(i, 1);
         initiativeStages.splice(i + delta, 0, moved);
@@ -1155,7 +1164,7 @@ function renderInitiativeStages() {
 }
 
 function validateInitiativeStagesStep() {
-  if (!initiativeStages.some((s) => s.checked)) return { valid: false, error: "Tick at least one stage." };
+  if (!anyStage && !initiativeStages.some((s) => s.checked)) return { valid: false, error: "Tick at least one stage." };
   return { valid: true };
 }
 
@@ -1221,7 +1230,7 @@ function validateTargetsStep() {
   const checks = [
     ["accounts", "Accounts", TARGET_LIMITS.accounts],
     ["contactsPerAccount", "Contacts per account", [TARGET_LIMITS.contactsPerAccount[0], contactsTargetMax()]],
-    ["initiativesPerAccount", "Relevant initiatives per account", TARGET_LIMITS.initiativesPerAccount],
+    ["initiativesPerAccount", "Relevant projects per account", TARGET_LIMITS.initiativesPerAccount],
   ];
   for (const [key, label, [lo, hi]] of checks) {
     const n = Number(raw[key]);
@@ -1419,7 +1428,9 @@ async function persistStep(step) {
       await saveCompanyAliases(companyAliases);
       break;
     case "initiative-stages":
-      await saveInitiativeStagePreference(initiativeStages);
+      // D2: the last "Only these stages" list is kept, so switching back to it restores it.
+      if (!anyStage || !isAnyStage(initiativeStages)) await saveInitiativeStageCustom(initiativeStages);
+      await saveInitiativeStagePreference(anyStage ? normalizeInitiativeStages(null) : initiativeStages);
       break;
     case "included":
       await saveIncludedCompanies(includedCompanies);
@@ -1611,7 +1622,8 @@ function renderSummaryInto(step, container) {
     }
     case "initiative-stages": {
       const ticked = initiativeStages.filter((x) => x.checked).map((x) => INITIATIVE_STAGE_LABELS[x.id]);
-      appendPara(container, "Initiative stages, most important first: ", { strong: ticked.join(", ") || "(none)" }, ".");
+      if (anyStage) appendPara(container, "Adoption stages: ", { strong: "any stage" }, ".");
+      else appendPara(container, "Adoption stages, most important first: ", { strong: ticked.join(", ") || "(none)" }, ".");
       break;
     }
     case "included": {
@@ -1626,7 +1638,7 @@ function renderSummaryInto(step, container) {
     case "targets": {
       const t = completionTargets;
       appendPara(container, "Build the list to ", { strong: `${t.accounts} accounts` }, ", each with ", { strong: `${t.contactsPerAccount} contacts` },
-        " and ", { strong: `${t.initiativesPerAccount} relevant initiative${t.initiativesPerAccount === 1 ? "" : "s"}` }, ".");
+        " and ", { strong: `${t.initiativesPerAccount} relevant project${t.initiativesPerAccount === 1 ? "" : "s"}` }, ".");
       break;
     }
     case "aliases": {
@@ -2944,6 +2956,13 @@ async function init() {
   el("about-language-select").value = await getOutputLanguage();
   el("about-api-key-wrap").hidden = !!(await getAnthropicApiKey());
   completedBefore = !!(await getOnboardingCompletedAt());
+  // 1.2.4.3: only once there are accounts whose findings the rules could settle.
+  el("web-findings-apply-wrap").hidden = !completedBefore;
+  el("web-findings-apply-btn").addEventListener("click", () => {
+    const target = "target-accounts.html#action=auto-findings";
+    if (window.top !== window) window.top.location.href = target;
+    else window.location.href = target;
+  });
   setupResearch = await getSetupResearch();
   if (setupResearch.status === "running" && Date.now() - (setupResearch.heartbeatAt || setupResearch.at || 0) > 60000) {
     // The page was closed or reloaded while the research ran: nothing came in.
@@ -2981,6 +3000,11 @@ async function init() {
     .join("\n");
   renderAliasesParsedList();
   initiativeStages = await getInitiativeStagePreference();
+  anyStage = isAnyStage(initiativeStages);
+  if (anyStage) initiativeStages = (await getInitiativeStageCustom()) || initiativeStages;
+  for (const id of ["stage-mode-any", "stage-mode-only"]) {
+    el(id).addEventListener("change", () => { anyStage = el("stage-mode-any").checked; renderInitiativeStages(); });
+  }
   renderInitiativeStages();
   includedCompanies = await getIncludedCompanies();
   el("included-input").value = includedCompanies.map((c) => (c.website ? `${c.name}, ${c.website}` : c.name)).join("\n");

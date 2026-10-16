@@ -9,6 +9,7 @@
 
 import { stampWall, stampMember } from "./team-merge.js";
 import { accountKeyOfChange } from "./team-claims.js";
+import { customerFieldName } from "./field-names.js";
 
 export const TEAM_LOG_KEPT = 3000;
 export const TEAM_LOG_DAYS = 90;
@@ -211,6 +212,8 @@ const FIELD_NAMES = {
 };
 export function fieldName(f) {
   if (FIELD_NAMES[f]) return FIELD_NAMES[f];
+  // 1.2.4.4 (R6): "aiMaturityFitScore" read "Ai maturity fit score" - the customer fields' own names, without "AI".
+  if (customerFieldName(f)) return customerFieldName(f);
   const words = String(f).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_.]+/g, " ").trim().toLowerCase();
   return words ? words[0].toUpperCase() + words.slice(1) : String(f);
 }

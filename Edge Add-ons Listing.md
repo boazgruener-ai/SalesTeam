@@ -48,7 +48,7 @@ YOUR AI SALES TEAM (optional, needs your own Anthropic API key)
 - AI-drafted opening messages for any lead (post) - editable, and only ever copied for you to paste and send yourself. Nothing is auto-sent.
 - Sales Mentor: an AI agent you can ask "Which lead should I approach first?" or general sales-strategy questions. It looks up your real lead data only when a question actually needs it.
 - Customer Voice: an AI agent that roleplays as a realistic buyer, so you can pressure-test a message or approach before you send it.
-- Web research: researches your accounts on the public web, with sources you can open and check. Click to research an account, or let account preparation do it within a monthly budget you set, never above it.
+- Web research: researches your accounts on the public web - size, headquarters and recent projects where what you sell could help - with sources you can open and check. Click to research an account, or let account preparation do it within a monthly budget you set, never above it.
 The core scanning, filtering, and Dashboard features work with no AI key at all. The AI Sales Team features (prioritization, drafting, Sales Mentor, Customer Voice) are entirely optional, and require you to provide your own Anthropic API key, which is stored only on your device.
 
 PRIVACY

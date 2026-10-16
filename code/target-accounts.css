@@ -1424,6 +1424,8 @@ thead .actions-col {
 
 #account-view, #contact-view {
   max-width: 1200px;
+  /* 1.2.4.1 (Boaz): room below the two Advisor chat boxes, which ended exactly at the window edge */
+  padding-bottom: 48px;
 }
 
 #account-back-link, #contact-back-link {
@@ -1919,6 +1921,8 @@ thead .actions-col {
 .import-help-heading { margin: 16px 0 6px; font-size: 13px; color: var(--ink); }
 /* 1.2.3 one Import… / Export… dialog: the format and "what" choices */
 .io-choice { border: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+/* 1.2.4.3: display:flex above outranks the browser's own [hidden] - the Accounts or contacts? question stayed on screen. */
+.io-choice[hidden] { display: none; }
 .io-choice legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
 .io-choice label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .export-folder-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -2286,3 +2290,4 @@ th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc !important; }
 /* 1.2.3 step 3 (R6.3): the account's groups next to its title. */
 .team-groups-tag[hidden] { display: none; }
 .team-groups-tag { font-size: 12px; color: #555; background: #eef1f6; border-radius: 10px; padding: 2px 10px; margin-left: 8px; white-space: nowrap; }
+

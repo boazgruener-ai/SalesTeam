@@ -474,6 +474,13 @@ export function normalizeInitiativeStages(raw) {
   return out;
 }
 
+// 1.2.4.2 (projects design D2): "Any stage" is all seven ticked in the default order - what every version reads as
+// no preference, so a colleague on an older version behaves the same.
+export function isAnyStage(stages) {
+  const s = normalizeInitiativeStages(stages);
+  return s.every((x, i) => x.checked && x.id === INITIATIVE_STAGE_IDS[i]);
+}
+
 // Does an initiative at this stage count towards the initiative target? One with no stage (imported before 1.2.1,
 // or the research could not tell) counts.
 export function initiativeCounts(stage, stages) {
@@ -523,7 +530,7 @@ export function coverageLines(status) {
   const lines = [accounts >= tg.accounts ? `Accounts: ${accounts} in the list, target ${tg.accounts} ✓.` : `Accounts: ${accounts} of ${tg.accounts} in the list.`];
   lines.push(`Contacts: ${status.contactsMet} of ${s(accounts, "account has", "accounts have")} ${tg.contactsPerAccount}.`);
   if (tg.initiativesPerAccount > 0) {
-    lines.push(`Initiatives: ${status.initiativesMet} of ${s(accounts, "account has", "accounts have")} ${s(tg.initiativesPerAccount, "relevant initiative", "relevant initiatives")}.`);
+    lines.push(`Projects: ${status.initiativesMet} of ${s(accounts, "account has", "accounts have")} ${s(tg.initiativesPerAccount, "relevant project", "relevant projects")}.`);
   }
   return lines;
 }
@@ -533,7 +540,7 @@ export const WEB_LANE_TOPICS = {
   headquarters: "headquarters (city and country of the group's global HQ)",
   employees: "number of employees (worldwide, and in the seller's home market)",
   industry: "industry",
-  initiatives: "recent initiatives and projects that could matter to the seller",
+  initiatives: "recent projects that could matter to the seller",
   contacts: "named senior people (management, leadership, heads of the relevant functions)",
   summary: "a short summary of what the company does",
 };

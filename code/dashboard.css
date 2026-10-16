@@ -364,7 +364,6 @@ details.nav-group > div > .nav-item {
   font-size: 20px;
 }
 
-#detail-status-select,
 #status-filter-select,
 #sort-select,
 #search-input,
@@ -470,6 +469,29 @@ details.nav-group > div > .nav-item {
   flex: 1;
   min-width: 220px;
 }
+
+/* 1.2.4.1 (Boaz): the lead page's Status and Priority are one compact size - Status was a big button-sized box. */
+#detail-status-select,
+#detail-priority-select {
+  font-family: inherit;
+  font-size: 13px;
+  width: 130px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+}
+
+/* 1.2.4.4 (Boaz): Status and Priority on the lead page - apart from each other, the boxes lined up, each centred on
+   its word. */
+#detail-header-section .control-label {
+  width: 200px;
+  height: 26px;
+  margin: 6px 0;
+}
+#detail-header-section .control-label > select { margin-left: auto; }
 
 .control-label {
   display: flex;
@@ -791,6 +813,11 @@ th.col-filtered {
   overflow: hidden;
 }
 
+/* 1.2.4.1: a row opens its lead on click (as .company-row on Target Accounts) */
+#results-table tbody tr {
+  cursor: pointer;
+}
+
 #results-table tr:hover td {
   background: #fbfdff;
 }
@@ -1088,8 +1115,11 @@ thead th.actions-col {
 }
 
 /* ---- detail view ---- */
+/* 1.2.4.4 (Boaz): as wide as the account and contact pages (target-accounts.css #account-view) - at 800px the Mentor
+   and Customer Voice chats side by side were narrow and very long. */
 #detail-view {
-  max-width: 800px;
+  max-width: 1200px;
+  padding-bottom: 48px;
 }
 
 #back-to-list-link {
@@ -1101,13 +1131,18 @@ thead th.actions-col {
 #detail-header-section,
 #detail-content-section,
 #detail-draft-section,
-#detail-mentor-section {
+#detail-mentor-section,
+#detail-voice-section {
   background: white;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 18px 20px;
   margin-bottom: 16px;
 }
+
+/* 1.2.4.4: Mentor and Customer Voice side by side; the second wraps below the first when two no longer fit. */
+.detail-advisors-row { display: flex; flex-wrap: wrap; gap: 16px; }
+.detail-advisors-row > section { flex: 1 1 360px; min-width: 0; }
 
 /* 1.2.4 Notes: the Notes section (notes.css) spaced and rounded like the other cards of the lead detail. */
 #detail-notes { margin: 0 0 16px; padding: 18px 20px; border-radius: 10px; }

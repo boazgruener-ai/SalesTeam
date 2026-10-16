@@ -465,7 +465,7 @@ export function importSummaryText(counts) {
   const parts = [
     part(c.newCompanies, "new account", "new accounts"),
     part(c.newContacts, "new contact", "new contacts"),
-    part(c.newInitiatives, "new initiative", "new initiatives"),
+    part(c.newInitiatives, "new project", "new projects"),
     part(c.filled, "empty field filled", "empty fields filled"),
     part(c.taken, "value taken from the file (the current one was weaker)", "values taken from the file (the current ones were weaker)"),
     part(c.kept, "difference kept as it is", "differences kept as they are"),

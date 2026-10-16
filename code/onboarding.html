@@ -334,7 +334,7 @@
       <p class="step-intro">
         Company size, geography, what they're investing in - independent of what you offer.
       </p>
-      <textarea id="icp-input" placeholder="e.g. Mid-to-large companies in your target market actively investing in the kind of initiative you help with, with a dedicated team or budget for it."></textarea>
+      <textarea id="icp-input" placeholder="e.g. Mid-to-large companies in your target market actively investing in the kind of work you help with, with a dedicated team or budget for it."></textarea>
     </section>
 
     <!-- Step 8: Target-contact profile -->
@@ -370,12 +370,21 @@
 
     <!-- 1.2.1 step 6 (design 3.7): Initiative stages -->
     <section id="enter-initiative-stages" class="wizard-step" hidden>
-      <h2>Which initiatives matter to you?</h2>
+      <h2>Which projects matter to you?</h2>
       <p class="step-intro">
-        SalesTeam looks for each account's recent initiatives and projects - a reason to get in touch. Tick the
-        stages where what you sell helps, and put the most important first with the arrows. Initiatives at an
-        unticked stage are left out, and only the ticked ones count towards your initiatives target.
+        SalesTeam looks for each account's recent projects - a reason to get in touch. Choose whether the stage a
+        project has reached matters to you.
       </p>
+      <!-- 1.2.4.2 (projects design D1): Any stage is the default; the list is greyed out until "Only these stages". -->
+      <label class="checkbox-label">
+        <input type="radio" name="stage-mode" id="stage-mode-any" value="any" />
+        <strong>Any stage</strong> - every project counts, whatever its stage.
+      </label>
+      <label class="checkbox-label">
+        <input type="radio" name="stage-mode" id="stage-mode-only" value="only" />
+        <strong>Only these stages</strong> - tick the stages where what you sell helps, and put the most important
+        first with the arrows. Projects at an unticked stage are left out and do not count towards your target.
+      </label>
       <div id="initiative-stages-list" class="priority-item-list"></div>
       <p class="step-error" hidden></p>
     </section>
@@ -464,7 +473,7 @@
       <label for="targets-contacts-input">Contacts per account</label>
       <input type="number" id="targets-contacts-input" min="1" max="10" />
       <p class="field-hint" id="targets-contacts-hint"></p>
-      <label for="targets-initiatives-input">Relevant initiatives per account</label>
+      <label for="targets-initiatives-input">Relevant projects per account</label>
       <input type="number" id="targets-initiatives-input" min="0" max="5" />
       <p class="targets-estimate" id="targets-estimate"></p>
       <p class="step-error" hidden></p>
@@ -485,10 +494,15 @@
       <p class="field-hint">
         When a web research turns up a fact that disagrees with what an account already holds, most of the time it is
         not a mistake: two correct figures counted differently (84,146 employees or 150,000 &ndash; direct staff against
-        staff-and-contractors), or a field that is never used to score a company at all. <strong>Resolve Web Findings
-        Automatically&hellip;</strong> on the Target Accounts Dashboard settles those by the rules below and leaves you only
-        the ones that can genuinely change something. It always shows you what it will do before it does it, writes
-        every single decision to the Activity Log, and can be undone in one action.
+        staff-and-contractors), or a field that is never used to score a company at all. SalesTeam settles those by the
+        rules below after every web research, by itself, and brings you only the ones that can genuinely change
+        something, in <strong>Decisions</strong>. Every decision it takes is in the Activity Log.
+      </p>
+      <!-- 1.2.4.3: replaces "Resolve Web Findings Automatically…" in the Target Accounts menu (Boaz). -->
+      <p id="web-findings-apply-wrap" class="field-hint" hidden>
+        Changed a rule? The new rules apply to the next web research. To apply them to the findings already waiting as
+        well: <button type="button" id="web-findings-apply-btn" class="step-inline-btn">Apply the rules to the open findings…</button>
+        You see what it would do before anything is written.
       </p>
 
       <h4>Rules</h4>

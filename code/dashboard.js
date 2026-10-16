@@ -14,6 +14,8 @@ import {
   updateLeadStatus,
   bulkUpdateLeadStatus,
   updateLeadMentorHistory,
+  updateLeadCustomerVoiceHistory,
+  getCustomerPersona,
   LEAD_STATUSES,
   getAnthropicApiKey,
   getMentorPersona,
@@ -66,6 +68,7 @@ import {
   runAgentTurn,
   leadNotesSection,
   buildLeadScopedMentorPrompt,
+  buildLeadScopedCustomerVoicePrompt,
   DRAFT_MESSAGE_TOOL,
   toolDraftMessage,
   prioritizeLeads,
@@ -133,7 +136,12 @@ function showEmbeddedPage(page, title) {
     // Identical URL (same action pressed again, e.g. after Cancel): a fragment-only "navigation" to it would do
     // nothing, so reload; a URL that differs only by #hash is routed by the page's own hashchange handler.
     const frameWindow = embeddedPageFrameEl.contentWindow;
-    if (frameWindow.location.href === resolvedUrl) {
+    if (frameWindow.location.href === resolvedUrl && /[#&]action=/.test(resolvedUrl)) {
+      // 1.2.4.3: the same pop-up action again (Export… after Cancel) - the page's own hashchange routing opens it
+      // again, instead of a reload of the whole page, which took about 10 s on a large list.
+      frameWindow.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: resolvedUrl, newURL: resolvedUrl }));
+      willLoad = false;
+    } else if (frameWindow.location.href === resolvedUrl) {
       frameWindow.location.reload();
     } else {
       frameWindow.location.replace(resolvedUrl);
@@ -297,6 +305,7 @@ let searchText = "";
 
 let currentDetailLead = null;
 let mentorHistory = [];
+let voiceHistory = []; // 1.2.4.4: the lead's Customer Voice conversation
 
 // ---------------------------------------------------------------------
 // Lead shape helpers - a lead is either a Post (author/headline/snippet) or
@@ -814,7 +823,7 @@ function paintTeamNotice(lead) {
   // Everything that works the lead: status, priority, the draft, the Sales Mentor (Boaz, 2026-10-05). Reading stays.
   for (const id of ["detail-status-select", "detail-priority-select", "detail-template-select", "detail-draft-btn", "detail-copy-btn",
     "detail-save-btn", "detail-mentor-input", "detail-mentor-send-btn", "detail-mentor-clear-btn", "mentor-quick-summary-btn",
-    "mentor-quick-openers-btn"]) {
+    "mentor-quick-openers-btn", "detail-voice-input", "detail-voice-send-btn", "detail-voice-clear-btn"]) {
     const b = document.getElementById(id);
     if (!b) continue;
     if (block) { b.disabled = true; b.title = block; }
@@ -1678,6 +1687,12 @@ function buildRow(lead) {
     tr.appendChild(td);
   }
   appendActionsTd(tr, (kebabBtn) => openRowMenu(kebabBtn, lead.key, buildLeadActionsMenu(lead)));
+  // 1.2.4.1 (Boaz): a click on the row opens the lead, as on Target Accounts and Target Contacts. Links, buttons, the
+  // row menu and a long text that expands on click keep their own click.
+  tr.addEventListener("click", (event) => {
+    if (event.target.closest("a, button, input, select, textarea, label, .kebab-btn, .content-cell[title]")) return;
+    openDetail(lead.key);
+  });
   return tr;
 }
 
@@ -1946,6 +1961,7 @@ function showListView() {
 function renderDetail(lead) {
   currentDetailLead = lead;
   mentorHistory = lead.mentorHistory || [];
+  voiceHistory = lead.customerVoiceHistory || [];
   notesSection(document.getElementById("detail-notes")).show({ // 1.2.4 Notes (R2.4)
     on: "lead", key: lead.key, name: `${leadNoteAbout(lead)}${lead.company ? ` (${lead.company})` : ""}`,
     accountKey: lead.company ? normalizeCompanyName(lead.company) : null,
@@ -1997,6 +2013,8 @@ function renderDetail(lead) {
 
   renderMentorHistory();
   document.getElementById("detail-mentor-status").textContent = "";
+  renderVoiceHistory();
+  document.getElementById("detail-voice-status").textContent = "";
   paintTeamNotice(lead);
 }
 
@@ -2328,6 +2346,72 @@ document.getElementById("detail-mentor-clear-btn").addEventListener("click", asy
   renderMentorHistory();
 });
 
+// 1.2.4.4 (Boaz: "Is there any reason that Customer voice does not appear in the Lead Page?"): the lead's own author
+// as the buyer, as on the account and contact pages. No tools - the Voice only reacts; drafting stays with the Mentor.
+function renderVoiceHistory() {
+  const historyEl = document.getElementById("detail-voice-history");
+  historyEl.innerHTML = "";
+  const bubble = (kind, text) => {
+    const b = document.createElement("div");
+    b.className = `agent-bubble agent-bubble-${kind}`;
+    b.textContent = text;
+    historyEl.appendChild(b);
+  };
+  for (const message of voiceHistory) {
+    if (message.role === "user" && typeof message.content === "string") bubble("you", message.content);
+    else if (message.role === "assistant") {
+      for (const block of message.content) if (block.type === "text" && block.text.trim()) bubble("agent", block.text);
+    }
+  }
+  historyEl.scrollTop = historyEl.scrollHeight;
+}
+
+async function sendVoiceMessage() {
+  if (!currentDetailLead) return;
+  const sendBtn = document.getElementById("detail-voice-send-btn");
+  if (sendBtn.disabled) return; // a stray Enter while a turn is running (same guard as the Mentor)
+  const input = document.getElementById("detail-voice-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  const leadKey = currentDetailLead.key;
+  const statusEl = document.getElementById("detail-voice-status");
+  const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+  sendBtn.disabled = true;
+  try {
+    const customerPersona = await getCustomerPersona();
+    const leadRelationship = relationshipOf(await getRelationshipMatcher().catch(() => null), { name: currentDetailLead.company });
+    const leadNotes = await leadNotesSection(currentDetailLead);
+    await runAgentTurn(text, {
+      history: voiceHistory,
+      apiKey,
+      buildSystemPrompt: () => buildLeadScopedCustomerVoicePrompt({ ...currentDetailLead, relationship: leadRelationship }, { companyContext, customerPersona, outputLanguage, notes: leadNotes }),
+      tools: [],
+      executeTool: async (name) => ({ error: `Unknown tool: ${name}` }),
+      saveHistory: (history) => updateLeadCustomerVoiceHistory(leadKey, history),
+      onStatus: (msg) => { statusEl.textContent = msg; },
+      onProgress: renderVoiceHistory,
+    });
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+document.getElementById("detail-voice-send-btn").addEventListener("click", sendVoiceMessage);
+document.getElementById("detail-voice-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    sendVoiceMessage();
+  }
+});
+document.getElementById("detail-voice-clear-btn").addEventListener("click", async () => {
+  if (!currentDetailLead) return;
+  if (!(await askConfirm("Clear this conversation? This can't be undone.", { okLabel: "Clear conversation", cancelLabel: "Keep it", danger: true }))) return;
+  voiceHistory = [];
+  await updateLeadCustomerVoiceHistory(currentDetailLead.key, []);
+  renderVoiceHistory();
+});
+
 // ---------------------------------------------------------------------
 // CSV export - same idea as the side panel's, kept small and local here
 // rather than shared, since the two column sets differ (this one includes
@@ -2373,9 +2457,23 @@ function exportLeadsToCsv(leads, filenameTag) {
   if (exportStatusEl) exportStatusEl.textContent = `Done - exported ${leads.length} lead${leads.length === 1 ? "" : "s"} to your Downloads folder (exports/${a.download.split("/").pop()}).`;
 }
 
-document.getElementById("export-csv-all-btn").addEventListener("click", () => {
-  exportLeadsToCsv(allLeads, "all");
-});
+// 1.2.4.3 (Boaz: export "should ask me, if I want to export only filtered accounts or all. Same thing for the other
+// Dashboards"): one Export… - when a search or filter hides leads, it asks all or only the filtered ones, as Target
+// Accounts and Target Contacts do. (Replaces Export All / Export Filtered; the old #action=export-csv-filtered opens it.)
+async function exportLeadsAsked() {
+  const shown = applyFilterSortSearch();
+  if (shown.length === allLeads.length) { exportLeadsToCsv(allLeads, "all"); return; }
+  const noun = (n) => `lead${n === 1 ? "" : "s"}`;
+  const choices = [{ value: "all", label: `All ${allLeads.length} ${noun(allLeads.length)}` }];
+  if (shown.length > 0) choices.push({ value: "shown", label: `Only the ${shown.length} filtered` });
+  const scope = await askChoice(`A search or filter is on, so the Leads Dashboard shows ${shown.length} of ${allLeads.length} ${noun(allLeads.length)}.
+
+Which do you want to export?`, choices);
+  if (!scope) return;
+  if (scope === "all") exportLeadsToCsv(allLeads, "all");
+  else exportLeadsToCsv(shown, "filtered");
+}
+document.getElementById("export-csv-all-btn").addEventListener("click", () => exportLeadsAsked());
 
 // A single prioritize_leads call is capped at 8192 output tokens - fine for
 // a small batch, but a large one (each lead needs a priority plus a written
@@ -2694,9 +2792,7 @@ applyLocationFilterBtn.addEventListener("click", async () => {
 // this one page of the table. Sort order doesn't affect which leads are
 // included, only applyFilterSortSearch's filtering does, so this reuses it
 // directly rather than re-deriving the filter logic.
-document.getElementById("export-csv-filtered-btn").addEventListener("click", () => {
-  exportLeadsToCsv(applyFilterSortSearch(), "filtered");
-});
+
 
 // Applies to everything the current search/status/column filters are
 // showing - across all pages, not just the one on screen - e.g. filter to
@@ -3034,7 +3130,7 @@ const ACTION_BUTTON_IDS = {
   "extract-companies-profiles": "extract-companies-profiles-btn",
   "apply-location-filter": "apply-location-filter-btn",
   "export-csv-all": "export-csv-all-btn",
-  "export-csv-filtered": "export-csv-filtered-btn",
+  "export-csv-filtered": "export-csv-all-btn",
 };
 // 25th round of direct feedback (2026-09-19): "when I clicked Re-score AI
 // Priorities from the Posts menu [cross-page, from a different page], it
