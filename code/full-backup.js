@@ -64,7 +64,7 @@ export const BACKUP_CATEGORIES = [
       "targetAccountScoreThreshold", "jobRulesMinConfidence"],
   },
   {
-    id: "accounts", label: "Accounts, contacts and initiatives",
+    id: "accounts", label: "Accounts, contacts and projects",
     detail: "The imported research workbook as it was, including discovered companies already merged in, and the notes on accounts, contacts and leads. Replaces your current accounts, contacts and notes.",
     // 1.2.4 (NOTES_DESIGN.md 9.4): "notes" belongs here, so restoring the accounts brings the notes too. A zip made by
     // 1.2.3.15 or earlier holds them under "Other data" instead.
@@ -138,7 +138,7 @@ function summarize(id, data) {
     case "scanner": return `${count(data.topics)} topics, ${count(data.jobTopics)} job topics`;
     case "accounts": {
       const wb = data.targetAccountsWorkbook || {};
-      return `${count(wb.companies)} companies, ${count(wb.contacts)} contacts, ${count(wb.aiInitiatives)} initiatives`;
+      return `${count(wb.companies)} companies, ${count(wb.contacts)} contacts, ${count(wb.aiInitiatives)} projects`;
     }
     case "edits": return `${count(data.targetAccountExtras)} account edits, ${count(data.targetContactExtras)} contact edits`;
     case "staged": return `${count(data.discoveredCompanies)} companies, ${count(data.discoveredContacts)} contacts`;

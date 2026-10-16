@@ -293,6 +293,17 @@ export async function saveInitiativeStagePreference(stages) {
   await chrome.storage.local.set({ [INITIATIVE_STAGE_PREFERENCE_KEY]: normalizeInitiativeStages(stages) });
 }
 
+// 1.2.4.2 (projects design D2): the user's last "Only these stages" list, kept while "Any stage" is chosen so switching
+// back restores it. Personal (this browser), not a team setting; null when there is none.
+const INITIATIVE_STAGE_CUSTOM_KEY = "initiativeStageCustom";
+export async function getInitiativeStageCustom() {
+  const data = await chrome.storage.local.get(INITIATIVE_STAGE_CUSTOM_KEY);
+  return data[INITIATIVE_STAGE_CUSTOM_KEY] ? normalizeInitiativeStages(data[INITIATIVE_STAGE_CUSTOM_KEY]) : null;
+}
+export async function saveInitiativeStageCustom(stages) {
+  await chrome.storage.local.set({ [INITIATIVE_STAGE_CUSTOM_KEY]: normalizeInitiativeStages(stages) });
+}
+
 // Design 3.8: companies the user wants in the list whatever their size or industry - [{ name, website }]. Web
 // Discovery adds them first; an exclusion still wins.
 const INCLUDED_COMPANIES_KEY = "includedCompanies";
@@ -6882,6 +6893,7 @@ function wizardSettingsBackupKeys() {
     SETUP_RESEARCH_KEY,
     COMPLETION_TARGETS_KEY,
     INITIATIVE_STAGE_PREFERENCE_KEY,
+    INITIATIVE_STAGE_CUSTOM_KEY,
     INCLUDED_COMPANIES_KEY,
     ONBOARDING_COMPLETED_AT_KEY,
     ONBOARDING_PROGRESS_STEP_KEY,

@@ -334,7 +334,7 @@
       <p class="step-intro">
         Company size, geography, what they're investing in - independent of what you offer.
       </p>
-      <textarea id="icp-input" placeholder="e.g. Mid-to-large companies in your target market actively investing in the kind of initiative you help with, with a dedicated team or budget for it."></textarea>
+      <textarea id="icp-input" placeholder="e.g. Mid-to-large companies in your target market actively investing in the kind of work you help with, with a dedicated team or budget for it."></textarea>
     </section>
 
     <!-- Step 8: Target-contact profile -->
@@ -370,12 +370,21 @@
 
     <!-- 1.2.1 step 6 (design 3.7): Initiative stages -->
     <section id="enter-initiative-stages" class="wizard-step" hidden>
-      <h2>Which initiatives matter to you?</h2>
+      <h2>Which projects matter to you?</h2>
       <p class="step-intro">
-        SalesTeam looks for each account's recent initiatives and projects - a reason to get in touch. Tick the
-        stages where what you sell helps, and put the most important first with the arrows. Initiatives at an
-        unticked stage are left out, and only the ticked ones count towards your initiatives target.
+        SalesTeam looks for each account's recent projects - a reason to get in touch. Choose whether the stage a
+        project has reached matters to you.
       </p>
+      <!-- 1.2.4.2 (projects design D1): Any stage is the default; the list is greyed out until "Only these stages". -->
+      <label class="checkbox-label">
+        <input type="radio" name="stage-mode" id="stage-mode-any" value="any" />
+        <strong>Any stage</strong> - every project counts, whatever its stage.
+      </label>
+      <label class="checkbox-label">
+        <input type="radio" name="stage-mode" id="stage-mode-only" value="only" />
+        <strong>Only these stages</strong> - tick the stages where what you sell helps, and put the most important
+        first with the arrows. Projects at an unticked stage are left out and do not count towards your target.
+      </label>
       <div id="initiative-stages-list" class="priority-item-list"></div>
       <p class="step-error" hidden></p>
     </section>
@@ -464,7 +473,7 @@
       <label for="targets-contacts-input">Contacts per account</label>
       <input type="number" id="targets-contacts-input" min="1" max="10" />
       <p class="field-hint" id="targets-contacts-hint"></p>
-      <label for="targets-initiatives-input">Relevant initiatives per account</label>
+      <label for="targets-initiatives-input">Relevant projects per account</label>
       <input type="number" id="targets-initiatives-input" min="0" max="5" />
       <p class="targets-estimate" id="targets-estimate"></p>
       <p class="step-error" hidden></p>

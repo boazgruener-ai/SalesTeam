@@ -28,7 +28,7 @@ const SETTINGS_SECTION_INFO = {
 };
 
 const TARGET_ACCOUNTS_SECTION_INFO = {
-  accounts: { label: "Accounts, contacts and initiatives", detail: "The imported research workbook as it was, including discovered companies already merged in, and the notes on accounts, contacts and leads." },
+  accounts: { label: "Accounts, contacts and projects", detail: "The imported research workbook as it was, including discovered companies already merged in, and the notes on accounts, contacts and leads." },
   edits: { label: "Your edits to accounts and contacts", detail: "Manual overrides and priorities, follow-up dates, removed accounts, and Sales Mentor / Customer Voice chats." },
   staged: { label: "Discovery results waiting to be merged", detail: "Companies and contacts found by Discovery that have not gone through Review & Merge yet." },
 };

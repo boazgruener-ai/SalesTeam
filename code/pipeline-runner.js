@@ -740,7 +740,7 @@ async function doWeb(view, plan, r) {
       if (applied.applied) bits.push(`${applied.applied} value${applied.applied === 1 ? "" : "s"} updated`);
       if (applied.dismissed) bits.push(`${applied.dismissed} kept as they were`);
       if (applied.review) bits.push(`${applied.review} for your decision`);
-      if (applied.initiatives) bits.push(`${applied.initiatives} initiative${applied.initiatives === 1 ? "" : "s"}`);
+      if (applied.initiatives) bits.push(`${applied.initiatives} project${applied.initiatives === 1 ? "" : "s"}`);
     }
     return { ok: true, costUsd, line: `${what}: ${bits.length ? bits.join(", ") : "nothing new"} (about US$${costUsd.toFixed(2)})` };
   } catch (err) {

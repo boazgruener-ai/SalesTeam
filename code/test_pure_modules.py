@@ -1855,6 +1855,11 @@ def test_targets_and_estimate(ctx):
     check("stage counts: unticked stage does not count", v("initiativeCounts('poc', [{id:'poc', checked:false}])"), False)
     check("stage counts: no stage counts", v("initiativeCounts(null, [{id:'poc', checked:false}])"), True)
     check("stage counts: ticked counts", v("initiativeCounts('scaling', [])"), True)
+    # 1.2.4.2 (projects design D2): "Any stage" = all seven ticked in the default order
+    check("any stage: nothing saved", v("isAnyStage(null)"), True)
+    check("any stage: default order all ticked", v("isAnyStage(INITIATIVE_STAGE_IDS.map((id) => ({ id, checked: true })))"), True)
+    check("any stage: one unticked", v("isAnyStage([{id:'poc', checked:false}])"), False)
+    check("any stage: reordered", v("isAnyStage(['pilot'])"), False)
     # targetsStatus
     ctx.eval("""var TS_E = [
       {state:'ready', relevantContacts:3, initiatives:1}, {state:'usable', relevantContacts:1, initiatives:2},
@@ -1874,7 +1879,7 @@ def test_targets_and_estimate(ctx):
     check("discovery: a week later -> may", v("discoveryMayRun({accountsTarget:100, at:0}, 100, 7*86400000)"), True)
     # coverage lines
     lines = v("coverageLines(targetsStatus(TS_E, {accounts: 10, contactsPerAccount: 3, initiativesPerAccount: 1}))")
-    check("coverage lines", lines, ["Accounts: 3 of 10 in the list.", "Contacts: 1 of 3 accounts have 3.", "Initiatives: 2 of 3 accounts have 1 relevant initiative."])
+    check("coverage lines", lines, ["Accounts: 3 of 10 in the list.", "Contacts: 1 of 3 accounts have 3.", "Projects: 2 of 3 accounts have 1 relevant project."])
     lines = v("coverageLines({ targets: { accounts: 100, contactsPerAccount: 3, initiativesPerAccount: 0 }, accounts: 108, contactsMet: 54 })")
     check("coverage lines over target", lines[0], "Accounts: 108 in the list, target 100 ✓.")
     check("coverage: no initiative line at target 0", len(v("coverageLines(targetsStatus([], {accounts: 10, initiativesPerAccount: 0}))")), 2)

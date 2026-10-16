@@ -162,7 +162,7 @@ function bodyFor(item) {
       SalesTeam cannot settle it by itself: they do not share a LinkedIn company that has been checked against
       its own page. Compare the details below.</p>
       <table class="compare">${rows}</table>
-      <p class="note"><strong>Merge</strong> keeps the first and moves the others' contacts, initiatives, sources and
+      <p class="note"><strong>Merge</strong> keeps the first and moves the others' contacts, projects, sources and
       Post leads over; this cannot be undone. <strong>Keep both</strong>: they are never proposed again.</p>`;
   }
   if (item.kind === "contact_duplicate") {

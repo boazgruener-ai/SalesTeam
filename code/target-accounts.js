@@ -788,7 +788,7 @@ const COMPANY_COLUMNS = [
   { id: "alternativeCompanyName", label: "Alternative Company Name" },
   { id: "companyId", label: "Company ID" },
   { id: "universeOrder", label: "Universe Order", numeric: true },
-  { id: "aiUseCaseFitScore", label: "Use Case Fit Score", numeric: true },
+  { id: "aiUseCaseFitScore", label: "Use-case Fit Score", numeric: true },
   { id: "researchQuality", label: "Research Quality" },
   { id: "primarySourceUrl", label: "Primary Source", link: true },
   { id: "lastVerified", label: "Last Verified", date: true },
@@ -818,11 +818,11 @@ const COMPANY_COLUMNS = [
   { id: "aiInvestmentGlobal", label: "Investment (Global)" },
   { id: "aiInvestmentSwitzerland", label: "Investment (Local)" },
   { id: "aiInvestmentConfidence", label: "Investment Confidence" },
-  { id: "topAiInitiatives", label: "Top Initiatives", longText: true },
+  { id: "topAiInitiatives", label: "Top Projects", longText: true },
   { id: "relevantContactsCount", label: "Relevant Contacts Count", numeric: true },
   { id: "swissSizeFitScore", label: "Local Size Fit Score", numeric: true },
   { id: "decisionAuthorityScore", label: "Decision Authority Score", numeric: true },
-  { id: "aiMaturityFitScore", label: "Maturity Fit Score", numeric: true },
+  { id: "aiMaturityFitScore", label: "Adoption Fit Score", numeric: true },
   { id: "aiInvestmentScore", label: "Investment Score", numeric: true },
   { id: "contactAccessScore", label: "Contact Access Score", numeric: true },
 ];
@@ -867,8 +867,8 @@ const CONTACT_COLUMNS = [
 ];
 
 const INITIATIVE_COLUMNS = [
-  { label: "Initiative ID", field: "initiativeId" },
-  { label: "Initiative", field: "initiativeName" },
+  { label: "Project ID", field: "initiativeId" },
+  { label: "Project", field: "initiativeName" },
   { label: "Category", field: "aiCategory" },
   { label: "Scope", field: "scope" },
   { label: "Business Function", field: "businessFunction" },
@@ -1572,7 +1572,7 @@ function buildDetailContent(company) {
   }));
 
   const initiatives = workbook.aiInitiatives.filter((i) => i.companyId === company.companyId);
-  wrap.appendChild(buildSubtable("Initiatives", initiatives, INITIATIVE_COLUMNS));
+  wrap.appendChild(buildSubtable("Projects", initiatives, INITIATIVE_COLUMNS));
 
   const investments = workbook.aiInvestment.filter((v) => v.companyId === company.companyId);
   if (investments.length > 0) wrap.appendChild(buildSubtable("Investment", investments, INVESTMENT_COLUMNS));
@@ -5200,7 +5200,7 @@ const ACCOUNT_EDIT_FIELDS = [
   // country clears the override (diffEditFormValues), which is the revert.
   { key: "globalHqCountry", label: "Global HQ Country", type: "select", options: () => distinctColumnValues(workbook.companies, "globalHqCountry") },
   { key: "alternativeCompanyName", label: "Alt. name(s)", type: "list" },
-  { key: "topAiInitiatives", label: "Top initiatives", type: "textarea" },
+  { key: "topAiInitiatives", label: "Top projects", type: "textarea" },
 ];
 
 // Narrowed 2026-09-18, same day, same direct feedback as ACCOUNT_EDIT_FIELDS
@@ -6439,7 +6439,7 @@ document.getElementById("account-web-research-btn").addEventListener("click", as
   if (webResearchRunning.has(companyKey)) return;
   const statusEl = document.getElementById("account-web-research-status");
   if (!(await askConfirm(
-    `Search the public web for "${company.company}"?\n\nThe search runs on Anthropic's servers with your own API key: several web searches plus the AI's reading of them, which costs a small amount. It can take up to a minute (at most 4 minutes) and you can press Stop at any time to keep what was found so far. No LinkedIn activity is used. The result is saved on this account with its sources, and any initiatives found are added to its Initiatives list.`,
+    `Search the public web for "${company.company}"?\n\nThe search runs on Anthropic's servers with your own API key: several web searches plus the AI's reading of them, which costs a small amount. It can take up to a minute (at most 4 minutes) and you can press Stop at any time to keep what was found so far. No LinkedIn activity is used. The result is saved on this account with its sources, and any projects found are added to its Projects list.`,
     { okLabel: "Search the web", cancelLabel: "Cancel" }))) return;
   if (webResearchRunning.size >= WEB_RESEARCH_MAX_PARALLEL) {
     await askConfirm(`${webResearchRunning.size} researches are already running. Please wait for one to finish before starting another.`, { okLabel: "OK", cancelLabel: null });
@@ -6470,8 +6470,8 @@ document.getElementById("account-web-research-btn").addEventListener("click", as
     webResearchRunning.delete(companyKey);
     if (currentAccountKey === companyKey) await renderAccountView(companyKey);
     const proposals = openFindings(computeFindingProposals(companyKey, result.data));
-    appendActivityLog({ actor: "user", action: "account_web_research", label: `Web research for "${company.company}": ${result.sources.length} sources, ${result.searches} searches, ${initiativesAdded} initiatives added${result.stopped ? " (stopped early)" : ""}`, relatedCompanyKey: companyKey });
-    statusEl.textContent = `Done - web research for "${company.company}" saved on this account${result.stopped ? " (stopped early - partial result)" : ""}: ${result.sources.length} source${result.sources.length === 1 ? "" : "s"}, ${initiativesAdded} initiative${initiativesAdded === 1 ? "" : "s"} added to its Initiatives list. Estimated cost: ${formatUsd(result.costUsd)}.` +
+    appendActivityLog({ actor: "user", action: "account_web_research", label: `Web research for "${company.company}": ${result.sources.length} sources, ${result.searches} searches, ${initiativesAdded} projects added${result.stopped ? " (stopped early)" : ""}`, relatedCompanyKey: companyKey });
+    statusEl.textContent = `Done - web research for "${company.company}" saved on this account${result.stopped ? " (stopped early - partial result)" : ""}: ${result.sources.length} source${result.sources.length === 1 ? "" : "s"}, ${initiativesAdded} project${initiativesAdded === 1 ? "" : "s"} added to its Projects list. Estimated cost: ${formatUsd(result.costUsd)}.` +
       (proposals.length > 0 ? ` ${proposals.length} finding${proposals.length === 1 ? "" : "s"} can update the account's data - use "Review findings…".` : "");
   } catch (err) {
     statusEl.textContent = `Something went wrong: ${err.message}`;
@@ -6498,7 +6498,7 @@ const BULK_TOPICS = {
   revenue: { label: "revenue", missing: (e) => isBlankFinding(e.globalRevenue) || isBlankFinding(e.swissRevenue) },
   headquarters: { label: "headquarters (city and country)", missing: (e) => isBlankFinding(e.globalHqCity) || isBlankFinding(e.globalHqCountry) },
   registry: { label: "official registry data (legal name, ID, address)", missing: (e) => isBlankFinding(e.zefixUid) || isBlankFinding(e.zefixOfficialName) || isBlankFinding(e.zefixAddress) },
-  initiatives: { label: "recent initiatives and news", missing: (e, c) => !(workbook.aiInitiatives || []).some((i) => i.companyId === c.companyId) },
+  initiatives: { label: "recent projects and news", missing: (e, c) => !(workbook.aiInitiatives || []).some((i) => i.companyId === c.companyId) },
 };
 
 function bulkAccountPriority(company) {
@@ -7167,7 +7167,7 @@ ${move.loses} has no access there: the account becomes unassigned, and ${move.lo
       { label: "Budget", value: [effectiveCompany.aiInvestmentGlobal, effectiveCompany.aiInvestmentSwitzerland].filter(Boolean).join(" / ") || null },
       { label: "Last contact", value: formatDateTime(lastCommunicationFor(companyLeads, accountExtras[companyKey], contactsManualOf(companyKey))) },
       { label: "Follow-up due", node: dueDateFieldNode(dueDateInputEl, dueDateClearBtnEl) },
-      { label: "Top initiatives", value: effectiveCompany.topAiInitiatives, long: true },
+      { label: "Top projects", value: effectiveCompany.topAiInitiatives, long: true },
     ]));
   }
 
@@ -7734,7 +7734,7 @@ function describeMergeImpact(dropCompany) {
   const initiatives = (workbook.aiInitiatives || []).filter(sameRow).length;
   const sources = (workbook.sources || []).filter(sameRow).length;
   const leads = allLeads.filter((l) => l.company && normalizeCompanyName(l.company) === dropKey).length;
-  return `"${dropCompany.company}" will disappear. Moving over: ${contacts} contact${contacts === 1 ? "" : "s"}, ${initiatives} initiative${initiatives === 1 ? "" : "s"}, ${sources} source${sources === 1 ? "" : "s"}, ${leads} Post lead${leads === 1 ? "" : "s"}.`;
+  return `"${dropCompany.company}" will disappear. Moving over: ${contacts} contact${contacts === 1 ? "" : "s"}, ${initiatives} project${initiatives === 1 ? "" : "s"}, ${sources} source${sources === 1 ? "" : "s"}, ${leads} Post lead${leads === 1 ? "" : "s"}.`;
 }
 
 // ---- Find & Merge Duplicates (Advanced tools) ----
@@ -7798,7 +7798,7 @@ async function mergeDuplicateGroup(group, keepIndex) {
     appendActivityLog({
       actor: "user",
       action: "target_accounts_merged",
-      label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} initiatives, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)`,
+      label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} projects, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)`,
       relatedCompanyKey: normalizeCompanyName(keep.company),
     });
   }
@@ -7858,7 +7858,7 @@ async function renderFindDuplicates(statusMessage = "") {
     mergeBtn.textContent = "Merge";
     mergeBtn.addEventListener("click", async () => {
       const keepIndex = keepIndexOf();
-      if (!(await askConfirm(`Merge these ${group.members.length} accounts into "${group.members[keepIndex].company}"?\n\nTheir contacts, initiatives, sources and Post leads move to it, and the other entries disappear. This can't be undone from the app.`, { okLabel: "Merge", cancelLabel: "Cancel", danger: true }))) return;
+      if (!(await askConfirm(`Merge these ${group.members.length} accounts into "${group.members[keepIndex].company}"?\n\nTheir contacts, projects, sources and Post leads move to it, and the other entries disappear. This can't be undone from the app.`, { okLabel: "Merge", cancelLabel: "Cancel", danger: true }))) return;
       setBusy(true, `Merging "${group.members[keepIndex].company}"…`);
       mergeBtn.textContent = "Merging…";
       try {
@@ -7980,7 +7980,7 @@ function openMergeAccountsDialog(companyKey) {
       appendActivityLog({
         actor: "user",
         action: "target_accounts_merged",
-        label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} initiatives, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)`,
+        label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} projects, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)`,
         relatedCompanyKey: keepKey,
         newValue: { keepKey, dropKey },
       });

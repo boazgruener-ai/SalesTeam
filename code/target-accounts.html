@@ -49,7 +49,7 @@
     <!-- Boaz (1.2.2.8 test): "Advanced tools → <tool>", and only what this tool does - no version history. -->
     <h3>Advanced tools → Research accounts on the web</h3>
     <p>
-      Fills in what each account still lacks - HQ, employees, industry, initiatives, senior people and a short summary -
+      Fills in what each account still lacks - HQ, employees, industry, projects, senior people and a short summary -
       from the company's own pages and web searches. People found are added as contacts; no LinkedIn page is visited.
     </p>
     <p>Listed companies go first, then by priority. It costs money on your Anthropic API key; the report at the end shows
@@ -101,7 +101,7 @@
     <h3>Advanced tools → Find &amp; Merge Duplicates</h3>
     <p id="find-duplicates-intro">
       Accounts that look like the same company (same name or same LinkedIn page). Pick the one to keep and press Merge -
-      its contacts, initiatives, sources and leads move over. Different companies: press Keep separate and they are not
+      its contacts, projects, sources and leads move over. Different companies: press Keep separate and they are not
       proposed again.
     </p>
     <div id="find-duplicates-list"></div>
@@ -134,7 +134,7 @@
   <dialog id="merge-accounts-dialog">
     <h3>Merge duplicate accounts</h3>
     <p>
-      Combine two entries for the same company into one. The other account's contacts, initiatives, sources and
+      Combine two entries for the same company into one. The other account's contacts, projects, sources and
       Post leads move to the account you keep, and its name is kept as an alternative name.
     </p>
     <label class="merge-accounts-field">
@@ -312,7 +312,7 @@
         <h1><span id="page-title-text">SalesTeam Target Accounts Dashboard</span></h1>
         <p class="page-subtitle">
           The full externally-researched company and contact workbook - every account, plus its known contacts and
-          initiatives, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
+          projects, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
           unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
           automatic lead (post) prioritization (see the Leads Dashboard's Priority column).
         </p>
@@ -755,7 +755,7 @@
     <h3>Research accounts on the web</h3>
     <p class="page-subtitle">
       Searches the public web for each chosen account (website, registers, reports, news) with your own Anthropic API key and
-      saves a briefing with sources on the account, adds the initiatives it finds to the Initiatives list, and fills in empty fields.
+      saves a briefing with sources on the account, adds the projects it finds to the Projects list, and fills in empty fields.
       It runs in the background: you can keep using this page while it works. No LinkedIn activity is used.
     </p>
     <fieldset class="bulk-research-group">
@@ -776,7 +776,7 @@
       <label><input type="checkbox" class="bulk-topic" value="revenue" checked /> Revenue</label>
       <label><input type="checkbox" class="bulk-topic" value="headquarters" checked /> Headquarters</label>
       <label><input type="checkbox" class="bulk-topic" value="registry" /> Registry data</label>
-      <label><input type="checkbox" class="bulk-topic" value="initiatives" checked /> Initiatives</label>
+      <label><input type="checkbox" class="bulk-topic" value="initiatives" checked /> Projects</label>
       <label class="bulk-research-wide"><input type="checkbox" id="bulk-autofill" checked /> Fill in empty fields automatically (existing values are never replaced; different values are left for you to review)</label>
     </fieldset>
     <label class="hubspot-field">Stop automatically when the cost reaches (US$)
@@ -856,7 +856,7 @@
       <label><input type="radio" name="import-format" value="workbook" /> Research workbook (.xlsx) - research done outside SalesTeam</label>
     </fieldset>
     <p class="page-subtitle">
-      An import <strong>only adds and fills in</strong>: companies, contacts and initiatives you do not have yet are
+      An import <strong>only adds and fills in</strong>: companies, contacts and projects you do not have yet are
       added, empty fields are filled, and nothing you have is replaced or removed. Where the file and an account
       disagree by more than 10%, the same rules as for web findings decide; what could change a priority comes to
       Decisions. You see what it will do before anything is saved.
@@ -891,7 +891,7 @@
   <dialog id="restore-accounts-dialog" class="action-dialog">
     <h3>Restore Accounts &amp; Contacts from Backup</h3>
     <p class="page-subtitle">
-      Bring back accounts, contacts and initiatives from a SalesTeam backup - the backup zip made by Backup &amp;
+      Bring back accounts, contacts and projects from a SalesTeam backup - the backup zip made by Backup &amp;
       Restore, or an older .json file. You choose what to restore; the parts you tick <strong>replace</strong> what
       is loaded now, and a safety copy of your current data is saved first. (To load a research workbook or a CSV
       file, use "Import…" instead.)
