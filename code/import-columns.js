@@ -54,7 +54,7 @@ export const IMPORT_COLUMNS = {
       "Relevant_Contacts_Count",
       "Home_Size_Fit_Score",
       "Decision_Authority_Score",
-      "Maturity_Fit_Score",
+      "Adoption_Fit_Score",
       "Investment_Score",
       "Contact_Access_Score",
       "Size_Bucket",

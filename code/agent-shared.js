@@ -395,6 +395,31 @@ export function buildContactScopedMentorPrompt(contact, account, { mentorPersona
   );
 }
 
+// 1.2.4.4 (Boaz: "Is there any reason that Customer voice does not appear in the Lead Page?"): the lead's own author
+// as the buyer - grounded in their post, the only first-hand words SalesTeam has from a person. A job lead has no
+// person: the Voice speaks as the hiring company.
+export function buildLeadScopedCustomerVoicePrompt(lead, { companyContext, customerPersona, outputLanguage, notes = "" }) {
+  const isJob = lead.type === "job";
+  const who = isJob
+    ? `A hiring manager at ${lead.company || "the company"} that posted this job ad: "${lead.title || "Untitled role"}"` +
+      (lead.location ? ` (${lead.location})` : "")
+    : `Name: ${lead.author || "Unknown"}\nHeadline: ${lead.headline || "n/a"}` + (lead.company ? `\nCompany: ${lead.company}` : "") +
+      `\nYour own LinkedIn post: "${lead.snippet || ""}"`;
+  const relLine = relationshipPromptLine(lead.relationship, lead.company, "the salesperson's company");
+  return (
+    "You are playing the role of ONE specific, real B2B buyer - the kind of person a salesperson using this " +
+    "extension is trying to reach." +
+    companyContextBlock(companyContext) +
+    customerPersonaBlock(customerPersona) +
+    `\nWho you are:\n${who}\n${relLine ? relLine + "\n" : ""}${notes || ""}` +
+    "\nThe salesperson will ask you to react to a proposed message or approach aimed at you. React as this exact " +
+    "person would, grounded in what you wrote and your role above - never invent facts beyond what's given. Be " +
+    "honest and even critical - point out specifically what would make you ignore a message, what would make you " +
+    "reply, and why. Keep answers concise and concrete.\n" +
+    languageInstruction(outputLanguage)
+  );
+}
+
 export function buildContactScopedCustomerVoicePrompt(contact, account, { companyContext, customerPersona, outputLanguage }) {
   return (
     "You are playing the role of ONE specific, real B2B buyer - the kind of person a salesperson using this " +

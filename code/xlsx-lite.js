@@ -353,6 +353,7 @@ const PROJECT_FIELD_ALIASES = {
   projectId: "initiativeId",
   projectName: "initiativeName",
   topProjects: "topInitiatives",
+  adoptionFitScore: "maturityFitScore", // 1.2.4.4 (R6): Adoption_Fit_Score, was Maturity_Fit_Score
 };
 
 function applyAiFieldAliases(row) {

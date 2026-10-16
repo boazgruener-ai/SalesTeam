@@ -3,6 +3,7 @@
 // or open in Excel and share - without needing the extension. UTF-8 with a byte-order mark and CRLF
 // line ends, which is what Excel expects.
 import { AI_FIELD_ALIASES, HOME_FIELD_ALIASES } from "./xlsx-lite.js";
+import { customerFieldName } from "./field-names.js";
 
 export function csvEscape(value) {
   const text = String(value ?? "");
@@ -65,6 +66,9 @@ const INTERNAL_FIELDS = new Set(["salesTeamPriorityScoredAt", "sizeFetchAttempte
 
 function headerLabel(key) {
   if (HEADER_OVERRIDES[key]) return HEADER_OVERRIDES[key];
+  // 1.2.4.4 (R6): no "AI" in a customer field's column title - "Adoption fit score" -> "Adoption Fit Score".
+  const named = customerFieldName(key);
+  if (named) return named.replace(/(^|[\s(])([a-z])/g, (m, pre, ch) => pre + ch.toUpperCase());
   const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" ");
   return words
     .map((w) => {
@@ -188,6 +192,7 @@ const WORKBOOK_HEADER_OVERRIDES = {
   topInitiatives: "Top_Projects",
   initiativeId: "Project_ID",
   initiativeName: "Project_Name",
+  maturityFitScore: "Adoption_Fit_Score", // 1.2.4.4 (R6); the import reads Maturity_Fit_Score too
   linkedinLink: "LinkedIn Link", // the research workbook's own spelling (sheet_contract.py)
   alternativeCompanyName: "Alternative Company Name",
 };

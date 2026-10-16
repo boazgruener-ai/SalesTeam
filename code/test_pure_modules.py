@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "field-names.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1860,6 +1860,11 @@ def test_targets_and_estimate(ctx):
     check("any stage: default order all ticked", v("isAnyStage(INITIATIVE_STAGE_IDS.map((id) => ({ id, checked: true })))"), True)
     check("any stage: one unticked", v("isAnyStage([{id:'poc', checked:false}])"), False)
     check("any stage: reordered", v("isAnyStage(['pilot'])"), False)
+    # 1.2.4.4 (R6): no "AI" in what users read for a customer field
+    check("field name: maturity", v("fieldName('aiMaturityFitScore')"), "Adoption fit score")
+    check("field name: local investment", v("fieldName('aiInvestmentSwitzerland')"), "Investment (local)")
+    check("field name: own AI priority unchanged", v("fieldName('aiPriority')"), "Priority")
+    check("field name: no AI left", v("Object.keys(CUSTOMER_FIELD_NAMES).filter((k) => /\bai\b/i.test(fieldName(k)))"), [])
     # 1.2.4.3: the Excel workbook of Export… (xlsx-write.js)
     check("xlsx column names", v("[0, 25, 26, 701, 702].map(columnName)"), ["A", "Z", "AA", "ZZ", "AAA"])
     parts = v("xlsxParts([{ name: 'Pro/jects', headers: ['A', 'B'], rows: [[1, 'x<&>\u0001y'], [null, '']] }])")

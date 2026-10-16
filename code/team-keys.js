@@ -20,7 +20,7 @@ export const TEAM_WORKBOOK_SHEETS = [
 export const TEAM_WORKBOOK_REST_ID = "wb:rest";
 
 // Per-lead fields that never leave the PC (drafts and Sales Mentor history are personal, R3.6).
-export const PERSONAL_LEAD_FIELDS = ["draftMessage", "draftTemplateId", "draftGeneratedAt", "mentorHistory"];
+export const PERSONAL_LEAD_FIELDS = ["draftMessage", "draftTemplateId", "draftGeneratedAt", "mentorHistory", "customerVoiceHistory"];
 
 export const TEAM_MAP_KEYS = [
   { key: "targetAccounts", e: "account", prefix: "ta:" },

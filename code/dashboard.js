@@ -14,6 +14,8 @@ import {
   updateLeadStatus,
   bulkUpdateLeadStatus,
   updateLeadMentorHistory,
+  updateLeadCustomerVoiceHistory,
+  getCustomerPersona,
   LEAD_STATUSES,
   getAnthropicApiKey,
   getMentorPersona,
@@ -66,6 +68,7 @@ import {
   runAgentTurn,
   leadNotesSection,
   buildLeadScopedMentorPrompt,
+  buildLeadScopedCustomerVoicePrompt,
   DRAFT_MESSAGE_TOOL,
   toolDraftMessage,
   prioritizeLeads,
@@ -302,6 +305,7 @@ let searchText = "";
 
 let currentDetailLead = null;
 let mentorHistory = [];
+let voiceHistory = []; // 1.2.4.4: the lead's Customer Voice conversation
 
 // ---------------------------------------------------------------------
 // Lead shape helpers - a lead is either a Post (author/headline/snippet) or
@@ -819,7 +823,7 @@ function paintTeamNotice(lead) {
   // Everything that works the lead: status, priority, the draft, the Sales Mentor (Boaz, 2026-10-05). Reading stays.
   for (const id of ["detail-status-select", "detail-priority-select", "detail-template-select", "detail-draft-btn", "detail-copy-btn",
     "detail-save-btn", "detail-mentor-input", "detail-mentor-send-btn", "detail-mentor-clear-btn", "mentor-quick-summary-btn",
-    "mentor-quick-openers-btn"]) {
+    "mentor-quick-openers-btn", "detail-voice-input", "detail-voice-send-btn", "detail-voice-clear-btn"]) {
     const b = document.getElementById(id);
     if (!b) continue;
     if (block) { b.disabled = true; b.title = block; }
@@ -1957,6 +1961,7 @@ function showListView() {
 function renderDetail(lead) {
   currentDetailLead = lead;
   mentorHistory = lead.mentorHistory || [];
+  voiceHistory = lead.customerVoiceHistory || [];
   notesSection(document.getElementById("detail-notes")).show({ // 1.2.4 Notes (R2.4)
     on: "lead", key: lead.key, name: `${leadNoteAbout(lead)}${lead.company ? ` (${lead.company})` : ""}`,
     accountKey: lead.company ? normalizeCompanyName(lead.company) : null,
@@ -2008,6 +2013,8 @@ function renderDetail(lead) {
 
   renderMentorHistory();
   document.getElementById("detail-mentor-status").textContent = "";
+  renderVoiceHistory();
+  document.getElementById("detail-voice-status").textContent = "";
   paintTeamNotice(lead);
 }
 
@@ -2337,6 +2344,72 @@ document.getElementById("detail-mentor-clear-btn").addEventListener("click", asy
   mentorHistory = [];
   await updateLeadMentorHistory(currentDetailLead.key, []);
   renderMentorHistory();
+});
+
+// 1.2.4.4 (Boaz: "Is there any reason that Customer voice does not appear in the Lead Page?"): the lead's own author
+// as the buyer, as on the account and contact pages. No tools - the Voice only reacts; drafting stays with the Mentor.
+function renderVoiceHistory() {
+  const historyEl = document.getElementById("detail-voice-history");
+  historyEl.innerHTML = "";
+  const bubble = (kind, text) => {
+    const b = document.createElement("div");
+    b.className = `agent-bubble agent-bubble-${kind}`;
+    b.textContent = text;
+    historyEl.appendChild(b);
+  };
+  for (const message of voiceHistory) {
+    if (message.role === "user" && typeof message.content === "string") bubble("you", message.content);
+    else if (message.role === "assistant") {
+      for (const block of message.content) if (block.type === "text" && block.text.trim()) bubble("agent", block.text);
+    }
+  }
+  historyEl.scrollTop = historyEl.scrollHeight;
+}
+
+async function sendVoiceMessage() {
+  if (!currentDetailLead) return;
+  const sendBtn = document.getElementById("detail-voice-send-btn");
+  if (sendBtn.disabled) return; // a stray Enter while a turn is running (same guard as the Mentor)
+  const input = document.getElementById("detail-voice-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  const leadKey = currentDetailLead.key;
+  const statusEl = document.getElementById("detail-voice-status");
+  const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
+  sendBtn.disabled = true;
+  try {
+    const customerPersona = await getCustomerPersona();
+    const leadRelationship = relationshipOf(await getRelationshipMatcher().catch(() => null), { name: currentDetailLead.company });
+    const leadNotes = await leadNotesSection(currentDetailLead);
+    await runAgentTurn(text, {
+      history: voiceHistory,
+      apiKey,
+      buildSystemPrompt: () => buildLeadScopedCustomerVoicePrompt({ ...currentDetailLead, relationship: leadRelationship }, { companyContext, customerPersona, outputLanguage, notes: leadNotes }),
+      tools: [],
+      executeTool: async (name) => ({ error: `Unknown tool: ${name}` }),
+      saveHistory: (history) => updateLeadCustomerVoiceHistory(leadKey, history),
+      onStatus: (msg) => { statusEl.textContent = msg; },
+      onProgress: renderVoiceHistory,
+    });
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+document.getElementById("detail-voice-send-btn").addEventListener("click", sendVoiceMessage);
+document.getElementById("detail-voice-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    sendVoiceMessage();
+  }
+});
+document.getElementById("detail-voice-clear-btn").addEventListener("click", async () => {
+  if (!currentDetailLead) return;
+  if (!(await askConfirm("Clear this conversation? This can't be undone.", { okLabel: "Clear conversation", cancelLabel: "Keep it", danger: true }))) return;
+  voiceHistory = [];
+  await updateLeadCustomerVoiceHistory(currentDetailLead.key, []);
+  renderVoiceHistory();
 });
 
 // ---------------------------------------------------------------------

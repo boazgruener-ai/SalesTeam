@@ -4649,6 +4649,15 @@ export async function updateLeadMentorHistory(key, history) {
   }
 }
 
+// 1.2.4.4: the lead page's Customer Voice conversation - like the Mentor's, personal (team-keys.js PERSONAL_LEAD_FIELDS).
+export async function updateLeadCustomerVoiceHistory(key, history) {
+  const results = await getResults();
+  if (results[key]) {
+    results[key].customerVoiceHistory = history;
+    await saveResults(results);
+  }
+}
+
 // Conversation history for the Sales Advisor agent, persisted so it
 // survives closing/reopening the side panel. Stores raw Anthropic API
 // message objects (including tool_use/tool_result blocks), not just display
