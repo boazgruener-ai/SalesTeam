@@ -200,7 +200,7 @@ export function buildMentorSystemPrompt({ mentorPersona, companyContext, idealCu
 
 export function buildCustomerSystemPrompt({ companyContext, customerPersona, outputLanguage }) {
   return (
-    "You are playing the role of a realistic B2B buyer of software & AI-services - the kind of person a " +
+    "You are playing the role of a realistic B2B buyer of what the company below sells - the kind of person a " +
     "salesperson using this extension is trying to reach." +
     companyContextBlock(companyContext) +
     customerPersonaBlock(customerPersona) +
@@ -210,7 +210,7 @@ export function buildCustomerSystemPrompt({ companyContext, customerPersona, out
     "to ground yourself in that real person's actual post/headline/situation, and react as they specifically " +
     "would - reference their real content over the default persona above, and never invent facts or traits " +
     "beyond what's given. When asked a general question not tied to one specific lead (e.g. what's your main " +
-    "pain point with AI projects today), answer in character as the default persona above if one is given, " +
+    "pain point with projects like this today), answer in character as the default persona above if one is given, " +
     "or as a knowledgeable, realistic composite of a typical buyer in this space otherwise - and make clear " +
     "this is a general perspective, not one specific person's view. Be honest and even critical - point out " +
     "specifically what would make you ignore a message, what would make you reply, and why. Keep answers " +
@@ -318,7 +318,7 @@ function accountOverviewBlock(company) {
     company.aiPriority
       ? `Priority: ${company.aiPriority}${company.aiPriorityScore ? ` (${Math.round(company.aiPriorityScore)}/100)` : ""}`
       : null,
-    company.topAiInitiatives ? `Top initiatives: ${company.topAiInitiatives}` : null,
+    company.topAiInitiatives ? `Top projects: ${company.topAiInitiatives}` : null,
     company.aiInvestmentGlobal || company.aiInvestmentSwitzerland
       ? `Investment: ${[company.aiInvestmentGlobal, company.aiInvestmentSwitzerland].filter(Boolean).join(" / ")}`
       : null,
@@ -338,7 +338,7 @@ export function buildAccountScopedMentorPrompt(company, { mentorPersona, company
     userProfileBlock(userProfile) +
     `\nThe account being discussed:\n${accountOverviewBlock(company)}\n${notes || ""}\n` +
     "Answer questions about this account directly using the details above - never invent facts beyond what's " +
-    "given. Ground advice in the company's actual initiatives/priority where relevant, not generic advice. " +
+    "given. Ground advice in the company's actual projects/priority where relevant, not generic advice. " +
     "Be direct and specific. Keep answers focused.\n" +
     languageInstruction(outputLanguage)
   );
@@ -352,7 +352,7 @@ export function buildAccountScopedCustomerVoicePrompt(company, { companyContext,
     customerPersonaBlock(customerPersona) +
     `\nThe account you represent:\n${accountOverviewBlock(company)}\n\n` +
     "The salesperson will ask you to react to a proposed message or approach aimed at this account. React as " +
-    "someone at this specific company would, grounded in its real industry/priority/initiatives above - " +
+    "someone at this specific company would, grounded in its real industry/priority/projects above - " +
     "never invent facts beyond what's given. Be honest and even critical - point out specifically what would " +
     "make you ignore a message, what would make you reply, and why. Keep answers concise and concrete.\n" +
     languageInstruction(outputLanguage)
@@ -385,7 +385,7 @@ export function buildContactScopedMentorPrompt(contact, account, { mentorPersona
     (account ? `\nTheir company (${account.company}):\n${accountOverviewBlock(account)}\n` : "") +
     (notes || "") +
     "\nAnswer questions about this contact directly using the details above - never invent facts beyond " +
-    "what's given. When drafting or suggesting outreach, ground it in the company's own real initiative(s) " +
+    "what's given. When drafting or suggesting outreach, ground it in the company's own real project(s) " +
     "where one is given (e.g. \"I read that you're doing a project to automate your customer support...\"), " +
     "and in this specific contact's role - not generic outreach. If this contact has an actual scanned post " +
     "(shown separately on this page), point the salesperson to that post's own page to use the reviewed " +
@@ -429,7 +429,7 @@ export function buildContactScopedCustomerVoicePrompt(contact, account, { compan
     `\nWho you are:\n${contactOverviewBlock(contact)}\n` +
     (account ? `\nYour company (${account.company}):\n${accountOverviewBlock(account)}\n` : "") +
     "\nThe salesperson will ask you to react to a proposed message aimed at you specifically. React as this " +
-    "exact person would, grounded in their real role and their company's real initiatives above - never " +
+    "exact person would, grounded in their real role and their company's real projects above - never " +
     "invent facts beyond what's given. Be honest and even critical - point out specifically what would make " +
     "you ignore a message, what would make you reply, and why. Keep answers concise and concrete.\n" +
     languageInstruction(outputLanguage)
@@ -639,31 +639,32 @@ function buildPrioritizationPrompt({ mentorPersona, companyContext, idealCustome
     "strong company signal with an unclear individual contact is still worth a real priority, since the next " +
     "step is finding a better contact there, not necessarily messaging the poster. " +
     "Treat the Ideal Customer Profile as a secondary, moderating factor, not a pass/fail gate: an explicit, " +
-    "on-topic need - a real hiring ad or stated project for AI engineering, LLM/agent development, RAG, or " +
-    "similar work the company above actually sells - should not be crushed to the bottom of the range just " +
+    "on-topic need - a real hiring ad or stated project for exactly the kind of work the company above " +
+    "actually sells - should not be crushed to the bottom of the range just " +
     "because the company is the wrong size or outside the target geography. That kind of lead is typically " +
     "still a 2-3: a real, reachable opportunity, just not a perfect-fit one. Reserve 4-5 for leads with no " +
     "genuine buying signal at all, a clearly unrelated technical domain, or noise that should have been " +
     "filtered - not simply \"real need, wrong location.\" " +
-    "Watch out for the opposite failure too: a post from someone with a vaguely AI-flavored title or who just " +
-    "talks about AI a lot, that is really just industry commentary or thought leadership (e.g. reacting to AI " +
-    "industry news, sharing opinions/trends, listicles) with no expressed need, project, challenge, or hiring " +
-    "signal of their own - that is a WEAK lead and belongs low (4-5). Topical overlap and sounding senior are " +
-    "not buying intent; only score a post higher on its own content because it names or implies an actual " +
-    "need, initiative, problem, or hire happening at that company right now. " +
-    "Reported directly as an important exception: when the poster's OWN professional title names a genuine, " +
-    "formal AI/ML/Data leadership FUNCTION at the company - \"Head of AI,\" \"Chief AI Officer,\" \"VP of AI,\" " +
-    "\"Director of Data Science,\" and similar (not a vague self-description like \"AI enthusiast,\" \"AI " +
-    "advisor,\" or an independent consultant's own tagline) - that role's mere existence is itself a real, " +
-    "company-level signal: the company has committed formal headcount and budget to AI, whether or not this " +
-    "particular post says so. Even pure thought-leadership from such a person should not fall below 2-3 on " +
-    "that basis alone - it's a genuinely different case from a random employee's generic AI commentary, and " +
-    "worth surfacing to the salesperson as a company worth researching further, not filtering out as noise. " +
-    "Still reserve 1 for an actual expressed need/initiative/hire - a senior AI title alone, with no content " +
-    "signal, is a real account-level lead, not an urgent one. " +
+    "Watch out for the opposite failure too: a post from someone whose title only loosely touches the seller's " +
+    "topic, or who just talks about that topic a lot, that is really just industry commentary or thought " +
+    "leadership (e.g. reacting to industry news, sharing opinions/trends, listicles) with no expressed need, " +
+    "project, challenge, or hiring signal of their own - that is a WEAK lead and belongs low (4-5). Topical " +
+    "overlap and sounding senior are not buying intent; only score a post higher on its own content because it " +
+    "names or implies an actual need, project, problem, or hire happening at that company right now. " +
+    // 1.2.4.5 (R7): was an AI-only rule ("Head of AI", "Chief AI Officer") - now the area the seller sells into.
+    "An important exception: when the poster's OWN professional title names a genuine, formal leadership " +
+    "FUNCTION at the company for the very area the seller sells into (for a seller of AI services \"Head of " +
+    "AI\" or \"Chief AI Officer\"; for a seller of workplace furniture \"Head of Facilities\" or \"Workplace " +
+    "Director\") - not a vague self-description or an independent consultant's own tagline - that role's mere " +
+    "existence is itself a real, company-level signal: the company has committed formal headcount and budget to " +
+    "that area, whether or not this particular post says so. Even pure thought-leadership from such a person " +
+    "should not fall below 2-3 on that basis alone - it's a genuinely different case from a random employee's " +
+    "generic commentary, and worth surfacing to the salesperson as a company worth researching further, not " +
+    "filtering out as noise. Still reserve 1 for an actual expressed need/project/hire - a senior title alone, " +
+    "with no content signal, is a real account-level lead, not an urgent one. " +
     "Use the full 1-5 range across the batch rather than clustering everyone in the middle - these are meant " +
     "to help the salesperson triage, which only works if the scores actually spread leads out. " +
-    "A lead may carry a `targetAccountSignal` - independent research on that company's investment/maturity " +
+    "A lead may carry a `targetAccountSignal` - independent research on that company's investment and adoption " +
     "from a separate target-account list, with a priorityLabel (e.g. \"Very High\", " +
     "\"High - Provisional\") and a 0-100 score - or, for an account without that research, only SalesTeam's own " +
     "account priority (salesTeamPriority, P1 best to P5). For a post lead (a real, named individual you can actually " +
@@ -843,7 +844,7 @@ function buildCompanyFitPrompt({ companyContext, idealCustomerProfile, outputLan
     idealCustomerProfileBlock(idealCustomerProfile) +
     "For each company, weigh whatever research text is given (topInitiatives, priorityRationale, or similar " +
     "free-text notes, when present) against the offering and ideal customer profile above - does this " +
-    "company's own situation, stated initiatives, or context genuinely suggest a need for what's being sold? " +
+    "company's own situation, stated projects, or context genuinely suggest a need for what's being sold? " +
     "A company with no research text at all should get a neutral-to-cautious score (40-55), not a guess " +
     "dressed up as confidence - there is no real basis for anything stronger from firmographic facts alone. " +
     "Assign a 0-100 fitScore: 0-30 for poor or no evident fit, 40-60 for plausible but unconfirmed, 70-100 " +
@@ -1523,7 +1524,24 @@ const WEB_SEARCH_TOOL_BASIC = "web_search_20250305"; // older models / faster
 const WEB_RESEARCH_MAX_SEARCHES = 4;
 const WEB_RESEARCH_TIME_LIMIT_MS = 240000;
 
-function buildWebResearchSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries }) {
+// 1.2.4.5 (R7): projects judged against the seller's offer. legacyProjectWording = the 1.2.4.4 line, for the before/after
+// measurement only (target-accounts.js, #action=measure-research) - removed with that tool in 1.2.4.6.
+// 1.2.4.5 measurement (Boaz, 2026-10-16): without these the list was padded with results, AGMs and buybacks, named one
+// project four times (Holcim's Zug HQ) and took a Chicago office move for a seller in Switzerland.
+// Measurement 2: "prefer the target market" was read too strictly - Chubb's and Holcim's group-wide AI programmes dropped
+// out - so only projects limited to another country are left out.
+const PROJECT_RULES =
+  "Projects rules: list only real projects, not financial results, general meetings, dividends, share buybacks or routine " +
+  "management changes - fewer than five is fine, and none is better than padding. Never list the same project twice under " +
+  "different names, and list the parts of one project as that one project. Group-wide and company-wide projects count " +
+  "wherever they are announced; leave out only a project clearly limited to a country outside the seller's target market " +
+  "(for example a US office move, for a seller in Switzerland).\n";
+const PROJECTS_BRIEFING_LINE =
+  "Recent projects and news: up to five items from roughly the last two years where what the seller offers could help - a " +
+  "programme, an investment, a change or a problem the company has made public - each with its date. Judge this against the " +
+  "seller's offer above, not against any one technology.\n" +
+  PROJECT_RULES;
+function buildWebResearchSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, legacyProjectWording = false }) {
   const home = (targetCountries && targetCountries[0]) || "the target country";
   return (
     "You are a B2B account researcher. Use web search to find current, PUBLICLY AVAILABLE facts about the company you are " +
@@ -1536,7 +1554,9 @@ function buildWebResearchSystemPrompt({ companyContext, idealCustomerProfile, ou
     "Size and structure: employees, revenue (say the year), headquarters, ownership, and its local entity in " + home + " if relevant.\n" +
     "Official registry: legal name, registry number and address, if you found the official register entry.\n" +
     "Website: the official website address.\n" +
-    "Recent initiatives and news: up to five items from roughly the last two years that could matter to the seller, each with its date.\n" +
+    (legacyProjectWording
+      ? "Recent initiatives and news: up to five items from roughly the last two years that could matter to the seller, each with its date.\n"
+      : PROJECTS_BRIEFING_LINE) +
     "Fit and gaps: one or two sentences on how relevant this company looks for the seller, and what you could not verify.\n" +
     "Then, as the very last line, write DATA: followed by ONE line of JSON with exactly these keys, using null for anything you " +
     "did not find (numbers as plain numbers without units or separators): " +
@@ -1775,8 +1795,8 @@ function stagePreferenceText(stages) {
   const all = STAGE_WORDS.split(", ").map((w) => w.split(" ")[0]);
   if (!Array.isArray(stages) || stages.length === 0) return "";
   if (stages.length === all.length && stages.every((s, i) => s === all[i])) return "";
-  return "The seller cares about initiatives at these stages, most important first: " + stages.join(", ") +
-    (stages.length < all.length ? ". Leave out initiatives at any other stage" : "") + ".\n";
+  return "The seller cares about projects at these stages, most important first: " + stages.join(", ") +
+    (stages.length < all.length ? ". Leave out projects at any other stage" : "") + ".\n";
 }
 
 function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, industryNames, seniorityLabels, initiativeStages }) {
@@ -1791,7 +1811,9 @@ function buildLaneSystemPrompt({ companyContext, idealCustomerProfile, outputLan
     "if something is not found, use null." +
     companyContextBlock(companyContext) +
     idealCustomerProfileBlock(idealCustomerProfile) +
-    "\nInitiatives: only ones from about the last two years that could matter to the seller, each with its stage, one of: " + STAGE_WORDS + ".\n" +
+    "\nProjects: only ones from about the last two years where what the seller offers could help - a programme, an investment, " +
+    "a change or a problem the company has made public - each with its stage, one of: " + STAGE_WORDS + ".\n" +
+    PROJECT_RULES +
     stagePreferenceText(initiativeStages) +
     "Contacts: at most " + LANE_MAX_PEOPLE + " named people, the most senior first, " +
     (seniorityLabels && seniorityLabels.length
@@ -2158,7 +2180,7 @@ export async function fitSearchDiscovery(ctx, settings, { signal } = {}) {
   const system =
     "You find companies that fit a B2B seller, in a given market, with web search. Look for companies of the given size, " +
     "local subsidiaries and regional headquarters of international groups, public bodies and institutions, and companies " +
-    "with recent initiatives that match what the seller offers. Name only companies a search result names, each with the " +
+    "with recent projects that match what the seller offers. Name only companies a search result names, each with the " +
     "page that names it." +
     companyContextBlock(settings.companyContext) +
     idealCustomerProfileBlock(settings.idealCustomerProfile) +

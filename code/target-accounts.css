@@ -2290,3 +2290,9 @@ th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc !important; }
 /* 1.2.3 step 3 (R6.3): the account's groups next to its title. */
 .team-groups-tag[hidden] { display: none; }
 .team-groups-tag { font-size: 12px; color: #555; background: #eef1f6; border-radius: 10px; padding: 2px 10px; margin-left: 8px; white-space: nowrap; }
+
+/* 1.2.4.5 TEMPORARY: the research wording measurement (removed in 1.2.4.6) */
+#measure-research-dialog { width: min(900px, 92vw); }
+#measure-research-dialog label { display: block; margin: 10px 0 4px; font-size: 13px; font-weight: 600; }
+#measure-research-dialog textarea { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 13px; }
+.measure-results-wrap { max-height: 320px; overflow: auto; margin: 8px 0; }

@@ -720,6 +720,36 @@
 
   <!-- Nothing here is written until "Resolve them" is pressed: the dialog opens on a dry run, so the
        counts and the examples below describe exactly what the button would do. -->
+  <!-- 1.2.4.5 TEMPORARY (projects design 6.3): the before/after measurement of the research wording. In no menu -
+       opened with target-accounts.html#action=measure-research; removed in 1.2.4.6. -->
+  <dialog id="measure-research-dialog" class="action-dialog">
+    <h3>Measure the research wording (test tool)</h3>
+    <p class="page-subtitle">
+      Researches the projects of each account below three times: <strong>A before</strong> - your Setup with the old
+      wording (1.2.4.4), <strong>A after</strong> - your Setup with the new wording, and <strong>B after</strong> - the
+      seller below with the new wording. <strong>Nothing is saved on the accounts</strong>; the results stay in this
+      window and can be downloaded. Each run is a short web research (projects only), about US$0.02-0.05.
+    </p>
+    <label for="measure-accounts">Accounts, one per line (names as in your list)</label>
+    <textarea id="measure-accounts" rows="6">Swiss Re
+Zurich Insurance Group
+Chubb
+Holcim Group
+Kühne + Nagel
+Compagnie Financière Richemont</textarea>
+    <label for="measure-seller-b">Seller B - what they sell (used instead of your "What you sell" for the B runs only)</label>
+    <textarea id="measure-seller-b" rows="3">We sell, plan and install ergonomic office furniture and workplace fit-outs - desks, seating, meeting rooms, acoustic solutions - for offices in Switzerland, with delivery, assembly and after-sales service.</textarea>
+    <label for="measure-icp-b">Seller B - ideal customer</label>
+    <textarea id="measure-icp-b" rows="2">Companies with 200 or more employees in Switzerland that are moving, opening or renovating offices, growing their headcount, or redesigning their workplace for hybrid work.</textarea>
+    <p id="measure-status" class="status-text" role="status"></p>
+    <div class="measure-results-wrap"><table id="measure-results" class="web-research-apply-table"></table></div>
+    <div class="action-dialog-actions">
+      <button id="measure-run-btn" type="button">Run the 3 researches per account</button>
+      <button id="measure-download-btn" type="button" disabled>Download results (CSV)</button>
+      <button type="button" class="action-dialog-close-btn">Close</button>
+    </div>
+  </dialog>
+
   <dialog id="auto-findings-dialog" class="action-dialog">
     <h3>Resolve web findings automatically</h3>
     <p class="page-subtitle">

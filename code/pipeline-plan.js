@@ -540,7 +540,7 @@ export const WEB_LANE_TOPICS = {
   headquarters: "headquarters (city and country of the group's global HQ)",
   employees: "number of employees (worldwide, and in the seller's home market)",
   industry: "industry",
-  initiatives: "recent initiatives and projects that could matter to the seller",
+  initiatives: "recent projects that could matter to the seller",
   contacts: "named senior people (management, leadership, heads of the relevant functions)",
   summary: "a short summary of what the company does",
 };

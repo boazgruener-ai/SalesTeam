@@ -93,7 +93,7 @@ function knownFacts(view, initiatives, relevantContacts) {
   if (emp) add(emp === "globalEmployees" ? "Employees (worldwide)" : "Employees (local)", emp);
   add("Industry", "industry");
   if (relevantContacts.length) out.push({ label: "Contacts already known", value: relevantContacts.map((c) => c.fullName).join(", ") });
-  if (initiatives.length) out.push({ label: "Initiatives already known", value: initiatives.map((i) => i.initiativeName).filter(Boolean).slice(0, 8).join("; ") });
+  if (initiatives.length) out.push({ label: "Projects already known", value: initiatives.map((i) => i.initiativeName).filter(Boolean).slice(0, 8).join("; ") });
   return out;
 }
 
