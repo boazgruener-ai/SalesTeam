@@ -54,7 +54,7 @@ COMPANIES = [
     ("Investment_Global", O, "Relevant investment/budget evidence, group-wide"),
     ("Investment_Home", O, "Relevant investment/budget evidence in the primary target country"),
     ("Investment_Confidence", O, "Verified, Reported, Estimated..."),
-    ("Top_Initiatives", O, "Short text list of the main relevant initiatives"),
+    ("Top_Projects", O, "Short text list of the main relevant projects"),
     ("Relevant_Contacts_Count", O, "Integer: number of verified relevant contacts"),
     ("Home_Size_Fit_Score", O, "0-100 size-fit sub-score for the primary target country"),
     ("Decision_Authority_Score", O, "0-100 sub-score"),
@@ -89,16 +89,16 @@ CONTACTS = [
     ("Evidence_Quality", O, "How well the contact is evidenced"),
 ]
 
-INITIATIVES = [
-    ("Initiative_ID", R, "Unique initiative ID"),
+PROJECTS = [
+    ("Project_ID", R, "Unique project ID"),
     ("Company_ID", R, "Must exist in Companies"),
     ("Company", R, "Company name"),
-    ("Initiative_Name", R, "Short name of the initiative"),
+    ("Project_Name", R, "Short name of the project"),
     ("Category", O, ""),
     ("Scope", O, "Global, Local, Business unit..."),
     ("Business_Function", O, ""),
     ("Description", O, ""),
-    ("Status", O, "Stage of the initiative, e.g. Pilot, Production, Scaling"),
+    ("Status", O, "Stage of the project, e.g. Pilot, Production, Scaling"),
     ("Announced_Date", O, ""),
     ("Investment_Amount", O, ""),
     ("Currency", O, ""),
@@ -155,11 +155,16 @@ ALIASES = [
     ("Verification_Status", O, ""),
 ]
 
-# Older workbooks (V66) used country-specific header names; the importer and validator still accept them.
-LEGACY_HEADERS = {'Registry_Official_Name': 'Zefix_Official_Name', 'Registry_ID': 'Zefix_UID', 'Registry_Address': 'Zefix_Address', 'Main_Home_Location': 'Main_Swiss_Location', 'Home_Decision_Authority': 'Swiss_Decision_Authority', 'Home_Revenue_Currency': 'Swiss_Revenue_Currency', 'Home_Revenue_Period': 'Swiss_Revenue_Period', 'Home_Revenue_Confidence': 'Swiss_Revenue_Confidence', 'Home_Revenue': 'Swiss_Revenue', 'Home_Employees_Period': 'Swiss_Employees_Period', 'Home_Employees_Confidence': 'Swiss_Employees_Confidence', 'Home_Employees': 'Swiss_Employees', 'Investment_Home': 'Investment_Switzerland', 'Home_Size_Fit_Score': 'Swiss_Size_Fit_Score', 'Home_Based': 'Swiss_Based'}
+# Older workbooks used older header names (V66: country-specific; before 1.2.4.3: "Initiative"); the importer and validator still accept them.
+LEGACY_HEADERS = {'Registry_Official_Name': 'Zefix_Official_Name', 'Registry_ID': 'Zefix_UID', 'Registry_Address': 'Zefix_Address', 'Main_Home_Location': 'Main_Swiss_Location', 'Home_Decision_Authority': 'Swiss_Decision_Authority', 'Home_Revenue_Currency': 'Swiss_Revenue_Currency', 'Home_Revenue_Period': 'Swiss_Revenue_Period', 'Home_Revenue_Confidence': 'Swiss_Revenue_Confidence', 'Home_Revenue': 'Swiss_Revenue', 'Home_Employees_Period': 'Swiss_Employees_Period', 'Home_Employees_Confidence': 'Swiss_Employees_Confidence', 'Home_Employees': 'Swiss_Employees', 'Investment_Home': 'Investment_Switzerland', 'Home_Size_Fit_Score': 'Swiss_Size_Fit_Score', 'Home_Based': 'Swiss_Based',
+                  # 1.2.4.3: "Initiatives" became "Projects"
+                  'Top_Projects': 'Top_Initiatives', 'Project_ID': 'Initiative_ID', 'Project_Name': 'Initiative_Name'}
+
+# Sheets renamed since older workbooks; the importer and validator still accept the old name.
+LEGACY_SHEETS = {'Projects': 'Initiatives'}
 
 SHEETS = [
-    ("Companies", COMPANIES), ("Contacts", CONTACTS), ("Initiatives", INITIATIVES),
+    ("Companies", COMPANIES), ("Contacts", CONTACTS), ("Projects", PROJECTS),
     ("Investment", INVESTMENT), ("Sources", SOURCES),
     ("Exclusion_List", EXCLUSION_LIST), ("Aliases", ALIASES),
 ]

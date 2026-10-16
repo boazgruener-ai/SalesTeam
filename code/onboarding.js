@@ -2956,6 +2956,13 @@ async function init() {
   el("about-language-select").value = await getOutputLanguage();
   el("about-api-key-wrap").hidden = !!(await getAnthropicApiKey());
   completedBefore = !!(await getOnboardingCompletedAt());
+  // 1.2.4.3: only once there are accounts whose findings the rules could settle.
+  el("web-findings-apply-wrap").hidden = !completedBefore;
+  el("web-findings-apply-btn").addEventListener("click", () => {
+    const target = "target-accounts.html#action=auto-findings";
+    if (window.top !== window) window.top.location.href = target;
+    else window.location.href = target;
+  });
   setupResearch = await getSetupResearch();
   if (setupResearch.status === "running" && Date.now() - (setupResearch.heartbeatAt || setupResearch.at || 0) > 60000) {
     // The page was closed or reloaded while the research ran: nothing came in.

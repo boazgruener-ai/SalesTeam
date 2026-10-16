@@ -6,7 +6,7 @@
 //   salesteam-backup-2026-09-19.zip
 //     README.txt          what is inside and how to use it
 //     manifest.json       date, extension version, what each category holds (read by the restore dialog)
-//     spreadsheets/*.csv  the accounts workbook (Companies, Contacts, Initiatives, ...) and Leads, ready to
+//     spreadsheets/*.csv  the accounts workbook (Companies, Contacts, Projects, ...) and Leads, ready to
 //                         upload to another system or open in Excel
 //     data/<category>.json the raw stored data, grouped by category, for restoring
 import { createZip, readZip, bytesToText } from "./backup-zip.js";
@@ -175,7 +175,7 @@ function readmeText(createdAt, version, categories) {
     "",
     "WHAT IS IN THIS ZIP",
     "  spreadsheets/   Your data as CSV files - open in Excel, or import into Salesforce or another CRM:",
-    "                    Companies.csv, Contacts.csv, Initiatives.csv, Investment.csv, Sources.csv, Aliases.csv,",
+    "                    Companies.csv, Contacts.csv, Projects.csv, Investment.csv, Sources.csv, Aliases.csv,",
     "                    Exclusion_List.csv (the accounts workbook) and Leads.csv (Posts and Job listings).",
     "                  Share the accounts files with or without Leads.csv.",
     "  data/           The raw data SalesTeam restores from, one file per category. Do not edit.",

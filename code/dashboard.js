@@ -133,7 +133,12 @@ function showEmbeddedPage(page, title) {
     // Identical URL (same action pressed again, e.g. after Cancel): a fragment-only "navigation" to it would do
     // nothing, so reload; a URL that differs only by #hash is routed by the page's own hashchange handler.
     const frameWindow = embeddedPageFrameEl.contentWindow;
-    if (frameWindow.location.href === resolvedUrl) {
+    if (frameWindow.location.href === resolvedUrl && /[#&]action=/.test(resolvedUrl)) {
+      // 1.2.4.3: the same pop-up action again (Export… after Cancel) - the page's own hashchange routing opens it
+      // again, instead of a reload of the whole page, which took about 10 s on a large list.
+      frameWindow.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: resolvedUrl, newURL: resolvedUrl }));
+      willLoad = false;
+    } else if (frameWindow.location.href === resolvedUrl) {
       frameWindow.location.reload();
     } else {
       frameWindow.location.replace(resolvedUrl);
@@ -2379,9 +2384,23 @@ function exportLeadsToCsv(leads, filenameTag) {
   if (exportStatusEl) exportStatusEl.textContent = `Done - exported ${leads.length} lead${leads.length === 1 ? "" : "s"} to your Downloads folder (exports/${a.download.split("/").pop()}).`;
 }
 
-document.getElementById("export-csv-all-btn").addEventListener("click", () => {
-  exportLeadsToCsv(allLeads, "all");
-});
+// 1.2.4.3 (Boaz: export "should ask me, if I want to export only filtered accounts or all. Same thing for the other
+// Dashboards"): one Export… - when a search or filter hides leads, it asks all or only the filtered ones, as Target
+// Accounts and Target Contacts do. (Replaces Export All / Export Filtered; the old #action=export-csv-filtered opens it.)
+async function exportLeadsAsked() {
+  const shown = applyFilterSortSearch();
+  if (shown.length === allLeads.length) { exportLeadsToCsv(allLeads, "all"); return; }
+  const noun = (n) => `lead${n === 1 ? "" : "s"}`;
+  const choices = [{ value: "all", label: `All ${allLeads.length} ${noun(allLeads.length)}` }];
+  if (shown.length > 0) choices.push({ value: "shown", label: `Only the ${shown.length} filtered` });
+  const scope = await askChoice(`A search or filter is on, so the Leads Dashboard shows ${shown.length} of ${allLeads.length} ${noun(allLeads.length)}.
+
+Which do you want to export?`, choices);
+  if (!scope) return;
+  if (scope === "all") exportLeadsToCsv(allLeads, "all");
+  else exportLeadsToCsv(shown, "filtered");
+}
+document.getElementById("export-csv-all-btn").addEventListener("click", () => exportLeadsAsked());
 
 // A single prioritize_leads call is capped at 8192 output tokens - fine for
 // a small batch, but a large one (each lead needs a priority plus a written
@@ -2700,9 +2719,7 @@ applyLocationFilterBtn.addEventListener("click", async () => {
 // this one page of the table. Sort order doesn't affect which leads are
 // included, only applyFilterSortSearch's filtering does, so this reuses it
 // directly rather than re-deriving the filter logic.
-document.getElementById("export-csv-filtered-btn").addEventListener("click", () => {
-  exportLeadsToCsv(applyFilterSortSearch(), "filtered");
-});
+
 
 // Applies to everything the current search/status/column filters are
 // showing - across all pages, not just the one on screen - e.g. filter to
@@ -3040,7 +3057,7 @@ const ACTION_BUTTON_IDS = {
   "extract-companies-profiles": "extract-companies-profiles-btn",
   "apply-location-filter": "apply-location-filter-btn",
   "export-csv-all": "export-csv-all-btn",
-  "export-csv-filtered": "export-csv-filtered-btn",
+  "export-csv-filtered": "export-csv-all-btn",
 };
 // 25th round of direct feedback (2026-09-19): "when I clicked Re-score AI
 // Priorities from the Posts menu [cross-page, from a different page], it

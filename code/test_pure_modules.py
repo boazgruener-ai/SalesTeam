@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -1860,6 +1860,14 @@ def test_targets_and_estimate(ctx):
     check("any stage: default order all ticked", v("isAnyStage(INITIATIVE_STAGE_IDS.map((id) => ({ id, checked: true })))"), True)
     check("any stage: one unticked", v("isAnyStage([{id:'poc', checked:false}])"), False)
     check("any stage: reordered", v("isAnyStage(['pilot'])"), False)
+    # 1.2.4.3: the Excel workbook of Export… (xlsx-write.js)
+    check("xlsx column names", v("[0, 25, 26, 701, 702].map(columnName)"), ["A", "Z", "AA", "ZZ", "AAA"])
+    parts = v("xlsxParts([{ name: 'Pro/jects', headers: ['A', 'B'], rows: [[1, 'x<&>\u0001y'], [null, '']] }])")
+    check("xlsx parts", [p["name"] for p in parts], ["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/worksheets/sheet1.xml"])
+    check("xlsx sheet name made legal", 'name="Pro jects"' in parts[2]["data"], True)
+    check("xlsx number cell", '<c r="A2"><v>1</v></c>' in parts[4]["data"], True)
+    check("xlsx text escaped, control character dropped", "x&lt;&amp;&gt;y</t>" in parts[4]["data"], True)
+    check("xlsx empty cells written as nothing", '<row r="3"></row>' in parts[4]["data"], True)
     # targetsStatus
     ctx.eval("""var TS_E = [
       {state:'ready', relevantContacts:3, initiatives:1}, {state:'usable', relevantContacts:1, initiatives:2},

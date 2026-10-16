@@ -50,7 +50,7 @@ export const IMPORT_COLUMNS = {
       "Investment_Global",
       "Investment_Home",
       "Investment_Confidence",
-      "Top_Initiatives",
+      "Top_Projects",
       "Relevant_Contacts_Count",
       "Home_Size_Fit_Score",
       "Decision_Authority_Score",
@@ -87,12 +87,12 @@ export const IMPORT_COLUMNS = {
       "Evidence_Quality"
     ]
   },
-  "Initiatives": {
+  "Projects": {
     "mandatory": [
-      "Initiative_ID",
+      "Project_ID",
       "Company_ID",
       "Company",
-      "Initiative_Name"
+      "Project_Name"
     ],
     "optional": [
       "Category",

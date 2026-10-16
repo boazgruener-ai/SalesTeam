@@ -55,7 +55,8 @@ export const SALESTEAM_ACCOUNT_COLUMNS = {
   "Investment (Global)": "aiInvestmentGlobal",
   "Investment (Local)": "aiInvestmentSwitzerland",
   "Investment Confidence": "aiInvestmentConfidence",
-  "Top Initiatives": "topAiInitiatives",
+  "Top Projects": "topAiInitiatives",
+  "Top Initiatives": "topAiInitiatives", // exported before 1.2.4.3
 };
 
 // Same for the Target Contacts table (target-accounts.js CONTACT_LIST_COLUMNS). Not Seniority: the table shows the level

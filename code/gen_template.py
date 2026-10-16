@@ -85,7 +85,7 @@ def build_workbook(path):
         ("4. In SalesTeam: Target Accounts menu > Import Research Workbook... > Choose workbook.", False),
         ("", False),
         ("Minimum to import", True),
-        ("A Companies sheet with a Company column (one row per account). Add Company_ID to link Contacts, Initiatives, "
+        ("A Companies sheet with a Company column (one row per account). Add Company_ID to link Contacts, Projects, "
          "Investment, Sources and Aliases to their company.", False),
         ("", False),
         ("Mandatory columns of the research format (dark blue headers; hover a header for its description)", True),
