@@ -132,6 +132,13 @@ const QA = [
     answer: 'In Settings > Change Settings > "Companies to exclude" (the same step as in the Setup). It has three tables - Competitors, Recruiters / staffing agencies and Other - each with Company, LinkedIn page and Website, sorted A-Z, with a search box and a count. "+ Add" opens an empty row: give the name, the LinkedIn company page or the website (a LinkedIn page is the surest match), then OK. Each row\'s ⋮ menu has Edit, Remove and, under the heading "Move to" (a heading, not an item to click), the other lists to move the company to - including Customers and Partners. Press Save to keep the changes. An excluded company never shows up as an account, is never researched and its people are never treated as leads (posts). In a team, only the Team Lead can change these lists.',
   },
   {
+    id: "projects-stages",
+    category: "Setup & Target Accounts",
+    question: "What are projects and adoption stages?",
+    keywords: ["project", "projects", "initiative", "initiatives", "top projects", "adoption stage", "adoption stages", "stage", "stages", "any stage", "only these stages", "proof of concept", "pilot", "scaling", "reason to get in touch", "news"],
+    answer: 'A project is something an account has made public in roughly the last two years where what you sell could help - a programme, an investment, a move, a change or a problem - each with its date and source. SalesTeam\'s web research looks for them against your "What you sell" from the Setup, not against any one technology, so an office-furniture seller gets office moves and fit-outs, and a software seller gets software projects. They are listed on the account page under Projects, and the Target Accounts list shows the top ones; they were called "initiatives" before 1.2.4.6. Results, general meetings, dividends and share buybacks are not projects, and a project limited to a country outside your target market is left out. The adoption stage says how far a project has come: Proof of concept, Exploration, Pilot, Early production, Scaling, Mature or Tech native. In the Setup step "Which projects matter to you?" (also in Settings > Change Settings) choose "Any stage" - every project counts, the default - or "Only these stages" to tick the stages where what you sell helps and put the most important first; projects at an unticked stage are left out.',
+  },
+  {
     id: "customers-partners",
     category: "Setup & Target Accounts",
     question: "How do I mark a company as an existing customer or partner?",

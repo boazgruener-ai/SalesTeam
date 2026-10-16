@@ -1524,8 +1524,7 @@ const WEB_SEARCH_TOOL_BASIC = "web_search_20250305"; // older models / faster
 const WEB_RESEARCH_MAX_SEARCHES = 4;
 const WEB_RESEARCH_TIME_LIMIT_MS = 240000;
 
-// 1.2.4.5 (R7): projects judged against the seller's offer. legacyProjectWording = the 1.2.4.4 line, for the before/after
-// measurement only (target-accounts.js, #action=measure-research) - removed with that tool in 1.2.4.6.
+// 1.2.4.5 (R7): projects judged against the seller's offer, not against any one technology.
 // 1.2.4.5 measurement (Boaz, 2026-10-16): without these the list was padded with results, AGMs and buybacks, named one
 // project four times (Holcim's Zug HQ) and took a Chicago office move for a seller in Switzerland.
 // Measurement 2: "prefer the target market" was read too strictly - Chubb's and Holcim's group-wide AI programmes dropped
@@ -1541,7 +1540,7 @@ const PROJECTS_BRIEFING_LINE =
   "programme, an investment, a change or a problem the company has made public - each with its date. Judge this against the " +
   "seller's offer above, not against any one technology.\n" +
   PROJECT_RULES;
-function buildWebResearchSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries, legacyProjectWording = false }) {
+function buildWebResearchSystemPrompt({ companyContext, idealCustomerProfile, outputLanguage, targetCountries }) {
   const home = (targetCountries && targetCountries[0]) || "the target country";
   return (
     "You are a B2B account researcher. Use web search to find current, PUBLICLY AVAILABLE facts about the company you are " +
@@ -1554,9 +1553,7 @@ function buildWebResearchSystemPrompt({ companyContext, idealCustomerProfile, ou
     "Size and structure: employees, revenue (say the year), headquarters, ownership, and its local entity in " + home + " if relevant.\n" +
     "Official registry: legal name, registry number and address, if you found the official register entry.\n" +
     "Website: the official website address.\n" +
-    (legacyProjectWording
-      ? "Recent initiatives and news: up to five items from roughly the last two years that could matter to the seller, each with its date.\n"
-      : PROJECTS_BRIEFING_LINE) +
+    PROJECTS_BRIEFING_LINE +
     "Fit and gaps: one or two sentences on how relevant this company looks for the seller, and what you could not verify.\n" +
     "Then, as the very last line, write DATA: followed by ONE line of JSON with exactly these keys, using null for anything you " +
     "did not find (numbers as plain numbers without units or separators): " +

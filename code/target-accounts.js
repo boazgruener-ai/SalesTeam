@@ -6372,110 +6372,6 @@ async function runAutoArbitration() {
 
 document.getElementById("auto-findings-run-btn").addEventListener("click", runAutoArbitration);
 
-// ---- 1.2.4.5 TEMPORARY: measure the research wording (projects design 6.3, R7.3) - removed in 1.2.4.6 ----
-// Each account is researched three times for its projects only: A before (your Setup, the 1.2.4.4 wording), A after
-// (your Setup, the new wording) and B after (seller B's offer and ideal customer, the new wording). Nothing is written
-// to the accounts. Each finished run is kept in this browser (localStorage) at once, so a reload loses nothing.
-const MEASURE_RUNS = [
-  { id: "A-before", legacy: true, sellerB: false, topic: "recent initiatives and news" },
-  { id: "A-after", legacy: false, sellerB: false, topic: "recent projects and news" },
-  { id: "B-after", legacy: false, sellerB: true, topic: "recent projects and news" },
-];
-const MEASURE_STORE_KEY = "salesteam-measure-research";
-let measureRows = [];
-
-function loadMeasureRows() {
-  try { measureRows = JSON.parse(localStorage.getItem(MEASURE_STORE_KEY) || "[]"); } catch { measureRows = []; }
-}
-function saveMeasureRows() {
-  try { localStorage.setItem(MEASURE_STORE_KEY, JSON.stringify(measureRows)); } catch { /* kept in this window only */ }
-}
-
-function renderMeasureResults() {
-  const table = document.getElementById("measure-results");
-  table.innerHTML = "";
-  if (!measureRows.length) return;
-  const head = table.insertRow();
-  for (const h of ["Account", "Run", "Projects", "Names", "US$"]) {
-    const th = document.createElement("th");
-    th.textContent = h;
-    head.appendChild(th);
-  }
-  for (const r of measureRows) {
-    const tr = table.insertRow();
-    for (const v of [r.account, r.run, r.error ? "error" : r.count, r.error || r.names, r.usd == null ? "" : r.usd.toFixed(3)]) {
-      tr.insertCell().textContent = v == null ? "" : String(v);
-    }
-  }
-  document.getElementById("measure-download-btn").disabled = false;
-}
-
-function openMeasureResearchDialog() {
-  loadMeasureRows();
-  renderMeasureResults();
-  const done = measureRows.length;
-  document.getElementById("measure-status").textContent = done ? `${done} run${done === 1 ? "" : "s"} from before are shown below. Run again to start over.` : "";
-  document.getElementById("measure-research-dialog").showModal();
-}
-
-document.getElementById("measure-run-btn").addEventListener("click", async () => {
-  const names = document.getElementById("measure-accounts").value.split("\n").map((s) => s.trim()).filter(Boolean);
-  const byKey = new Map(workbook.companies.map((c) => [normalizeCompanyName(c.company), c]));
-  const missing = names.filter((n) => !byKey.has(normalizeCompanyName(n)));
-  const status = document.getElementById("measure-status");
-  if (missing.length) { status.textContent = `Not in your list: ${missing.join(", ")}. Check the spelling.`; return; }
-  const runBtn = document.getElementById("measure-run-btn");
-  runBtn.disabled = true;
-  measureRows = [];
-  saveMeasureRows();
-  renderMeasureResults();
-  try {
-    const apiKey = sanitizeApiKey((await getAnthropicApiKey()) || "");
-    const config = await getTargetUniverseConfig();
-    const base = {
-      apiKey,
-      outputLanguage: currentSettingsCache.outputLanguage,
-      targetCountries: config.countries || [],
-    };
-    const total = names.length * MEASURE_RUNS.length;
-    for (const name of names) {
-      const company = byKey.get(normalizeCompanyName(name));
-      for (const run of MEASURE_RUNS) {
-        status.textContent = `Run ${measureRows.length + 1} of ${total}: ${company.company} - ${run.id}…`;
-        const settings = {
-          ...base,
-          legacyProjectWording: run.legacy,
-          companyContext: run.sellerB ? document.getElementById("measure-seller-b").value : currentSettingsCache.companyContext,
-          idealCustomerProfile: run.sellerB ? document.getElementById("measure-icp-b").value : currentSettingsCache.idealCustomerProfile,
-        };
-        try {
-          const result = await researchAccountOnWeb(company, settings, { onlyTopics: [run.topic] });
-          const items = (result.data && Array.isArray(result.data.initiatives)) ? result.data.initiatives : [];
-          measureRows.push({
-            account: company.company, run: run.id, count: items.length,
-            names: items.map((i) => i && i.name).filter(Boolean).join("; "), usd: result.costUsd ?? null,
-          });
-        } catch (err) {
-          measureRows.push({ account: company.company, run: run.id, error: err.message });
-        }
-        saveMeasureRows();
-        renderMeasureResults();
-      }
-    }
-    const usd = measureRows.reduce((sum, r) => sum + (r.usd || 0), 0);
-    status.textContent = `Done - ${measureRows.length} runs, about US$${usd.toFixed(2)}. Download the results and send them to Claude.`;
-  } catch (err) {
-    status.textContent = `Stopped: ${err.message}`;
-  } finally {
-    runBtn.disabled = false;
-  }
-});
-
-document.getElementById("measure-download-btn").addEventListener("click", () => {
-  const csv = toCsv(["Account", "Run", "Projects", "Names", "US$", "Error"],
-    measureRows.map((r) => [r.account, r.run, r.error ? "" : r.count, r.names || "", r.usd == null ? "" : r.usd.toFixed(3), r.error || ""]));
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `SalesTeam-research-measurement-${exportStamp()}.csv`);
-});
 document.getElementById("auto-findings-undo-btn").addEventListener("click", async () => {
   const restored = await undoLastBulkExtrasChange("webFindings");
   // Undo puts the findings back, so the dialog goes back to offering to write them.
@@ -8231,8 +8127,6 @@ const ACTION_DIALOG_IDS = {
   "web-discovery": "web-discovery-dialog",
   // 1.2.4.3: no longer in the menu - opened from Settings > How to handle research findings.
   "auto-findings": "auto-findings-dialog",
-  // 1.2.4.5 TEMPORARY: the research wording measurement - removed in 1.2.4.6.
-  "measure-research": "measure-research-dialog",
 };
 // 1.2.3 step 2 (design 7.3): one Import… and one Export…. The old action names still open them, with their format
 // (and what) chosen - a link or an open tab from before keeps working.
@@ -8276,7 +8170,6 @@ async function openActionFromHash() {
   if (action === "web-lane") { openWebLaneDialog(); return; }
   if (action === "web-discovery") { openWebDiscoveryDialog(); return; }
   if (action === "auto-findings") { openAutoFindingsDialog(); return; }
-  if (action === "measure-research") { openMeasureResearchDialog(); return; }
   if (action === "find-duplicates") { renderFindDuplicates().then(() => document.getElementById(dialogId).showModal()); return; }
   document.getElementById(dialogId).showModal();
 }

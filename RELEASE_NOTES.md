@@ -1,3 +1,51 @@
+# SalesTeam — v1.2.4.6
+
+## Projects instead of initiatives, and research that fits what you sell (builds 1.2.4.2-1.2.4.5)
+
+- **Projects** - what an account is doing, and why it may need you, is now called a project everywhere: on the
+  account page, in the Target Accounts list ("Top projects"), in the Setup, in research messages, in Decisions, in the
+  backup and in Help. Nothing you stored changes; it is only the name.
+- **Any stage, or only these stages** - the Setup step "Which projects matter to you?" (also in Settings → Change
+  Settings) starts with **Any stage**: every project counts. Choose **Only these stages** to tick the adoption stages
+  where what you sell helps - Proof of concept to Tech native, as before - and put the most important first.
+- **Research that fits what you sell** - the web research looks for projects where your offer could help, judged
+  against "What you sell" in your Setup, not against one technology. An office-furniture seller now gets office moves
+  and fit-outs; a software seller gets software projects. Results, general meetings, dividends and share buybacks are
+  no longer listed as projects, one project is no longer listed several times, and a project limited to a country
+  outside your target market is left out. Group-wide projects still count.
+- **Measured** - the same 6 accounts were researched before and after the change, for a software seller and for an
+  office-furniture seller, in three rounds (about US$0.085 per research). Items that were not real projects fell from
+  about 8 to about 1 per round; the office-furniture seller got office moves and fit-outs and no AI projects;
+  group-wide projects (Holcim, Chubb) were kept; a project only in another country (Richemont Manhattan) was left out.
+- **No AI-specific names** - customer fields are named for what they are: Investment, Adoption Fit Score, Use-case Fit
+  Score, Portfolio Profile. The Activity Log, the team log and the backup files use the same names instead of "Ai
+  maturity fit score".
+- **Help** - new entry "What are projects and adoption stages?".
+
+## Export and Import, simpler (build 1.2.4.3)
+
+- **One Excel file for everything** - Export… now saves a **SalesTeam Excel** workbook by default: accounts, their
+  contacts and their projects in one file, with your edits. Import… reads it back ("SalesTeam Excel - a file saved with
+  Export…"). HubSpot, Salesforce and Microsoft Dynamics stay as they were and always write the accounts and the
+  contacts file. The Accounts / Contacts question is gone, and so is SalesTeam's own CSV export; an older SalesTeam CSV
+  can still be imported.
+- **New column names, old ones still read** - files are written with Projects, Project ID, Project Name and Top
+  Projects; Import still reads files with the old Initiatives names.
+- **All or only the filtered** - Export… asks whenever the table shows fewer rows than there are, also when only the
+  Group or Assigned picker narrows it.
+- **Leads export** - Export All and Export Filtered on the Leads Dashboard are one **Export… (CSV)** that asks.
+- **Export… and Import… open at once** from the menu.
+- **Resolving web findings by rule** moved from the Target Accounts menu to Settings → Change Settings → How to handle
+  research findings → "Apply the rules to the open findings…".
+- **Top projects** - when it is empty, the account's first three projects are shown.
+
+## Customer Voice on leads, and smaller fixes (builds 1.2.4.1, 1.2.4.4)
+
+- **Customer Voice on a lead's page** - next to the Sales Mentor: the author of the post plays the buyer (for a job
+  post, the hiring manager), so you can try out a message before sending it. The conversation is yours only.
+- **Fixes** - space below the chat boxes on account and contact pages; the lead's Status and Priority in one compact
+  size; a click on a row of the Leads Dashboard opens the lead; the lead page is as wide as the account pages.
+
 # SalesTeam — v1.2.4
 
 ## Notes on accounts, contacts and leads (builds 1.2.3.10-1.2.3.17)
