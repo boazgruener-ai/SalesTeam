@@ -1,3 +1,41 @@
+# SalesTeam — v1.2.4.11
+
+## Leads where you work: on account and contact pages, and in the export (builds 1.2.4.7-1.2.4.9)
+
+- **Leads on the account page** - a new **Leads** section under Contacts lists every post and job listing from that
+  company, newest first, with date, source, author, title, the start of the text, status and priority. Click a row to
+  open the lead.
+- **Leads on the contact page** - "Posts by this contact" is now **Leads (Posts) by this contact**, the same table.
+- **The lead page** - headed **Lead**, with the lead's account at the top ("Account: Novartis", a link to the account
+  page when it is one of your target accounts). A lead opened from an account or contact page opens in the same tab,
+  and you go back to that page from the path line at the top.
+- **Leads in the Excel export** - the SalesTeam Excel workbook has a fourth sheet, **Leads**: the leads of the
+  exported accounts, linked to them by Company ID. Import… leaves this sheet alone - leads come from scans, not files.
+
+## Find your way: page names and a path at the top (builds 1.2.4.9-1.2.4.11)
+
+- **Each page says what it is** - the heading and the browser tab name the page you are on - "Account", "Contact",
+  "Lead", "SalesTeam Settings → Automation" - not the list you came from. A page opened from the menu gives the tab its
+  own title.
+- **A path under the heading** - for example "Target Accounts Dashboard › Novartis › Rui Costa". Click any part of it
+  to go back to that level. It replaces the "Back to …" links.
+- **Straight to the page** - going back to an account or contact no longer shows the accounts list for a few seconds
+  first, and lines that belong to the list (its description, "LinkedIn company IDs resolved") are no longer shown on
+  account and contact pages.
+
+## Scanner: this scan's leads first (build 1.2.4.8)
+
+- **What this scan found** - above the results: "1 new lead found in this scan, all leads in SalesTeam (209)". The
+  switch **Show only this scan's leads** is on whenever the Scanner opens; untick it to see every lead. **Export Leads
+  (CSV)** exports the leads listed.
+
+## Smaller fixes (builds 1.2.4.9-1.2.4.10)
+
+- **No error after a reload** - reloading SalesTeam while a LinkedIn search tab from a scan was still open no longer
+  leaves an error on the extension card.
+- **Leads Dashboard in the menu** works from a lead's page again (it did nothing there).
+- **Follow-up due** - its Save button stays inside the card.
+
 # SalesTeam — v1.2.4.6
 
 ## Projects instead of initiatives, and research that fits what you sell (builds 1.2.4.2-1.2.4.5)
