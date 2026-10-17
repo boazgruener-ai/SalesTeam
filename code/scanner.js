@@ -16,6 +16,7 @@
 // shows its progress, lists results, and provides Export/Import/backup plus
 // the entry points to the Dashboard, Advisors, Settings, and Help pages.
 import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
 import { guardBatchStart, SCAN_BATCH_LABEL } from "./batch-jobs.js";
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -26,6 +27,7 @@ import {
   getJobTopics,
   saveJobTopics,
   getResults,
+  getLastScanStartedAt,
   getTimeframe,
   saveTimeframe,
   saveAuthorTitles,
@@ -696,6 +698,7 @@ const pageNativeContentEl = document.getElementById("page-native-content");
 const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
+mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
@@ -760,6 +763,7 @@ function hideEmbeddedPage() {
   embeddedPageWrapEl.hidden = true;
   embeddedPageFrameEl.src = "about:blank";
   pageNativeContentEl.hidden = false;
+  restoreOwnTitle();
 }
 
 // Pages shown inside this one can ask it to close them (e.g. the "Back to menu" link of Change Settings).
@@ -1679,14 +1683,28 @@ function renderResultsStats(results) {
     (filteredOut > 0 ? ` - ${filteredOut} more filtered out by your negative topics or location filter` : "") + ".";
 }
 
-function renderResults(sortedResults) {
+// 1.2.4.8 (Boaz): the list shows only the last scan's new leads unless "Show only this scan's leads" is unticked (on
+// whenever the page opens), under a summary line "n new leads found in this scan, all leads in SalesTeam (N)".
+const onlyThisScanCb = document.getElementById("only-this-scan-cb");
+let allResults = []; // every saved lead, isNew = first found by the last scan
+let shownResults = [];
+onlyThisScanCb.addEventListener("change", () => renderResults(allResults));
+
+function renderResults(results) {
+  allResults = results;
+  const newCount = results.filter((r) => r.isNew).length;
+  document.getElementById("results-summary").textContent = results.length === 0 ? ""
+    : `${newCount} new lead${newCount === 1 ? "" : "s"} found in this scan, all leads in SalesTeam (${results.length}).`;
+  const sortedResults = onlyThisScanCb.checked ? results.filter((r) => r.isNew) : results;
+  shownResults = sortedResults;
   resultsListEl.innerHTML = "";
   renderResultsStats(sortedResults);
 
   if (sortedResults.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = "No results yet. Run a scan to find leads.";
+    empty.textContent = results.length === 0 ? "No results yet. Run a scan to find leads."
+      : "No new leads in this scan. Untick \"Show only this scan's leads\" to see all leads.";
     resultsListEl.appendChild(empty);
     return;
   }
@@ -1706,8 +1724,11 @@ function renderResults(sortedResults) {
 }
 
 async function renderResultsFromStorage() {
-  const resultsMap = await getResults();
-  const sorted = sortResultsByRelevance(resultsMap).map((r) => ({ ...r, isNew: false }));
+  // New = first found since the last scan started (the Leads Dashboard's isNewFromLastScan), so the list stays
+  // right after the page is reopened, not only straight after SCAN_COMPLETE.
+  const [resultsMap, lastScanStartedAt] = await Promise.all([getResults(), getLastScanStartedAt()]);
+  const sorted = sortResultsByRelevance(resultsMap)
+    .map((r) => ({ ...r, isNew: lastScanStartedAt > 0 && (r.firstSeenAt || 0) >= lastScanStartedAt }));
   renderResults(sorted);
 }
 
@@ -1797,10 +1818,10 @@ document.querySelectorAll(".action-dialog-close-btn").forEach((btn) => {
 });
 
 exportCsvBtn.addEventListener("click", async () => {
-  const resultsMap = await getResults();
-  const sorted = sortResultsByRelevance(resultsMap);
+  // 1.2.4.8: the leads listed below, as the button says - this scan's only while the switch is on.
+  const sorted = shownResults;
   if (sorted.length === 0) {
-    alert("No leads to export yet - run a scan first.");
+    alert("No leads listed to export.");
     return;
   }
 

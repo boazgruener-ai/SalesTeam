@@ -11,6 +11,7 @@
 // to target-accounts.js instead (2026-09-16, reported directly: it belongs
 // next to the data it actually affects, not on a separate settings page).
 import { getApiUsage, sumDays, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
+import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
 import { askConfirm, markSaved } from "./confirm-dialog.js";
 import { leadRightsOf } from "./team-groups.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -205,6 +206,7 @@ const pageNativeContentEl = document.getElementById("page-native-content");
 const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
+mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
@@ -269,6 +271,7 @@ function hideEmbeddedPage() {
   embeddedPageWrapEl.hidden = true;
   embeddedPageFrameEl.src = "about:blank";
   pageNativeContentEl.hidden = false;
+  restoreOwnTitle();
 }
 
 // Messages from the frame this page hosts (the wizard / Change Settings).
@@ -787,6 +790,7 @@ function routeSettings() {
   const advanced = navEl?.closest("details")?.querySelector("summary")?.textContent.trim() === "Advanced tools";
   document.getElementById("settings-title").textContent = !label ? "SalesTeam Settings"
     : `${advanced ? "Advanced tools" : "SalesTeam Settings"} → ${label}`;
+  document.title = document.getElementById("settings-title").textContent; // 1.2.4.10: the tab names the Settings page
   document.getElementById("linkedin-touch-stat").hidden = activeId !== "automation-section";
   renderSellerResearchOffer();
 }

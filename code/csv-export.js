@@ -182,7 +182,7 @@ export function leadsToCsv(results) {
 }
 
 // ---- 1.2.4.3: the Excel workbook of Export… (xlsx-write.js) ----
-// The research workbook's own layout - sheets Companies, Contacts, Projects; headers Company_ID, Full_Name,
+// The research workbook's own layout - sheets Companies, Contacts, Projects (+ Leads, lead-shape.js, on export); headers Company_ID, Full_Name,
 // Top_Projects … - so Import… reads the file back (xlsx-lite.js camelCases each header into the stored field id).
 
 // Headers the workbook reader needs on Companies even when empty (xlsx-lite.js NEEDED_HEADER_ALIASES), and the

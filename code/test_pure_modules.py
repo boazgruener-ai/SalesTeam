@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "field-names.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "field-names.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js", "lead-shape.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2945,6 +2945,7 @@ def main():
     test_notes(ctx)
     test_note_log_lines(ctx)
     test_crm_notes(ctx)
+    test_leads_sheet(ctx)
 
     print()
     for f in _failures:
@@ -3110,6 +3111,30 @@ def test_note_log_lines(ctx):
     check("note log: edited on a contact names the account", e("NL({ kind: 'note', op: 'note', note: 'edited', on: 'contact', key: 'acme ag' })"), "edited a note on a contact of Acme AG")
     check("note log: deleted on a lead names the post's author", e("NL({ kind: 'note', op: 'note', note: 'deleted', on: 'lead', key: null, label: 'Anna Muster' })"), "deleted a note on the lead Anna Muster")
     check("note log: a lead not known here", e("NL({ kind: 'note', op: 'note', note: 'added', on: 'lead', key: null, label: null })"), "added a note on a lead")
+
+
+def test_leads_sheet(ctx):
+    """1.2.4.7: the Leads sheet of the SalesTeam Excel export - newest first, Company_ID from the account, both lead shapes."""
+    ctx.eval("""
+      var ls = leadsSheet([
+        { key: "p1", type: "post", author: "Anna Muster", headline: "CIO at Galenica", snippet: "We are hiring",
+          company: "Galenica", postedAt: Date.UTC(2026, 9, 1), firstSeenAt: Date.UTC(2026, 9, 2), status: "Contacted",
+          priority: 2, postUrl: "https://www.linkedin.com/feed/update/1", profileUrl: "https://www.linkedin.com/in/anna" },
+        { key: "j1", type: "job", title: "Data Engineer", company: "Galenica", location: "Bern",
+          postedAt: Date.UTC(2026, 9, 10), jobUrl: "https://www.linkedin.com/jobs/view/9" },
+      ], function (l) { return l.company === "Galenica" ? "C0001" : ""; });
+    """)
+    check("sheet name", ctx.eval("ls.name"), "Leads")
+    check("one row per lead", ctx.eval("ls.rows.length"), 2)
+    check("row width = headers", ctx.eval("ls.rows.every(function (r) { return r.length === ls.headers.length; })"), True)
+    col = lambda h: ctx.eval("ls.headers.indexOf(%r)" % h)
+    check("newest first", ctx.eval("ls.rows[0][%d]" % col("Source")), "Job Listing")
+    check("Company_ID filled", ctx.eval("ls.rows[1][%d]" % col("Company_ID")), "C0001")
+    check("ISO post date", ctx.eval("ls.rows[1][%d]" % col("Post_Date")), "2026-10-01")
+    check("job without status is New", ctx.eval("ls.rows[0][%d]" % col("Status")), "New")
+    check("priority label", ctx.eval("ls.rows[1][%d]" % col("Priority")), "P2")
+    check("post URL, not profile", ctx.eval("ls.rows[1][%d]" % col("URL")), "https://www.linkedin.com/feed/update/1")
+    check("creator URL = profile", ctx.eval("ls.rows[1][%d]" % col("Creator_URL")), "https://www.linkedin.com/in/anna")
 
 
 def test_crm_notes(ctx):

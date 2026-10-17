@@ -1155,6 +1155,17 @@ thead th.actions-col {
   letter-spacing: normal;
 }
 
+/* 1.2.4.9: the lead's account, above the title. */
+.detail-account { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+/* 1.2.4.10: the path line under the page heading (same as Target Accounts) replaces the back link. */
+#back-to-list-link[hidden] { display: none; }
+.page-breadcrumb { margin-top: 4px; font-size: 13px; color: #666; }
+.page-breadcrumb a { color: #2b5fb4; text-decoration: none; }
+.page-breadcrumb a:hover { text-decoration: underline; }
+.page-breadcrumb .crumb-sep { margin: 0 6px; }
+.detail-account .relationship-tag { margin-left: 8px; }
+.detail-account-note { font-weight: 400; color: #666; }
+
 #detail-meta {
   color: var(--gray);
   font-size: 13px;

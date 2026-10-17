@@ -360,4 +360,11 @@ async function run() {
   }).catch(() => {});
 }
 
-run();
+// 1.2.4.9: a SalesTeam Reload while this LinkedIn tab is still open (mid-scan) cuts this script off from the extension
+// - chrome.runtime becomes undefined ("Cannot read properties of undefined (reading 'sendMessage')") or throws
+// "Extension context invalidated", which showed as an error on the extension card. Nothing is lost (the scan stops
+// with the reload); end quietly.
+run().catch((err) => {
+  if (!globalThis.chrome?.runtime?.id || /context invalidated/i.test(err?.message || "")) return;
+  throw err;
+});

@@ -308,7 +308,9 @@
       <div id="page-native-content">
       <div id="page-header-bar">
         <h1><span id="page-title-text">SalesTeam Target Accounts Dashboard</span></h1>
-        <p class="page-subtitle">
+        <!-- 1.2.4.10 (Boaz): on an account or contact page the heading names the page and this path leads back up. -->
+        <nav id="page-breadcrumb" class="page-breadcrumb" aria-label="Path to this page" hidden></nav>
+        <p id="page-description" class="page-subtitle">
           The full externally-researched company and contact workbook - every account, plus its known contacts and
           projects, linked by the workbook's own IDs. Sorted by priority, flagged (⚑) when an account has an
           unreviewed post or an overdue follow-up. Click a row to open its Account or Contact view. Also drives
@@ -462,7 +464,7 @@
     </div>
 
     <div id="account-view" hidden>
-      <a href="#" id="account-back-link">&larr; Back to Target Accounts</a>
+      <a href="#" id="account-back-link" hidden>&larr; Back to Target Accounts</a>
       <div id="account-title-row">
         <h2 id="account-title"></h2>
         <span id="account-relationship-tag" class="relationship-tag" hidden></span>
@@ -537,7 +539,7 @@
     </div>
 
     <div id="contact-view" hidden>
-      <a href="#" id="contact-back-link">&larr; Back to Target Contacts</a>
+      <a href="#" id="contact-back-link" hidden>&larr; Back to Target Contacts</a>
       <div id="contact-title-row">
         <h2 id="contact-title"></h2>
         <button id="contact-actions-btn" class="kebab-btn" type="button" title="Actions">&#8942;</button>
@@ -550,7 +552,7 @@
       <section id="contact-notes" hidden></section>
 
       <section>
-        <h3 id="contact-posts-toggle">Posts by this contact</h3>
+        <h3 id="contact-posts-toggle">Leads (Posts) by this contact <span id="contact-posts-count"></span></h3>
         <div id="contact-posts-list" class="entity-activity-list"></div>
       </section>
 
@@ -798,7 +800,7 @@
     <fieldset class="io-choice">
       <legend>Format</legend>
       <!-- 1.2.4.3 (Boaz): one SalesTeam format, the Excel file, for Export and Import; a CRM always gets both files. -->
-      <label><input type="radio" name="export-format" value="xlsx" checked /> SalesTeam Excel - accounts, contacts and projects in one file (Import… reads it back)</label>
+      <label><input type="radio" name="export-format" value="xlsx" checked /> SalesTeam Excel - accounts, contacts, projects and leads in one file (Import… reads it back)</label>
       <label><input type="radio" name="export-format" value="hubspot" /> HubSpot - two files: companies and contacts</label>
       <label><input type="radio" name="export-format" value="salesforce" /> Salesforce - two files: accounts and contacts</label>
       <label><input type="radio" name="export-format" value="dynamics" /> Microsoft Dynamics - two files: accounts and contacts</label>
