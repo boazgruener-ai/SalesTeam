@@ -1440,6 +1440,14 @@ thead .actions-col {
   text-decoration: underline;
 }
 
+/* 1.2.4.10: the path line under the page heading replaces the back links. */
+#account-back-link[hidden], #contact-back-link[hidden] { display: none; }
+.page-breadcrumb { margin-top: 4px; font-size: 13px; color: var(--gray); }
+.page-breadcrumb a { color: var(--blue); text-decoration: none; }
+.page-breadcrumb a:hover { text-decoration: underline; }
+.page-breadcrumb .crumb-sep { margin: 0 6px; }
+#page-header-bar.on-detail-page #linkedin-resolve-status { display: none; }
+
 .entity-overview {
   margin: 10px 0 14px;
 }
@@ -1611,6 +1619,7 @@ thead .actions-col {
    than a separate labeled row. */
 .due-date-field {
   display: flex;
+  flex-wrap: wrap; /* 1.2.4.10 (Boaz): Save stuck out past the card's right edge in the last grid column */
   align-items: center;
   gap: 6px;
 }

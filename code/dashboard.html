@@ -155,6 +155,8 @@
       <div id="page-native-content">
       <div id="page-header-bar">
         <h1>SalesTeam Leads Dashboard</h1>
+        <!-- 1.2.4.10: on a lead's page, the path back up (replaces "Back to …"). -->
+        <nav id="page-breadcrumb" class="page-breadcrumb" aria-label="Path to this page" hidden></nav>
         <span id="prioritize-status" class="status-text"></span>
         <span id="rescore-all-status" class="status-text"></span>
         <span id="extract-companies-status" class="status-text"></span>
@@ -310,9 +312,10 @@
   </dialog>
 
   <div id="detail-view" hidden>
-    <a href="#" id="back-to-list-link">&larr; Back to all leads</a>
+    <a href="#" id="back-to-list-link" hidden>&larr; Back to all leads</a>
 
     <section id="detail-header-section">
+      <div id="detail-account" class="detail-account"></div>
       <h2 id="detail-title"></h2>
       <div id="detail-meta"></div>
       <label class="control-label">

@@ -14,6 +14,7 @@
 // experimental Resolve LinkedIn Company IDs action (6.16), both likewise
 // moved here from Settings the same day.
 import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
+import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
 import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
 import { askConfirm, askChoice, mirrorStatusToPopup, showNotice } from "./confirm-dialog.js";
 import { workbookExportSheets, toCsv } from "./csv-export.js";
@@ -144,6 +145,7 @@ import { getNotes } from "./storage.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
+import { leadTitle, leadContent, leadCreatorName, leadSourceLabel, leadDate, leadPriorityLabel, leadsSheet } from "./lead-shape.js";
 
 const emptyStateEl = document.getElementById("empty-state");
 const controlsEl = document.getElementById("explorer-controls");
@@ -389,6 +391,7 @@ const pageNativeContentEl = document.getElementById("page-native-content");
 const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
+mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19): "The Advisors, Activity Log
@@ -464,6 +467,7 @@ function hideEmbeddedPage() {
   embeddedPageWrapEl.hidden = true;
   embeddedPageFrameEl.src = "about:blank";
   pageNativeContentEl.hidden = false;
+  restoreOwnTitle();
 }
 
 // Pages shown inside this one can ask it to close them (e.g. the "Back to menu" link of Change Settings).
@@ -1513,12 +1517,18 @@ function buildSubtable(title, rows, columns, { rowClick } = {}) {
     chevron.textContent = body.hidden ? "▸" : "▾";
   });
 
+  body.appendChild(buildSubtableBody(rows, columns, { rowClick }));
+  return section;
+}
+
+// The table of a subtable (or "None on record."), without the collapsible heading - the contact page's Leads list
+// has its own section heading.
+function buildSubtableBody(rows, columns, { rowClick, emptyText = "None on record." } = {}) {
   if (rows.length === 0) {
     const empty = document.createElement("p");
     empty.className = "detail-empty-note";
-    empty.textContent = "None on record.";
-    body.appendChild(empty);
-    return section;
+    empty.textContent = emptyText;
+    return empty;
   }
 
   const table = document.createElement("table");
@@ -1564,8 +1574,36 @@ function buildSubtable(title, rows, columns, { rowClick } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "detail-subtable-wrap";
   wrap.appendChild(table);
-  body.appendChild(wrap);
-  return section;
+  return wrap;
+}
+
+// 1.2.4.7 (Boaz): the leads on the account and contact pages - newest first, a row opens the lead on the Leads
+// Dashboard. The contact page leaves out Creator (always the contact itself).
+const LEAD_COLUMNS = [
+  { label: "Date", field: "date" },
+  { label: "Source", field: "source" },
+  { label: "Creator", field: "creator" },
+  { label: "Title", field: "title" },
+  { label: "Content", field: "content" },
+  { label: "Status", field: "status" },
+  { label: "Priority", field: "priority" },
+];
+
+function leadSubtableRows(leads) {
+  return [...leads].sort((a, b) => leadDate(b) - leadDate(a)).map((lead) => {
+    const content = leadContent(lead);
+    const ms = leadDate(lead);
+    return {
+      key: lead.key,
+      date: ms ? new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "",
+      source: leadSourceLabel(lead),
+      creator: leadCreatorName(lead),
+      title: leadTitle(lead),
+      content: content.length > 140 ? `${content.slice(0, 140)}…` : content,
+      status: lead.status || "New",
+      priority: leadPriorityLabel(lead),
+    };
+  });
 }
 
 function buildDetailContent(company) {
@@ -1590,6 +1628,10 @@ function buildDetailContent(company) {
     // is always computable from what's already on the row.
     rowClick: (contact) => openContact(contactKeyFor(contact.company, contact.fullName)),
   }));
+
+  const companyKey = normalizeCompanyName(company.company);
+  const leads = allLeads.filter((l) => normalizeCompanyName(l.company) === companyKey && teamAccounts.canSeeLead(l));
+  wrap.appendChild(buildSubtable("Leads", leadSubtableRows(leads), LEAD_COLUMNS, { rowClick: (row) => openLeadInDashboard(row.key, { view: "account", key: companyKey, name: company.company }) }));
 
   const initiatives = workbook.aiInitiatives.filter((i) => i.companyId === company.companyId);
   wrap.appendChild(buildSubtable("Projects", initiatives, INITIATIVE_COLUMNS));
@@ -3468,13 +3510,55 @@ contactsTableWrapEl.addEventListener("scroll", () => {
 // glance. Kept in sync with the button labels in sidepanel.html.
 const PAGE_TITLES = { accounts: "Target Accounts Dashboard", contacts: "Target Contacts Dashboard" };
 
+// 1.2.4.10 (Boaz): the heading names the page that is shown - "Account", "Contact" - not the list it was opened from,
+// with the path under it ("Target Accounts Dashboard › Novartis"); every level but the last is a link. crumbs: [{label,
+// hash}] - hash "" is the accounts list. No crumbs = a list: the page's description shows instead.
+function setPageHeading(title, crumbs = []) {
+  document.getElementById("page-title-text").textContent = title;
+  const last = crumbs[crumbs.length - 1];
+  document.title = last ? `SalesTeam ${title} - ${last.label}` : title;
+  const nav = document.getElementById("page-breadcrumb");
+  nav.innerHTML = "";
+  crumbs.forEach((c, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "crumb-sep";
+      sep.textContent = "›";
+      nav.appendChild(sep);
+    }
+    if (i < crumbs.length - 1) {
+      const a = document.createElement("a");
+      a.href = `#${c.hash}`;
+      a.textContent = c.label;
+      a.addEventListener("click", (e) => { e.preventDefault(); location.hash = c.hash; });
+      nav.appendChild(a);
+    } else {
+      const span = document.createElement("span");
+      span.textContent = c.label;
+      nav.appendChild(span);
+    }
+  });
+  nav.hidden = crumbs.length === 0;
+  document.getElementById("page-description").hidden = crumbs.length > 0;
+  // The list's own lines (description, "LinkedIn company IDs resolved: …") do not belong on an account or contact page.
+  document.getElementById("page-header-bar").classList.toggle("on-detail-page", crumbs.length > 0);
+}
+
+function contactCrumbs(contact) {
+  const accountName = contactBackAccountKey
+    ? (workbook.companies || []).find((c) => normalizeCompanyName(c.company) === contactBackAccountKey)?.company
+    : null;
+  return accountName
+    ? [{ label: PAGE_TITLES.accounts, hash: "" }, { label: accountName, hash: `account=${encodeURIComponent(contactBackAccountKey)}` }, { label: contact.fullName || "Contact" }]
+    : [{ label: PAGE_TITLES.contacts, hash: "contacts" }, { label: contact.fullName || "Contact" }];
+}
+
 function showListTab(tab) {
   listViewEl.hidden = tab !== "accounts";
   contactsListViewEl.hidden = tab !== "contacts";
   tabAccountsEl.classList.toggle("active", tab === "accounts");
   tabContactsEl.classList.toggle("active", tab === "contacts");
-  document.getElementById("page-title-text").textContent = `SalesTeam ${PAGE_TITLES[tab]}`;
-  document.title = `SalesTeam ${PAGE_TITLES[tab]}`;
+  setPageHeading(`SalesTeam ${PAGE_TITLES[tab]}`);
 }
 
 searchInputEl.addEventListener("input", () => {
@@ -5508,8 +5592,13 @@ function renderActivityList(el, entries) {
   }
 }
 
-function openLeadInDashboard(key) {
-  chrome.tabs.create({ url: chrome.runtime.getURL(`dashboard.html#lead=${encodeURIComponent(key)}`) });
+// 1.2.4.9 (Boaz): from an account or contact page the lead opens in this tab, and its back link returns here
+// ("Back to Galenica") - not to the Leads Dashboard. Leaving with unsaved changes still asks first (beforeunload).
+function openLeadInDashboard(key, from = null) {
+  const back = from ? `&from=${encodeURIComponent(`${from.view}:${from.key}`)}&fromName=${encodeURIComponent(from.name || "")}` : "";
+  const url = chrome.runtime.getURL(`dashboard.html#lead=${encodeURIComponent(key)}${back}`);
+  if (from) location.href = url;
+  else chrome.tabs.create({ url });
 }
 
 document.getElementById("open-onboarding-link").addEventListener("click", (event) => {
@@ -7323,23 +7412,12 @@ async function renderContactView(contactKey, { startInEdit = false } = {}) {
 
   const postsEl = document.getElementById("contact-posts-list");
   postsEl.innerHTML = "";
-  if (contactLeads.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "detail-empty-note";
-    empty.textContent = "No scanned posts from this contact yet.";
-    postsEl.appendChild(empty);
-  } else {
-    for (const lead of contactLeads) {
-      const row = document.createElement("div");
-      row.className = "entity-activity-row";
-      const link = document.createElement("a");
-      link.href = "#";
-      link.textContent = `${(lead.snippet || "").slice(0, 100) || "(post)"} — ${lead.status}`;
-      link.addEventListener("click", (e) => { e.preventDefault(); openLeadInDashboard(lead.key); });
-      row.appendChild(link);
-      postsEl.appendChild(row);
-    }
-  }
+  // 1.2.4.7: the same Leads table as the account page (was a list of post snippets).
+  document.getElementById("contact-posts-count").textContent = `(${contactLeads.length})`;
+  postsEl.appendChild(buildSubtableBody(leadSubtableRows(contactLeads), LEAD_COLUMNS.filter((c) => c.field !== "creator"), {
+    rowClick: (row) => openLeadInDashboard(row.key, { view: "contact", key: contactKey, name: contact.fullName }),
+    emptyText: "No scanned posts from this contact yet.",
+  }));
 
   // Gap, not a bug: the Sources sheet only joins by companyId, not
   // contactId (confirmed against the real workbook) - there's no richer
@@ -7424,17 +7502,23 @@ async function route() {
     document.getElementById("no-access-text").textContent =
       view === "account" ? "This account is not in your groups." : "This contact's account is not in your groups.";
     showView("noAccess");
+    setPageHeading(view === "account" ? "Account" : "Contact", view === "account"
+      ? [{ label: PAGE_TITLES.accounts, hash: "" }, { label: "Not in your groups" }]
+      : [{ label: PAGE_TITLES.contacts, hash: "contacts" }, { label: "Not in your groups" }]);
   } else if (view === "account" && key) {
     showView("account");
     const startInEdit = pendingAccountEditKey === key;
     pendingAccountEditKey = null;
     accountClaimGuard.show(key);
+    setPageHeading("Account", [{ label: PAGE_TITLES.accounts, hash: "" },
+      { label: workbook.companies.find((c) => normalizeCompanyName(c.company) === key)?.company || "Account" }]);
     await renderAccountView(key, { startInEdit });
   } else if (view === "contact" && key) {
     showView("contact");
     const startInEdit = pendingContactEditKey === key;
     pendingContactEditKey = null;
     await renderContactView(key, { startInEdit });
+    setPageHeading("Contact", contactCrumbs(currentContactRow()));
     contactClaimGuard.show(normalizeCompanyName(currentContactRow().company || "") || null);
   } else if (view === "contactsList") {
     showView("contactsList");
@@ -7672,10 +7756,14 @@ async function runExport(format, what) {
     const sheets = workbookExportSheets({ companies, contacts, projects }, (kind, row) => (kind === "account"
       ? accountExtras[normalizeCompanyName(row.company)]?.overrides
       : contactExtras[contactKeyFor(row.company, row.fullName)]?.overrides) || null);
+    // 1.2.4.7 (Boaz): a Leads sheet - the leads of the exported accounts, tied to them by Company_ID.
+    const idOfKey = new Map(companies.map((c) => [normalizeCompanyName(c.company), c.companyId]));
+    const leads = allLeads.filter((l) => idOfKey.has(normalizeCompanyName(l.company || "")) && teamAccounts.canSeeLead(l));
+    sheets.push(leadsSheet(leads, (l) => idOfKey.get(normalizeCompanyName(l.company))));
     const blob = new Blob([await (await createZip(xlsxParts(sheets))).arrayBuffer()],
       { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     files.push({ name: `SalesTeam-workbook-${stamp}.xlsx`, blob,
-      text: `${n(companies.length, "account")}, ${n(contacts.length, "contact")} and ${n(projects.length, "project")}` });
+      text: `${n(companies.length, "account")}, ${n(contacts.length, "contact")}, ${n(projects.length, "project")} and ${n(leads.length, "lead")}` });
   }
   const where = await saveExportFiles(files);
   const list = files.map((f) => `${f.text}: ${f.name}`).join("\n");
@@ -8176,6 +8264,18 @@ async function openActionFromHash() {
 
 async function init() {
   document.getElementById("version-text").textContent = `v${chrome.runtime.getManifest().version}`;
+  // 1.2.4.10 (Boaz: "Back to Novartis" showed the Accounts Dashboard for ~5 s first): opened on an account or contact
+  // page, the list is never shown while the workbook loads - only the page's heading, until route() draws the page.
+  {
+    const first = parseHash();
+    if (first.view === "account" || first.view === "contact") {
+      listViewEl.hidden = true;
+      setPageHeading(first.view === "account" ? "Account" : "Contact", [
+        first.view === "account" ? { label: PAGE_TITLES.accounts, hash: "" } : { label: PAGE_TITLES.contacts, hash: "contacts" },
+        { label: "Loading…" },
+      ]);
+    }
+  }
   // Same gate as the side panel's own onboarding-required banner - a
   // Discovery scan (PRD 6.20, not yet built) will need this page too, so
   // flag the gap here as well rather than only where a scan is triggered.

@@ -1071,6 +1071,8 @@ section {
 }
 
 .results-stats { margin: 4px 0 10px; font-size: 12px; color: #444; }
+.results-summary { margin: 4px 0 6px; font-weight: 600; }
+.results-only-new { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 
 /* Same fix as target-accounts.css: .action-dialog-actions button:first-child paints the primary
    button blue unconditionally, so a DISABLED one still looks fully pressable and invites a second

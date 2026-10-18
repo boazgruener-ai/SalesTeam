@@ -87,7 +87,7 @@ const QA = [
     category: "Setup & Target Accounts",
     question: "How do I export my accounts or contacts to Excel?",
     keywords: ["export", "csv", "excel", "spreadsheet", "download accounts", "download contacts", "accounts list", "contacts list", "crm", "salesforce", "hubspot", "dynamics"],
-    answer: 'Use "Export…" in the Target Accounts Dashboard menu (or in the Target Contacts Dashboard menu for contacts). Choose the format: SalesTeam Excel - one Excel file with a sheet each for the accounts, their contacts and their projects, which "Import…" reads back after you edit it - or HubSpot, Salesforce or Microsoft Dynamics, each with its own column names, as two files: the accounts (companies) and their contacts. If a search or filter is on, SalesTeam asks whether to export all accounts or only the filtered ones. For HubSpot, Salesforce and Microsoft Dynamics, import the accounts (companies) file first, then the contacts file.',
+    answer: 'Use "Export…" in the Target Accounts Dashboard menu (or in the Target Contacts Dashboard menu for contacts). Choose the format: SalesTeam Excel - one Excel file with a sheet each for the accounts, their contacts, their projects and their leads, which "Import…" reads back after you edit it - or HubSpot, Salesforce or Microsoft Dynamics, each with its own column names, as two files: the accounts (companies) and their contacts. If a search or filter is on, SalesTeam asks whether to export all accounts or only the filtered ones. For HubSpot, Salesforce and Microsoft Dynamics, import the accounts (companies) file first, then the contacts file.',
   },
   {
     id: "import-accounts-contacts",

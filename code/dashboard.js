@@ -4,7 +4,9 @@
 // dialog (mass status changes with a confirmation step and one-level undo)
 // and the "Prioritize Unscored Leads" action.
 import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
+import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
 import { toCsv, compactCsvColumns } from "./csv-export.js";
+import { leadTitle, leadContent, leadCreatorName, leadCompany, leadCreatorUrl, leadSourceLabel, leadDate, leadPriorityLabel } from "./lead-shape.js";
 import { confirmIfCostly } from "./api-usage.js";
 import { guardBatchStart, withBatch } from "./batch-jobs.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -102,6 +104,7 @@ const pageNativeContentEl = document.getElementById("page-native-content");
 const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
+mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
@@ -166,6 +169,7 @@ function hideEmbeddedPage() {
   embeddedPageWrapEl.hidden = true;
   embeddedPageFrameEl.src = "about:blank";
   pageNativeContentEl.hidden = false;
+  restoreOwnTitle();
 }
 
 // Pages shown inside this one can ask it to close them (e.g. the "Back to menu" link of Change Settings).
@@ -179,7 +183,12 @@ document.getElementById("app-nav-brand-name").addEventListener("click", hideEmbe
 // on this button for the full reasoning: a findable, self-referential way
 // back to Leads Dashboard's own real content, matching target-accounts.js's
 // own "Target Accounts" self tab.
-document.getElementById("open-posts-dashboard-self-btn").addEventListener("click", hideEmbeddedPage);
+// 1.2.4.9 (Boaz): on a lead's own page the menu's Leads Dashboard did nothing - it only closed an embedded page. It now
+// also goes back to the list.
+document.getElementById("open-posts-dashboard-self-btn").addEventListener("click", () => {
+  hideEmbeddedPage();
+  if (parseHash().lead) location.hash = "";
+});
 
 if (new URLSearchParams(location.search).has("embedded")) {
   document.getElementById("app-shell").classList.add("embedded-mode");
@@ -287,6 +296,7 @@ let allLeads = [];
 // listener below instead). Drives the Creator column's "known Target
 // Contact" badge/link.
 let targetContacts = [];
+let targetCompanyKeys = new Set(); // 1.2.4.9: which lead companies are target accounts (the lead page links them)
 let lastScanStartedAt = 0;
 let messageTemplates = [];
 let valueAddOffers = [];
@@ -310,54 +320,14 @@ let voiceHistory = []; // 1.2.4.4: the lead's Customer Voice conversation
 // ---------------------------------------------------------------------
 // Lead shape helpers - a lead is either a Post (author/headline/snippet) or
 // a Job listing (title/company/location), see storage.js's mergeTopicPosts/
-// mergeJobPosts for the two shapes.
+// mergeJobPosts for the two shapes. The ones other pages need too live in
+// lead-shape.js (1.2.4.7).
 // ---------------------------------------------------------------------
-
-function leadTitle(lead) {
-  return lead.type === "job" ? (lead.title || "Untitled role") : (lead.headline || lead.author || "Untitled");
-}
-
-function leadContent(lead) {
-  return lead.type === "job"
-    ? [lead.title, lead.company, lead.location].filter(Boolean).join(" · ")
-    : (lead.snippet || "");
-}
-
-function leadCreatorName(lead) {
-  return lead.type === "job" ? (lead.company || "Unknown company") : (lead.author || "Unknown");
-}
-
-// Reported directly: the CSV export had no Company column at all for Post
-// leads (leadCreatorName above returns the author's name, not their
-// employer) - blocked a real analysis (cross-referencing new leads against
-// the Target Accounts list) that the JSON leads backup could already do via
-// its own company field. Job leads already carry company in leadCreatorName,
-// but this gives both lead types their own explicit, unambiguous column.
-function leadCompany(lead) {
-  return lead.company || "";
-}
-
-function leadCreatorUrl(lead) {
-  return lead.type === "job" ? lead.jobUrl : lead.profileUrl;
-}
-
-function leadSourceLabel(lead) {
-  if (lead.type === "job") return "Job Listing";
-  if (lead.isJobAd) return "In-Post Job Ad";
-  return "Post";
-}
 
 function leadSourceClass(lead) {
   if (lead.type === "job") return "source-joblisting";
   if (lead.isJobAd) return "source-jobad";
   return "source-post";
-}
-
-// The real (estimated) post date, not when the scanner happened to find it -
-// see storage.js's parseRelativeTimestamp. Falls back to firstSeenAt only
-// for the rare case both parsing attempts (fresh scrape and self-heal) failed.
-function leadDate(lead) {
-  return lead.postedAt || lead.firstSeenAt || 0;
 }
 
 function isNewFromLastScan(lead) {
@@ -379,10 +349,6 @@ function leadLastActivity(lead) {
 // treated as "5" so it's visually distinct from a genuinely low-priority lead.
 function leadPrioritySortValue(lead) {
   return lead.priority || 99;
-}
-
-function leadPriorityLabel(lead) {
-  return lead.priority ? `P${lead.priority}` : "";
 }
 
 function formatDateTime(epochMs) {
@@ -438,7 +404,9 @@ function applyVisibleLeads() {
 }
 
 async function loadTargetContacts() {
-  targetContacts = (await getTargetAccountsWorkbook()).contacts;
+  const workbook = await getTargetAccountsWorkbook();
+  targetContacts = workbook.contacts;
+  targetCompanyKeys = new Set((workbook.companies || []).map((c) => normalizeCompanyName(c.company || "")).filter(Boolean));
 }
 
 // ---------------------------------------------------------------------
@@ -1950,12 +1918,86 @@ function openDetail(key, focus) {
 
 function parseHash() {
   const params = new URLSearchParams(location.hash.replace(/^#/, ""));
-  return { lead: params.get("lead"), focus: params.get("focus") };
+  return { lead: params.get("lead"), focus: params.get("focus"), from: params.get("from"), fromName: params.get("fromName") };
 }
+
+// 1.2.4.9 (Boaz): the lead's own page is titled "Lead", not "SalesTeam Leads Dashboard".
+const pageHeadingEl = document.querySelector("#page-header-bar h1");
+const LIST_HEADING = pageHeadingEl.textContent;
+const LIST_DOC_TITLE = document.title;
 
 function showListView() {
   listViewEl.hidden = false;
   detailViewEl.hidden = true;
+  pageHeadingEl.textContent = LIST_HEADING;
+  document.title = LIST_DOC_TITLE;
+  document.getElementById("page-breadcrumb").hidden = true;
+}
+
+// 1.2.4.10 (Boaz): the path under the heading - "Target Accounts Dashboard › Novartis › Rui Costa" when the lead was
+// opened from an account page, "Leads Dashboard › Rui Costa" otherwise. Every level but the last is a link.
+function paintBreadcrumb(lead) {
+  const { from, fromName } = parseHash();
+  const m = from && /^(account|contact):(.+)$/.exec(from);
+  const page = (hash) => chrome.runtime.getURL(`target-accounts.html${hash ? `#${hash}` : ""}`);
+  const crumbs = !m ? [{ label: "Leads Dashboard", hash: "" }]
+    : m[1] === "account"
+      ? [{ label: "Target Accounts Dashboard", href: page("") }, { label: fromName || lead.company || "Account", href: page(`account=${encodeURIComponent(m[2])}`) }]
+      : [{ label: "Target Contacts Dashboard", href: page("contacts") }, { label: fromName || "Contact", href: page(`contact=${encodeURIComponent(m[2])}`) }];
+  crumbs.push({ label: leadCreatorName(lead) });
+  const nav = document.getElementById("page-breadcrumb");
+  nav.innerHTML = "";
+  crumbs.forEach((c, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "crumb-sep";
+      sep.textContent = "›";
+      nav.appendChild(sep);
+    }
+    if (i === crumbs.length - 1) { nav.append(c.label); return; }
+    const a = document.createElement("a");
+    a.href = c.href || "#";
+    a.textContent = c.label;
+    if (c.href === undefined) a.addEventListener("click", (e) => { e.preventDefault(); location.hash = c.hash; });
+    nav.appendChild(a);
+  });
+  nav.hidden = false;
+}
+
+// The account the lead belongs to, at the top of the lead page - a link to the account page when it is a target account.
+function paintDetailAccount(lead) {
+  const el = document.getElementById("detail-account");
+  el.innerHTML = "";
+  el.append("Account: ");
+  const key = lead.company ? normalizeCompanyName(lead.company) : "";
+  if (!lead.company) {
+    el.append("unknown");
+  } else if (targetCompanyKeys.has(key)) {
+    const a = document.createElement("a");
+    a.href = chrome.runtime.getURL(`target-accounts.html#account=${encodeURIComponent(key)}`);
+    a.textContent = lead.company;
+    a.title = "Open the account page";
+    el.appendChild(a);
+  } else {
+    el.append(lead.company);
+    const note = document.createElement("span");
+    note.className = "detail-account-note";
+    note.textContent = " (not in Target Accounts)";
+    el.appendChild(note);
+  }
+  const tagText = lead.company ? relationshipTagText(relationshipOf(relationshipMatcher, { name: lead.company })) : "";
+  if (tagText) {
+    const tag = document.createElement("span");
+    tag.className = "relationship-tag";
+    tag.textContent = tagText;
+    el.appendChild(tag);
+  }
+}
+
+// Back link: to the account or contact page the lead was opened from, else to the list.
+function paintBackLink() {
+  const { from, fromName } = parseHash();
+  document.getElementById("back-to-list-link").textContent = from ? `← Back to ${fromName || (from.startsWith("contact:") ? "the contact" : "the account")}` : "← Back to all leads";
 }
 
 function renderDetail(lead) {
@@ -1968,6 +2010,11 @@ function renderDetail(lead) {
   });
 
   document.getElementById("detail-title").textContent = leadTitle(lead);
+  pageHeadingEl.textContent = "Lead";
+  document.title = `SalesTeam Lead - ${lead.company || leadCreatorName(lead)}`;
+  paintDetailAccount(lead);
+  paintBackLink();
+  paintBreadcrumb(lead);
   document.getElementById("detail-meta").textContent =
     `${leadSourceLabel(lead)} · ${leadCreatorName(lead)} · found ${formatDateTime(lead.firstSeenAt)}`;
 
@@ -2123,7 +2170,10 @@ function route() {
 
 document.getElementById("back-to-list-link").addEventListener("click", (event) => {
   event.preventDefault();
-  location.hash = "";
+  const { from } = parseHash();
+  const m = from && /^(account|contact):(.+)$/.exec(from);
+  if (m) location.href = chrome.runtime.getURL(`target-accounts.html#${m[1]}=${encodeURIComponent(m[2])}`);
+  else location.hash = "";
 });
 
 // Status and Priority are edited with an explicit Save button (not silently on every change - reported directly,
