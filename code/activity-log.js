@@ -3,9 +3,10 @@
 // errors), newest first, with simple client-side filtering. Deliberately
 // read-only - this is the one place to investigate "what happened" after
 // something looks wrong, so nothing here can delete it. Old entries age out
-// on their own (storage.js prunes anything past the 90-day retention
+// on their own (storage.js prunes anything past the 12-month retention
 // window), not via any action on this page.
 import { getActivityLog } from "./storage.js";
+import { toCsv } from "./csv-export.js";
 import { teamLogText, fieldName, shownFields, isAutomaticEntry, entryFields } from "./team-log.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
@@ -24,6 +25,7 @@ const tableEl = document.getElementById("log-table");
 const tbodyEl = document.getElementById("log-tbody");
 
 let allEntries = [];
+let myName = null; // the team name, for the export's Who column
 
 function formatTimestamp(ms) {
   return new Date(ms).toLocaleString(undefined, {
@@ -370,6 +372,7 @@ function teamRows(teamLog, me) {
     // My own assignments, releases and member removals are only in the team log - shown under All actors too.
     ownOnlyHere: ["assign", "unassign", "remove_member"].includes(e.op),
     actor: "team",
+    op: e.op || "",
     who: e.m === me ? "You" : e.mn || "A colleague",
     timestamp: e.at,
     // 1.2.2.39: automatic work is SalesTeam's, not the member's - "SalesTeam on Annick's PC updated …".
@@ -383,6 +386,7 @@ function teamRows(teamLog, me) {
 async function loadLog() {
   const [log, stored] = await Promise.all([getActivityLog(), chrome.storage.local.get([TEAM_LOG_KEY, "teamMembership"])]);
   const me = stored.teamMembership?.memberId || null;
+  myName = stored.teamMembership?.name || null;
   const team = teamRows(stored[TEAM_LOG_KEY], me);
   document.getElementById("log-actor-team-option").hidden = !me && !team.length;
   document.getElementById("log-actor-colleagues-option").hidden = !me && !team.length;
@@ -402,6 +406,62 @@ errorsOnlyCheckbox.addEventListener("change", applyFilters);
 // for any changed key with that prefix, not one fixed key name.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && Object.keys(changes).some((k) => k.startsWith("activityLog:") || k === "activityLog" || k === TEAM_LOG_KEY)) loadLog();
+});
+
+// --------------------------------------------------------------------------
+// Export… (1.2.4.33, Boaz, audit): every entry of a date range - what "Everything" shows, whatever the filters on the
+// page - as a CSV with date-time, who, action, description, previous and new value. UTF-8 with a byte-order mark
+// (toCsv) so Excel shows umlauts correctly.
+// --------------------------------------------------------------------------
+const exportDialog = document.getElementById("log-export-dialog");
+const exportFromEl = document.getElementById("log-export-from");
+const exportToEl = document.getElementById("log-export-to");
+const exportStatusEl = document.getElementById("log-export-status");
+const pad2 = (n) => String(n).padStart(2, "0");
+const isoDay = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const csvDateTime = (ms) => { const d = new Date(ms); return `${isoDay(d)} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
+const csvValue = (v) => { const text = formatValue(v); return text === "—" ? "" : text; };
+const csvWho = (e) => (e.team ? (e.mine ? myName || "Me" : e.who) : e.actor === "extension" ? "Automatic" : myName || "Me");
+
+document.getElementById("log-export-btn").addEventListener("click", () => {
+  const oldest = allEntries.length ? allEntries[allEntries.length - 1].timestamp : Date.now();
+  exportFromEl.value = isoDay(new Date(oldest));
+  exportToEl.value = isoDay(new Date());
+  exportStatusEl.textContent = "";
+  exportDialog.showModal();
+});
+document.getElementById("log-export-cancel-btn").addEventListener("click", () => exportDialog.close());
+document.getElementById("log-export-go-btn").addEventListener("click", () => {
+  const from = exportFromEl.value;
+  const to = exportToEl.value;
+  if (!from || !to) { exportStatusEl.textContent = "Pick both dates."; return; }
+  if (from > to) { exportStatusEl.textContent = "From must be on or before To."; return; }
+  const start = new Date(`${from}T00:00:00`).getTime();
+  const end = new Date(`${to}T00:00:00`);
+  end.setDate(end.getDate() + 1);
+  const rows = allEntries
+    .filter((e) => !(e.team && e.mine && !e.ownOnlyHere)) // my own team lines repeat my own entries
+    .filter((e) => e.timestamp >= start && e.timestamp < end.getTime())
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((e) => [
+      csvDateTime(e.timestamp),
+      csvWho(e),
+      e.action || (e.team ? `team_${e.op}` : ""),
+      `${e.label || ""}${e.errorMessage ? ` ${e.errorMessage}` : ""}`,
+      csvValue(e.prevValue),
+      csvValue(e.newValue),
+    ]);
+  if (!rows.length) { exportStatusEl.textContent = "No entries between these dates."; return; }
+  const csv = toCsv(["Date & Time", "Who", "Action", "Description", "Previous Value", "New Value"], rows);
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `SalesTeam Activity Log ${from} to ${to}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  exportDialog.close();
 });
 
 async function init() {

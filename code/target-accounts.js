@@ -14,9 +14,10 @@
 // experimental Resolve LinkedIn Company IDs action (6.16), both likewise
 // moved here from Settings the same day.
 import { webLaneCandidates, accountLine, measureText, WEB_LANE_STATE_KEY } from "./web-lane.js";
-import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
+import { mirrorFrameTitle, restoreOwnTitle, rememberEmbeddedOnReload, reopenEmbeddedAfterReload } from "./frame-title.js";
+reopenEmbeddedAfterReload(); // 1.2.4.25: F5 on a page shown in this one reopens that page
 import { WEB_DISCOVERY_STATE_KEY, discoveryText } from "./discovery-report.js";
-import { askConfirm, askChoice, mirrorStatusToPopup, showNotice } from "./confirm-dialog.js";
+import { askConfirm, askChoice, mirrorStatusToPopup, reasonSuffix, showNotice } from "./confirm-dialog.js";
 import { workbookExportSheets, toCsv } from "./csv-export.js";
 import { xlsxParts } from "./xlsx-write.js";
 import { createZip } from "./backup-zip.js";
@@ -142,6 +143,7 @@ import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
 import { accountTimelineMarked, lastNoteByAccount, lastNoteByContact, noteSearchText, noteLine, leadNoteAbout, notesAbout, notesPromptSection, notesOn, notesExportLines } from "./notes.js";
 import { getNotes } from "./storage.js";
+import { previewPermanentDelete, permanentDeleteSummary, deletePermanently } from "./storage.js";
 import { changeAccountGroups } from "./team-groups-ui.js";
 import { sizeEmployeesOf, groupFacts } from "./team-groups.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
@@ -327,10 +329,10 @@ async function renderWebDiscoveryLastRun() {
 document.getElementById("web-discovery-close-btn").addEventListener("click", () => document.getElementById("web-discovery-dialog").close());
 document.getElementById("web-discovery-undo-btn").addEventListener("click", async () => {
   const statusEl = document.getElementById("web-discovery-status");
-  const ok = await askConfirm("Remove the accounts the last Find new accounts run added? They are removed like Remove Account (their data stays in the backup).", { okLabel: "Remove them", cancelLabel: "Keep them" });
-  if (!ok) return;
+  const reason = await askConfirm("Remove the accounts the last Find new accounts run added? They are removed like Remove Account (their data stays in the backup).", { okLabel: "Remove them", cancelLabel: "Keep them", reason: true });
+  if (!reason) return;
   const n = await undoLastWebDiscovery();
-  appendActivityLog({ actor: "user", action: "web_discovery_undone", label: `Removed the ${n} accounts the last Find new accounts run added` }).catch(() => {});
+  appendActivityLog({ actor: "user", action: "web_discovery_undone", label: `Removed the ${n} accounts the last Find new accounts run added${reasonSuffix(reason)}` }).catch(() => {});
   statusEl.textContent = `${n} account${n === 1 ? "" : "s"} removed.`;
   renderWebDiscoveryLastRun().catch(() => {});
 });
@@ -392,6 +394,7 @@ const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
 mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
+rememberEmbeddedOnReload(embeddedPageFrameEl, () => !embeddedPageWrapEl.hidden);
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19): "The Advisors, Activity Log
@@ -514,6 +517,7 @@ document.getElementById("open-settings-backup-btn").addEventListener("click", ()
 document.getElementById("open-settings-restore-btn").addEventListener("click", () => showEmbeddedPage("settings.html#restore-section", "Settings"));
 document.getElementById("open-settings-team-btn").addEventListener("click", () => showEmbeddedPage("settings.html#team-section", "Settings"));
 document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
+document.getElementById("open-settings-data-protection-btn").addEventListener("click", () => showEmbeddedPage("settings.html#data-protection-section", "Settings"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
 // 1.2 build step 4: the decision queue, with its red dot (R12.4.1).
@@ -1496,6 +1500,10 @@ function renderCellContent(td, company, column) {
 // collapsed by default (▸), expanding in place (▾) on click, so the page
 // fits a standard browser window with minimal scrolling until a section is
 // actually opened.
+// 1.2.4.25 (Boaz: Contacts opened and closed again at once): the page is built again when data arrives just after it
+// opens (the team assignment check, a sync), which folded every list. Which lists are open is remembered by title, so a
+// rebuild keeps them as the user left them.
+const openSubtables = new Set();
 function buildSubtable(title, rows, columns, { rowClick } = {}) {
   const section = document.createElement("div");
 
@@ -1504,17 +1512,18 @@ function buildSubtable(title, rows, columns, { rowClick } = {}) {
   heading.className = "detail-section-title detail-section-toggle";
   const chevron = document.createElement("span");
   chevron.className = "detail-section-chevron";
-  chevron.textContent = "▸";
   heading.append(chevron, document.createTextNode(`${title} (${rows.length})`));
   section.appendChild(heading);
 
   const body = document.createElement("div");
-  body.hidden = true;
+  body.hidden = !openSubtables.has(title);
+  chevron.textContent = body.hidden ? "▸" : "▾";
   section.appendChild(body);
 
   heading.addEventListener("click", () => {
     body.hidden = !body.hidden;
     chevron.textContent = body.hidden ? "▸" : "▾";
+    if (body.hidden) openSubtables.delete(title); else openSubtables.add(title);
   });
 
   body.appendChild(buildSubtableBody(rows, columns, { rowClick }));
@@ -2175,10 +2184,11 @@ document.getElementById("bulk-edit-apply-btn").addEventListener("click", async (
   }
   // Removal is the one irreversible-feeling action here (it is undoable, but it makes rows vanish
   // from every list at once), so it gets its own confirm on top of the dialog.
-  if (remove && !(await askConfirm(
+  const removeReason = remove ? await askConfirm(
     `Remove ${keys.length} ${scope === "accounts" ? "account" : "contact"}${keys.length === 1 ? "" : "s"} from your list?\n\nThey won't show up anywhere after this, but nothing is permanently erased and this bulk edit can be undone.`,
-    { okLabel: "Remove", cancelLabel: "Cancel", danger: true }
-  ))) return;
+    { okLabel: "Remove", cancelLabel: "Cancel", danger: true, reason: true }
+  ) : null;
+  if (remove && !removeReason) return;
 
   const dueMs = dueValue ? new Date(`${dueValue}T00:00:00`).getTime() : null;
   // Team use 1.2.2 step 5 (R6.2): a colleague's accounts (and their contacts) are skipped, and said so.
@@ -2209,7 +2219,7 @@ document.getElementById("bulk-edit-apply-btn").addEventListener("click", async (
   appendActivityLog({
     actor: "user",
     action: "bulk_edit_applied",
-    label: `Bulk edit on ${changed} ${scope === "accounts" ? "account" : "contact"}${changed === 1 ? "" : "s"}: ${parts.join(", ")}`,
+    label: `Bulk edit on ${changed} ${scope === "accounts" ? "account" : "contact"}${changed === 1 ? "" : "s"}: ${parts.join(", ")}${remove ? reasonSuffix(removeReason) : ""}`,
   });
 
   bulkEditEl("bulk-edit-dialog").close();
@@ -2477,10 +2487,15 @@ function appendTeamBadge(td, companyKey) {
 }
 
 // Menu items marked `change` are disabled on a colleague's account, with the reason as their tooltip.
+// 1.2.4.12 (live test 2026-10-19): Delete permanently and Remove (`leadOverride`) are not held up by a colleague's
+// assignment or edit when the Team Lead or deputy uses them - a person's request to be deleted outranks whoever works
+// the account, and only they may remove (so without this nobody could, Boaz 2026-10-19). The colleague's unsent edits of
+// deleted rows are dropped on their PC; a removed account's assignment ends. A team folder not in sync still blocks them.
 function offLimitsItems(companyKey, items) {
   const off = teamAccounts.offLimits(companyKey);
   if (!off) return items;
-  return items.map((item) => (item.change ? { ...item, disabled: true, title: off.text } : item));
+  const override = off.reason !== "offline" && teamAccounts.hasLeadRights();
+  return items.map((item) => (item.change && !(item.leadOverride && override) ? { ...item, disabled: true, title: off.text } : item));
 }
 
 // ONE menu per account and one per contact (Boaz, 2026-10-05): the ⋮ at the end of a list row and the ⋮ next to the
@@ -2507,7 +2522,10 @@ function accountMenuItems(companyKey, company, { onDetailPage = false } = {}) {
       : []),
     ...teamAssignMenuItems(companyKey, { onDetailPage }),
     ...teamGroupMenuItems(companyKey),
-    ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, onClick: () => removeAccount(companyKey, company.company, { onDetailPage }) }] : []),
+    ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, leadOverride: true, onClick: () => removeAccount(companyKey, company.company, { onDetailPage }) }] : []),
+    // 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R2.3): the account stays - a company is not a person - its people go.
+    ...(teamAccounts.canRemove() ? [{ label: "Delete its contacts and leads permanently…", danger: true, change: true, leadOverride: true,
+      onClick: () => runPermanentDelete({ accountKeys: [companyKey] }, `Delete the contacts and leads of "${company.company}" permanently`) }] : []),
   ]);
 }
 
@@ -2560,8 +2578,33 @@ function contactMenuItems(contactKey, contact, { onDetailPage = false } = {}) {
       if (onDetailPage) { contactEditMode = true; renderContactView(contactKey); }
       else { pendingContactEditKey = contactKey; openContact(contactKey); }
     } },
-    ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, onClick: () => removeContact(contactKey, contact.fullName, { onDetailPage }) }] : []),
+    ...(teamAccounts.canRemove() ? [{ label: "Remove", danger: true, change: true, leadOverride: true, onClick: () => removeContact(contactKey, contact.fullName, { onDetailPage }) }] : []),
+    ...(teamAccounts.canRemove() ? [{ label: "Delete permanently…", danger: true, change: true, leadOverride: true,
+      onClick: () => runPermanentDelete({ contactKeys: [contactKey] }, `Delete "${contact.fullName}" permanently`, { onDetailPage }) }] : []),
   ]);
+}
+
+// 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R2.4): one confirm for every permanent delete - what goes, with counts,
+// that it cannot be undone, and what still holds it for a while (the team folder, older backups).
+async function runPermanentDelete(what, title, { onDetailPage = false, after = null } = {}) {
+  const counts = await previewPermanentDelete(what);
+  if (!counts.leads && !counts.contacts) {
+    await askConfirm("There are no contacts or leads to delete.", { title, cancelLabel: null });
+    return false;
+  }
+  const team = teamAccounts.inTeam()
+    ? "\n\nIt is deleted for the whole team. A colleague's SalesTeam deletes it the next time it opens, and the team folder lets go of it within about 8 days."
+    : "";
+  const reason = await askConfirm(
+    `Delete permanently: ${permanentDeleteSummary(counts)}.\n\nThis cannot be undone. Their notes, Sales Mentor and Customer Voice conversations and the activity-log lines about them go too. SalesTeam does not store a deleted contact again (Settings → Data protection → Do-not-store list), and a later scan skips the deleted posts.${team}\n\nBackup files made before now still hold them until they are deleted under your backup setting (Settings → Backup).`,
+    { title, okLabel: "Delete permanently", cancelLabel: "Cancel", danger: true, reason: true });
+  if (!reason) return false;
+  if (onDetailPage) location.hash = "";
+  const done = await accountWriteWithFeedback("Deleting…", () => deletePermanently(what));
+  appendActivityLog({ actor: "user", action: "permanent_delete", label: `Deleted permanently: ${permanentDeleteSummary(done)}${reasonSuffix(reason)}` });
+  showNotice(`Deleted permanently: ${permanentDeleteSummary(done)}.`);
+  if (after) await after();
+  return true;
 }
 
 // Assign to me / Release, and for the Team Lead Reassign… - in the menus only; the line under the account's title
@@ -2666,22 +2709,104 @@ async function accountWriteWithFeedback(workingText, write) {
 // who removed them, and restore the ticked ones. Admin-only in a team.
 // --------------------------------------------------------------------------
 let removedScope = "accounts";
-let removedSortDesc = true;
 const removedSelected = new Set();
+// 1.2.4.24 (Boaz): a long Removed list is sorted and filtered per column, the way the main tables are - each header has
+// the same ▾ menu (Sort Ascending / Descending, a filter with "Exclude matches"). Cleared when the tab changes.
+let removedSort = { field: "at", dir: "desc" };
+let removedFilters = {}; // { [field]: { text, exclude } }
+const REMOVED_COLUMNS = {
+  accounts: [{ id: "name", label: "Account" }, { id: "at", label: "Removed" }, { id: "by", label: "By" }],
+  contacts: [{ id: "name", label: "Contact" }, { id: "company", label: "Company" }, { id: "at", label: "Removed" }, { id: "by", label: "By" }],
+};
+const removedCellText = (r, field) => (field === "at" ? (r.at ? formatDateTime(r.at) : "") : String(r[field] || ""));
+
+function removedVisibleRows() {
+  const all = removedRows(removedScope);
+  const rows = all.filter((r) => Object.entries(removedFilters).every(([field, f]) => {
+    if (!f || !f.text) return true;
+    const hit = removedCellText(r, field).toLowerCase().includes(f.text.toLowerCase());
+    return f.exclude ? !hit : hit;
+  }));
+  const { field, dir } = removedSort;
+  const sign = dir === "asc" ? 1 : -1;
+  rows.sort((a, b) => sign * (field === "at"
+    ? (a.at || 0) - (b.at || 0)
+    : removedCellText(a, field).localeCompare(removedCellText(b, field), undefined, { sensitivity: "base" })));
+  return { rows, total: all.length };
+}
+
+function closeRemovedMenu() {
+  document.querySelectorAll("#removed-dialog .col-menu-popup").forEach((el) => el.remove());
+}
+
+// The same menu as the main tables' headers, kept inside the dialog (a pop-up outside it would sit behind the dialog).
+function openRemovedMenu(column, th) {
+  const wasOpen = document.querySelector(`#removed-dialog .col-menu-popup[data-col="${column.id}"]`);
+  closeRemovedMenu();
+  if (wasOpen) return;
+  const dialog = document.getElementById("removed-dialog");
+  const popup = document.createElement("div");
+  popup.className = "col-menu-popup";
+  popup.dataset.col = column.id;
+  const done = () => { closeRemovedMenu(); renderRemovedDialog(); };
+  for (const [dir, text] of [["asc", "Sort Ascending"], ["desc", "Sort Descending"]]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "col-menu-item";
+    b.textContent = text;
+    b.addEventListener("click", () => { removedSort = { field: column.id, dir }; done(); });
+    popup.appendChild(b);
+  }
+  popup.appendChild(document.createElement("hr"));
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "col-filter-input";
+  input.placeholder = `Filter ${column.label}…`;
+  input.value = removedFilters[column.id]?.text || "";
+  const excludeLabel = document.createElement("label");
+  excludeLabel.className = "col-filter-exclude-label";
+  const exclude = document.createElement("input");
+  exclude.type = "checkbox";
+  exclude.checked = removedFilters[column.id]?.exclude || false;
+  excludeLabel.append(exclude, document.createTextNode("Exclude matches"));
+  const apply = () => {
+    const text = input.value.trim();
+    if (text) removedFilters[column.id] = { text, exclude: exclude.checked };
+    else delete removedFilters[column.id];
+    done();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+  const actions = document.createElement("div");
+  actions.className = "col-menu-actions";
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.textContent = "Apply";
+  applyBtn.addEventListener("click", apply);
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.textContent = "Clear";
+  clearBtn.addEventListener("click", () => { delete removedFilters[column.id]; done(); });
+  actions.append(applyBtn, clearBtn);
+  popup.append(input, excludeLabel, actions);
+  dialog.appendChild(popup);
+  const rect = th.getBoundingClientRect();
+  const w = popup.offsetWidth;
+  popup.style.left = `${Math.max(8, Math.min(rect.right - w, window.innerWidth - w - 8))}px`;
+  popup.style.top = `${rect.bottom + 2}px`;
+  input.focus();
+}
 
 function removedRows(scope) {
   if (scope === "accounts") {
     const names = new Map(rawWorkbook.companies.map((c) => [normalizeCompanyName(c.company), c.company]));
     for (const [k, v] of Object.entries(removedNameHints)) if (!names.has(k)) names.set(k, v);
-    return Object.entries(accountExtras).filter(([, x]) => x?.deletedAt).map(([key, x]) => ({
-      key, name: names.get(key) || key, company: "", at: x.deletedAt, by: x.deletedBy || "",
-      // A merged-away account comes back only by undoing the merge - alone it would be a duplicate again.
-      note: x.mergedInto ? `Merged into ${names.get(x.mergedInto) || x.mergedInto} - not restorable here` : "",
-      restorable: !x.mergedInto,
+    // 1.2.4.29 (Boaz): merged-away rows are left out - a merge cannot be undone, and the Activity Log records it.
+    return Object.entries(accountExtras).filter(([, x]) => x?.deletedAt && !x.mergedInto).map(([key, x]) => ({
+      key, name: names.get(key) || key, company: "", at: x.deletedAt, by: x.deletedBy || "", note: "", restorable: true,
     }));
   }
   const byKey = new Map(rawWorkbook.contacts.map((c) => [contactKeyFor(c.company, c.fullName), c]));
-  return Object.entries(contactExtras).filter(([, x]) => x?.deletedAt).map(([key, x]) => {
+  return Object.entries(contactExtras).filter(([, x]) => x?.deletedAt && !x.mergedInto).map(([key, x]) => {
     const c = byKey.get(key);
     const companyKey = normalizeCompanyName(c?.company || String(key).split("::")[0]);
     return {
@@ -2692,13 +2817,19 @@ function removedRows(scope) {
   });
 }
 
+// A click anywhere else in the dialog closes the column menu; so does closing the dialog.
+document.getElementById("removed-dialog")?.addEventListener("click", (event) => {
+  if (!event.target.closest(".col-menu-popup") && !event.target.closest(".col-menu-btn")) closeRemovedMenu();
+});
+document.getElementById("removed-dialog")?.addEventListener("close", closeRemovedMenu);
+
 function renderRemovedDialog() {
-  const rows = removedRows(removedScope).sort((a, b) => (removedSortDesc ? b.at - a.at : a.at - b.at));
+  const { rows, total } = removedVisibleRows();
   for (const k of [...removedSelected]) if (!rows.some((r) => r.key === k && r.restorable)) removedSelected.delete(k);
-  for (const b of document.querySelectorAll("#removed-dialog [data-removed-scope]")) b.classList.toggle("active", b.dataset.removedScope === removedScope);
+  document.getElementById("removed-dialog-title").textContent = removedScope === "accounts" ? "Removed accounts" : "Removed contacts";
   const wrap = document.getElementById("removed-table-wrap");
   wrap.innerHTML = "";
-  if (!rows.length) {
+  if (!total) {
     const p = document.createElement("p");
     p.className = "removed-empty";
     p.textContent = `No ${removedScope} have been removed.`;
@@ -2721,15 +2852,50 @@ function renderRemovedDialog() {
     });
     allTh.appendChild(all);
     head.appendChild(allTh);
-    const labels = removedScope === "accounts" ? ["Account"] : ["Contact", "Company"];
-    for (const l of labels) { const th = document.createElement("th"); th.textContent = l; head.appendChild(th); }
-    const dateTh = document.createElement("th");
-    dateTh.textContent = `Removed ${removedSortDesc ? "▼" : "▲"}`;
-    dateTh.title = "Sort by date";
-    dateTh.addEventListener("click", () => { removedSortDesc = !removedSortDesc; renderRemovedDialog(); });
-    head.appendChild(dateTh);
-    for (const l of ["By", ""]) { const th = document.createElement("th"); th.textContent = l; head.appendChild(th); }
+    for (const column of REMOVED_COLUMNS[removedScope]) {
+      const th = document.createElement("th");
+      const label = document.createElement("span");
+      label.className = "th-label";
+      label.textContent = column.label;
+      label.title = "Click to sort";
+      // A click on the name sorts by it; a second click turns the order round.
+      label.addEventListener("click", () => {
+        removedSort = removedSort.field === column.id
+          ? { field: column.id, dir: removedSort.dir === "asc" ? "desc" : "asc" }
+          : { field: column.id, dir: column.id === "at" ? "desc" : "asc" };
+        closeRemovedMenu();
+        renderRemovedDialog();
+      });
+      th.appendChild(label);
+      if (removedSort.field === column.id) th.appendChild(document.createTextNode(removedSort.dir === "asc" ? " ▲" : " ▼"));
+      const f = removedFilters[column.id];
+      if (f?.text) {
+        th.classList.add("col-filtered");
+        const dot = document.createElement("span");
+        dot.className = "filter-active-dot";
+        dot.title = `Filtered: "${f.text}"${f.exclude ? " (excluded)" : ""}`;
+        th.appendChild(dot);
+      }
+      const menuBtn = document.createElement("button");
+      menuBtn.type = "button";
+      menuBtn.className = "col-menu-btn";
+      menuBtn.textContent = "▾";
+      menuBtn.title = "Sort / Filter this column";
+      menuBtn.addEventListener("click", (event) => { event.stopPropagation(); openRemovedMenu(column, th); });
+      th.appendChild(menuBtn);
+      head.appendChild(th);
+    }
+    head.appendChild(document.createElement("th"));
     table.appendChild(head);
+    if (!rows.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = REMOVED_COLUMNS[removedScope].length + 2;
+      td.className = "removed-note";
+      td.textContent = "Nothing matches the filter.";
+      tr.appendChild(td);
+      table.appendChild(tr);
+    }
     for (const r of rows) {
       const tr = document.createElement("tr");
       const td0 = document.createElement("td");
@@ -2742,6 +2908,13 @@ function renderRemovedDialog() {
           else removedSelected.delete(r.key);
           renderRemovedDialog();
         });
+        td0.appendChild(cb);
+      } else {
+        // 1.2.4.27 (Boaz: a missing tick box looked like a bug): shown greyed, saying why it cannot be ticked.
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.disabled = true;
+        cb.title = r.note || "Cannot be restored here";
         td0.appendChild(cb);
       }
       tr.appendChild(td0);
@@ -2759,29 +2932,72 @@ function renderRemovedDialog() {
   const btn = document.getElementById("removed-restore-btn");
   btn.disabled = removedSelected.size === 0;
   btn.textContent = removedSelected.size ? `Restore ${removedSelected.size}` : "Restore";
+  // 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R2.1): the same permanent delete as in the ⋮ menus, for the ticked rows.
+  const del = document.getElementById("removed-delete-btn");
+  del.disabled = removedSelected.size === 0;
+  del.textContent = removedScope === "accounts" ? "Delete their contacts and leads permanently…" : "Delete permanently…";
 }
 
 // Names of rows a merge took out of the workbook: the targetAccounts map often still has them.
 let removedNameHints = {};
-async function openRemovedDialog() {
+// 1.2.4.29: one kind per opening - the quiet link under each table says which.
+async function openRemovedDialog(scope, { keep = [] } = {}) {
+  removedScope = scope;
   try {
     const map = await getTargetAccounts();
     removedNameHints = {};
     for (const [k, v] of Object.entries(map || {})) if (v?.company) removedNameHints[normalizeCompanyName(v.company)] = v.company;
   } catch { removedNameHints = {}; }
   removedSelected.clear();
+  for (const k of keep) removedSelected.add(k);
+  if (!keep.length) {
+    removedFilters = {};
+    removedSort = { field: "at", dir: "desc" };
+  }
   document.getElementById("removed-status-text").textContent = "";
   renderRemovedDialog();
   document.getElementById("removed-dialog").showModal();
 }
 
-document.getElementById("removed-btn").addEventListener("click", openRemovedDialog);
-for (const b of document.querySelectorAll("#removed-dialog [data-removed-scope]")) {
-  b.addEventListener("click", () => { removedScope = b.dataset.removedScope; removedSelected.clear(); renderRemovedDialog(); });
+// 1.2.4.30 (Boaz): rarely used, so a quiet grey link under each table instead of a toolbar button, shown only when
+// something was removed. In a team only the Team Lead (and deputy) may restore, so only they see it.
+function paintRemovedLinks() {
+  for (const [scope, id, noun] of [["accounts", "removed-accounts-link", "Removed accounts"], ["contacts", "removed-contacts-link", "Removed contacts"]]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const n = teamAccounts.canRemove() ? removedRows(scope).length : 0;
+    el.hidden = n === 0;
+    el.textContent = `${noun} (${n})`;
+  }
 }
+document.getElementById("removed-accounts-link")?.addEventListener("click", () => openRemovedDialog("accounts"));
+document.getElementById("removed-contacts-link")?.addEventListener("click", () => openRemovedDialog("contacts"));
 let restoring = false;
+document.getElementById("removed-delete-btn").addEventListener("click", async () => {
+  if (!teamAccounts.canRemove() || removedSelected.size === 0) return;
+  const keys = [...removedSelected];
+  const n = keys.length;
+  const what = removedScope === "accounts" ? { accountKeys: keys } : { contactKeys: keys };
+  const title = removedScope === "accounts"
+    ? `Delete the contacts and leads of ${n} removed account${n === 1 ? "" : "s"} permanently`
+    : `Delete ${n} removed contact${n === 1 ? "" : "s"} permanently`;
+  // The dialog is modal: the confirm would sit behind it.
+  const dialog = document.getElementById("removed-dialog");
+  dialog.close();
+  await runPermanentDelete(what, title);
+  removedSelected.clear();
+  await openRemovedDialog(removedScope);
+});
+
 document.getElementById("removed-restore-btn").addEventListener("click", async () => {
   if (restoring || !teamAccounts.canRemove() || removedSelected.size === 0) return;
+  // 1.2.4.31 (audit): a restore needs a reason too. The dialog is modal - the confirm would sit behind it.
+  const keys = [...removedSelected];
+  const one = removedScope === "accounts" ? "account" : "contact";
+  document.getElementById("removed-dialog").close();
+  const reason = await askConfirm(`Restore ${keys.length} ${one}${keys.length === 1 ? "" : "s"}?`, { okLabel: "Restore", cancelLabel: "Cancel", reason: true });
+  await openRemovedDialog(removedScope, { keep: keys });
+  if (!reason) return;
   restoring = true;
   const btn = document.getElementById("removed-restore-btn");
   const statusEl = document.getElementById("removed-status-text");
@@ -2794,8 +3010,17 @@ document.getElementById("removed-restore-btn").addEventListener("click", async (
     const patchByKey = {};
     for (const key of removedSelected) patchByKey[key] = { deletedAt: null, deletedBy: null };
     // The dialog is modal: the pop-up would sit behind it, so progress shows in the dialog itself.
+    const rowByKey = new Map(removedRows(scope).map((r) => [r.key, r]));
     const restored = await bulkPatchExtras(scope, patchByKey);
-    appendActivityLog({ actor: "user", action: `target_${noun}s_restored`, label: `Restored ${restored} removed ${noun}${restored === 1 ? "" : "s"}` });
+    // 1.2.4.28 (Boaz): one log line per restored account or contact, by name, shown on its own page's log too.
+    appendActivityLogBatch([...removedSelected].map((key) => {
+      const r = rowByKey.get(key);
+      const name = r ? (scope === "accounts" ? r.name : `${r.name} (${r.company})`) : key;
+      return {
+        actor: "user", action: `target_${noun}s_restored`, label: `Restored removed ${noun} "${name}"${reasonSuffix(reason)}`,
+        ...(scope === "accounts" ? { relatedCompanyKey: key } : { relatedContactKey: key }),
+      };
+    })).catch(() => null);
     removedSelected.clear();
     await refreshAfterExtrasChange();
     rerenderForScope("accounts");
@@ -2826,8 +3051,7 @@ const contactOwnerPicker = teamAccounts.ownerPicker(document.getElementById("con
 function paintTeamOwnerFilter() {
   accountGroupPicker.paint();
   accountOwnerPicker.paint();
-  const removedBtn = document.getElementById("removed-btn");
-  if (removedBtn) removedBtn.hidden = !teamAccounts.canRemove();
+  paintRemovedLinks();
   const el = document.getElementById("team-owner-filter");
   if (!el) return;
   el.hidden = !teamAccounts.inTeam() || teamAccounts.groupsOn();
@@ -3327,6 +3551,7 @@ function hasUnreviewedPostForContact(contact) {
 }
 
 function renderContactsTable() {
+  paintRemovedLinks();
   contactGroupPicker.paint();
   contactOwnerPicker.paint();
   const contacts = sortedFilteredContacts();
@@ -4393,7 +4618,8 @@ let importPickerMode = "research";
 // 1.2.3 Export & Import step 2 (design 7.2): one Import… for every format. The research workbook keeps its own file
 // picker and help (prompt, template, mandatory columns); a SalesTeam CSV, a HubSpot, a Salesforce or a Microsoft Dynamics export is read by
 // csv-import.js / hubspot.js / crm-files.js. All of them then go through runPlannedImport below.
-const IMPORT_TITLES = { workbook: "Import Research Workbook", salesteam: "Import SalesTeam CSV", hubspot: "Import HubSpot Export", salesforce: "Import Salesforce Export", dynamics: "Import Microsoft Dynamics Export" };
+// 1.2.4.18 (Boaz, 2026-10-19: "Import HubSpot Export" read as if something was exported): named by where the file comes from.
+const IMPORT_TITLES = { workbook: "Import research workbook", salesteam: "Import SalesTeam Excel file", hubspot: "Import from HubSpot", salesforce: "Import from Salesforce", dynamics: "Import from Microsoft Dynamics" };
 const IMPORT_FORMAT_NOTES = {
   workbook: "Only for research done outside SalesTeam: the Excel workbook the SalesTeam research prompt produces in ChatGPT or another AI assistant, or one you filled in yourself from the template. SalesTeam researches accounts itself, so you normally do not need this.",
   salesteam: "The Excel file saved with Export… (SalesTeam Excel) - accounts, contacts and projects together - for example after editing it in Excel. A SalesTeam CSV file from an earlier version works too.",
@@ -7119,7 +7345,7 @@ function reviewFindingsFromTable(companyKey) {
 }
 
 async function renderAccountView(companyKey, { startInEdit = false } = {}) {
-  if (companyKey !== currentAccountKey) accountEditMode = false;
+  if (companyKey !== currentAccountKey) { accountEditMode = false; openSubtables.clear(); }
   currentAccountKey = companyKey;
   if (startInEdit) accountEditMode = true;
   const company = currentAccountCompanyRow();
@@ -7896,7 +8122,7 @@ function describeAccountRow(c) {
   return `${c.company} - ${kind}, ${contacts} contact${contacts === 1 ? "" : "s"}`;
 }
 
-async function mergeDuplicateGroup(group, keepIndex) {
+async function mergeDuplicateGroup(group, keepIndex, reason) {
   const keep = group.members[keepIndex];
   for (const drop of group.members) {
     if (drop === keep) continue;
@@ -7904,7 +8130,7 @@ async function mergeDuplicateGroup(group, keepIndex) {
     appendActivityLog({
       actor: "user",
       action: "target_accounts_merged",
-      label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} projects, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)`,
+      label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} projects, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)${reasonSuffix(reason)}`,
       relatedCompanyKey: normalizeCompanyName(keep.company),
     });
   }
@@ -7964,11 +8190,12 @@ async function renderFindDuplicates(statusMessage = "") {
     mergeBtn.textContent = "Merge";
     mergeBtn.addEventListener("click", async () => {
       const keepIndex = keepIndexOf();
-      if (!(await askConfirm(`Merge these ${group.members.length} accounts into "${group.members[keepIndex].company}"?\n\nTheir contacts, projects, sources and Post leads move to it, and the other entries disappear. This can't be undone from the app.`, { okLabel: "Merge", cancelLabel: "Cancel", danger: true }))) return;
+      const reason = await askConfirm(`Merge these ${group.members.length} accounts into "${group.members[keepIndex].company}"?\n\nTheir contacts, projects, sources and Post leads move to it, and the other entries disappear. This can't be undone from the app.`, { okLabel: "Merge", cancelLabel: "Cancel", danger: true, reason: true });
+      if (!reason) return;
       setBusy(true, `Merging "${group.members[keepIndex].company}"…`);
       mergeBtn.textContent = "Merging…";
       try {
-        await mergeDuplicateGroup(group, keepIndex);
+        await mergeDuplicateGroup(group, keepIndex, reason);
         await loadWorkbook();
         await renderFindDuplicates("Merged.");
       } catch (err) {
@@ -8005,12 +8232,13 @@ async function renderFindDuplicates(statusMessage = "") {
   });
 
   mergeAllBtn.onclick = async () => {
-    if (!(await askConfirm(`Merge all ${count} proposals, keeping the researched account in each? Anything you would rather keep separate should be marked first. This can't be undone from the app.`, { okLabel: "Merge all", cancelLabel: "Cancel", danger: true }))) return;
+    const reason = await askConfirm(`Merge all ${count} proposals, keeping the researched account in each? Anything you would rather keep separate should be marked first. This can't be undone from the app.`, { okLabel: "Merge all", cancelLabel: "Cancel", danger: true, reason: true });
+    if (!reason) return;
     let done = 0;
     try {
       for (const group of groups) {
         setBusy(true, `Merging ${done + 1} of ${count}: "${group.members[0].company}"…`);
-        await mergeDuplicateGroup(group, 0);
+        await mergeDuplicateGroup(group, 0, reason);
         done++;
       }
     } catch (err) {
@@ -8055,9 +8283,13 @@ function openMergeAccountsDialog(companyKey) {
 
   const otherOf = () => workbook.companies.find((c) => normalizeCompanyName(c.company) === select.value);
   const keepRadio = (v) => dialog.querySelector(`input[name="merge-accounts-keep"][value="${v}"]`);
+  // 1.2.4.31 (audit): a merge needs a reason, as every remove, restore and delete does.
+  const reasonBox = document.getElementById("merge-accounts-reason");
+  reasonBox.value = "";
+  reasonBox.oninput = () => refresh();
   const refresh = () => {
     const other = otherOf();
-    confirmBtn.disabled = !other;
+    confirmBtn.disabled = !other || reasonBox.value === "";
     document.getElementById("merge-accounts-keep-fieldset").hidden = !other;
     if (!other) { previewEl.textContent = "Pick the account that is a duplicate of this one."; return; }
     document.getElementById("merge-accounts-keep-this").textContent = me.company;
@@ -8076,7 +8308,7 @@ function openMergeAccountsDialog(companyKey) {
   document.getElementById("merge-accounts-cancel-btn").onclick = () => dialog.close();
   confirmBtn.onclick = async () => {
     const other = otherOf();
-    if (!other) return;
+    if (!other || reasonBox.value === "") return;
     const keepOther = keepRadio("other").checked;
     const keepKey = keepOther ? normalizeCompanyName(other.company) : companyKey;
     const dropKey = keepOther ? companyKey : normalizeCompanyName(other.company);
@@ -8086,7 +8318,7 @@ function openMergeAccountsDialog(companyKey) {
       appendActivityLog({
         actor: "user",
         action: "target_accounts_merged",
-        label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} projects, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)`,
+        label: `Merged "${r.dropName}" into "${r.keepName}" (${r.contactsMoved} contacts moved, ${r.contactsDuplicate} already there, ${r.initiativesMoved} projects, ${r.sourcesMoved} sources, ${r.leadsMoved} Post leads)${reasonSuffix(reasonBox.value)}`,
         relatedCompanyKey: keepKey,
         newValue: { keepKey, dropKey },
       });
@@ -8114,32 +8346,37 @@ function openMergeAccountsDialog(companyKey) {
 // this stays on the table, just re-rendered without that row.
 async function removeAccount(companyKey, companyName, { onDetailPage = false } = {}) {
   if (!companyName) return;
-  if (!(await askConfirm(`Remove "${companyName}" from your Target Accounts list?\n\nIt won't show up anywhere after this, but nothing is permanently erased.`, { okLabel: "Remove", cancelLabel: "Cancel", danger: true }))) return;
+  const reason = await askConfirm(`Remove "${companyName}" from your Target Accounts list?\n\nIt won't show up anywhere after this, but nothing is permanently erased.`, { okLabel: "Remove", cancelLabel: "Cancel", danger: true, reason: true });
+  if (!reason) return;
   if (onDetailPage) location.hash = "";
   await accountWriteWithFeedback(`Removing "${companyName}"…`,
     () => saveTargetAccountExtra(companyKey, { deletedAt: Date.now(), deletedBy: teamAccounts.myName() }));
+  // 1.2.4.17: removed by the Team Lead while a member had it - the assignment ends with it (the team log says who).
+  const holder = teamAccounts.inTeam() ? teamAccounts.entry(companyKey)?.a : null;
+  if (holder && holder !== teamAccounts.me()) await teamAssignKeys([companyKey], "TEAM_UNASSIGN");
   appendActivityLog({
     actor: "user",
     action: "target_account_removed",
-    label: `Removed Target Account "${companyName}" from the list`,
+    label: `Removed Target Account "${companyName}" from the list${reasonSuffix(reason)}`,
     newValue: { companyKey },
   });
-  showNotice(`"${companyName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back with Removed…." : " Removed… brings it back."}`);
+  showNotice(`"${companyName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back." : " \"Removed accounts\" under the list brings it back."}`);
 }
 
 async function removeContact(contactKey, fullName, { onDetailPage = false } = {}) {
   if (!fullName) return;
-  if (!(await askConfirm(`Remove "${fullName}" from your Target Accounts list?\n\nIt won't show up anywhere after this, but nothing is permanently erased.`, { okLabel: "Remove", cancelLabel: "Cancel", danger: true }))) return;
+  const reason = await askConfirm(`Remove "${fullName}" from your Target Accounts list?\n\nIt won't show up anywhere after this, but nothing is permanently erased.`, { okLabel: "Remove", cancelLabel: "Cancel", danger: true, reason: true });
+  if (!reason) return;
   if (onDetailPage) location.hash = "";
   await accountWriteWithFeedback(`Removing "${fullName}"…`,
     () => saveTargetContactExtra(contactKey, { deletedAt: Date.now(), deletedBy: teamAccounts.myName() }));
   appendActivityLog({
     actor: "user",
     action: "target_contact_removed",
-    label: `Removed Target Contact "${fullName}" from the list`,
+    label: `Removed Target Contact "${fullName}" from the list${reasonSuffix(reason)}`,
     newValue: { contactKey },
   });
-  showNotice(`"${fullName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back with Removed…." : " Removed… brings it back."}`);
+  showNotice(`"${fullName}" removed.${teamAccounts.inTeam() ? " The Team Lead can bring it back." : " \"Removed contacts\" under the list brings it back."}`);
 }
 
 // PRD 6.20 Phase 10 (2026-09-17) - the detail page's own kebab, replacing

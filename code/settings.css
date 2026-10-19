@@ -923,3 +923,15 @@ body {
   min-width: 100%;
   max-width: none;
 }
+
+/* 1.2.4.20 Data protection: Find a person, do-not-store list */
+.data-protection-subhead { margin-top: 26px; padding-top: 16px; border-top: 1px solid #e3e3e3; }
+.find-person-row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+.find-person-row input { flex: 1 1 260px; min-width: 0; padding: 6px 8px; }
+.find-person-people label { display: block; margin: 4px 0; font-weight: 600; }
+.find-person-lines { margin: 8px 0 12px; padding-left: 20px; }
+.find-person-lines li { margin: 3px 0; }
+.find-person-lines .where { color: #666; }
+.find-person-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+.find-person-actions button.danger-btn { border: 1px solid #c23b3b; background: white; color: #c23b3b; }
+.find-person-actions button.danger-btn:disabled { border-color: #d99; color: #d99; cursor: default; }

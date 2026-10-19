@@ -3,8 +3,9 @@
 // leads table, and per-lead priority scoring. Also owns the "Bulk Change"
 // dialog (mass status changes with a confirmation step and one-level undo)
 // and the "Prioritize Unscored Leads" action.
-import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
-import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
+import { askConfirm, askChoice, mirrorStatusToPopup, showNotice } from "./confirm-dialog.js";
+import { mirrorFrameTitle, restoreOwnTitle, rememberEmbeddedOnReload, reopenEmbeddedAfterReload } from "./frame-title.js";
+reopenEmbeddedAfterReload(); // 1.2.4.25: F5 on a page shown in this one reopens that page
 import { toCsv, compactCsvColumns } from "./csv-export.js";
 import { leadTitle, leadContent, leadCreatorName, leadCompany, leadCreatorUrl, leadSourceLabel, leadDate, leadPriorityLabel } from "./lead-shape.js";
 import { confirmIfCostly } from "./api-usage.js";
@@ -84,6 +85,7 @@ import { teamAccounts } from "./team-accounts-ui.js";
 import { notesSection, notesUnsaved } from "./notes-ui.js";
 import { lastNoteByLead, noteSearchText, noteLine, leadNoteAbout, notesOn, notesExportLines } from "./notes.js";
 import { getNotes } from "./storage.js";
+import { previewPermanentDelete, permanentDeleteSummary, deletePermanently } from "./storage.js";
 import { orderedColumns, makeColumnDraggable, resetOrderItem } from "./column-order.js";
 
 const STATUS_COLORS = {
@@ -105,6 +107,7 @@ const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
 mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
+rememberEmbeddedOnReload(embeddedPageFrameEl, () => !embeddedPageWrapEl.hidden);
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
@@ -222,6 +225,7 @@ document.getElementById("open-settings-backup-btn").addEventListener("click", ()
 document.getElementById("open-settings-restore-btn").addEventListener("click", () => showEmbeddedPage("settings.html#restore-section", "Settings"));
 document.getElementById("open-settings-team-btn").addEventListener("click", () => showEmbeddedPage("settings.html#team-section", "Settings"));
 document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
+document.getElementById("open-settings-data-protection-btn").addEventListener("click", () => showEmbeddedPage("settings.html#data-protection-section", "Settings"));
 document.getElementById("open-advisors-btn").addEventListener("click", () => showEmbeddedPage("advisors.html", "Advisors"));
 document.getElementById("open-activity-log-btn").addEventListener("click", () => showEmbeddedPage("activity-log.html", "Activity Log"));
 // 1.2 build step 4: the decision queue, with its red dot (R12.4.1).
@@ -976,7 +980,34 @@ function buildLeadActionsMenu(lead) {
         appendActivityLog({ actor: "user", action: "lead_status_changed", label: `Lead "${leadTitle(lead)}" status changed`, prevValue, newValue: "Dismissed" });
       },
     },
+    // 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R2): the Team Lead's (or deputy's) in a team, like Remove.
+    ...(teamAccounts.canRemove() ? [{
+      label: "Delete permanently…",
+      danger: true,
+      onClick: () => deleteLeadsPermanently([lead.key], `Delete the lead "${leadTitle(lead)}" permanently`),
+    }] : []),
   ];
+}
+
+// 1.2.4.12 (R2.4): the confirm says what goes, that it cannot be undone, and what still holds it for a while.
+async function deleteLeadsPermanently(keys, title) {
+  const counts = await previewPermanentDelete({ leadKeys: keys });
+  if (!counts.leads) return false;
+  const team = teamAccounts.inTeam()
+    ? "\n\nIt is deleted for the whole team. A colleague's SalesTeam deletes it the next time it opens, and the team folder lets go of it within about 8 days."
+    : "";
+  const ok = await askConfirm(
+    `Delete permanently: ${permanentDeleteSummary(counts)}.\n\nThis cannot be undone. Their notes, Sales Mentor and Customer Voice conversations and the activity-log lines about them go too. A later scan skips these posts; their authors can still be found in other posts.${team}\n\nBackup files made before now still hold them until they are deleted under your backup setting (Settings → Backup).`,
+    { title, okLabel: "Delete permanently", cancelLabel: "Cancel", danger: true });
+  if (!ok) return false;
+  showNotice("Deleting…", { working: true });
+  const done = await deletePermanently({ leadKeys: keys });
+  appendActivityLog({ actor: "user", action: "permanent_delete", label: `Deleted permanently: ${permanentDeleteSummary(done)}` });
+  await loadLeads();
+  renderAllPieCharts();
+  renderTableFromScratch();
+  showNotice(`Deleted permanently: ${permanentDeleteSummary(done)}.`);
+  return true;
 }
 
 // Every column in one place: how to sort by it (getSortValue - omitted for
@@ -1573,6 +1604,9 @@ function syncTopScrollWidth() {
 function renderColgroup() {
   const colgroup = document.getElementById("results-colgroup");
   colgroup.innerHTML = "";
+  const selectCol = document.createElement("col");
+  selectCol.style.width = "34px";
+  colgroup.appendChild(selectCol);
   for (const col of visibleColumns()) {
     const colEl = document.createElement("col");
     colEl.dataset.colId = col.id;
@@ -1586,6 +1620,7 @@ function renderTableHead() {
   const thead = document.getElementById("results-thead");
   thead.innerHTML = "";
   const tr = document.createElement("tr");
+  tr.appendChild(selectAllTh());
 
   for (const column of visibleColumns()) {
     const th = document.createElement("th");
@@ -1649,6 +1684,7 @@ function renderTableHead() {
 
 function buildRow(lead) {
   const tr = document.createElement("tr");
+  tr.appendChild(selectTd(lead.key));
   for (const column of visibleColumns()) {
     const td = document.createElement("td");
     column.render(td, lead);
@@ -1658,7 +1694,7 @@ function buildRow(lead) {
   // 1.2.4.1 (Boaz): a click on the row opens the lead, as on Target Accounts and Target Contacts. Links, buttons, the
   // row menu and a long text that expands on click keep their own click.
   tr.addEventListener("click", (event) => {
-    if (event.target.closest("a, button, input, select, textarea, label, .kebab-btn, .content-cell[title]")) return;
+    if (event.target.closest("a, button, input, select, textarea, label, .kebab-btn, .content-cell[title], td.select-cell")) return;
     openDetail(lead.key);
   });
   return tr;
@@ -1752,7 +1788,7 @@ function buildGroupHeaderRow(group) {
   // more (18th round of direct feedback, 2026-09-19 - actions is now built
   // separately, same shape as target-accounts.js's own bare actionsTh/Td),
   // but the row still needs to span it too.
-  td.colSpan = visibleColumns().length + 1;
+  td.colSpan = visibleColumns().length + 2; // + the tick box and ⋮ columns
 
   const isCollapsed = collapsedCompanyGroups.has(group.key);
   const caret = document.createElement("button");
@@ -1799,7 +1835,7 @@ function buildGroupSummaryRow(group) {
   const tr = document.createElement("tr");
   tr.className = "company-group-summary-row";
   const td = document.createElement("td");
-  td.colSpan = visibleColumns().length + 1;
+  td.colSpan = visibleColumns().length + 2; // + the tick box and ⋮ columns
   // capped width + sticky left: a summary is several paragraphs and must not stretch across every column of a wide table
   const text = document.createElement("div");
   text.className = "group-summary-text";
@@ -1809,7 +1845,104 @@ function buildGroupSummaryRow(group) {
   return tr;
 }
 
+function paintDismissedLink() {
+  const el = document.getElementById("dismissed-leads-link");
+  if (!el) return;
+  const n = allLeads.filter((l) => l.status === "Dismissed").length;
+  el.hidden = n === 0;
+  el.textContent = `Dismissed leads (${n})`;
+}
+
+// --------------------------------------------------------------------------
+// 1.2.4.34 (Boaz): tick boxes and a Bulk edit… bar above the table, as on Target Contacts - a bulk change works on the
+// ticked leads, not on everything the filters happen to show. The header box ticks this page; the bar then offers
+// every lead matching the filter (Gmail's rule, as on Target Accounts / Contacts).
+// --------------------------------------------------------------------------
+const selectedLeads = new Set();
+let shownPageKeys = [];
+let shownFilteredKeys = [];
+
+function rememberShownLeads(leads) {
+  const known = new Set(allLeads.map((l) => l.key));
+  for (const k of [...selectedLeads]) if (!known.has(k)) selectedLeads.delete(k);
+  shownFilteredKeys = leads.map((l) => l.key);
+  shownPageKeys = groupByCompany
+    ? leads.filter((l) => !collapsedCompanyGroups.has(normalizeCompanyName(l.company))).map((l) => l.key)
+    : (pageSize === "all" ? leads : leads.slice((currentPage - 1) * pageSize, currentPage * pageSize)).map((l) => l.key);
+}
+
+function selectAllTh() {
+  const th = document.createElement("th");
+  th.className = "select-cell";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.title = "Select the leads on this page";
+  cb.addEventListener("change", () => {
+    for (const k of shownPageKeys) { if (cb.checked) selectedLeads.add(k); else selectedLeads.delete(k); }
+    renderTable();
+  });
+  th.appendChild(cb);
+  return th;
+}
+
+function refreshSelectAllHeader() {
+  const cb = document.querySelector("#results-thead th.select-cell input");
+  if (!cb) return;
+  const chosen = shownPageKeys.filter((k) => selectedLeads.has(k)).length;
+  cb.checked = shownPageKeys.length > 0 && chosen === shownPageKeys.length;
+  cb.indeterminate = chosen > 0 && chosen < shownPageKeys.length;
+}
+
+function selectTd(key) {
+  const td = document.createElement("td");
+  td.className = "select-cell";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = selectedLeads.has(key);
+  cb.addEventListener("change", () => {
+    if (cb.checked) selectedLeads.add(key); else selectedLeads.delete(key);
+    renderBulkBar();
+    refreshSelectAllHeader();
+  });
+  td.appendChild(cb);
+  return td;
+}
+
+function renderBulkBar() {
+  const bar = document.getElementById("leads-bulk-bar");
+  if (!bar) return;
+  const n = selectedLeads.size;
+  const noun = (c) => (c === 1 ? "lead" : "leads");
+  bar.hidden = n === 0;
+  document.getElementById("leads-bulk-count").textContent = `${n} ${noun(n)} selected`;
+  const extendEl = document.getElementById("leads-bulk-extend");
+  const total = shownFilteredKeys.length;
+  const wholePage = shownPageKeys.length > 0 && shownPageKeys.every((k) => selectedLeads.has(k));
+  const allChosen = total > 0 && shownFilteredKeys.every((k) => selectedLeads.has(k));
+  if (wholePage && !allChosen) {
+    extendEl.hidden = false;
+    extendEl.disabled = false;
+    extendEl.textContent = `Select all ${total} ${noun(total)} matching the current filter`;
+    extendEl.onclick = () => { for (const k of shownFilteredKeys) selectedLeads.add(k); renderTable(); };
+  } else if (wholePage && allChosen && total > shownPageKeys.length) {
+    extendEl.hidden = false;
+    extendEl.disabled = true;
+    extendEl.textContent = `All ${total} ${noun(total)} matching the current filter are selected`;
+    extendEl.onclick = null;
+  } else {
+    extendEl.hidden = true;
+  }
+}
+
+document.getElementById("leads-bulk-clear-btn").addEventListener("click", () => { selectedLeads.clear(); renderTable(); });
+
+// The ticked leads that still exist, in the table's order.
+function selectedLeadList() {
+  return allLeads.filter((l) => selectedLeads.has(l.key));
+}
+
 function renderTable() {
+  paintDismissedLink();
   leadGroupPicker.paint();
   leadOwnerPicker.paint();
   renderColgroup();
@@ -1818,6 +1951,7 @@ function renderTable() {
   renderActiveFiltersBar();
 
   const leads = applyFilterSortSearch();
+  rememberShownLeads(leads);
   // Say WHAT is hiding leads, not just "filtered": the default view hides Irrelevant leads (those the negative
   // topics or the location filter dismissed) until "Show Irrelevant" is ticked.
   const reasons = [];
@@ -1838,7 +1972,7 @@ function renderTable() {
   if (leads.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = visibleColumns().length + 1;
+    td.colSpan = visibleColumns().length + 2; // + the tick box and ⋮ columns
     td.className = "empty-state";
     const chips = activeFilterChips();
     if (allLeads.length === 0) {
@@ -1858,6 +1992,8 @@ function renderTable() {
     }
     tr.appendChild(td);
     tbody.appendChild(tr);
+    renderBulkBar();
+    refreshSelectAllHeader();
     syncTopScrollWidth();
     return;
   }
@@ -1870,6 +2006,8 @@ function renderTable() {
         for (const lead of group.leads) tbody.appendChild(buildRow(lead));
       }
     }
+    renderBulkBar();
+    refreshSelectAllHeader();
     syncTopScrollWidth();
     return;
   }
@@ -1879,6 +2017,8 @@ function renderTable() {
     : leads.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   for (const lead of pageLeads) tbody.appendChild(buildRow(lead));
+  renderBulkBar();
+  refreshSelectAllHeader();
   syncTopScrollWidth();
 }
 
@@ -2864,11 +3004,13 @@ async function refreshUndoButtonState() {
 }
 
 openBulkChangeBtn.addEventListener("click", async () => {
-  const filteredLeads = applyFilterSortSearch();
-  document.getElementById("bulk-dialog-count").textContent = String(filteredLeads.length);
-  document.getElementById("bulk-dialog-count-plural").textContent = filteredLeads.length === 1 ? "" : "s";
+  const chosen = selectedLeadList();
+  if (!chosen.length) return;
+  document.getElementById("bulk-dialog-count").textContent = String(chosen.length);
+  document.getElementById("bulk-dialog-count-plural").textContent = chosen.length === 1 ? "" : "s";
   bulkStatusSelect.value = "";
   bulkStatusText.textContent = "";
+  document.getElementById("bulk-delete-btn").hidden = !teamAccounts.canRemove();
   await refreshUndoButtonState();
   bulkChangeDialog.showModal();
 });
@@ -2887,17 +3029,18 @@ bulkApplyBtn.addEventListener("click", async () => {
     bulkStatusText.textContent = "Choose a status first.";
     return;
   }
-  const filteredLeads = applyFilterSortSearch();
-  if (filteredLeads.length === 0) {
-    bulkStatusText.textContent = "No leads match the current filters.";
+  const chosen = selectedLeadList();
+  if (chosen.length === 0) {
+    bulkStatusText.textContent = "No leads are selected.";
     return;
   }
-  if (!(await askConfirm(`Change ${filteredLeads.length} currently-filtered lead${filteredLeads.length === 1 ? "" : "s"} to "${targetStatus}"? You can undo this specific change from this same dialog afterward, but not once you've made another bulk change.`))) {
+  if (!(await askConfirm(`Change ${chosen.length} selected lead${chosen.length === 1 ? "" : "s"} to "${targetStatus}"? You can undo this change from this same dialog afterward, but not once you've made another bulk change.`))) {
     return;
   }
   bulkApplyBtn.disabled = true;
   try {
-    const changed = await bulkUpdateLeadStatus(filteredLeads.map((l) => l.key), targetStatus);
+    const changed = await bulkUpdateLeadStatus(chosen.map((l) => l.key), targetStatus);
+    selectedLeads.clear();
     bulkStatusText.textContent = `Done - ${changed} lead${changed === 1 ? "" : "s"} changed to "${targetStatus}".`;
     await refreshUndoButtonState();
     await loadLeads();
@@ -2907,6 +3050,17 @@ bulkApplyBtn.addEventListener("click", async () => {
   } finally {
     bulkApplyBtn.disabled = false;
   }
+});
+
+document.getElementById("bulk-delete-btn").addEventListener("click", async () => {
+  const chosen = selectedLeadList();
+  if (chosen.length === 0) {
+    bulkStatusText.textContent = "No leads are selected.";
+    return;
+  }
+  bulkChangeDialog.close(); // modal: the confirm would sit behind it
+  const n = chosen.length;
+  await deleteLeadsPermanently(chosen.map((l) => l.key), `Delete ${n} selected lead${n === 1 ? "" : "s"} permanently`);
 });
 
 bulkUndoBtn.addEventListener("click", async () => {
@@ -3029,6 +3183,12 @@ assignLocationInput.addEventListener("keydown", (event) => {
 
 searchInput.addEventListener("input", (event) => {
   searchText = event.target.value;
+  saveFilterSortState();
+  renderTableFromScratch();
+});
+
+document.getElementById("dismissed-leads-link")?.addEventListener("click", () => {
+  setStatusFilter("Dismissed");
   saveFilterSortState();
   renderTableFromScratch();
 });

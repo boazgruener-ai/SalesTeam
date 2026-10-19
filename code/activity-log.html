@@ -13,7 +13,8 @@
       Every user action and automatic extension action - topic edits, scans, exports/imports, lead (post) changes,
       and errors - with old/new values where applicable. Written directly to storage as each action happens,
       so it's complete even if this page (or the side panel) was closed at the time. Read-only by design -
-      entries age out on their own after 90 days, nothing here can delete it early.
+      entries are kept for 12 months, nothing here can delete them early. Export… saves the entries of a date range
+      as a spreadsheet (CSV).
     </p>
   </header>
 
@@ -34,6 +35,7 @@
       </label>
       <span id="log-count" class="log-count"></span>
       <button type="button" id="log-columns-btn" class="log-columns-btn" title="Show or hide columns, or reset their order">Columns ▾</button>
+      <button type="button" id="log-export-btn" class="log-export-btn" title="Save the entries of a date range as a spreadsheet (CSV)">Export…</button>
     </div>
 
     <p id="log-empty-state" class="empty-state" hidden>No activity logged yet.</p>
@@ -47,6 +49,20 @@
       </table>
     </div>
   </main>
+
+  <!-- 1.2.4.33 (Boaz, audit): the entries of a date range as a CSV, for compliance evidence. -->
+  <dialog id="log-export-dialog" class="log-export-dialog">
+    <h3>Export the Activity Log</h3>
+    <div class="log-export-dates">
+      <label>From <input type="date" id="log-export-from" /></label>
+      <label>To <input type="date" id="log-export-to" /></label>
+    </div>
+    <p id="log-export-status" class="log-export-status" role="status"></p>
+    <div class="log-export-actions">
+      <button type="button" id="log-export-cancel-btn">Cancel</button>
+      <button type="button" id="log-export-go-btn" class="log-export-go">Export</button>
+    </div>
+  </dialog>
 
   <script type="module" src="activity-log.js"></script>
 </body>

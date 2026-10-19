@@ -123,6 +123,23 @@ export function teamLogEntries(records, state, normalize, priors = null) {
   }
   for (const r of records || []) {
     if (!r || SKIPPED_OPS.has(r.op)) continue;
+    // 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R2): "deleted 3 leads and 1 contact permanently" - one line per member
+    // and batch, counted by what the rows were. The record names nothing, and neither does the line.
+    if (r.op === "erase") {
+      const m = stampMember(r.t);
+      const at = stampWall(r.t);
+      if (!m || !at) continue;
+      let entry = groups.get(`${m}|erase`);
+      if (!entry) {
+        entry = { at, m, op: "erase", kind: "erase", key: null, ref: null, label: null, fields: [], rows: 0, before: {}, after: {}, erased: {} };
+        groups.set(`${m}|erase`, entry);
+      }
+      entry.at = Math.max(entry.at, at);
+      entry.rows += 1;
+      const w = ["lead", "contact", "note"].includes(r.w) ? r.w : "other";
+      entry.erased[w] = (entry.erased[w] || 0) + 1;
+      continue;
+    }
     // 1.2.4 Notes (R8): "added a note on Belimed" - one line per note added, edited or deleted, never its text.
     if (r.e === "account" && String(r.id).startsWith("note:")) {
       const entry = noteLogEntry(state, r);
@@ -256,6 +273,12 @@ export function teamLogText(entry, name, who, self = false) {
     if (entry.on === "lead") return `${done} ${entry.label ? `the lead ${entry.label}` : "a lead"}`;
     if (entry.on === "contact") return `${done} a contact${entry.key ? ` of ${name(entry.key)}` : ""}`;
     return `${done} ${entry.key ? name(entry.key) : "an account"}`;
+  }
+  if (entry.kind === "erase") {
+    const n = entry.erased || {};
+    const count = (k, one) => (n[k] ? `${n[k]} ${one}${n[k] === 1 ? "" : "s"}` : "");
+    const parts = [count("lead", "lead"), count("contact", "contact"), count("note", "note")].filter(Boolean);
+    return parts.length ? `deleted ${parts.join(", ")} permanently` : "deleted data permanently";
   }
   if (entry.kind === "import") {
     const n = (entry.accounts || []).length;

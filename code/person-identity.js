@@ -58,8 +58,8 @@ function spellings(word) {
 }
 
 // The keys a name is found under: first word x last word, every spelling of each. Fewer than two words -> none (a
-// single name is matched by LinkedIn profile only).
-function nameKeys(fullName) {
+// single name is matched by LinkedIn profile only). Exported for the do-not-store list (data-protection.js).
+export function nameKeys(fullName) {
   const words = personNameWords(fullName);
   if (words.length < 2) return [];
   const keys = [];

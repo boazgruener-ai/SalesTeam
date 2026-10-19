@@ -27,6 +27,11 @@ function ensureStyle() {
     #salesteam-confirm-dialog .sc-details[hidden] { display: none; }
     #salesteam-confirm-dialog .sc-details summary { cursor: pointer; font-weight: 600; }
     #salesteam-confirm-dialog .sc-details ul { margin: 6px 0 0; padding-left: 18px; max-height: 220px; overflow-y: auto; }
+    #salesteam-confirm-dialog .sc-reason { display: block; margin: -6px 0 16px; font-size: 13px; font-weight: 600; color: #1f2933; }
+    #salesteam-confirm-dialog .sc-reason[hidden] { display: none; }
+    #salesteam-confirm-dialog .sc-reason textarea { display: block; box-sizing: border-box; width: 100%; margin-top: 4px; padding: 6px 8px;
+      border: 1px solid #c4ccd6; border-radius: 6px; font: inherit; font-weight: 400; resize: vertical; }
+    #salesteam-confirm-dialog button:disabled { opacity: .45; cursor: default; }
     #salesteam-confirm-dialog .sc-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
     #salesteam-confirm-dialog button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
     #salesteam-confirm-dialog .sc-ok { background: #0a66c2; color: #fff; }
@@ -54,7 +59,7 @@ function ensureDialog() {
   ensureStyle();
   dialogEl = document.createElement("dialog");
   dialogEl.id = "salesteam-confirm-dialog";
-  dialogEl.innerHTML = '<h3 class="sc-title" hidden></h3><p class="sc-message"></p><details class="sc-details" hidden><summary></summary><ul></ul></details><div class="sc-actions"><button type="button" class="sc-cancel"></button><button type="button" class="sc-ok"></button></div>';
+  dialogEl.innerHTML = '<h3 class="sc-title" hidden></h3><p class="sc-message"></p><details class="sc-details" hidden><summary></summary><ul></ul></details><label class="sc-reason" hidden>Reason<textarea rows="2" placeholder="Required"></textarea></label><div class="sc-actions"><button type="button" class="sc-cancel"></button><button type="button" class="sc-ok"></button></div>';
   document.body.appendChild(dialogEl);
   return dialogEl;
 }
@@ -63,7 +68,9 @@ function ensureDialog() {
 // `title`: an optional heading - "Advanced tools → Re-score All Priorities" (1.2.2.8, Boaz: each tool its own pop-up).
 // `details`: an optional fold-out list under the message - { summary: "Details", lines: ["...", ...] } (1.2.3: the
 // import's check-first summary lists the new accounts and the differences for Decisions).
-export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false, title = "", details = null } = {}) {
+// `reason: true` (1.2.4.31, audit): a Reason box that must not be empty - OK stays greyed until something is typed (a
+// single space counts: a deliberate non-answer is itself on record). Resolves to the text as typed, or false.
+export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", danger = false, title = "", details = null, reason = false } = {}) {
   return new Promise((resolve) => {
     const dialog = ensureDialog();
     // 1.2.2.7 (Annick's Join button stayed disabled): a second askConfirm used to take over the dialog before the first
@@ -88,6 +95,12 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
     cancelBtn.textContent = cancelLabel || "";
     cancelBtn.hidden = cancelLabel === null;
     okBtn.classList.toggle("sc-danger", danger);
+    const reasonEl = dialog.querySelector(".sc-reason");
+    const reasonBox = reasonEl.querySelector("textarea");
+    reasonEl.hidden = !reason;
+    reasonBox.value = "";
+    okBtn.disabled = Boolean(reason);
+    reasonBox.oninput = () => { okBtn.disabled = reason && reasonBox.value === ""; };
     let settled = false;
     const finish = (value) => {
       if (settled) return;
@@ -95,18 +108,26 @@ export function askConfirm(message, { okLabel = "OK", cancelLabel = "Cancel", da
       if (pendingFinish === finish) pendingFinish = null;
       okBtn.onclick = null;
       cancelBtn.onclick = null;
+      reasonBox.oninput = null;
+      okBtn.disabled = false;
       dialog.onclose = null;
       if (dialog.open) dialog.close();
       resolve(value);
     };
-    okBtn.onclick = () => finish(true);
+    okBtn.onclick = () => {
+      if (reason && reasonBox.value === "") return;
+      finish(reason ? reasonBox.value : true);
+    };
     cancelBtn.onclick = () => finish(false);
     dialog.onclose = () => finish(false); // Escape
     pendingFinish = finish;
     dialog.showModal();
-    (cancelLabel === null ? okBtn : cancelBtn).focus();
+    (reason ? reasonBox : cancelLabel === null ? okBtn : cancelBtn).focus();
   });
 }
+
+// The Activity Log's wording for a reason given in askConfirm's Reason box - kept exactly as typed.
+export const reasonSuffix = (reason) => (typeof reason === "string" ? ` - reason: ${reason}` : "");
 
 // A question with more than two answers: one button per choice, plus Cancel. Resolves to the chosen value, or null
 // for Cancel / Escape. The first choice is the highlighted one.

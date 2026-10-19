@@ -39,14 +39,14 @@
       <details class="nav-group">
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts and projects">Target Accounts Dashboard</button>
-        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a file from HubSpot, Salesforce or Microsoft Dynamics. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="nav-export-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot can import">Export…</button>
       </details>
 
       <details class="nav-group">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
-        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file or a file from HubSpot, Salesforce or Microsoft Dynamics. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="nav-export-contacts-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot can import">Export…</button>
       </details>
 
@@ -92,6 +92,7 @@
         <a href="#backup-section" class="nav-item" id="nav-backup-section">Backup</a>
         <a href="#restore-section" class="nav-item" id="nav-restore-section">Restore</a>
         <a href="#billing-section" class="nav-item" id="nav-billing-section" title="What SalesTeam's AI features and web research have used on your Anthropic API key">Anthropic Usage</a>
+        <a href="#data-protection-section" class="nav-item" id="nav-data-protection-section" title="How long leads are kept, and deleting what SalesTeam holds about a person">Data protection</a>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
@@ -321,6 +322,65 @@
         Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>.
         Stored only on this device, and used only to call Anthropic's API directly from your browser.
       </p>
+    </section>
+
+    <!-- 1.2.4.18 (DATA_PROTECTION_REQUIREMENTS.md R1): how long leads are kept; 1.2.4.20: Find a person, do-not-store list. -->
+    <section class="settings-card" id="data-protection-section">
+      <h3>How long leads are kept</h3>
+      <label for="lead-retention-select">Delete leads older than</label>
+      <select id="lead-retention-select">
+        <option value="0">Off - keep leads until they are deleted by hand</option>
+        <option value="6">6 months</option>
+        <option value="12">12 months</option>
+        <option value="24">24 months</option>
+      </select>
+      <p id="lead-retention-info" class="field-hint"></p>
+      <p class="field-hint">
+        Counted from the day SalesTeam found the lead. Once a day, while SalesTeam is open, older leads are deleted
+        permanently, with their notes and their Sales Mentor and Customer Voice conversations. Accounts and contacts are your
+        target list and are not deleted by age - delete one with ⋮ → Delete permanently.
+      </p>
+      <p class="field-hint">
+        Backup files made earlier still hold deleted leads until they are removed under Backup → Keeping old backups.
+      </p>
+      <p id="lead-retention-team-note" class="field-hint" hidden></p>
+      <div class="backup-save-row">
+        <button id="lead-retention-save-btn" type="button" disabled>Save</button>
+        <span id="lead-retention-status" class="field-hint"></span>
+      </div>
+
+      <!-- 1.2.4.20 (R3, R5): everything held about one person - shown, saved as a PDF, or deleted for good. -->
+      <h3 class="data-protection-subhead">Find a person</h3>
+      <p class="field-hint">
+        In order to support GDPR regulations (e.g. RTBF), when someone asks what SalesTeam holds about them, or asks to be deleted: enter their name or their LinkedIn profile link.
+      </p>
+      <form id="find-person-form" class="find-person-row" autocomplete="off">
+        <input id="find-person-input" type="text" placeholder="Name, or https://www.linkedin.com/in/…" aria-label="Name or LinkedIn profile link">
+        <button id="find-person-btn" type="submit">Find</button>
+      </form>
+      <p id="find-person-status" class="field-hint"></p>
+      <div id="find-person-result" hidden>
+        <div id="find-person-people"></div>
+        <ul id="find-person-lines" class="find-person-lines"></ul>
+        <div class="find-person-actions">
+          <button id="find-person-pdf-btn" type="button">Save Person's data as PDF…</button>
+          <button id="find-person-forget-btn" type="button" class="danger-btn">Delete this person's data and do not store this person again</button>
+        </div>
+        <p id="find-person-rights" class="field-hint" hidden></p>
+      </div>
+
+      <!-- 1.2.4.20 (R4.4, R4.5): only a count - the list holds no names. -->
+      <h3 class="data-protection-subhead">Do-not-store list</h3>
+      <p id="dns-count" class="field-hint"></p>
+      <p class="field-hint">
+        SalesTeam does not store these people again: scans, contact discovery, web research and imports skip them. The list holds
+        no names or links, so it cannot be shown. To take someone off it, enter the same name or LinkedIn link again.
+      </p>
+      <form id="dns-allow-form" class="find-person-row" autocomplete="off">
+        <input id="dns-allow-input" type="text" placeholder="Name, or https://www.linkedin.com/in/…" aria-label="Name or LinkedIn profile link to allow again">
+        <button id="dns-allow-btn" type="submit">Allow this person again</button>
+      </form>
+      <p id="dns-allow-status" class="field-hint"></p>
     </section>
 
     <section class="settings-card" id="billing-section">

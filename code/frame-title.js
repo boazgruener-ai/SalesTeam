@@ -29,3 +29,43 @@ export function restoreOwnTitle() {
   if (savedTitle !== null) document.title = savedTitle;
   savedTitle = null;
 }
+
+// 1.2.4.25 (Boaz: F5 on an account page opened Settings → Data protection): a page shown inside another one has no
+// address of its own in the browser, so a reload showed the host page again. When the host page is left while a page
+// is shown in it, that page's address is kept for this tab (sessionStorage); if the same host address is loaded next -
+// a reload - the kept page is opened instead, as a page of its own. Leaving to anywhere else forgets it.
+const RELOAD_KEY = "salesteamEmbeddedOnReload";
+
+// Only the page in the browser tab itself does this: an embedded page shares the tab's sessionStorage, and its own
+// pagehide (which comes after the host's) would otherwise wipe what the host kept.
+const isTopPage = () => { try { return window.top === window; } catch { return false; } };
+
+export function rememberEmbeddedOnReload(frameEl, isShown) {
+  if (!isTopPage()) return;
+  window.addEventListener("pagehide", () => {
+    try {
+      const href = isShown() ? frameEl.contentWindow?.location?.href : null;
+      if (href && !href.startsWith("about:")) sessionStorage.setItem(RELOAD_KEY, JSON.stringify({ href, host: location.href }));
+      else sessionStorage.removeItem(RELOAD_KEY);
+    } catch { /* storage or frame not readable: a reload shows the host page, as before */ }
+  });
+}
+
+// At the top of a host page. -> true when it is moving on to the kept page.
+export function reopenEmbeddedAfterReload() {
+  if (!isTopPage()) return false;
+  try {
+    const raw = sessionStorage.getItem(RELOAD_KEY);
+    if (!raw) return false;
+    sessionStorage.removeItem(RELOAD_KEY);
+    const { href, host } = JSON.parse(raw);
+    if (host !== location.href) return false;
+    const url = new URL(href);
+    if (url.origin !== location.origin) return false;
+    url.searchParams.delete("embedded");
+    location.replace(url.href);
+    return true;
+  } catch {
+    return false;
+  }
+}

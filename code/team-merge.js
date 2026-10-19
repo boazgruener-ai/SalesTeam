@@ -13,6 +13,7 @@
 // valid ones whenever either side changes. That keeps the merge order-free.
 
 import { teamLeadOf, leadRightsAt } from "./team-groups.js";
+import { eraseHash } from "./data-protection.js";
 
 // --------------------------------------------------------------------------
 // Stamps - a hybrid logical clock
@@ -91,16 +92,19 @@ export function observe(clock, stamp) {
 // state.teamRecs = { stamp: { id, member } }  the Team Lead chain: lead / deputy / takeover records
 // state.days     = { member: { day: 1 } }      days a member wrote anything - a take-over needs the lead quiet (D13)
 // state.creator  = member | null              the team's creator (admins/ in the folder), the chain's start
+// 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R6):
+// state.erased   = { hash: { e, t } }         rows deleted permanently, by eraseHash(e, id) - never revived
 
 export const ENTITY_TYPES = ["account", "contact", "lead", "setting", "team"];
-export const OPS = ["set", "delete", "claim", "release", "assign", "unassign", "touch"];
+export const OPS = ["set", "delete", "claim", "release", "assign", "unassign", "touch", "erase"];
 
 export function newState() {
-  return { entities: {}, lost: {}, seen: {}, gated: {}, teamRecs: {}, days: {}, creator: null };
+  return { entities: {}, lost: {}, seen: {}, gated: {}, teamRecs: {}, days: {}, creator: null, erased: {} };
 }
 
 // Rows only the Team Lead (or the deputy) may write (design 4.2). Setup and rules keep their screen lock (D2).
-export const GATED_PREFIXES = ["teamGroups:"];
+// 1.2.4.20: the do-not-store list too (DATA_PROTECTION_REQUIREMENTS.md R4.3, R4.5).
+export const GATED_PREFIXES = ["teamGroups:", "doNotStore:"];
 export const isGatedRow = (e, id) => e === "setting" && GATED_PREFIXES.some((p) => String(id).startsWith(p));
 export const TEAM_RECORD_IDS = ["lead", "deputy", "takeover"];
 const MERGE_DAY_MS = 24 * 3600 * 1000;
@@ -115,6 +119,7 @@ function ensureTeamParts(state) {
   if (!state.gated) state.gated = {};
   if (!state.teamRecs) state.teamRecs = {};
   if (state.creator === undefined) state.creator = null;
+  if (!state.erased) state.erased = {};
   if (!state.days) {
     state.days = {};
     for (const k of Object.keys(state.seen || {})) noteDay(state, k.split("|")[0]);
@@ -148,11 +153,15 @@ export function applyChange(state, ch) {
   const { t, e, id, op } = ch;
   const author = stampMember(t);
   if (!author || !ENTITY_TYPES.includes(e) || id == null || id === "" || !OPS.includes(op)) return false;
+  ensureTeamParts(state);
+  if (op === "erase") return applyErase(state, ch);
+  // A row deleted permanently stays deleted: whatever arrives for it later is dropped, and not even remembered as
+  // seen (the seen key would hold the row id).
+  if (isErasedRow(state, e, id)) return false;
   const seenKey = `${t}|${e}|${id}`;
   if (state.seen[seenKey]) return false;
   state.seen[seenKey] = true;
 
-  ensureTeamParts(state);
   noteDay(state, t);
   if (isGatedRow(e, id)) {
     const byStamp = state.gated[String(id)] || (state.gated[String(id)] = {});
@@ -166,6 +175,67 @@ export function applyChange(state, ch) {
     rebuildGated(state);
   }
   return true;
+}
+
+// --------------------------------------------------------------------------
+// Permanent delete - 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R2, R6)
+// --------------------------------------------------------------------------
+// { t, e, id: "#<hash>", op: "erase", h: <hash> }. Unlike "delete", nothing revives it: the row's record goes from the
+// state, and any change for the row read later - an offline colleague's edit, an old change file - is dropped. The
+// record names the row only by its hash, so it can stay in the folder for good. The same set of records gives the
+// same state in any order: erased rows are left out whichever arrived first.
+
+function hasErased(state) {
+  for (const _ in state.erased || {}) return true;
+  return false;
+}
+
+export function isErasedRow(state, e, id) {
+  return hasErased(state) && Boolean(state.erased[eraseHash(e, String(id))]);
+}
+
+// w: what the row was, for the team log ("deleted 3 leads permanently") - never anything that names it.
+export function eraseRecordFor(t, e, id) {
+  id = String(id);
+  const h = eraseHash(e, id);
+  const w = e === "lead" ? "lead" : e === "contact" && id.startsWith("wb:") ? "contact" : e === "account" && id.startsWith("note:") ? "note" : "other";
+  return { t, e, id: `#${h}`, op: "erase", h, w };
+}
+
+// The ids of the rows of type `e` this erase record removes (looked up before it is applied - afterwards they are gone).
+export function rowsErasedBy(state, ch) {
+  if (!ch || ch.op !== "erase" || !ch.h) return [];
+  return Object.keys(state.entities[ch.e] || {}).filter((id) => eraseHash(ch.e, id) === ch.h);
+}
+
+function applyErase(state, ch) {
+  const { t, e } = ch;
+  const h = String(ch.h || "");
+  if (!/^[0-9a-f]{32}$/.test(h) || String(ch.id) !== `#${h}`) return false;
+  const prev = state.erased[h];
+  if (prev && prev.t >= t) return false; // the same or a later erase is already applied
+  noteDay(state, t);
+  state.erased[h] = { e, t, w: ["lead", "contact", "note"].includes(ch.w) ? ch.w : "other" };
+  for (const id of rowsErasedBy(state, ch)) delete state.entities[e][id];
+  return true;
+}
+
+// The seen keys and overwritten values of erased rows hold their ids and old values. One pass over both, after a
+// batch (team-sync.js calls it before saving the state) rather than per record. Returns how many entries went.
+export function sweepErased(state) {
+  ensureTeamParts(state);
+  if (!hasErased(state)) return 0;
+  let n = 0;
+  for (const k of Object.keys(state.seen || {})) {
+    const i = k.indexOf("|");
+    const j = k.indexOf("|", i + 1);
+    if (i < 0 || j < 0) continue;
+    if (isErasedRow(state, k.slice(i + 1, j), k.slice(j + 1))) { delete state.seen[k]; n += 1; }
+  }
+  for (const [k, x] of Object.entries(state.lost || {})) {
+    if (x && isErasedRow(state, x.e, x.id)) { delete state.lost[k]; n += 1; }
+  }
+  return n;
 }
 
 function applyOp(state, ch, author) {
@@ -242,6 +312,7 @@ export function recordsBetween(state, author, lower = null, upper = null) {
   }
   for (const byStamp of Object.values(state.gated || {})) for (const [t, ch] of Object.entries(byStamp)) if (inGap(t)) out.push(ch);
   for (const [t, r] of Object.entries(state.teamRecs || {})) if (inGap(t)) out.push({ t, e: "team", id: r.id, op: "set", f: { member: r.member } });
+  for (const [h, x] of Object.entries(state.erased || {})) if (inGap(x.t)) out.push({ t: x.t, e: x.e, id: `#${h}`, op: "erase", h, w: x.w || "other" });
   return out.sort((a, b) => compareStamps(a.t, b.t));
 }
 
@@ -489,7 +560,24 @@ export function activeAssignments(state, e, id) {
 // and that answer must not depend on whether a PC read the original files or the snapshot.
 const keptWhole = (ch) => ch.e === "team" || isGatedRow(ch.e, ch.id);
 
-export function compactChanges(records) {
+// 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R6.1): with the merged `state`, the records of rows deleted permanently
+// are left out - the snapshot is where the old values would otherwise stay for good. A day that kept nothing else keeps
+// an empty record on a neutral row ("~day"), so the take-over answer stays the same without naming the erased row.
+export const DAY_KEEPER_ID = "~day";
+
+export function compactChanges(records, state = null) {
+  if (state) {
+    ensureTeamParts(state);
+    if (hasErased(state)) {
+      const erased = [];
+      records = (records || []).filter((ch) => {
+        if (!ch || ch.op === "erase" || !isErasedRow(state, ch.e, ch.id)) return true;
+        erased.push({ t: ch.t, e: "setting", id: DAY_KEEPER_ID, op: "set", f: {} });
+        return false;
+      });
+      records.push(...erased);
+    }
+  }
   const latest = {};
   for (const ch of records || []) {
     if (!ch || ch.op !== "set" || !ch.t || keptWhole(ch)) continue;

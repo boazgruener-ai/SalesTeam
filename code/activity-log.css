@@ -203,6 +203,17 @@ h1 {
 .col-menu-btn { border: none; background: none; cursor: pointer; color: var(--gray); font-size: 11px; padding: 0 4px; }
 .col-menu-btn:hover { color: #1155cc; }
 .log-columns-btn { margin-left: auto; font-size: 12px; padding: 4px 10px; cursor: pointer; }
+.log-export-btn { font-size: 12px; padding: 4px 10px; cursor: pointer; }
+.log-export-dialog { border: none; border-radius: 10px; padding: 20px 24px; width: 380px; max-width: 90vw; box-shadow: 0 8px 30px rgba(0, 0, 0, .25); }
+.log-export-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+.log-export-dialog h3 { margin: 0 0 14px; font-size: 15px; }
+.log-export-dates { display: flex; gap: 16px; flex-wrap: wrap; }
+.log-export-dates label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+.log-export-dates input { font: inherit; font-weight: 400; padding: 4px 6px; }
+.log-export-status { min-height: 1.2em; font-size: 13px; color: #8e1b12; margin: 12px 0; }
+.log-export-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.log-export-actions button { padding: 7px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.log-export-go { background: #0a66c2; color: #fff; border: none; }
 .col-menu-popup { position: fixed; z-index: 1000; background: #fff; border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15); padding: 6px; width: 220px; text-align: left; cursor: default; }
 .col-menu-popup hr { border: none; border-top: 1px solid #eee; margin: 6px 0; }

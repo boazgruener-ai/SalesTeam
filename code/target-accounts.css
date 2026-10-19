@@ -2132,6 +2132,10 @@ thead .actions-col {
 /* A colleague holds the account: its controls take no clicks; links still do (reading is never blocked). */
 .team-blocked { pointer-events: none; opacity: 0.75; }
 .team-blocked a[href] { pointer-events: auto; }
+/* 1.2.4.14 (Boaz's live test 2026-10-19: Contacts on a colleague's account could not even be opened): reading includes
+   unfolding a list and opening a contact or lead from it - the page that opens has its own block. */
+#account-detail-lists.team-blocked .detail-section-toggle,
+#account-detail-lists.team-blocked .clickable-subtable-row { pointer-events: auto; }
 
 /* Team use 1.2.2 step 5 (design 7): the assignment line on the account / contact page, list badges, the owner filter. */
 .team-claim-notice:not(.team-claim-blocked):not(.team-claim-checking):not(.team-claim-aside) {
@@ -2161,17 +2165,18 @@ thead .actions-col {
 .bulk-edit-advanced summary { cursor: pointer; color: #555; font-size: 12.5px; }
 .bulk-edit-advanced[hidden] { display: none; }
 .removed-dialog { width: min(900px, 92vw); }
-.removed-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin: 6px 0 10px; }
-.removed-tabs button { border: none; border-right: 1px solid var(--border); background: #fff; color: #333; padding: 4px 12px; font-size: 12.5px; border-radius: 0; cursor: pointer; }
-.removed-tabs button:last-child { border-right: none; }
-.removed-tabs button.active { background: #1a56c4; color: #fff; }
+/* 1.2.4.30: the rarely used Removed lists open from a quiet grey link under the table. */
+.quiet-link { background: none; border: none; padding: 0; margin: 2px 0 8px; color: #888; font-size: 12px; cursor: pointer; }
+.quiet-link:hover { color: #555; text-decoration: underline; }
+.quiet-link[hidden] { display: none; }
+.merge-accounts-reason textarea { display: block; box-sizing: border-box; width: 100%; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; resize: vertical; }
 .removed-table-wrap { max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
 .removed-table-wrap table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.removed-table-wrap th { position: sticky; top: 0; background: #f6f8fb; text-align: left; padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+.removed-table-wrap th { position: sticky; top: 0; background: #f6f8fb; text-align: left; padding: 6px 26px 6px 8px; white-space: nowrap; }
+.removed-table-wrap th.col-filtered { background: #dbe7fb; }
 .removed-table-wrap td { border-top: 1px solid #eef0f3; padding: 5px 8px; vertical-align: top; }
 .removed-table-wrap td.removed-note { color: #777; }
 .removed-table-wrap .removed-empty { padding: 14px; color: #777; }
-#removed-btn[hidden] { display: none; }
 .team-assign-lost button { margin-left: 6px; padding: 1px 10px; font-size: 12px; background: #fff; color: #333; border: 1px solid var(--border); }
 
 /* Rule 2026-10-06 (explicit Save): shown beside Status / SalesTeam Priority / Follow-up due while the picked value

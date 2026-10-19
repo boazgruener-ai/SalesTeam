@@ -55,14 +55,14 @@
       <details class="nav-group">
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <button id="open-target-accounts-btn" type="button" class="nav-item" title="Browse Target Accounts - companies, contacts and projects">Target Accounts Dashboard</button>
-        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-import-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a file from HubSpot, Salesforce or Microsoft Dynamics. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="nav-export-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot can import">Export…</button>
       </details>
 
       <details class="nav-group">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <button id="open-target-contacts-btn" type="button" class="nav-item" title="Browse every Target Contact across all accounts">Target Contacts Dashboard</button>
-        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file or a HubSpot export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="nav-import-contacts-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file or a file from HubSpot, Salesforce or Microsoft Dynamics. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="nav-export-contacts-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot can import">Export…</button>
       </details>
 
@@ -114,6 +114,7 @@
         <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
         <button id="open-settings-team-btn" type="button" class="nav-item" title="Share accounts, contacts and leads with colleagues through a OneDrive folder - create, join or leave a team">Team</button>
         <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Anthropic Usage</button>
+        <button id="open-settings-data-protection-btn" type="button" class="nav-item" title="How long leads are kept, and deleting what SalesTeam holds about a person">Data protection</button>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round - see
@@ -232,6 +233,13 @@
          filler (a thin mirrored scrollbar above the table, synced to
          #table-wrap's real one via scroll listeners in JS) was never added
          here. Added, same mechanism, same ids' shape (results- prefix). -->
+    <!-- 1.2.4.34 (Boaz): tick leads, then Bulk edit… - the same bar as on Target Contacts. -->
+    <div id="leads-bulk-bar" class="bulk-bar" hidden>
+      <span id="leads-bulk-count" class="bulk-bar-count"></span>
+      <button id="open-bulk-change-btn" type="button">Bulk edit…</button>
+      <button id="leads-bulk-extend" type="button" class="text-link-btn" hidden></button>
+      <button id="leads-bulk-clear-btn" type="button" class="text-link-btn">Clear selection</button>
+    </div>
     <div id="table-scroll-top"><div id="table-scroll-top-filler"></div></div>
 
     <section id="table-section">
@@ -260,27 +268,27 @@
         <button id="page-next-btn" type="button" title="Next page">&rsaquo;</button>
         <button id="page-last-btn" type="button" title="Last page">&raquo;</button>
       </div>
-      <button id="open-bulk-change-btn" type="button" title="Change the status of every currently-filtered lead at once">Bulk Change…</button>
     </section>
+    <button id="dismissed-leads-link" type="button" class="quiet-link" hidden></button>
   </div>
 
   <dialog id="bulk-change-dialog">
     <button id="bulk-close-x-btn" type="button" aria-label="Close" title="Close">✕</button>
-    <h3>Bulk Change Status</h3>
+    <h3>Bulk edit</h3>
     <p class="bulk-warning">
-      ⚠ This changes the status of every lead (post) currently matching the table's filters
-      (<strong id="bulk-dialog-count">0</strong> lead<span id="bulk-dialog-count-plural">s</span>) in one action.
-      Double-check your search/status/column filters before applying.
+      Changes the <strong id="bulk-dialog-count">0</strong> selected lead<span id="bulk-dialog-count-plural">s</span> in one action.
     </p>
     <label for="bulk-status-select">Change status to:</label>
     <select id="bulk-status-select">
       <option value="" selected disabled>Choose a status…</option>
     </select>
     <div class="bulk-dialog-actions">
-      <button id="bulk-apply-btn" type="button" title="Change every currently-filtered lead to the selected status">Apply</button>
+      <button id="bulk-apply-btn" type="button" title="Change the selected leads to this status">Apply</button>
       <button id="bulk-cancel-btn" type="button" title="Close without making any change">Cancel</button>
     </div>
     <p id="bulk-status-text" class="status-text"></p>
+    <hr />
+    <button id="bulk-delete-btn" type="button" class="danger-btn" title="Delete the selected leads permanently, with their notes and conversations - cannot be undone">Delete these leads permanently…</button>
     <hr />
     <button id="bulk-undo-btn" type="button" title="Restore every lead affected by the last Bulk Change to its previous status">Undo Last Bulk Change</button>
     <p id="bulk-undo-text" class="status-text"></p>

@@ -32,7 +32,7 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "field-names.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js", "lead-shape.js"]
+PURE_MODULES = ["company-identity.js", "person-identity.js", "relationships.js", "value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "import-merge.js", "crm-files.js", "csv-import.js", "readiness.js", "pipeline-plan.js", "decision-rules.js", "rate-limit.js", "extras-merge.js", "discovery-filter.js", "iso-country-codes.js", "country-local-names.js", "setup-proposals.js", "onboarding-estimate.js", "geo-regions.js", "team-groups.js", "data-protection.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "field-names.js", "team-log.js", "team-join.js", "team-invites.js", "notes.js", "team-usage.js", "xlsx-write.js", "lead-shape.js"]
 
 # Dependency order matters above: each module is concatenated after the ones it uses.
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M)
@@ -2927,6 +2927,8 @@ def main():
     test_title_brackets(ctx)
     test_login_wall(ctx)
     test_team_merge(ctx)
+    test_data_protection(ctx)
+    test_do_not_store(ctx)
     test_team_rows(ctx)
     test_team_list_rows(ctx)
     test_team_claims(ctx)
@@ -3642,6 +3644,45 @@ def test_whole_employees(ctx):
     check("employees: a web finding is rounded", e("computeFindingProposals({ company: 'SNB' }, null, { employeesGlobal: '941.2' }).filter(function (p) { return p.key === 'globalEmployees'; })[0].found"), 941)
 
 
+def test_data_protection(ctx):
+    """1.2.4.12 DATA_PROTECTION_REQUIREMENTS.md R2, R6: the erase record - never revived, order-free, compacted away."""
+    e = ctx.eval
+    check("sha256 of 'abc'", e("sha256Hex('abc')"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    check("sha256 of ''", e("sha256Hex('')"), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    check("sha256 of a 2-block text with umlauts", e("sha256Hex('Jürg ' + 'x'.repeat(70)).length"), 64)
+    check("erase hash: 32 hex, no name in it", e("/^[0-9a-f]{32}$/.test(eraseHash('contact', 'x:acme ag::ann muster'))"), True)
+    e("""
+      var M = 'm-anna', B = 'm-ben';
+      var T = function (ms, m) { return formatStamp(ms, 0, m); };
+      var SET = function (t, id, f) { return { t: t, e: 'lead', id: id, op: 'set', f: f }; };
+      var ER = eraseRecordFor(T(2000, M), 'lead', 'L1');
+      var LATE = SET(T(3000, B), 'L1', { status: 'Contacted' });
+      var recs = [SET(T(1000, M), 'L1', { author: 'Ann Muster', status: 'New' }), SET(T(1000, M), 'L2', { author: 'Bob Bauer' }), ER, LATE];
+      var S1 = newState(); applyChanges(S1, recs);
+      var S2 = newState(); applyChanges(S2, recs.slice().reverse());
+      sweepErased(S1); sweepErased(S2);
+    """)
+    check("erase record names nothing", e("JSON.stringify(ER).indexOf('L1') < 0 && ER.w === 'lead'"), True)
+    check("erased lead is gone", e("getRecord(S1, 'lead', 'L1')"), None)
+    check("a later colleague edit does not revive it", e("entityView(S1, 'lead', 'L1')"), None)
+    check("the other lead stays", e("entityView(S1, 'lead', 'L2').values.author"), "Bob Bauer")
+    check("same state in any order", e("JSON.stringify(S1.entities) === JSON.stringify(S2.entities)"), True)
+    check("no seen key or lost value names the erased row", e("JSON.stringify([S1.seen, S1.lost]).indexOf('L1') < 0"), True)
+    check("isErasedRow", e("[isErasedRow(S1, 'lead', 'L1'), isErasedRow(S1, 'lead', 'L2')].join()"), "true,false")
+    check("re-applying the erase changes nothing", e("applyChange(S1, ER)"), False)
+    e("var C = compactChanges(recs, S1);")
+    check("compaction keeps the erase, drops the erased row's values", e("JSON.stringify(C).indexOf('Ann Muster') < 0 && C.some(function (r) { return r.op === 'erase'; })"), True)
+    check("compaction keeps the other row", e("JSON.stringify(C).indexOf('Bob Bauer') >= 0"), True)
+    check("a day with only an erased row's change keeps an empty record on a neutral row",
+          e("JSON.stringify(compactChanges([LATE], S1).map(function (r) { return [r.e, r.id, Object.keys(r.f).length]; }))"), '[["setting","~day",0]]')
+    check("records rebuilt for a lost file include the erase", e("recordsBetween(S1, M).filter(function (r) { return r.op === 'erase'; }).length"), 1)
+    check("team log: one line, no name", e("teamLogText(teamLogEntries([ER, eraseRecordFor(T(2001, M), 'contact', 'wb:p-1')], S1, function (x) { return x; })[0], String, String)"), "deleted 1 lead, 1 contact permanently")
+    e("var HIT = logMatcher({ keys: ['acme ag::ann muster'], names: ['Ann Muster', 'Microsoft'] });")
+    check("log line with the contact key goes", e("HIT({ relatedContactKey: 'acme ag::ann muster' })"), True)
+    check("log line naming the person goes", e("HIT({ label: 'Removed Target Contact \\\"ann muster\\\"' })"), True)
+    check("a one-word name matches nothing", e("HIT({ label: 'Microsoft scan done' })"), False)
+
+
 def test_person_identity(ctx):
     """Contact deduplication (2026-10-10): the ~10 people the Salesforce import showed in SalesTeam twice."""
     e = ctx.eval
@@ -3682,6 +3723,45 @@ def test_person_identity(ctx):
     """)
     check("pairs: one pair - other accounts and 'Keep both' left out", e("PAIRS.length"), 1)
     check("pairs: the fuller entry (with LinkedIn) is kept on Merge", e("KEEP"), "b")
+
+
+
+
+def test_do_not_store(ctx):
+    """1.2.4.20 DATA_PROTECTION_REQUIREMENTS.md R3-R4: the do-not-store list - hashes only, every way a name is written."""
+    e = ctx.eval
+    e("""
+      var ANN = personEntry({ fullName: 'Dr. Ann Müller', company: 'Acme AG', profileUrl: 'https://www.linkedin.com/in/ann-mueller/' }, 'm-1', 1000);
+      var POST = postEntry('urn:li:activity:42', 'm-1', 1000);
+      var LIST = {}; LIST[ANN.id] = ANN.entry; LIST[POST.id] = POST.entry;
+      var M = doNotStoreMatcher(LIST);
+    """)
+    check("entry holds no name, company or link", e("/m.?ller|acme|ann/i.test(JSON.stringify(LIST))"), False)
+    check("entry has a profile hash and name hashes", e("[Boolean(ANN.entry.p), ANN.entry.n.length > 0, ANN.entry.a.length > 0].join()"), "true,true,true")
+    check("blocked by profile, any name", e("M.person({ fullName: 'A. M.', company: 'Other', profileUrl: 'https://ch.linkedin.com/in/Ann-Mueller?trk=x' })"), True)
+    check("blocked by name at the company, umlaut written out, no title", e("M.person({ fullName: 'Ann Mueller', company: 'Acme AG' })"), True)
+    check("not blocked: namesake at another company", e("M.person({ fullName: 'Ann Müller', company: 'Beta SA' })"), False)
+    check("not blocked: another person at the company", e("M.person({ fullName: 'Bob Müller', company: 'Acme AG' })"), False)
+    check("lead by the person: 'person'", e("M.lead({ author: 'Ann Müller', company: 'Acme AG' }, 'urn:x')"), "person")
+    check("lead by profile, company not known yet: 'person'", e("M.lead({ author: 'Ann', profileUrl: 'https://www.linkedin.com/in/ann-mueller' }, 'urn:y')"), "person")
+    check("the deleted post: 'post', author not blocked", e("M.lead({ author: 'Carl Kunz', company: 'Gamma' }, 'urn:li:activity:42')"), "post")
+    check("another post by someone else: kept", e("M.lead({ author: 'Carl Kunz', company: 'Gamma' }, 'urn:li:activity:43')"), None)
+    check("an empty list blocks nothing", e("doNotStoreMatcher({}).empty && !doNotStoreMatcher({}).person({ fullName: 'Ann Müller', company: 'Acme AG' })"), True)
+    check("count: people only, not posts", e("countBlockedPeople(LIST)"), 1)
+    check("query: a profile link", e("JSON.stringify(personQuery(' https://www.linkedin.com/in/ann-mueller/ '))"), '{"ok":true,"slug":"ann-mueller"}')
+    check("query: one word is too short", e("personQuery('Ann').reason"), "short")
+    check("query: a link that is no profile", e("personQuery('https://www.linkedin.com/company/acme').reason"), "link")
+    check("finds: by name, every spelling", e("queryFinds(personQuery('ann mueller'), { fullName: 'Dr. Ann Müller' })"), True)
+    check("finds: lead author by name", e("queryFinds(personQuery('Ann Müller'), { author: 'Ann Müller' })"), True)
+    check("finds: by link", e("queryFinds(personQuery('linkedin.com/in/ann-mueller'), { lastVerified2: 'https://www.linkedin.com/in/ann-mueller/' })"), True)
+    check("finds not: link vs another profile", e("queryFinds(personQuery('linkedin.com/in/ann-mueller'), { fullName: 'Ann Müller', lastVerified2: 'https://www.linkedin.com/in/ann-m-2/' })"), False)
+    check("allow again: by name, no company asked", e("JSON.stringify(entriesToAllow(LIST, 'Ann Mueller'))"), e("JSON.stringify([ANN.id])"))
+    check("allow again: by link", e("entriesToAllow(LIST, 'https://www.linkedin.com/in/ann-mueller').length"), 1)
+    check("allow again: another name finds nothing", e("entriesToAllow(LIST, 'Bob Müller').length"), 0)
+    check("allow again never takes a post off", e("entriesToAllow(LIST, 'Carl Kunz').length"), 0)
+    check("text names the person (any case)", e("textNames('Call ANN MÜLLER next week', ['Ann Müller'])"), True)
+    check("text: one-word name never matches", e("textNames('Acme call', ['Acme'])"), False)
+    check("no entry without a profile or a company", e("personEntry({ fullName: 'Ann Müller', company: '' }, null, 1)"), None)
 
 
 if __name__ == "__main__":
