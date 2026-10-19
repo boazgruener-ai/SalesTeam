@@ -3287,6 +3287,7 @@ def test_import_merge(ctx):
     e("var BAD = planImport({ companies: [{ company: 'Banded AG', globalEmployees: 0, globalRevenue: 5000000 }] }, IM_CURRENT, IM_OPTS);")
     check("import: 0 employees from the file is never written", e("'globalEmployees' in ((BAD.companyPatches['banded'] || {}).overrides || {})"), False)
     check("import: summary text", e("importSummaryText({ newCompanies: 1, filled: 2, decisions: 1 })"), "1 new account, 2 empty fields filled, 1 difference for Decisions")
+    check("import: people left out by the do-not-store list are named, not 'nothing new'", e("importSummaryText({ doNotStore: 2 })"), "2 people not imported (on the do-not-store list)")
     # 1.2.2.10 live test (Boaz, 9 Oct): an import never overrules a hand edit, LinkedIn or cited web research
     e("""
       var axaRow = { companyId: 'A', company: 'AXA Switzerland', companyType: 'International company', globalEmployees: 1001, globalHqCountry: 'Switzerland' };

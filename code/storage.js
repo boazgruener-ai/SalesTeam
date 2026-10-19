@@ -1909,13 +1909,16 @@ async function planWorkbookImport(parsed, { fileName = null, at = Date.now(), qu
   for (const c of wb.contacts || []) if (c.companyId) contactCounts.set(c.companyId, (contactCounts.get(c.companyId) || 0) + 1);
   // 1.2.4.20 (R4.2): people on the do-not-store list are left out of the file - the check-first summary already counts
   // without them; the import itself logs how many.
-  const file = { ...parsed, contacts: await withoutDoNotStore(normalizeContactRows(parsed.contacts || []), contactPerson, "import", { quiet }) };
+  const fileContacts = normalizeContactRows(parsed.contacts || []);
+  const file = { ...parsed, contacts: await withoutDoNotStore(fileContacts, contactPerson, "import", { quiet }) };
   const plan = planImport(file, { ...wb, extras, contactExtras }, {
     settings, money: revenueMoneySettings(money), buckets: SIZE_PRIORITY_BUCKETS,
     locationTier: (country) => resolveLocationPriority(country, config.locationPriorities),
     tolerancePct: settings.importTolerancePct ?? DEFAULT_IMPORT_TOLERANCE_PCT, contactCounts, fileName, at,
     unitsMinimum: targetingMinimum(config.sizeBuckets, SIZE_PRIORITY_BUCKETS),
   });
+  // 1.2.4.35 (Boaz): say that people were left out because of the list - not "nothing new".
+  plan.counts.doNotStore = fileContacts.length - file.contacts.length;
   return { wb, extras, contactExtras, plan };
 }
 
