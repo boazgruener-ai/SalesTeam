@@ -624,8 +624,8 @@ manual Dashboard button**, never part of the automatic per-scan pipeline:
   selecting "Irrelevant" from the Status filter always shows them regardless.
 - Pagination (20/50/100/All per page, remembered), global search (title/content/creator), CSV export (all
   leads, or exactly what's currently filtered — both include Priority).
-- **Bulk Change**: a small, deliberately unobtrusive button (pagination row, not the main controls) opens a
-  modal dialog — a red warning naming exactly how many currently-filtered leads will be affected, no default
+- **Bulk edit** (1.2.4.34: tick boxes and a bar above the table, as on Target Contacts - see 6.32): opens a
+  modal dialog — naming how many ticked leads will be affected, no default
   status pre-selected, a confirmation prompt on top of that, and an **"Undo Last Bulk Change"** button in the
   same dialog that restores every affected lead to its exact prior status (one level of undo, persists across
   Dashboard sessions until superseded by another bulk change). Closeable via a title-bar-style ✕.
@@ -795,8 +795,8 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   that it changed.
 - **Never manually clearable (v0.26.2)** — this is the one place to investigate what happened after
   something looks wrong, so no action anywhere deletes it. Stored as one array per calendar day
-  (`activityLog:YYYY-MM-DD`) rather than one shared array; anything older than a 90-day retention window is
-  pruned automatically on every write — a predictable "always the last 90 days" guarantee, not a raw
+  (`activityLog:YYYY-MM-DD`) rather than one shared array; anything older than a 12-month retention window
+  (90 days until 1.2.4.32) is pruned automatically — a predictable "always the last 12 months" guarantee, not a raw
   entry-count cap that could exhaust itself faster during a single unusually active day. Log data from the
   earlier flat single-key scheme migrates automatically (bucketed by each entry's own timestamp) the first
   time it's read.
@@ -808,6 +808,7 @@ idle), and a data-loss incident reconstructed after the fact from context clues.
   fire) rather than a `chrome.alarms` schedule. Each *closed* day (not today, which is still being written to)
   is exported to `log/activityLog-YYYY-MM-DD.json` exactly once, the first time a scan happens on or after the
   next day — a predictable, permission-free approximation of a daily export, not a true cron.
+- **Export… (1.2.4.33)** — the entries of a chosen date range as a CSV for audit evidence (see 6.32).
 
 ### 6.11 Target Accounts (v0.28.0, extended through v0.29.5)
 
@@ -2201,6 +2202,15 @@ The imported workbook is a snapshot, researched outside the extension. v1.1.3 le
 - **Scanner results: this scan’s leads first** - build 1.2.4.8 (Boaz). A summary line above the results, “n new leads found in this scan, all leads in SalesTeam (N)”, and a “Show only this scan’s leads” switch, on whenever the Scanner opens: the list shows only the leads first found by the last scan, untick it to list every lead. New = first found since the last scan started (lastScanStartedAt), so it holds after the page is reopened. Export Leads (CSV) exports the leads listed, as its tooltip says.
 - **Lead page: title, account and the way back** - build 1.2.4.9 (Boaz). The lead’s page is headed “Lead” (tab title “SalesTeam Lead - <company>”), not “SalesTeam Leads Dashboard”. Above the title, “Account: <company>” - a link to the account page when the company is a target account, otherwise “(not in Target Accounts)” - with its Customer / Partner tag. A lead opened from the Leads table of an account or contact page opens in the same tab, and its back link says “Back to <account or contact>” and returns there (#from=account:<key> / contact:<key>); opened from anywhere else it keeps “Back to all leads”. On the lead page the menu’s Leads Dashboard item now returns to the list (it did nothing there).
 - **Page headings, path line and tab titles** - build 1.2.4.10 (Boaz). Every page’s heading and browser-tab title name the page shown, not the list it was opened from: “Account” and “Contact” on Target Accounts (tab “SalesTeam Account - Novartis”), “Lead” on the Leads Dashboard, “SalesTeam Settings → <page>” also in the tab, “SalesTeam Decisions”. Under the heading a path line - “Target Accounts Dashboard › Novartis”, “Target Accounts Dashboard › Novartis › Rui Costa” for a lead opened there, “Target Contacts Dashboard › <contact>”, “Leads Dashboard › <creator>” - where every level but the last is a link; it replaces the “Back to …” links, and the list’s description and its “LinkedIn company IDs resolved” line are hidden on these pages (1.2.4.11). A page opened inside another through the menu gives the tab its own title (frame-title.js). Opened on an account or contact (for example from a lead’s path line), Target Accounts no longer shows the accounts list for a few seconds first. The Follow-up due Save button wraps inside the card instead of sticking out past its right edge.
+
+### 6.32 Audit: removed lists, a reason for every removal, merge and delete, the Activity Log kept 12 months and exported (builds 1.2.4.29-1.2.4.34)
+
+- **Removed lists** - merged-away accounts and contacts are no longer listed under Removed: a merge cannot be undone (it does not record which side each contact, lead, note or field came from), and the Activity Log records it. The Removed dialog shows one kind per opening, “Removed accounts” or “Removed contacts”, with no tabs; every row in it can be restored. Build 1.2.4.29.
+- **Quiet links instead of a button** - the Removed… toolbar button is gone. Small grey links under the tables, next to the page controls, shown only when the count is above zero: “Removed accounts (N)” on Target Accounts, “Removed contacts (N)” on Target Contacts (new), and “Dismissed leads (N)” on the Leads Dashboard, which sets the Status filter to Dismissed (Dismissed stays a normal status in the list). In a team only the Team Lead and the deputy see the Removed links, as only they may restore. Build 1.2.4.30.
+- **A reason is required** - the confirm of Remove, Restore, Merge and Delete permanently of an account or contact has a Reason box (askConfirm option reason, confirm-dialog.js); the action cannot go ahead while it is empty. A single space is accepted and stored as given - deliberately giving no reason is itself on record. The reason ends the action’s Activity Log line (“ - reason: …”). Covered: Remove from the ⋮ menus and from Bulk edit, undoing a Find new accounts run, Delete permanently (⋮ menus and the Removed dialog), Restore, Find duplicates (Merge and Merge all), the Merge accounts dialog, Decisions (Merge, Remove) and Settings → Data protection. Build 1.2.4.31.
+- **Activity Log kept 12 months** - day buckets older than 12 months are pruned (was 90 days), long enough to serve as compliance evidence. Build 1.2.4.32.
+- **Activity Log export** - Export… on the Activity Log page asks for From and To dates and saves the entries of that range, oldest first, as a CSV with Date & Time, Who, Action, Description, Previous Value and New Value - UTF-8 with a byte-order mark so Excel shows umlauts correctly. It holds what “Everything” shows, whatever the page’s filters. Who is the member’s team name (or “Me”), “Automatic” for SalesTeam’s own work, or the colleague’s name. Build 1.2.4.33.
+- **Leads Dashboard bulk edit** - tick boxes on the Leads table and a bar above it once a lead is ticked - “n leads selected”, Bulk edit…, “Select all N matching the current filter” and Clear selection - as on Target Contacts. The header box ticks the page shown. The Bulk edit dialog (status change, Undo Last Bulk Change, Delete these leads permanently…) acts on the ticked leads only; the old Bulk Change… button under the table, which acted on every filtered lead, is gone. Build 1.2.4.34 (Boaz).
 
 ## 7. Non-functional requirements
 
