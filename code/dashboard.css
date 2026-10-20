@@ -1072,6 +1072,20 @@ thead th.actions-col {
   font-size: 13px;
 }
 
+/* 1.2.4.34: the selection bar above the table, as on Target Accounts / Contacts. */
+.bulk-bar { display: flex; align-items: center; gap: 12px; margin: 8px 0; padding: 8px 12px; background: var(--blue-light);
+  border: 1px solid var(--blue); border-radius: 6px; font-size: 13px; }
+.bulk-bar[hidden], .bulk-bar .text-link-btn[hidden] { display: none; }
+.bulk-bar-count { font-weight: 600; color: var(--blue); }
+.bulk-bar .text-link-btn { color: var(--blue); text-decoration: underline; font-size: 13px; }
+.bulk-bar .text-link-btn:disabled { color: var(--gray); text-decoration: none; cursor: default; }
+#results-table th.select-cell, #results-table td.select-cell { width: 34px; text-align: center; }
+
+/* 1.2.4.30: Dismissed leads stay in the list; a quiet grey link under the table filters to them. */
+.quiet-link { background: none; border: none; padding: 0; margin: 6px 0 8px; color: #888; font-size: 12px; cursor: pointer; }
+.quiet-link:hover { color: #555; text-decoration: underline; }
+.quiet-link[hidden] { display: none; }
+
 #page-size-select {
   padding: 4px 6px;
   border: 1px solid #ccc;
@@ -1747,3 +1761,15 @@ th.th-drop-after { box-shadow: inset -3px 0 0 #1155cc !important; }
 /* 1.2.3 step 2 (design 7): the Group dropdown above a table. */
 .team-group-picker[hidden] { display: none; }
 .team-group-picker { border: 1px solid var(--border, #ccc); border-radius: 6px; background: #fff; color: #333; padding: 4px 8px; font-size: 12px; margin-right: 8px; vertical-align: middle; max-width: 220px; }
+
+/* 1.2.4.12 data protection: the bulk dialog's permanent delete - red outline, like the other danger buttons */
+#bulk-delete-btn {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #c23b3b;
+  border-radius: 6px;
+  background: white;
+  color: #c23b3b;
+  cursor: pointer;
+  font-weight: 600;
+}

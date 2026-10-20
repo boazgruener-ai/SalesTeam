@@ -147,6 +147,10 @@
       <label><input type="radio" name="merge-accounts-keep" value="other" /> <span id="merge-accounts-keep-other"></span></label>
     </fieldset>
     <p id="merge-accounts-preview" class="page-subtitle"></p>
+    <label class="merge-accounts-field merge-accounts-reason">
+      <span>Reason</span>
+      <textarea id="merge-accounts-reason" rows="2" placeholder="Required"></textarea>
+    </label>
     <p class="page-subtitle">This can't be undone from the app, so take a Backup first if you are unsure (Settings &rarr; Backup).</p>
     <div class="merge-discovered-dialog-actions">
       <button type="button" id="merge-accounts-confirm-btn">Merge</button>
@@ -192,7 +196,7 @@
       <details class="nav-group" id="nav-group-accounts" open>
         <summary class="nav-group-label">Target Accounts Dashboard</summary>
         <a href="#" id="tab-accounts" class="nav-item active">Target Accounts</a>
-        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="import-page-btn" type="button" class="nav-item" title="Add accounts and contacts from a research workbook (.xlsx), a SalesTeam Excel file, a file from HubSpot, Salesforce or Microsoft Dynamics. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="export-page-btn" type="button" class="nav-item" title="Save accounts and/or contacts as a CSV file with SalesTeam's columns, or as files HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
         <button id="bulk-research-page-btn" type="button" class="nav-item" title="Search the public web for many accounts in one go, in the background. You choose which accounts and what to look for, and see the estimated cost first.">Research Accounts on the Web…</button>
         <input type="file" id="import-target-accounts-page-file-input" accept=".xlsx,application/json" hidden />
@@ -201,7 +205,7 @@
       <details class="nav-group" id="nav-group-contacts">
         <summary class="nav-group-label">Target Contacts Dashboard</summary>
         <a href="#contacts" id="tab-contacts" class="nav-item">Target Contacts</a>
-        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
+        <button id="import-contacts-page-btn" type="button" class="nav-item" title="Add contacts (and accounts) from a SalesTeam Excel file, a file from HubSpot, Salesforce or Microsoft Dynamics. Adds what you do not have and fills in what is missing - nothing is replaced or removed.">Import…</button>
         <button id="export-contacts-page-btn" type="button" class="nav-item" title="Save contacts as a CSV file with SalesTeam's columns, or as a file HubSpot, Salesforce or Microsoft Dynamics can import">Export…</button>
       </details>
 
@@ -244,6 +248,7 @@
         <button id="open-settings-restore-btn" type="button" class="nav-item" title="Open Settings - Restore from a backup file">Restore</button>
         <button id="open-settings-team-btn" type="button" class="nav-item" title="Share accounts, contacts and leads with colleagues through a OneDrive folder - create, join or leave a team">Team</button>
         <button id="open-settings-billing-btn" type="button" class="nav-item" title="What the AI features and web research have used on your Anthropic API key">Anthropic Usage</button>
+        <button id="open-settings-data-protection-btn" type="button" class="nav-item" title="How long leads are kept, and deleting what SalesTeam holds about a person">Data protection</button>
       </details>
 
       <!-- PRD 6.20 Phase 10 follow-up (2026-09-19), 6th round of direct
@@ -330,7 +335,7 @@
       <p id="empty-state" class="empty-state" hidden>
         No Target Accounts data imported yet.
         <button id="empty-import-btn" type="button">Import…</button>
-        Choose your research workbook (.xlsx), a SalesTeam Excel file, a HubSpot, a Salesforce or a Microsoft Dynamics export.
+        Choose your research workbook (.xlsx), a SalesTeam Excel file, a file from HubSpot, Salesforce or Microsoft Dynamics.
       </p>
 
       <section id="accounts-stats-section" hidden>
@@ -378,7 +383,6 @@
           <button type="button" data-owner="unassigned" title="Accounts nobody has taken yet">Unassigned</button>
           <button type="button" data-owner="all" title="Every account">All</button>
         </span>
-        <button id="removed-btn" type="button" title="Accounts and contacts removed from the list - see when, and restore them">Removed…</button>
         <button id="columns-btn" type="button" title="Show or hide table columns">Columns ▾</button>
         <span id="result-count"></span>
       </div>
@@ -410,6 +414,7 @@
       </div>
 
       <div id="pagination-bottom" class="pagination-bar" hidden></div>
+      <button id="removed-accounts-link" type="button" class="quiet-link" hidden></button>
     </div>
 
     <div id="contacts-list-view" hidden>
@@ -455,6 +460,7 @@
       </div>
 
       <div id="contacts-pagination-bottom" class="pagination-bar" hidden></div>
+      <button id="removed-contacts-link" type="button" class="quiet-link" hidden></button>
     </div>
 
     <!-- 1.2.3 step 2: an account or contact opened by link that is in none of the member's groups - nothing else is shown. -->
@@ -666,16 +672,13 @@
 
   <!-- 1.2.2 step 5b (design 2.11): every removal is soft - see them with their date, and restore in bulk -->
   <dialog id="removed-dialog" class="action-dialog removed-dialog">
-    <h3>Removed from the list</h3>
-    <p class="page-subtitle">Nothing removed is erased. Tick the rows to bring back and click Restore. Sort by date to undo a removal done on a given day.</p>
-    <div class="removed-tabs">
-      <button type="button" data-removed-scope="accounts" class="active">Accounts</button>
-      <button type="button" data-removed-scope="contacts">Contacts</button>
-    </div>
+    <h3 id="removed-dialog-title">Removed accounts</h3>
+    <p class="page-subtitle">Nothing removed is erased. Tick the rows to bring back and click Restore. Sort by date to undo a removal done on a given day. To erase people for good, tick them and click Delete permanently.</p>
     <div id="removed-table-wrap" class="removed-table-wrap"></div>
     <p id="removed-status-text" class="status-text" role="status"></p>
     <div class="action-dialog-actions">
       <button id="removed-restore-btn" type="button" disabled>Restore</button>
+      <button id="removed-delete-btn" type="button" class="danger-btn" disabled>Delete permanently…</button>
       <button type="button" class="action-dialog-close-btn">Close</button>
     </div>
   </dialog>
@@ -844,9 +847,9 @@
     <fieldset class="io-choice">
       <legend>File type</legend>
       <label><input type="radio" name="import-format" value="salesteam" checked /> SalesTeam Excel - a file saved with Export…</label>
-      <label><input type="radio" name="import-format" value="hubspot" /> HubSpot export (CSV) - companies or contacts</label>
-      <label><input type="radio" name="import-format" value="salesforce" /> Salesforce export (CSV) - accounts or contacts</label>
-      <label><input type="radio" name="import-format" value="dynamics" /> Microsoft Dynamics export (Excel or CSV) - accounts or contacts</label>
+      <label><input type="radio" name="import-format" value="hubspot" /> HubSpot (CSV file) - companies or contacts</label>
+      <label><input type="radio" name="import-format" value="salesforce" /> Salesforce (CSV file) - accounts or contacts</label>
+      <label><input type="radio" name="import-format" value="dynamics" /> Microsoft Dynamics (Excel or CSV file) - accounts or contacts</label>
       <!-- 1.2.2.13 (Boaz): last - the research now runs inside SalesTeam, so a workbook made outside is rarely used. -->
       <label><input type="radio" name="import-format" value="workbook" /> Research workbook (.xlsx) - research done outside SalesTeam</label>
     </fieldset>

@@ -6,16 +6,18 @@ import { joinProposalItems, applyJoinProposal, groupMoveItems, applyGroupMove } 
 import { listingRevenue } from "./discovery-filter.js";
 import { DEFAULT_ARBITRATION_SETTINGS, arbitrateAccount, arbitrationContext, sizeBucketKey } from "./web-findings-arbitration.js";
 import { assessAccount, isScannable, deriveProvenance, applicableProvenance, provenanceValueKey, toEpochMs, seniorityLevelFromLabel, isGoodSource } from "./readiness.js";
-import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages, initiativeCounts, targetsStatus } from "./pipeline-plan.js";
+import { LANE_MAX_PEOPLE, normalizeCompletionTargets, normalizeInitiativeStages, initiativeCounts, targetsStatus, localDay } from "./pipeline-plan.js";
 import { accountInputsKey, effectivePipeline, lackingReason, duplicateGroups, idVerifiedFor, accountPairKey, sortDecisions, similarKey } from "./decision-rules.js";
 import { computeFindingProposals, researchConfirms, webCitationFor, findingValue, findingUrl, isCitedValue, researchContacts, researchInitiatives, linkedinCompanyUrl, WEB_FINDING_FIELDS } from "./web-research-apply.js";
 import { mergeFieldChanges } from "./extras-merge.js";
 import { planImport, importValueKey, importSummaryText, importDetailLines, DEFAULT_IMPORT_TOLERANCE_PCT } from "./import-merge.js";
 import { normalizeCompanyName, buildExclusionMatcher, buildRelationshipMatcher, matchesExclusion, matchesRelationship, websiteDomain, webCompanyId } from "./company-identity.js";
-import { createPersonIndex, contactDuplicatePairs, contactPairKey, fullerFirst, linkedinProfileSlug } from "./person-identity.js";
+import { createPersonIndex, contactDuplicatePairs, contactPairKey, fullerFirst, linkedinProfileSlug, nameKeys } from "./person-identity.js";
 import { splitCompanyLists, isRelationshipCategory, effectivePriority, relationshipsMovedText, RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS } from "./relationships.js";
 import { relationshipOf } from "./company-identity.js";
 import { noteEntry, editedNote, deletedNote, isLiveNote, mayEditNote, mayDeleteNote, rekeyNotes } from "./notes.js";
+import { extractRows } from "./team-rows.js";
+import { logMatcher, TEAM_PENDING_ERASURES_KEY, DO_NOT_STORE_KEY, doNotStoreMatcher, personEntry, postEntry, countBlockedPeople, entriesToAllow, personQuery, queryFinds, textNames, personProfileUrl } from "./data-protection.js";
 export { normalizeCompanyName, buildExclusionMatcher, websiteDomain };
 export { RELATIONSHIP_CATEGORIES, RELATIONSHIP_CATEGORY_LABELS, relationshipsMovedText };
 // Thin wrapper around chrome.storage.local for everything this extension persists:
@@ -1216,7 +1218,8 @@ export async function getDiscoveredContacts() {
 export async function appendDiscoveredContacts(newContacts) {
   const existing = await getDiscoveredContacts();
   const existingSlugs = new Set(existing.map((c) => c.slug));
-  const toAdd = newContacts.filter((c) => !existingSlugs.has(c.slug));
+  const allowed = await withoutDoNotStore(newContacts, discoveredPerson, "contact discovery"); // 1.2.4.20 R4.2
+  const toAdd = allowed.filter((c) => !existingSlugs.has(c.slug));
   const merged = [...existing, ...toAdd];
   await chrome.storage.local.set({ [DISCOVERED_CONTACTS_KEY]: merged });
   return merged;
@@ -1896,7 +1899,7 @@ export async function mayImport() {
   return mayImportFor(got.teamMembership, got.teamAccountStates);
 }
 
-async function planWorkbookImport(parsed, { fileName = null, at = Date.now() } = {}) {
+async function planWorkbookImport(parsed, { fileName = null, at = Date.now(), quiet = false } = {}) {
   const [raw, extras, contactExtras, config, settings, money] = await Promise.all([
     chrome.storage.local.get(TARGET_ACCOUNTS_WORKBOOK_KEY).then((d) => d[TARGET_ACCOUNTS_WORKBOOK_KEY] || {}),
     getTargetAccountExtras(), getTargetContactExtras(), getTargetUniverseConfig(), getWebFindingsArbitration(), getRevenueNormalization(),
@@ -1904,20 +1907,25 @@ async function planWorkbookImport(parsed, { fileName = null, at = Date.now() } =
   const wb = { companies: [], contacts: [], aiInitiatives: [], aiInvestment: [], sources: [], ...raw };
   const contactCounts = new Map();
   for (const c of wb.contacts || []) if (c.companyId) contactCounts.set(c.companyId, (contactCounts.get(c.companyId) || 0) + 1);
-  const file = { ...parsed, contacts: normalizeContactRows(parsed.contacts || []) };
+  // 1.2.4.20 (R4.2): people on the do-not-store list are left out of the file - the check-first summary already counts
+  // without them; the import itself logs how many.
+  const fileContacts = normalizeContactRows(parsed.contacts || []);
+  const file = { ...parsed, contacts: await withoutDoNotStore(fileContacts, contactPerson, "import", { quiet }) };
   const plan = planImport(file, { ...wb, extras, contactExtras }, {
     settings, money: revenueMoneySettings(money), buckets: SIZE_PRIORITY_BUCKETS,
     locationTier: (country) => resolveLocationPriority(country, config.locationPriorities),
     tolerancePct: settings.importTolerancePct ?? DEFAULT_IMPORT_TOLERANCE_PCT, contactCounts, fileName, at,
     unitsMinimum: targetingMinimum(config.sizeBuckets, SIZE_PRIORITY_BUCKETS),
   });
+  // 1.2.4.35 (Boaz): say that people were left out because of the list - not "nothing new".
+  plan.counts.doNotStore = fileContacts.length - file.contacts.length;
   return { wb, extras, contactExtras, plan };
 }
 
 // The check-first summary (design 3.4): what the import would do, with nothing written.
 // Every format goes through these two (build step 2): the research workbook, a SalesTeam CSV and a HubSpot export.
 export async function previewWorkbookImport(parsed, { fileName = null } = {}) {
-  const { plan } = await planWorkbookImport(parsed, { fileName });
+  const { plan } = await planWorkbookImport(parsed, { fileName, quiet: true });
   return { counts: plan.counts, newCompanyNames: plan.newCompanyNames, decisions: plan.decisions, detailLines: importDetailLines(plan) };
 }
 
@@ -2287,10 +2295,12 @@ export async function getPendingDiscoveredMergePreview() {
 
 export async function mergeDiscoveredIntoWorkbook() { return withAccountWriteLock(() => mergeDiscoveredIntoWorkbookUnlocked(...arguments)); }
 async function mergeDiscoveredIntoWorkbookUnlocked() {
+  const diff = await computeDiscoveredMergeDiff();
   const {
-    workbook, newCompanyRows, newContactRows, matchedCompanies, heldNameMatches, heldContacts,
+    workbook, newCompanyRows, matchedCompanies, heldNameMatches, heldContacts,
     totalDiscoveredCompanies, totalDiscoveredContacts, duplicateContactsSkipped, orphanedContactsSkipped,
-  } = await computeDiscoveredMergeDiff();
+  } = diff;
+  const newContactRows = await withoutDoNotStore(diff.newContactRows, contactPerson, "contact discovery"); // 1.2.4.20 R4.2
   const targetAccountsMap = await getTargetAccounts();
 
   // Free LinkedIn ID backfill (2026-09-16, per the user's own proposal): a
@@ -2424,8 +2434,10 @@ async function markContactDiscoveryAttemptedUnlocked(keys) {
 // (contactKeyFor identity), so re-running this after a partial/stopped run
 // never double-adds the same person.
 export async function appendContactsToWorkbook(newContactRows) { return withAccountWriteLock(() => appendContactsToWorkbookUnlocked(...arguments)); }
-async function appendContactsToWorkbookUnlocked(newContactRows) {
-  if (!newContactRows || newContactRows.length === 0) return 0;
+async function appendContactsToWorkbookUnlocked(rows) {
+  if (!rows || rows.length === 0) return 0;
+  const newContactRows = await withoutDoNotStore(rows, contactPerson, "new contacts"); // 1.2.4.20 R4.2
+  if (newContactRows.length === 0) return 0;
   const workbook = await getTargetAccountsWorkbook();
   const existingContactKeys = new Set((workbook.contacts || []).map((c) => contactKeyFor(c.company, c.fullName)));
   const knownPeople = createPersonIndex(); // the same person written another way is not added again
@@ -5128,6 +5140,455 @@ export async function deleteNote(id) { return withAccountWriteLock(async () => {
 }); }
 
 // --------------------------------------------------------------------------
+// Permanent delete (1.2.4.12, DATA_PROTECTION_REQUIREMENTS.md R2, R6)
+// --------------------------------------------------------------------------
+// "Remove" hides an account or contact and can be undone; this erases leads and contacts with everything that hangs
+// on them: their notes, their Sales Mentor / Customer Voice conversations (on the lead or the contact), the lines of
+// this PC's activity log and team log that name them, and any undo record that still holds them. An account is never
+// erased (Q3: a company is not a person) - "its people" means its contacts, their leads and the leads posted from it.
+// In a team every row that goes is put on the pending-erasures list in the same write, so team-sync.js sends it as an
+// erase record that no colleague's later edit can revive (team-merge.js applyErase).
+
+const ERASABLE_KEYS = [RESULTS_KEY, TARGET_ACCOUNTS_WORKBOOK_KEY, TARGET_CONTACT_EXTRAS_KEY, NOTES_KEY];
+const ERASE_UNDO_KEYS = () => [LAST_BULK_CHANGE_KEY, ...Object.values(EXTRAS_UNDO_SLOTS)];
+
+// what: { leadKeys, contactKeys, accountKeys }. data: the ERASABLE_KEYS as stored.
+function resolvePermanentDelete(what, data) {
+  const results = data[RESULTS_KEY] || {};
+  const contacts = Array.isArray(data[TARGET_ACCOUNTS_WORKBOOK_KEY]?.contacts) ? data[TARGET_ACCOUNTS_WORKBOOK_KEY].contacts : [];
+  const extras = data[TARGET_CONTACT_EXTRAS_KEY] || {};
+  const notes = data[NOTES_KEY] || {};
+  const accountKeys = new Set((what.accountKeys || []).filter(Boolean));
+  const contactKeys = new Set((what.contactKeys || []).filter(Boolean));
+  for (const c of contacts) {
+    const k = contactKeyFor(c.company, c.fullName);
+    if (k && accountKeys.has(normalizeCompanyName(c.company))) contactKeys.add(k);
+  }
+  const contactRows = contacts.filter((c) => contactKeys.has(contactKeyFor(c.company, c.fullName)));
+  const leadList = Object.entries(results).map(([key, lead]) => ({ ...lead, key }));
+  const leadKeys = new Set((what.leadKeys || []).filter((k) => k in results));
+  for (const c of contactRows) for (const l of findLeadsForContact(c, leadList)) leadKeys.add(l.key);
+  for (const l of leadList) if (l.company && accountKeys.has(normalizeCompanyName(l.company))) leadKeys.add(l.key);
+  // 1.2.4.20 Forget a person (R3.2): notes elsewhere (on an account) that name the person go too.
+  const extraNoteIds = new Set((what.noteIds || []).filter((id) => id in notes));
+  // A contact merged into one being deleted keeps its old record (deletedAt + mergedInto) with its conversations.
+  const extraKeys = Object.keys(extras).filter((k) => contactKeys.has(k) || contactKeys.has(extras[k]?.mergedInto));
+  const noteIds = Object.keys(notes).filter((id) => {
+    const n = notes[id];
+    return n && ((n.on === "lead" && leadKeys.has(n.key)) || (n.on === "contact" && contactKeys.has(n.key)) || extraNoteIds.has(id));
+  });
+  const hasTalk = (x) => (x?.mentorHistory || []).length + (x?.customerVoiceHistory || []).length > 0;
+  return {
+    leadKeys: [...leadKeys],
+    contactKeys: [...contactKeys],
+    contactRows,
+    extraKeys,
+    noteIds,
+    conversations: [...leadKeys].filter((k) => hasTalk(results[k])).length + extraKeys.filter((k) => hasTalk(extras[k])).length,
+    names: [...contactRows.map((c) => c.fullName), ...[...leadKeys].map((k) => results[k]?.author), ...(what.names || [])].filter(Boolean),
+  };
+}
+
+const eraseCounts = (r) => ({ leads: r.leadKeys.length, contacts: r.contactRows.length, notes: r.noteIds.length, conversations: r.conversations });
+
+// For the confirm pop-up: how many leads, contacts, notes and conversations would go.
+export async function previewPermanentDelete(what) {
+  return eraseCounts(resolvePermanentDelete(what, await chrome.storage.local.get(ERASABLE_KEYS)));
+}
+
+// "3 leads, 1 contact, 2 notes" - for the confirm, the notice and the activity log (never a name).
+export function permanentDeleteSummary(counts) {
+  const part = (n, one) => (n ? `${n} ${one}${n === 1 ? "" : "s"}` : "");
+  return [part(counts.leads, "lead"), part(counts.contacts, "contact"), part(counts.notes, "note"), part(counts.conversations, "conversation")]
+    .filter(Boolean).join(", ") || "nothing";
+}
+
+// 1.2.4.20 (R4.6): a permanent delete stays permanent - each deleted contact, and each person in what.people, goes on
+// the do-not-store list, and each deleted lead's post is remembered so no scan brings it back (its author is not
+// blocked). remember: false for the retention run - a lead deleted for its age is not a person's request.
+function doNotStoreAdditions(what, r, data, by, at) {
+  const add = {};
+  const put = (x) => { if (x) add[x.id] = x.entry; };
+  for (const c of r.contactRows) put(personEntry({ fullName: c.fullName, company: c.company, profileUrl: personProfileUrl(c) }, by, at));
+  for (const p of what.people || []) put(personEntry(p, by, at));
+  for (const k of r.leadKeys) put(postEntry(k, by, at));
+  const list = data[DO_NOT_STORE_KEY] || {};
+  for (const id of Object.keys(add)) if (list[id]) delete add[id];
+  return add;
+}
+
+// -> { leads, contacts, notes, conversations, logLines, listed }
+export async function deletePermanently(what, { remember = true } = {}) { return withAccountWriteLock(async () => {
+  const data = await chrome.storage.local.get([...ERASABLE_KEYS, ...ERASE_UNDO_KEYS(), "teamMembership", TEAM_PENDING_ERASURES_KEY, DO_NOT_STORE_KEY]);
+  const r = resolvePermanentDelete(what, data);
+  const next = {};
+  const listAdd = remember ? doNotStoreAdditions(what, r, data, data.teamMembership?.memberId || null, Date.now()) : {};
+  const listed = Object.values(listAdd).filter((x) => x.k === "person").length;
+  if (r.leadKeys.length) {
+    const results = { ...(data[RESULTS_KEY] || {}) };
+    for (const k of r.leadKeys) delete results[k];
+    next[RESULTS_KEY] = results;
+  }
+  if (r.contactRows.length) {
+    const wb = data[TARGET_ACCOUNTS_WORKBOOK_KEY];
+    const gone = new Set(r.contactRows);
+    next[TARGET_ACCOUNTS_WORKBOOK_KEY] = { ...wb, contacts: wb.contacts.filter((c) => !gone.has(c)) };
+  }
+  if (r.extraKeys.length) {
+    const extras = { ...(data[TARGET_CONTACT_EXTRAS_KEY] || {}) };
+    for (const k of r.extraKeys) delete extras[k];
+    next[TARGET_CONTACT_EXTRAS_KEY] = extras;
+  }
+  if (r.noteIds.length) {
+    const notes = { ...(data[NOTES_KEY] || {}) };
+    for (const id of r.noteIds) delete notes[id];
+    next[NOTES_KEY] = notes;
+  }
+  if (!Object.keys(next).length) {
+    if (Object.keys(listAdd).length) await chrome.storage.local.set({ [DO_NOT_STORE_KEY]: { ...(data[DO_NOT_STORE_KEY] || {}), ...listAdd } });
+    return { ...eraseCounts(r), logLines: 0, listed };
+  }
+  if (data.teamMembership) {
+    const now = Date.now();
+    const pending = [...(data[TEAM_PENDING_ERASURES_KEY] || [])];
+    for (const key of Object.keys(next)) {
+      const after = extractRows(key, next[key]);
+      for (const rk of extractRows(key, data[key]).keys()) if (!after.has(rk)) pending.push({ rk, at: now });
+    }
+    next[TEAM_PENDING_ERASURES_KEY] = pending;
+  }
+  const hit = logMatcher({ keys: [...r.leadKeys, ...r.contactKeys, ...r.noteIds], names: r.names });
+  const staleUndo = ERASE_UNDO_KEYS().filter((k) => data[k] && hit(data[k]));
+  if (Object.keys(listAdd).length) next[DO_NOT_STORE_KEY] = { ...(data[DO_NOT_STORE_KEY] || {}), ...listAdd };
+  await chrome.storage.local.set(next);
+  if (staleUndo.length) await chrome.storage.local.remove(staleUndo);
+  return { ...eraseCounts(r), logLines: await dropLogLines(hit), listed };
+}); }
+
+// The activity log (every day kept) and the team log, without the lines `hit` matches. -> how many went.
+async function dropLogLines(hit) {
+  const all = chrome.storage.local.getKeys ? await chrome.storage.local.getKeys() : Object.keys(await chrome.storage.local.get(null));
+  const logKeys = all.filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX) || k === "teamLog");
+  if (!logKeys.length) return 0;
+  const got = await chrome.storage.local.get(logKeys);
+  const next = {};
+  let n = 0;
+  for (const k of logKeys) {
+    if (!Array.isArray(got[k])) continue;
+    const kept = got[k].filter((x) => !hit(x));
+    if (kept.length !== got[k].length) { next[k] = kept; n += got[k].length - kept.length; }
+  }
+  if (n) await chrome.storage.local.set(next);
+  return n;
+}
+
+// --------------------------------------------------------------------------
+// Find a person, forget them, the do-not-store list (1.2.4.20, DATA_PROTECTION_REQUIREMENTS.md R3-R5)
+// --------------------------------------------------------------------------
+// Settings → Data protection → Find a person: everything SalesTeam holds about one person (a name or a LinkedIn
+// profile link), as a list, as a PDF for the person (R5), or deleted with "don't store this person again" (R3). The
+// do-not-store list itself (hashes only) is data-protection.js; this is where it is read and enforced: saveResults
+// drops leads by a listed author or of a deleted post, and every way contacts come in skips listed people.
+
+export async function getDoNotStore() {
+  return (await chrome.storage.local.get(DO_NOT_STORE_KEY))[DO_NOT_STORE_KEY] || {};
+}
+
+export async function getDoNotStoreCount() {
+  return countBlockedPeople(await getDoNotStore());
+}
+
+// One activity-log line per skip (R4.2), never a name.
+async function noteDoNotStoreSkips({ people = 0, posts = 0 }, where) {
+  const parts = [];
+  if (people) parts.push(`${people} ${people === 1 ? "person" : "people"} skipped: on the do-not-store list`);
+  if (posts) parts.push(`${posts} lead${posts === 1 ? "" : "s"} skipped: deleted permanently before`);
+  if (!parts.length) return;
+  await appendActivityLog({ actor: "extension", action: "do_not_store_skip", label: `${parts.join("; ")}${where ? ` (${where})` : ""}`, newValue: { people, posts } })
+    .catch(() => null);
+}
+
+// Takes listed people's and deleted posts' leads out of `results` in place (a scan keeps its map in memory between
+// saves, so a skipped lead is not counted again at the next save). -> { people, posts }
+async function dropDoNotStoreLeads(results) {
+  const counts = { people: 0, posts: 0 };
+  if (!results || typeof results !== "object") return counts;
+  const m = doNotStoreMatcher(await getDoNotStore());
+  if (m.empty) return counts;
+  for (const [k, lead] of Object.entries(results)) {
+    const why = m.lead(lead, k);
+    if (!why) continue;
+    delete results[k];
+    counts[why === "post" ? "posts" : "people"]++;
+  }
+  return counts;
+}
+
+// rows: people about to be stored; personOf(row) -> { fullName, company, profileUrl }. -> the rows not listed.
+async function withoutDoNotStore(rows, personOf, where, { quiet = false } = {}) {
+  if (!Array.isArray(rows) || !rows.length) return rows || [];
+  const m = doNotStoreMatcher(await getDoNotStore());
+  if (m.empty) return rows;
+  const kept = rows.filter((r) => !m.person(personOf(r)));
+  if (!quiet && kept.length < rows.length) await noteDoNotStoreSkips({ people: rows.length - kept.length }, where);
+  return kept;
+}
+
+const contactPerson = (c) => ({ fullName: c?.fullName, company: c?.company, profileUrl: personProfileUrl(c) });
+const discoveredPerson = (d) => ({
+  fullName: d?.name, company: d?.companyName,
+  profileUrl: d?.slug ? `https://www.linkedin.com/in/${d.slug}/` : null,
+});
+
+// After a restore: whatever the backup brought back of a listed person goes again (R4.2). A backup's own do-not-store
+// list is added to today's, never put in its place - an older list must not let a forgotten person back in.
+export async function purgeDoNotStore({ where = "restore", backupList = null } = {}) { return withAccountWriteLock(async () => {
+  const current = await getDoNotStore();
+  if (backupList && typeof backupList === "object") {
+    const merged = { ...backupList, ...current };
+    if (Object.keys(merged).length !== Object.keys(current).length) await chrome.storage.local.set({ [DO_NOT_STORE_KEY]: merged });
+  }
+  const m = doNotStoreMatcher(await getDoNotStore());
+  if (m.empty) return { people: 0, posts: 0 };
+  const data = await chrome.storage.local.get([RESULTS_KEY, TARGET_ACCOUNTS_WORKBOOK_KEY, DISCOVERED_CONTACTS_KEY]);
+  const next = {};
+  const results = { ...(data[RESULTS_KEY] || {}) };
+  const leads = await dropDoNotStoreLeads(results);
+  if (leads.people || leads.posts) next[RESULTS_KEY] = results;
+  const wb = data[TARGET_ACCOUNTS_WORKBOOK_KEY];
+  const contacts = Array.isArray(wb?.contacts) ? wb.contacts.filter((c) => !m.person(contactPerson(c))) : null;
+  if (contacts && contacts.length < wb.contacts.length) next[TARGET_ACCOUNTS_WORKBOOK_KEY] = { ...wb, contacts };
+  const staged = Array.isArray(data[DISCOVERED_CONTACTS_KEY]) ? data[DISCOVERED_CONTACTS_KEY] : [];
+  const stagedKept = staged.filter((d) => !m.person(discoveredPerson(d)));
+  if (stagedKept.length < staged.length) next[DISCOVERED_CONTACTS_KEY] = stagedKept;
+  if (Object.keys(next).length) await chrome.storage.local.set(next);
+  const people = leads.people + (contacts ? wb.contacts.length - contacts.length : 0) + (staged.length - stagedKept.length);
+  await noteDoNotStoreSkips({ people, posts: leads.posts }, where);
+  return { people, posts: leads.posts };
+}); }
+
+// The text of one Sales Mentor / Customer Voice / Advisors message (a string, or the API's content blocks).
+function messageText(m) {
+  if (!m) return "";
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) return m.content.map((b) => (b && b.type === "text" ? b.text : "")).filter(Boolean).join("\n");
+  return typeof m.text === "string" ? m.text : "";
+}
+const conversationOf = (history) => (history || []).map((m) => ({ role: m.role === "user" ? "You" : "SalesTeam", text: messageText(m) })).filter((m) => m.text);
+const mentions = (history, names) => (history || []).some((m) => textNames(messageText(m), names));
+
+async function allLogEntries() {
+  const all = chrome.storage.local.getKeys ? await chrome.storage.local.getKeys() : Object.keys(await chrome.storage.local.get(null));
+  const keys = all.filter((k) => k.startsWith(ACTIVITY_LOG_PREFIX) || k === "teamLog");
+  const got = keys.length ? await chrome.storage.local.get(keys) : {};
+  return keys.flatMap((k) => (Array.isArray(got[k]) ? got[k].map((x) => ({ x, team: k === "teamLog" })) : []));
+}
+
+// input: a name or a LinkedIn profile link. only: the person ids to keep (the ticks on the page), or null for all.
+// -> { ok: false, reason } | { ok: true, query, people, notes, conversations, discovered, logLines, sources, names, … }
+export async function findPerson(input, { only = null } = {}) {
+  const q = personQuery(input);
+  if (!q.ok) return { ok: false, reason: q.reason };
+  const data = await chrome.storage.local.get([RESULTS_KEY, TARGET_ACCOUNTS_WORKBOOK_KEY, TARGET_CONTACT_EXTRAS_KEY, NOTES_KEY,
+    DISCOVERED_CONTACTS_KEY, ADVISOR_HISTORY_KEY, CUSTOMER_VOICE_HISTORY_KEY]);
+  const results = data[RESULTS_KEY] || {};
+  const extras = data[TARGET_CONTACT_EXTRAS_KEY] || {};
+  const notes = data[NOTES_KEY] || {};
+
+  // One "person" per name at one company: the page ticks people, so a namesake elsewhere can be left out.
+  const people = new Map();
+  const personId = (name, company) => `${normalizeCompanyName(company || "") || "?"}|${nameKeys(name)[0] || String(name || "").trim().toLowerCase()}`;
+  const personFor = (name, company, profileUrl) => {
+    const id = personId(name, company);
+    if (!people.has(id)) people.set(id, { id, name: String(name || "").trim(), company: company || null, profileUrl: null, contacts: [], leads: [] });
+    const p = people.get(id);
+    if (!p.profileUrl && linkedinProfileSlug(profileUrl || "")) p.profileUrl = profileUrl;
+    return p;
+  };
+  const contacts = Array.isArray(data[TARGET_ACCOUNTS_WORKBOOK_KEY]?.contacts) ? data[TARGET_ACCOUNTS_WORKBOOK_KEY].contacts : [];
+  for (const c of contacts) {
+    if (!queryFinds(q, c)) continue;
+    personFor(c.fullName, c.company, personProfileUrl(c)).contacts.push({ ...c, key: contactKeyFor(c.company, c.fullName) });
+  }
+  for (const [key, lead] of Object.entries(results)) {
+    if (lead.type === "job" || !lead.author || !queryFinds(q, { author: lead.author, profileUrl: lead.profileUrl })) continue;
+    personFor(lead.author, lead.company, lead.profileUrl).leads.push({ ...lead, key });
+  }
+  const discoveredAll = (Array.isArray(data[DISCOVERED_CONTACTS_KEY]) ? data[DISCOVERED_CONTACTS_KEY] : [])
+    .filter((d) => queryFinds(q, { name: d.name, profileUrl: discoveredPerson(d).profileUrl }));
+  for (const d of discoveredAll) personFor(d.name, d.companyName, discoveredPerson(d).profileUrl);
+
+  const allPeople = [...people.values()];
+  const chosen = only ? allPeople.filter((p) => only.has(p.id)) : allPeople;
+  const chosenIds = new Set(chosen.map((p) => p.id));
+  const leadKeys = new Set(chosen.flatMap((p) => p.leads.map((l) => l.key)));
+  const contactKeys = new Set(chosen.flatMap((p) => p.contacts.map((c) => c.key)));
+  const names = [...new Set([...(q.name ? [q.name] : []), ...chosen.map((p) => p.name)].filter(Boolean))];
+  // A name search with no tick left names nobody.
+  const textHit = (t) => chosen.length > 0 && textNames(t, names);
+
+  const noteList = Object.entries(notes).filter(([, n]) => n && (
+    (n.on === "lead" && leadKeys.has(n.key)) || (n.on === "contact" && contactKeys.has(n.key)) || textHit(n.text)
+  )).map(([id, n]) => ({ id, on: n.on, key: n.key, text: n.text, at: n.at, deleted: Boolean(n.deletedAt) }));
+
+  const conversations = [];
+  const talk = (where, kind, history) => { const msgs = conversationOf(history); if (msgs.length) conversations.push({ where, kind, messages: msgs }); };
+  for (const p of chosen) for (const l of p.leads) {
+    talk(`Lead - post by ${l.author}`, "Sales Mentor", l.mentorHistory);
+    talk(`Lead - post by ${l.author}`, "Customer Voice", l.customerVoiceHistory);
+  }
+  for (const [k, x] of Object.entries(extras)) {
+    if (!contactKeys.has(k) && !contactKeys.has(x?.mergedInto)) continue;
+    talk(`Contact - ${x?.mergedInto ? "merged record" : "contact page"}`, "Sales Mentor", x?.mentorHistory);
+    talk(`Contact - ${x?.mergedInto ? "merged record" : "contact page"}`, "Customer Voice", x?.customerVoiceHistory);
+  }
+  const advisorsHit = chosen.length > 0 && mentions(data[ADVISOR_HISTORY_KEY], names);
+  const voiceHit = chosen.length > 0 && mentions(data[CUSTOMER_VOICE_HISTORY_KEY], names);
+  if (advisorsHit) talk("Advisors page (mentions the name)", "Sales Advisor", data[ADVISOR_HISTORY_KEY]);
+  if (voiceHit) talk("Advisors page (mentions the name)", "Customer Voice", data[CUSTOMER_VOICE_HISTORY_KEY]);
+
+  const discovered = discoveredAll.filter((d) => chosenIds.has(personId(d.name, d.companyName)));
+  const hit = chosen.length ? logMatcher({ keys: [...leadKeys, ...contactKeys], names }) : () => false;
+  const logLines = (await allLogEntries()).filter(({ x }) => hit(x))
+    .map(({ x, team }) => ({ at: x.timestamp || x.at || null, text: x.label || x.text || "", team }));
+
+  const sources = new Set();
+  for (const p of chosen) {
+    if (p.leads.length) sources.add("LinkedIn posts found by a Leads scan");
+    for (const c of p.contacts) {
+      if (c.source === "Discovered") sources.add("LinkedIn people search (contact discovery)");
+      else if (c.source === "Web") sources.add("Web research (public web pages)");
+      else sources.add("An import (research workbook or CRM file)");
+    }
+  }
+  if (discovered.length) sources.add("LinkedIn people search (contact discovery)");
+
+  return {
+    ok: true, query: String(input).trim(), byLink: Boolean(q.slug),
+    people: allPeople.map((p) => ({ ...p, chosen: chosenIds.has(p.id) })),
+    leadKeys: [...leadKeys], contactKeys: [...contactKeys], names,
+    notes: noteList, conversations, discovered, logLines, sources: [...sources],
+    clears: { advisors: advisorsHit, customerVoice: voiceHit },
+  };
+}
+
+async function mayForget() {
+  const got = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  return !got.teamMembership || Boolean(leadRightsOf(got.teamMembership, got.teamAccountStates));
+}
+
+// "Delete all of this and don't store this person again" (R3.3). only: as findPerson. -> { ok, done, listed } or
+// { ok: false, reason: "rights" | "nothing" | <personQuery reason> }
+export async function forgetPerson(input, { only = null, reason = null } = {}) {
+  if (!(await mayForget())) return { ok: false, reason: "rights" };
+  const found = await findPerson(input, { only });
+  if (!found.ok) return found;
+  const chosen = found.people.filter((p) => p.chosen);
+  const people = chosen.map((p) => ({ fullName: p.name, company: p.company, profileUrl: p.profileUrl }));
+  if (found.byLink && !people.some((p) => p.profileUrl)) people.push({ fullName: "", company: null, profileUrl: found.query });
+  if (!people.length) return { ok: false, reason: "nothing" };
+  const done = await deletePermanently({
+    leadKeys: found.leadKeys, contactKeys: found.contactKeys, noteIds: found.notes.map((n) => n.id), people, names: found.names,
+  });
+  // What deletePermanently does not hold: discovered contacts not yet added, and the Advisors page's conversations.
+  const after = {};
+  if (found.discovered.length) {
+    const ids = new Set(found.discovered.map((d) => d.slug || `${d.name}|${d.companyName}`));
+    after[DISCOVERED_CONTACTS_KEY] = (await getDiscoveredContacts()).filter((d) => !ids.has(d.slug || `${d.name}|${d.companyName}`));
+  }
+  if (found.clears.advisors) after[ADVISOR_HISTORY_KEY] = [];
+  if (found.clears.customerVoice) after[CUSTOMER_VOICE_HISTORY_KEY] = [];
+  if (Object.keys(after).length) await chrome.storage.local.set(after);
+  const listed = done.listed || 0;
+  await appendActivityLog({
+    actor: "user", action: "forget_person",
+    label: `A person was forgotten (Settings → Data protection): deleted ${permanentDeleteSummary(done)}${found.discovered.length ? `, ${found.discovered.length} discovered contact${found.discovered.length === 1 ? "" : "s"}` : ""}; on the do-not-store list now${typeof reason === "string" ? ` - reason: ${reason}` : ""}`,
+    newValue: { leads: done.leads, contacts: done.contacts, notes: done.notes, conversations: done.conversations, listed },
+  });
+  return { ok: true, done, listed };
+}
+
+// "Allow this person again" (R4.5): the same link or name, typed again. -> { ok, removed } | { ok: false, reason }
+export async function allowPersonAgain(input) { return withAccountWriteLock(async () => {
+  if (!(await mayForget())) return { ok: false, reason: "rights" };
+  const q = personQuery(input);
+  if (!q.ok) return { ok: false, reason: q.reason };
+  const list = await getDoNotStore();
+  const ids = entriesToAllow(list, input);
+  if (!ids.length) return { ok: true, removed: 0 };
+  const next = { ...list };
+  for (const id of ids) delete next[id];
+  await chrome.storage.local.set({ [DO_NOT_STORE_KEY]: next });
+  await appendActivityLog({ actor: "user", action: "do_not_store_allow", label: `${ids.length} ${ids.length === 1 ? "person" : "people"} taken off the do-not-store list (Settings → Data protection)`, newValue: { removed: ids.length } });
+  return { ok: true, removed: ids.length };
+}); }
+
+// --------------------------------------------------------------------------
+// Lead retention (1.2.4.18, DATA_PROTECTION_REQUIREMENTS.md R1)
+// --------------------------------------------------------------------------
+// "Delete leads older than … months" - off by default. Counted from the day SalesTeam found the lead (firstSeenAt; post
+// dates are only "3 w ago" on LinkedIn). Run once a day from an open SalesTeam page (backup-restore.js startAutoBackup,
+// like the daily backup - nothing runs while the browser is closed) and right after Save. Accounts and contacts are the
+// user's target list and are never deleted by age (R1.4). In a team the setting is the Team Lead's, one value for the
+// whole team (team-keys.js TEAM_WHOLE_KEYS); every member's PC runs it, so a lead goes even while the Team Lead is away.
+
+const LEAD_RETENTION_KEY = "leadRetentionMonths";
+const LEAD_RETENTION_LAST_RUN_KEY = "leadRetentionLastRun"; // this PC's last run day - personal
+export const LEAD_RETENTION_CHOICES = [0, 6, 12, 24];
+
+export async function getLeadRetentionMonths() {
+  const v = Number((await chrome.storage.local.get(LEAD_RETENTION_KEY))[LEAD_RETENTION_KEY]);
+  return LEAD_RETENTION_CHOICES.includes(v) ? v : 0;
+}
+
+export async function saveLeadRetentionMonths(months) {
+  if (!LEAD_RETENTION_CHOICES.includes(months)) throw new Error(`Not a retention choice: ${months}`);
+  await chrome.storage.local.set({ [LEAD_RETENTION_KEY]: months });
+}
+
+// When SalesTeam found the lead: firstSeenAt, else (a lead from a very early build) the post date or the last scan.
+function leadFoundAt(lead) {
+  return toEpochMs(lead?.firstSeenAt) || toEpochMs(lead?.postedAt) || toEpochMs(lead?.lastSeenAt) || null;
+}
+
+function retentionCutoff(months, now) {
+  const d = new Date(now);
+  d.setMonth(d.getMonth() - months);
+  return d.getTime();
+}
+
+// The leads a setting of `months` would delete now (for the page's "N leads would be deleted").
+export async function leadsPastRetention(months, now = Date.now()) {
+  if (!months) return [];
+  const results = (await chrome.storage.local.get(RESULTS_KEY))[RESULTS_KEY] || {};
+  const cutoff = retentionCutoff(months, now);
+  return Object.entries(results).filter(([, lead]) => {
+    const at = leadFoundAt(lead);
+    return at !== null && at < cutoff;
+  }).map(([key]) => key);
+}
+
+// Once a day per PC (force: right after Save). -> null when nothing ran, else { months, leads, notes, conversations }.
+export async function runLeadRetentionIfDue({ force = false, now = Date.now() } = {}) {
+  const months = await getLeadRetentionMonths();
+  if (!months) return null;
+  const today = localDay(now);
+  if (!force && (await chrome.storage.local.get(LEAD_RETENTION_LAST_RUN_KEY))[LEAD_RETENTION_LAST_RUN_KEY] === today) return null;
+  // Claim the day first, so a second page opening at the same moment does not run it too.
+  await chrome.storage.local.set({ [LEAD_RETENTION_LAST_RUN_KEY]: today });
+  const keys = await leadsPastRetention(months, now);
+  if (!keys.length) return { months, leads: 0, notes: 0, conversations: 0 };
+  const done = await deletePermanently({ leadKeys: keys }, { remember: false });
+  await appendActivityLog({
+    actor: "extension",
+    action: "lead_retention",
+    label: `Deleted ${permanentDeleteSummary(done)} - leads older than ${months} months (Settings → Data protection)`,
+    newValue: { months, leads: done.leads },
+  });
+  return { months, ...done };
+}
+
+// --------------------------------------------------------------------------
 // Bulk edit of account/contact extras (2026-09-22)
 // --------------------------------------------------------------------------
 
@@ -6370,7 +6831,7 @@ async function resetPipelineForUnlocked(key) {
 //   duplicate: "merge" | "separate"          lacking_evidence: "keep" | "remove"
 //   finding: "web" | "current"
 // Returns a short line saying what was done, for the page and the Activity Log.
-export async function applyDecision(item, choice) {
+export async function applyDecision(item, choice, { reason = null } = {}) {
   if (item.kind === "join_proposal" || item.kind === "group_move") {
     const done = item.kind === "group_move" ? await applyGroupMove(item, choice) : await applyJoinProposal(item, choice);
     appendActivityLog({ actor: "user", action: "decision", label: `Decision: ${done}`, relatedCompanyKey: item.accountKey, newValue: { kind: item.kind, choice } }).catch(() => {});
@@ -6517,7 +6978,9 @@ export async function applyDecision(item, choice) {
   } else {
     throw new Error(`Unknown decision kind: ${item.kind}`);
   }
-  appendActivityLog({ actor: "user", action: "decision", label: `Decision: ${label}`, relatedCompanyKey: item.accountKey, newValue: { kind: item.kind, choice } }).catch(() => {});
+  // 1.2.4.31 (audit): the reason a remove or merge was given, exactly as typed.
+  const why = typeof reason === "string" ? ` - reason: ${reason}` : "";
+  appendActivityLog({ actor: "user", action: "decision", label: `Decision: ${label}${why}`, relatedCompanyKey: item.accountKey, newValue: { kind: item.kind, choice } }).catch(() => {});
   return label;
 }
 
@@ -6673,8 +7136,11 @@ export async function getResults() {
   return results;
 }
 
+// 1.2.4.20 (R4.2): every lead write passes here, so a listed person's lead or a deleted post is never stored again.
 export async function saveResults(results) {
+  const skipped = await dropDoNotStoreLeads(results);
   await chrome.storage.local.set({ [RESULTS_KEY]: results });
+  if (skipped.people || skipped.posts) await noteDoNotStoreSkips(skipped, "Leads");
 }
 
 // In-app audit trail of both user actions (topic edits, exports, scans
@@ -6699,7 +7165,8 @@ export async function saveResults(results) {
 // not the entire accumulated history.
 const ACTIVITY_LOG_PREFIX = "activityLog:";
 const LEGACY_ACTIVITY_LOG_KEY = "activityLog"; // pre-90-day-retention flat array (v0.26.0/0.26.1)
-const ACTIVITY_LOG_RETENTION_DAYS = 90;
+// 1.2.4.32 (Boaz, audit): kept 12 months, was 90 days - long enough to serve as compliance evidence.
+const ACTIVITY_LOG_RETENTION_MONTHS = 12;
 const ACTIVITY_LOG_EXPORTED_DAYS_KEY = "activityLogExportedDays";
 const ACTIVITY_LOG_PRUNED_DAY_KEY = "activityLogPrunedDay";
 
@@ -6749,7 +7216,7 @@ export async function appendActivityLog({
   if (prunedDay === key) return;
   await chrome.storage.local.set({ [ACTIVITY_LOG_PRUNED_DAY_KEY]: key });
   const cutoff = new Date(now);
-  cutoff.setDate(cutoff.getDate() - ACTIVITY_LOG_RETENTION_DAYS);
+  cutoff.setMonth(cutoff.getMonth() - ACTIVITY_LOG_RETENTION_MONTHS);
   const cutoffKey = activityLogDayKey(cutoff);
   const allKeys = chrome.storage.local.getKeys
     ? await chrome.storage.local.getKeys()

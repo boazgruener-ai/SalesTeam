@@ -18,7 +18,7 @@ import sys
 from py_mini_racer import MiniRacer
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
-REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-usage.js", "team-sync.js"]
+REAL = ["value-normalize.js", "web-research-apply.js", "web-findings-arbitration.js", "geo-regions.js", "team-groups.js", "person-identity.js", "data-protection.js", "team-merge.js", "team-keys.js", "team-rows.js", "team-claims.js", "team-log.js", "team-join.js", "team-invites.js", "team-usage.js", "team-sync.js"]
 IMPORT_RE = re.compile(r"""^\s*import\s+[^;]*?from\s+["\']([^"\']+)["\']\s*;\s*$""", re.M | re.S)
 
 FAKES = r"""
@@ -56,9 +56,10 @@ function fire(changes) { LISTENERS.forEach(function (l) { Promise.resolve().then
 var chrome = {
   storage: {
     local: {
+      getKeys: function () { return Promise.resolve(Object.keys(STORE)); },
       get: function (keys) {
         var out = {};
-        (typeof keys === 'string' ? [keys] : keys).forEach(function (k) { if (k in STORE) out[k] = clone(STORE[k]); });
+        (keys === null ? Object.keys(STORE) : typeof keys === 'string' ? [keys] : keys).forEach(function (k) { if (k in STORE) out[k] = clone(STORE[k]); });
         return Promise.resolve(out);
       },
       set: function (obj) {
@@ -1432,6 +1433,124 @@ def main():
     t, folder = umi.call("getTeamUsage()", folder)
     check("table: a member who left keeps the line, marked as left", line(t, "Vic"), ["ok", 2.75, 20, True])
     check("usage: after leaving, the record is gone here and the file is still in the folder", (vic.local("teamUsageMonths"), usage_file(vic) is not None), (None, True))
+
+    # 1.2.4.12 Data protection (DATA_PROTECTION_REQUIREMENTS.md R2, R6): a permanent delete reaches every member, is
+    # never revived by a colleague's later edit - not even one made offline - and leaves the team folder at compaction.
+    folder = {}
+    xia = Member("xia")
+    xia.set_local({
+        "targetAccountsWorkbook": {
+            "companies": [{"companyId": "c-1", "company": "Acme AG"}],
+            "contacts": [{"contactId": "p-1", "companyId": "c-1", "company": "Acme AG", "fullName": "Ann Muster"},
+                         {"contactId": "p-2", "companyId": "c-1", "company": "Acme AG", "fullName": "Bob Bauer"}],
+            "aiInitiatives": [], "sources": [],
+        },
+        "results": {"L1": {"author": "Ann Muster", "company": "Acme AG", "status": "New"},
+                    "L2": {"author": "Bob Bauer", "company": "Acme AG", "status": "New"}},
+        "targetContactExtras": {"acme ag::ann muster": {"manualStatus": "Contacted"}},
+        "notes": {"n-ann": {"on": "contact", "key": "acme ag::ann muster", "text": "Ann likes trains.", "at": 1, "by": None,
+                            "byName": None, "editedAt": None, "deletedAt": None, "deletedBy": None}},
+    })
+    r, folder = xia.call("createTeam({ name: 'Xia', teamName: 'Erase' })", folder)
+    inv_y, folder = invite(xia, "Yan", folder)
+    inv_z, folder = invite(xia, "Zed", folder)
+    yan = Member("yan", now_offset=3)
+    zed = Member("zed", now_offset=6)
+    r, folder = yan.call("joinTeam({ inviteId: '%s' })" % inv_y, folder)
+    r, folder = zed.call("joinTeam({ inviteId: '%s' })" % inv_z, folder)
+    # Ola is still on a build before 1.2.4.12 (the store version): it does not know the erase record.
+    inv_o, folder = invite(xia, "Ola", folder)
+    ola = Member("ola", now_offset=4)
+    ola.e("OPS.splice(OPS.indexOf('erase'), 1);")
+    r, folder = ola.call("joinTeam({ inviteId: '%s' })" % inv_o, folder)
+    folder = all_round(folder, (xia, yan, zed, ola))
+    check("erase: Ann is on every PC first", ["L1" in (m.local("results") or {}) for m in (xia, yan, zed)], [True, True, True])
+
+    # Zed is offline (sees the folder as it is now) and works on Ann's lead meanwhile.
+    zed_seen = dict(folder)
+    res = zed.local("results"); res["L1"]["status"] = "Contacted"; zed.set_local({"results": res})
+
+    # Xia deletes Ann permanently: what storage.js deletePermanently writes, in one write.
+    wb = xia.local("targetAccountsWorkbook")
+    wb["contacts"] = [c for c in wb["contacts"] if c["contactId"] != "p-1"]
+    res = xia.local("results"); del res["L1"]
+    xia.set_local({
+        "targetAccountsWorkbook": wb, "results": res, "targetContactExtras": {}, "notes": {},
+        "teamPendingErasures": [{"rk": rk, "at": 1} for rk in ("lead|L1", "contact|wb:p-1", "contact|x:acme ag::ann muster", "account|note:n-ann")],
+    })
+    folder = all_round(folder, (xia, yan, ola))
+    xia_id = xia.status()["me"]["memberId"]
+    erases = [c for k, v in folder.items() if k.startswith("members/%s/changes/" % xia_id) and v for c in json.loads(v)["changes"] if c.get("op") == "erase"]
+    check("erase: four erase records went out (lead, contact row, contact extras, note)", len(erases), 4)
+    check("erase: the erase records name nobody", "Ann" in json.dumps(erases) or "muster" in json.dumps(erases), False)
+    check("erase: the pending list is used up", xia.local("teamPendingErasures"), [])
+    check("erase: Yan no longer has Ann - lead, contact, extras, note",
+          ("L1" in yan.local("results"), [c["fullName"] for c in yan.local("targetAccountsWorkbook")["contacts"]],
+           yan.local("targetContactExtras") or {}, yan.local("notes") or {}), (False, ["Bob Bauer"], {}, {}))
+    check("erase: Bob stays", "L2" in yan.local("results"), True)
+    check("erase: Yan's team log has one line for it, and names Ann nowhere",
+          ([x.get("erased") for x in yan.local("teamLog") or [] if x.get("kind") == "erase"], "Ann Muster" in json.dumps(yan.local("teamLog"))),
+          ([{"lead": 1, "contact": 1, "note": 1, "other": 1}], False))
+
+    # Live test 2026-10-19 (Edge still showed the deleted contact): the older build skipped the erase and moved on.
+    check("erase: an older build does not apply it", "L1" in ola.local("results"), True)
+    ola.e("OPS.push('erase'); DB.meta.rereadV = 1; mem = null;")  # Ola updates; the worker starts again
+    folder = all_round(folder, (ola, xia))
+    folder = all_round(folder, (ola, xia))
+    check("erase: after updating, the colleague reads the folder once more and Ann goes",
+          ("L1" in ola.local("results"), [c["fullName"] for c in ola.local("targetAccountsWorkbook")["contacts"]], ola.local("notes") or {}),
+          (False, ["Bob Bauer"], {}))
+    check("erase: ... and the updated colleague has the same picture", same(picture(ola), picture(yan)), True)
+    # A row already erased in the state but still on the PC (an older page wrote it back): taken off at the next round.
+    res = yan.local("results"); res["L1"] = {"author": "Ann Muster", "company": "Acme AG", "status": "New"}
+    yan.e("STORE.results = %s;" % json.dumps(res))  # written outside the sync's notice, as an old page would
+    yan.e("erasedLocalChecked = -1;")
+    folder = all_round(folder, (yan,))
+    check("erase: a stray local copy of an erased row is removed and not sent", ("L1" in yan.local("results"), "L1" in xia.local("results")), (False, False))
+
+    # Zed comes back: the offline edit does not bring Ann back, on any PC.
+    zed.e("FOLDER = %s;" % json.dumps(zed_seen))
+    folder = all_round(folder, (zed, xia, yan))
+    folder = all_round(folder, (zed, xia, yan))
+    check("erase: an offline colleague's later edit does not revive the lead, on any PC",
+          ["L1" in (m.local("results") or {}) for m in (xia, yan, zed)], [False, False, False])
+    check("erase: ... and Zed lost the contact and the note too",
+          ([c["fullName"] for c in zed.local("targetAccountsWorkbook")["contacts"]], zed.local("notes") or {}), (["Bob Bauer"], {}))
+    check("erase: the three PCs agree", (same(picture(xia), picture(yan)), same(picture(yan), picture(zed))), (True, True))
+    check("erase: no PC's saved team state names Ann",
+          ["Ann Muster" in m.e("JSON.stringify(mem.state)") or "ann muster" in m.e("JSON.stringify(mem.state)") for m in (xia, yan, zed)], [False, False, False])
+
+    # A colleague joining later gets Bob, not Ann - even though the base file had her.
+    check("erase: the base file still has Ann before the clean-up", "Ann Muster" in json.dumps([v for k, v in folder.items() if k.startswith("base/")]), True)
+    for m in (xia, yan, zed):
+        m.e("NOW += 8 * 24 * 3600 * 1000; DB.meta.lastCompactDay = null; if (mem) mem.meta.lastCompactDay = null;")
+    folder = all_round(folder, (xia, yan, zed))
+    check("erase: eight days later the team folder names Ann nowhere (snapshots, change files, base)",
+          [k for k, v in folder.items() if v and ("Ann Muster" in v or "ann muster" in v)], [])
+    check("erase: ... and Bob is still there", "Bob Bauer" in json.dumps([v for k, v in folder.items() if k.startswith("base/")]), True)
+    inv_n, folder = invite(xia, "Noa", folder)
+    noa = Member("noa", now_offset=8 * 24 * 3600 * 1000 + 9)
+    r, folder = noa.call("joinTeam({ inviteId: '%s' })" % inv_n, folder)
+    folder = all_round(folder, (noa, xia))
+    check("erase: a member joining afterwards has the same picture, without Ann", (same(picture(noa), picture(xia)), "L1" in (noa.local("results") or {})), (True, False))
+
+    # 1.2.4.20 (R4.3, R4.5): the do-not-store list is shared, and only the Team Lead's (or deputy's) rows count -
+    # a member taking an entry off, or adding one, changes nothing for the team.
+    entry = {"k": "person", "p": "a" * 32, "n": ["b" * 32], "a": ["c" * 32], "at": 1, "by": None}
+    xia.set_local({"doNotStore": {"p-ann": entry}})
+    folder = all_round(folder, (xia, yan, zed, noa))
+    check("do-not-store: the Team Lead's entry reaches every member", [("p-ann" in (m.local("doNotStore") or {})) for m in (yan, zed, noa)], [True, True, True])
+    check("do-not-store: the entry is hashes only", "Ann" in json.dumps(yan.local("doNotStore")), False)
+    yan.set_local({"doNotStore": {"p-yan": dict(entry, p="d" * 32)}})  # Yan (a member) removes Ann and adds someone
+    folder = all_round(folder, (yan, xia, zed))
+    folder = all_round(folder, (yan, xia, zed))
+    check("do-not-store: a member cannot take an entry off", ["p-ann" in (m.local("doNotStore") or {}) for m in (xia, zed)], [True, True])
+    check("do-not-store: ... nor add one", ["p-yan" in (m.local("doNotStore") or {}) for m in (xia, zed)], [False, False])
+    xia.e("NOW += 30000;")
+    xia.set_local({"doNotStore": {}})  # the Team Lead: "Allow this person again"
+    folder = all_round(folder, (xia, yan, zed))
+    folder = all_round(folder, (xia, yan, zed))
+    check("do-not-store: the Team Lead's 'Allow again' reaches the members", ["p-ann" in (m.local("doNotStore") or {}) for m in (yan, zed)], [False, False])
 
     print()
     for f in _failures:

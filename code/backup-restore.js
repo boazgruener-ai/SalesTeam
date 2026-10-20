@@ -9,7 +9,7 @@
 //    before the full backup existed is stranded.
 import {
   availableSettingsSections, availableTargetAccountsSections, appendActivityLog,
-  importSettings, importTargetAccountsBackup, importLeads, mayImport, IMPORT_REFUSED,
+  importSettings, importTargetAccountsBackup, importLeads, mayImport, IMPORT_REFUSED, runLeadRetentionIfDue, purgeDoNotStore,
 } from "./storage.js";
 import { buildFullBackupZip, parseFullBackup, restoreFullBackup } from "./full-backup.js";
 import { showNotice, closeNotice } from "./confirm-dialog.js";
@@ -508,6 +508,7 @@ async function restoreFromFileInner(file, RESTORE_WORKING) {
       showNotice(RESTORE_WORKING, { working: true });
       if (!done.length && !(await safetyCopyBefore("before-restore"))) return null;
       await importTargetAccountsBackup(accounts, sections);
+      await purgeDoNotStore({ where: "restore" }).catch(() => null); // 1.2.4.20 R4.2
       done.push(`Target Accounts (${[...sections].join(", ")})`);
     }
   }
@@ -942,6 +943,9 @@ export function startAutoBackup() {
   maybeShowFreshInstallBanner();
   maybeShowStorageWarning();
   runAutoBackupIfDue();
+  // 1.2.4.18 (DATA_PROTECTION_REQUIREMENTS.md R1.2): the lead retention period runs from here too, once a day per PC.
+  const retention = () => runLeadRetentionIfDue().catch(() => {});
+  retention();
   // once a minute: cheap (two small storage reads), and it means a chosen time of day is met within a minute
-  setInterval(runAutoBackupIfDue, 60 * 1000);
+  setInterval(() => { runAutoBackupIfDue(); retention(); }, 60 * 1000);
 }

@@ -20,7 +20,9 @@ import {
   newState, applyChange, createClock, tick, observe, formatStamp, compactChanges, stampWall, priorOf, retractChanges,
   pipelineOwner, DEFAULT_CLAIM_IDLE_MS, activeAssignments, isClaimConfirmed, stampMember,
   leadChain, setTeamCreator, isGatedRow, recordsBetween, memberActiveWithin,
+  getRecord, isErasedRow, eraseRecordFor, rowsErasedBy, sweepErased,
 } from "./team-merge.js";
+import { logMatcher, TEAM_PENDING_ERASURES_KEY } from "./data-protection.js";
 import {
   groupsOn, groupIndex, groupsOf, groupFacts, memberGroups, isLiveGroup, OTHER_GROUP,
   mayAccess, workCandidates, livePins, sameGroups, groupDefsKey, factsDiffText, TAKEOVER_AFTER_MS,
@@ -47,6 +49,8 @@ export const TEAM_NOTICES_KEY = "teamNotices";
 // Step 6 (R3.11, design 4.3): the team log shown in the Activity Log - built from the change records written and read
 // (team-log.js). Personal (each PC keeps what it has seen), backup-excluded.
 export const TEAM_LOG_KEY = "teamLog";
+const ACTIVITY_LOG_DAY_PREFIX = "activityLog:"; // storage.js ACTIVITY_LOG_PREFIX
+const PENDING_ERASE_MAX_MS = 30 * 24 * 3600 * 1000;
 // 1.2.3 step 1 (D16): "Boaz closed the team" - set on a member's PC when it stops sharing because the Team Lead closed
 // the team, shown in the top bar until OK. Personal; cleared when this PC creates or joins a team.
 export const TEAM_CLOSED_NOTICE_KEY = "teamClosedNotice";
@@ -73,12 +77,15 @@ const CLAIM_REFRESH_MS = 60000;
 const EDIT_DONE_RELEASE_MS = 10000;
 const EDIT_IDLE_RELEASE_MS = 60000;
 const NOT_IN_SYNC_AFTER_MS = 2 * 60000;
-const REREAD_VERSION = 1;
+// 2 (1.2.4.12, Boaz's live test 2026-10-19): a build older than 1.2.4.12 does not know the "erase" record - it skips it
+// and its cursor moves on, so the permanent delete never reaches that PC. Reading everything once more after the update
+// applies the erases it skipped (the records it did apply are seen and cost nothing).
+const REREAD_VERSION = 2;
 // Keys that became shared after 1.2.3. A colleague who was still on the older build has read their rows into the
 // merged state without a home for them on the PC; after the update they are written to local storage once
 // (backfillNewKeys). Raise the version when a key is added.
-const NEW_KEYS_VERSION = 1;
-const NEW_SHARED_KEYS = ["notes"];
+const NEW_KEYS_VERSION = 3;
+const NEW_SHARED_KEYS = ["notes", "leadRetentionMonths", "doNotStore"];
 
 let membership = null;      // { memberId, name, teamId, teamName, role, joinedAt } or null
 let membershipLoaded = false;
@@ -187,7 +194,7 @@ function measure(entry) {
 
 // Compares one key's local value with the shadow; new records go into `out`. Rows a clobbering writer put back
 // are collected in `rewrite` instead.
-function diffKeyInto(key, value, out, rewrite) {
+function diffKeyInto(key, value, out, rewrite, pending = null) {
   const rows = extractRows(key, value);
   const shadowRows = mem.shadow[key] || {};
   const d = diffRows(shadowRows, rows);
@@ -206,12 +213,20 @@ function diffKeyInto(key, value, out, rewrite) {
   for (const s of d.sets) {
     const rk = rowKey(s.e, s.id);
     if (guarded(rk)) continue;
+    // A row the team deleted permanently is never sent again (purgeErasedLocalRows takes it off this PC).
+    if (isErasedRow(mem.state, s.e, s.id)) continue;
     const f = s.isNew ? { ...staleFieldUnsets(mem.state, s.e, s.id, s.f), ...s.f } : s.f;
     out.push({ t: tick(mem.clock, now), e: s.e, id: s.id, op: "set", f });
   }
   for (const x of d.dels) {
     const rk = rowKey(x.e, x.id);
     if (guarded(rk)) continue;
+    // 1.2.4.12: deleted permanently (storage.js) - an erase, which no later edit revives, instead of a delete.
+    if (pending && pending.has(rk)) {
+      out.push(eraseRecordFor(tick(mem.clock, now), x.e, x.id));
+      pending.delete(rk);
+      continue;
+    }
     out.push({ t: tick(mem.clock, now), e: x.e, id: x.id, op: "delete" });
   }
   mem.shadow[key] = newShadow;
@@ -226,13 +241,33 @@ async function diffKeys(keys, values = null) {
   const records = [];
   const rewrite = new Set();
   let rowCount = 0;
-  for (const key of keys) rowCount += diffKeyInto(key, values[key], records, rewrite);
+  const pendingList = (await chrome.storage.local.get(TEAM_PENDING_ERASURES_KEY))[TEAM_PENDING_ERASURES_KEY] || [];
+  const pending = new Map(pendingList.filter((p) => p && p.rk).map((p) => [p.rk, p]));
+  const pendingBefore = pending.size;
+  for (const key of keys) rowCount += diffKeyInto(key, values[key], records, rewrite, pending);
+  if (pendingBefore) {
+    // A row deleted permanently that the shadow never had (not sent yet) but the merged state knows: erased as well.
+    // Every pending row of a key diffed here is settled now; the others wait for their key.
+    const now = Date.now();
+    for (const [rk, p] of pending) {
+      const { e, id } = splitRowKey(rk);
+      const target = rowTarget(e, id);
+      if (!target || !keys.includes(target.key)) {
+        if (now - (p.at || 0) > PENDING_ERASE_MAX_MS) pending.delete(rk);
+        continue;
+      }
+      if (getRecord(mem.state, e, id) && !isErasedRow(mem.state, e, id)) records.push(eraseRecordFor(tick(mem.clock, now), e, id));
+      pending.delete(rk);
+    }
+    await chrome.storage.local.set({ [TEAM_PENDING_ERASURES_KEY]: [...pending.values()] });
+  }
   // Step 4 (design 8.2): the accounts this PC itself just changed - a pin is written only for those (holdMoves).
   for (const r of records) {
     const k = accountKeyOfChange(mem.state, r, normalizeCompanyName);
     if (k) localTouched.set(k, Date.now());
   }
   if (records.length) holdOrSend(records);
+  if (records.some((r) => r.op === "erase")) dropErased();
   measure({ kind: "diff", keys: keys.join(","), rows: rowCount, records: records.length, ms: Math.round(performance.now() - t0) });
   await save(["state", "shadow", "outbox", "claims"]);
   if (records.length) scheduleTick(FLUSH_DELAY_MS);
@@ -364,14 +399,29 @@ async function applyRemote(records) {
     if (author === me || (r.member || author) !== me) continue;
     if (activeAssignments(mem.state, "account", r.id).some((a) => a.member === me)) takenFrom.set(r.id, { author, why: r.why || null, into: r.into || null });
   }
+  const erasedRows = [];
   for (const r of records) {
+    // 1.2.4.12: a colleague's permanent delete - the rows it takes are known only before it is applied.
+    const erasing = r && r.op === "erase" ? rowsErasedBy(mem.state, r).map((id) => ({ e: r.e, id, f: getRecord(mem.state, r.e, id)?.f || {} })) : null;
     if (!applyChange(mem.state, r)) continue;
     observe(mem.clock, r.t);
+    if (erasing) {
+      for (const x of erasing) {
+        erasedRows.push(x);
+        if (rowTarget(x.e, x.id)) affected.add(rowKey(x.e, x.id));
+      }
+      continue;
+    }
     if (r.op === "claim" || r.op === "assign") ackDue = true;
     if (pinsExist && (r.op === "assign" || r.op === "unassign")) markGroupsDirty();
     if (rowTarget(r.e, r.id)) affected.add(rowKey(r.e, r.id));
     // 1.2.3: a Team Lead record decides which group records count - every group row may have changed.
     if (r.e === "team") for (const rk of gatedRowKeys()) affected.add(rk);
+  }
+  if (erasedRows.length) {
+    dropErased();
+    // The local logs are a courtesy on top: failing there must not stop the rows themselves from going.
+    try { await forgetErasedLocally(erasedRows); } catch (err) { lastError = `forget: ${errText(err)}`; }
   }
   await save(["state"]);
   if (affected.size) await writeBack(affected);
@@ -681,8 +731,28 @@ async function readRound(root, me) {
       mem.meta.replaying = false; // caught up: from here on, what is read is news
       if (mem.meta.shadowLost) await seedShadow();
       if ((mem.meta.newKeysV || 0) < NEW_KEYS_VERSION) await backfillNewKeys();
+      await purgeErasedLocalRows();
     }
   });
+}
+
+// 1.2.4.12: inside the queue, once the folder is read up to date. A row the team deleted permanently that is still in
+// local storage - an erase applied while the row was not there yet, or written back again by an older page - goes now.
+// Once per worker life and whenever the number of erases changes; cheap (the row hashes are cached).
+let erasedLocalChecked = -1;
+async function purgeErasedLocalRows() {
+  const n = Object.keys(mem.state.erased || {}).length;
+  if (!n || erasedLocalChecked === n) return;
+  const values = await chrome.storage.local.get(TEAM_SHARED_KEYS);
+  const rks = new Set();
+  for (const key of TEAM_SHARED_KEYS) {
+    for (const rk of extractRows(key, values[key]).keys()) {
+      const { e, id } = splitRowKey(rk);
+      if (isErasedRow(mem.state, e, id)) rks.add(rk);
+    }
+  }
+  if (rks.size) await writeBack(rks);
+  erasedLocalChecked = n;
 }
 
 // Inside the queue, once the folder is read up to date. Rows of NEW_SHARED_KEYS that are in the merged state but not
@@ -897,6 +967,28 @@ export async function getTeamUsage() {
   return { member: true, lead: true, connected: Boolean(root), readAt: copy.readAt, ...usageTable(members, usageDayKey(new Date())) };
 }
 
+// 1.2.4.12 (DATA_PROTECTION_REQUIREMENTS.md R6.1): rows deleted permanently are also taken out of the base files - the
+// team's starting point, read by everyone who joins and never compacted. Rewritten by a PC with the Team Lead's rights
+// (the one who can delete permanently), once a day while there is a new erase since the last clean-up.
+async function cleanBases(root) {
+  const n = Object.keys(mem.state.erased || {}).length;
+  if (!n || mem.meta.basesCleanedN === n || !hasLeadRights()) return null;
+  let files = 0;
+  let dropped = 0;
+  for (const name of await listTeamNames(root, ["base"], "file")) {
+    const r = await readTeamJson(root, ["base"], name);
+    if (r.status !== "ok") return null; // try again tomorrow
+    const changes = r.data.changes || [];
+    const kept = changes.filter((ch) => !ch || !isErasedRow(mem.state, ch.e, ch.id));
+    if (kept.length === changes.length) continue;
+    await writeTeamJson(root, ["base"], name, { ...r.data, changes: kept });
+    files += 1;
+    dropped += changes.length - kept.length;
+  }
+  mem.meta.basesCleanedN = n;
+  return { files, dropped };
+}
+
 // Design 3.3: once a day, this member's change files older than 7 days are folded into one snapshot.
 async function compact(root, me) {
   const meta = mem.meta;
@@ -914,7 +1006,7 @@ async function compact(root, me) {
     if (r.status !== "ok") return null; // try again tomorrow, never snapshot with a gap
     records.push(...(r.data.changes || []));
   }
-  const changes = compactChanges(records);
+  const changes = compactChanges(records, mem.state);
   await writeTeamJson(root, ["members", me, "snapshots"], `s-${upTo}.json`, { member: me, n: upTo, written: new Date().toISOString(), changes });
   // Only once the snapshot is safely written: drop what it replaces. Never another member's files.
   for (const name of await listTeamNames(root, ["members", me, "changes"], "file")) {
@@ -990,6 +1082,8 @@ export async function runTick(reason = "alarm") {
     if (mem.meta.lastCompactDay !== today) {
       const result = await compact(root, me);
       if (result) measure({ kind: "compact", ...result });
+      const cleaned = await cleanBases(root);
+      if (cleaned) measure({ kind: "cleanBases", ...cleaned });
       mem.meta.lastCompactDay = today;
     }
     await enqueue(() => save([]));
@@ -1306,6 +1400,53 @@ async function publishSummary() {
   if (json === lastSummaryJson) return;
   lastSummaryJson = json;
   await chrome.storage.local.set({ [TEAM_ACCOUNTS_KEY]: value });
+}
+
+// 1.2.4.12: rows deleted permanently leave nothing behind in this PC's team data: not in the outbox or the held and
+// kept-aside edits (an edit not sent yet must not go out after the erase), not in the seen keys or overwritten values.
+function dropErased() {
+  const live = (r) => !r || r.op === "erase" || !isErasedRow(mem.state, r.e, r.id);
+  mem.outbox = mem.outbox.filter(live);
+  for (const part of [mem.claims.held, mem.claims.aside]) {
+    for (const h of Object.values(part || {})) if (Array.isArray(h.records)) h.records = h.records.filter(live);
+  }
+  for (const k of [...ownPriors.keys()]) {
+    const [, e, ...rest] = k.split("|");
+    if (isErasedRow(mem.state, e, rest.join("|"))) ownPriors.delete(k);
+  }
+  for (const rk of [...recentWriteBack.keys()]) {
+    const { e, id } = splitRowKey(rk);
+    if (isErasedRow(mem.state, e, id)) recentWriteBack.delete(rk);
+  }
+  sweepErased(mem.state);
+}
+
+// A colleague deleted rows permanently: this PC's own logs (activity log, team log - never shared) lose the lines that
+// name them. rows: [{ e, id, f }] with the merged fields as they were.
+async function forgetErasedLocally(rows) {
+  const keys = [];
+  const names = [];
+  for (const { e, id, f } of rows) {
+    const v = (k) => (f?.[k] && typeof f[k].v === "string" ? f[k].v : null);
+    if (e === "lead") { keys.push(id); names.push(v("author")); }
+    if (e === "contact") {
+      if (id.startsWith("x:")) keys.push(id.slice(2));
+      if (v("fullName")) { names.push(v("fullName")); keys.push(contactKeyFor(v("company") || "", v("fullName"))); }
+    }
+    if (e === "account" && id.startsWith("note:")) keys.push(id.slice(5));
+  }
+  const hit = logMatcher({ keys, names });
+  const all = chrome.storage.local.getKeys ? await chrome.storage.local.getKeys() : Object.keys(await chrome.storage.local.get(null));
+  const logKeys = all.filter((k) => k.startsWith(ACTIVITY_LOG_DAY_PREFIX) || k === TEAM_LOG_KEY);
+  if (!logKeys.length) return;
+  const got = await chrome.storage.local.get(logKeys);
+  const next = {};
+  for (const k of logKeys) {
+    if (!Array.isArray(got[k])) continue;
+    const kept = got[k].filter((x) => !hit(x));
+    if (kept.length !== got[k].length) next[k] = kept;
+  }
+  if (Object.keys(next).length) await chrome.storage.local.set(next);
 }
 
 // My own record: into the outbox and the merged state at once.

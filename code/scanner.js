@@ -16,7 +16,8 @@
 // shows its progress, lists results, and provides Export/Import/backup plus
 // the entry points to the Dashboard, Advisors, Settings, and Help pages.
 import { askConfirm, askChoice, mirrorStatusToPopup } from "./confirm-dialog.js";
-import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
+import { mirrorFrameTitle, restoreOwnTitle, rememberEmbeddedOnReload, reopenEmbeddedAfterReload } from "./frame-title.js";
+reopenEmbeddedAfterReload(); // 1.2.4.25: F5 on a page shown in this one reopens that page
 import { guardBatchStart, SCAN_BATCH_LABEL } from "./batch-jobs.js";
 import { setStatusMessage, clearStatusMessage } from "./status-bar.js";
 import { initBatchStatus } from "./batch-status.js";
@@ -699,6 +700,7 @@ const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
 mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
+rememberEmbeddedOnReload(embeddedPageFrameEl, () => !embeddedPageWrapEl.hidden);
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
@@ -801,6 +803,7 @@ document.getElementById("open-settings-backup-btn").addEventListener("click", ()
 document.getElementById("open-settings-restore-btn").addEventListener("click", () => showEmbeddedPage("settings.html#restore-section", "Settings"));
 document.getElementById("open-settings-team-btn").addEventListener("click", () => showEmbeddedPage("settings.html#team-section", "Settings"));
 document.getElementById("open-settings-billing-btn").addEventListener("click", () => showEmbeddedPage("settings.html#billing-section", "Settings"));
+document.getElementById("open-settings-data-protection-btn").addEventListener("click", () => showEmbeddedPage("settings.html#data-protection-section", "Settings"));
 // Discrete on purpose (own muted, closed-by-default group at the bottom) -
 // reported directly: only for a support session, never normal use.
 document.getElementById("open-debug-queue-btn").addEventListener("click", () => showEmbeddedPage("settings.html#discovery-queue-section", "Settings"));

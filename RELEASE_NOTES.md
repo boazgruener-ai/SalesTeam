@@ -1,3 +1,37 @@
+# SalesTeam — v1.2.4.35
+
+## Data protection: keep less, delete for good (builds 1.2.4.12-1.2.4.35)
+
+- **Delete leads after a while** - Settings → Data protection → "Delete leads older than" 6, 12 or 24 months (off
+  until you choose). Older leads are then deleted for good once a day, with their notes and conversations.
+- **Delete permanently** - contacts and leads have **Delete permanently…** in their ⋮ menu, next to Remove. Remove
+  still only hides; Delete permanently erases, with its notes and conversations, and cannot be undone. An account
+  keeps its name and notes: its ⋮ offers **Delete its contacts and leads permanently…**.
+- **When someone asks about their data** - Settings → Data protection → **Find a person**: enter a name or LinkedIn
+  link to see everything SalesTeam holds about them, save it as a PDF to send to them, or delete it all.
+- **Do-not-store list** - a person deleted this way is not stored again by scans, research or imports. Only a
+  coded fingerprint is kept, never the name. **Allow this person again** takes someone off the list.
+- **In a team** - a permanent delete reaches every member and stays deleted. Only the Team Lead and the deputy can
+  delete permanently and change the retention period.
+- **Import** - when people in a file are left out because of the do-not-store list, the import says so.
+
+## Audit: reasons on record, and an Activity Log you can export (builds 1.2.4.29-1.2.4.33)
+
+- **A reason for every removal** - removing, restoring, merging or permanently deleting an account or contact now
+  asks for a reason. The reason is kept with that action in the Activity Log.
+- **Activity Log kept 12 months** - up from 90 days.
+- **Export the Activity Log** - **Export…** on the Activity Log page saves the entries between two dates as a
+  spreadsheet (CSV) with date and time, who, action, description and the values before and after.
+- **Removed accounts and contacts** - open from a small link under each table, "Removed accounts (N)" or
+  "Removed contacts (N)", shown only when something was removed. Merged accounts and contacts are no longer listed
+  there: a merge cannot be undone.
+- **Dismissed leads** - a small "Dismissed leads (N)" link under the Leads table shows them.
+
+## Leads Dashboard: tick the leads to change (build 1.2.4.34)
+
+- Tick leads to select them, as on Target Contacts. A bar above the table then offers **Bulk edit…** to change their
+  status, undo the last bulk change or delete them permanently. The Bulk Change button under the table is gone.
+
 # SalesTeam — v1.2.4.11
 
 ## Leads where you work: on account and contact pages, and in the export (builds 1.2.4.7-1.2.4.9)

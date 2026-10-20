@@ -11,9 +11,11 @@
 // to target-accounts.js instead (2026-09-16, reported directly: it belongs
 // next to the data it actually affects, not on a separate settings page).
 import { getApiUsage, sumDays, localDayKey, getCostWarningUsd, saveCostWarningUsd } from "./api-usage.js";
-import { mirrorFrameTitle, restoreOwnTitle } from "./frame-title.js";
+import { mirrorFrameTitle, restoreOwnTitle, rememberEmbeddedOnReload, reopenEmbeddedAfterReload } from "./frame-title.js";
+reopenEmbeddedAfterReload(); // 1.2.4.25: F5 on a page shown in this one reopens that page
 import { askConfirm, markSaved } from "./confirm-dialog.js";
 import { leadRightsOf } from "./team-groups.js";
+import { getLeadRetentionMonths, saveLeadRetentionMonths, leadsPastRetention, runLeadRetentionIfDue, permanentDeleteSummary, findPerson, forgetPerson, allowPersonAgain, getDoNotStoreCount } from "./storage.js";
 import { initBatchStatus } from "./batch-status.js";
 import { watchPipelineStatusLine, watchWebStatusLine, kickPipelineFromPage, kickAndExplain } from "./pipeline-status.js";
 import {
@@ -207,6 +209,7 @@ const embeddedPageWrapEl = document.getElementById("embedded-page-wrap");
 const embeddedPageBarEl = document.getElementById("embedded-page-bar");
 const embeddedPageFrameEl = document.getElementById("embedded-page-frame");
 mirrorFrameTitle(embeddedPageFrameEl); // 1.2.4.10: the tab is titled after the page shown
+rememberEmbeddedOnReload(embeddedPageFrameEl, () => !embeddedPageWrapEl.hidden);
 const embeddedPageTitleEl = document.getElementById("embedded-page-title");
 
 // 19th round of direct feedback (2026-09-19) - see target-accounts.js's own
@@ -218,6 +221,11 @@ function showEmbeddedPage(page, title) {
   const sep = base.includes("?") ? "&" : "?";
   const url = hash ? `${base}${sep}embedded=1#${hash}` : `${base}${sep}embedded=1`;
   const resolvedUrl = chrome.runtime.getURL(url);
+  // 1.2.4.26 (Boaz: Import… left User Profile highlighted): the Settings page shown before is not what is on screen any
+  // more - the menu item just clicked is.
+  document.querySelectorAll("#app-nav .nav-item.active").forEach((e) => e.classList.remove("active"));
+  const clicked = document.activeElement;
+  if (clicked?.classList?.contains("nav-item") && clicked.closest("#app-nav")) clicked.classList.add("active");
   pageNativeContentEl.hidden = true;
   embeddedPageTitleEl.textContent = title;
   embeddedPageBarEl.hidden = true;
@@ -719,6 +727,7 @@ async function renderLinkedinTouchStat() {
 // the hash is empty or doesn't match any known section.
 const SETTINGS_SECTION_IDS = [
   "setup-section", "automation-section", "profile-section", "language-section", "api-key-section", "backup-section", "restore-section", "billing-section",
+  "data-protection-section",
   "team-section",
   "discovery-queue-section", "company-discovery-section", "contact-discovery-section",
 ];
@@ -796,6 +805,246 @@ function routeSettings() {
 }
 
 window.addEventListener("hashchange", routeSettings);
+
+// ---- Data protection (1.2.4.18, DATA_PROTECTION_REQUIREMENTS.md R1): how long leads are kept ----
+// Explicit Save. Saving a period that already has leads past it asks first - they are deleted at once and for good.
+// In a team the period is the Team Lead's for everyone (R1.6): a member sees it, unchangeable.
+const retentionSelect = document.getElementById("lead-retention-select");
+const retentionSaveBtn = document.getElementById("lead-retention-save-btn");
+const retentionStatus = document.getElementById("lead-retention-status");
+let retentionSaved = 0;
+
+async function retentionInfo(months) {
+  const info = document.getElementById("lead-retention-info");
+  if (!months) { info.textContent = "Leads are kept until they are deleted by hand."; return 0; }
+  const n = (await leadsPastRetention(months)).length;
+  info.textContent = n
+    ? `${n} lead${n === 1 ? " is" : "s are"} older than ${months} months now.`
+    : `No lead is older than ${months} months now.`;
+  return n;
+}
+
+async function renderRetention() {
+  if (!retentionSelect) return;
+  const team = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const member = Boolean(team.teamMembership) && !leadRightsOf(team.teamMembership, team.teamAccountStates);
+  retentionSaved = await getLeadRetentionMonths();
+  retentionSelect.value = String(retentionSaved);
+  retentionSelect.disabled = member;
+  retentionSaveBtn.hidden = member;
+  retentionSaveBtn.disabled = true;
+  const note = document.getElementById("lead-retention-team-note");
+  note.hidden = !team.teamMembership;
+  note.textContent = member
+    ? "Set by the Team Lead for the whole team."
+    : "This applies to the whole team: every member's SalesTeam deletes the same leads.";
+  await retentionInfo(retentionSaved);
+}
+
+retentionSelect?.addEventListener("change", async () => {
+  retentionSaveBtn.disabled = Number(retentionSelect.value) === retentionSaved;
+  retentionStatus.textContent = "";
+  await retentionInfo(Number(retentionSelect.value));
+});
+
+retentionSaveBtn?.addEventListener("click", async () => {
+  const months = Number(retentionSelect.value);
+  const n = months ? (await leadsPastRetention(months)).length : 0;
+  if (n && !(await askConfirm(
+    `${n} lead${n === 1 ? " is" : "s are"} older than ${months} months. Saving deletes ${n === 1 ? "it" : "them"} now, permanently, with their notes and conversations. This cannot be undone.`,
+    { title: "SalesTeam Settings → Data protection", okLabel: `Save and delete ${n}`, cancelLabel: "Cancel", danger: true }))) return;
+  retentionSaveBtn.disabled = true;
+  retentionStatus.textContent = "Saving…";
+  await saveLeadRetentionMonths(months);
+  appendActivityLog({ actor: "user", action: "lead_retention_set", label: months ? `Lead retention set: delete leads older than ${months} months` : "Lead retention turned off", newValue: months });
+  const done = months ? await runLeadRetentionIfDue({ force: true }) : null;
+  retentionSaved = months;
+  markSaved(retentionStatus, done && done.leads ? `✓ Saved - deleted ${permanentDeleteSummary(done)}` : "✓ Saved");
+  await retentionInfo(months);
+});
+
+window.addEventListener("hashchange", () => { if (location.hash === "#data-protection-section") renderRetention(); });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && ("leadRetentionMonths" in changes || "teamMembership" in changes)) renderRetention();
+});
+renderRetention();
+// ---- Find a person, do-not-store list (1.2.4.20, DATA_PROTECTION_REQUIREMENTS.md R3-R5) ----
+// One search; the list shows everything held about the person, each line saying where it is. With more than one person
+// found (namesakes at different companies), each has a tick - only the ticked ones are saved or deleted.
+const findForm = document.getElementById("find-person-form");
+const findInput = document.getElementById("find-person-input");
+const findStatus = document.getElementById("find-person-status");
+const findResult = document.getElementById("find-person-result");
+const forgetBtn = document.getElementById("find-person-forget-btn");
+const pdfBtn = document.getElementById("find-person-pdf-btn");
+let found = null; // the last findPerson answer
+let foundInput = "";
+
+const QUERY_PROBLEM = {
+  empty: "Enter a name or a LinkedIn profile link.",
+  link: "That is not a LinkedIn profile link - it should look like https://www.linkedin.com/in/….",
+  short: "Enter a first and a last name, or the LinkedIn profile link.",
+};
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const dayOf = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "date unknown");
+const shortText = (t, n = 90) => { const x = String(t || "").replace(/\s+/g, " ").trim(); return x.length > n ? `${x.slice(0, n - 1)}…` : x; };
+
+function tickedIds() {
+  const boxes = [...document.querySelectorAll("#find-person-people input[type=checkbox]")];
+  return boxes.length ? new Set(boxes.filter((b) => b.checked).map((b) => b.value)) : null;
+}
+
+function foundLine(text, where) {
+  const el = document.createElement("li");
+  el.textContent = text;
+  if (where) {
+    const w = document.createElement("span");
+    w.className = "where";
+    w.textContent = ` - ${where}`;
+    el.appendChild(w);
+  }
+  return el;
+}
+
+function renderFound() {
+  const peopleEl = document.getElementById("find-person-people");
+  const lines = document.getElementById("find-person-lines");
+  peopleEl.textContent = "";
+  lines.textContent = "";
+  const people = found.people;
+  if (people.length > 1) {
+    const hint = document.createElement("p");
+    hint.className = "field-hint";
+    hint.textContent = `${people.length} people found. Untick anyone who is not the person who asked.`;
+    peopleEl.appendChild(hint);
+    for (const p of people) {
+      const label = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = p.id;
+      box.checked = p.chosen;
+      box.addEventListener("change", () => refind(tickedIds()));
+      label.append(box, ` ${p.name} - ${p.company || "company unknown"}`);
+      peopleEl.appendChild(label);
+    }
+  }
+  for (const p of people.filter((x) => x.chosen)) {
+    for (const c of p.contacts) lines.appendChild(foundLine(`Person: ${c.fullName}${c.jobTitle ? `, Title: ${c.jobTitle}` : ""}, Company: ${c.company || "unknown"}`));
+    for (const l of p.leads) lines.appendChild(foundLine(`Lead: post by ${l.author}, ${dayOf(l.postedAt || l.firstSeenAt)}`, `Leads${l.company ? `, ${l.company}` : ""}`));
+  }
+  for (const d of found.discovered) lines.appendChild(foundLine(`Contact found, not added yet: ${d.name}`, `contact discovery, ${d.companyName || "company unknown"}`));
+  for (const n of found.notes) lines.appendChild(foundLine(`Note: "${shortText(n.text, 70)}"`, `note on ${n.on === "account" ? `account ${n.key}` : `a ${n.on}`}, ${dayOf(n.at)}`));
+  for (const c of found.conversations) lines.appendChild(foundLine(`Conversation: ${c.kind}, ${plural(c.messages.length, "message")}`, c.where));
+  if (found.logLines.length) lines.appendChild(foundLine(`Activity log: ${plural(found.logLines.length, "line")}`, "activity log and team log on this PC"));
+  const any = lines.children.length > 0;
+  if (!any) lines.appendChild(foundLine(found.byLink ? "Nothing is stored about this profile." : "Nothing is stored about anyone of this name."));
+  pdfBtn.disabled = !any;
+  // A link can go on the do-not-store list with nothing stored; a name needs its company, so only people found.
+  forgetBtn.disabled = !(any || found.byLink);
+  forgetBtn.textContent = any ? "Delete this person's data and do not store this person again" : "Don't store this person";
+  findResult.hidden = false;
+}
+
+async function refind(only) {
+  const r = await findPerson(foundInput, { only });
+  if (!r.ok) { findStatus.textContent = QUERY_PROBLEM[r.reason] || "Not found."; findResult.hidden = true; found = null; return; }
+  found = r;
+  findStatus.textContent = r.people.length ? "" : (r.byLink ? "No one with this LinkedIn profile is stored." : "No one of this name is stored.");
+  renderFound();
+  await renderForgetRights();
+}
+
+findForm?.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  foundInput = findInput.value;
+  findStatus.textContent = "Looking…";
+  await refind(null);
+});
+
+// R3.4, R4.5: in a team only the Team Lead or deputy deletes a person or takes one off the list. -> true for a member.
+async function renderForgetRights() {
+  const team = await chrome.storage.local.get(["teamMembership", "teamAccountStates"]);
+  const member = Boolean(team.teamMembership) && !leadRightsOf(team.teamMembership, team.teamAccountStates);
+  const note = document.getElementById("find-person-rights");
+  if (note) {
+    note.hidden = !member;
+    note.textContent = member ? "In a team, only the Team Lead or the deputy can delete a person and put them on the do-not-store list. You can save the PDF." : "";
+  }
+  if (member && forgetBtn) forgetBtn.disabled = true;
+  const allowBtn = document.getElementById("dns-allow-btn");
+  if (allowBtn) allowBtn.disabled = member;
+  return member;
+}
+
+forgetBtn?.addEventListener("click", async () => {
+  if (!found || (await renderForgetRights())) return;
+  const chosen = found.people.filter((p) => p.chosen);
+  const nothing = !chosen.some((p) => p.contacts.length || p.leads.length) && !found.discovered.length && !found.notes.length
+    && !found.conversations.length && !found.logLines.length;
+  // Just enough for the user (Boaz, 2026-10-19): what happens, not every scenario behind it.
+  const msg = nothing
+    ? "Nothing is stored about this person. SalesTeam will prevent this person from being added via the automated search or enrichment."
+    : "This deletes this person's data permanently from SalesTeam, and prevents this person from being added again via the automated search or enrichment. This cannot be undone.";
+  const reason = await askConfirm(msg, { title: "SalesTeam Settings → Data protection", okLabel: nothing ? "Don't store this person" : "Delete permanently", cancelLabel: "Cancel", danger: true, reason: true });
+  if (!reason) return;
+  forgetBtn.disabled = true;
+  findStatus.textContent = "Deleting…";
+  const r = await forgetPerson(foundInput, { only: tickedIds(), reason });
+  if (!r.ok) {
+    findStatus.textContent = r.reason === "rights" ? "Only the Team Lead or the deputy can do this."
+      : r.reason === "nothing" ? "Nothing to delete, and no LinkedIn link to remember." : (QUERY_PROBLEM[r.reason] || "Not done.");
+    forgetBtn.disabled = false;
+    return;
+  }
+  findResult.hidden = true;
+  found = null;
+  findInput.value = "";
+  markSaved(findStatus, `✓ Deleted ${permanentDeleteSummary(r.done)}. ${r.listed ? "On the do-not-store list now." : "Already on the do-not-store list."}`);
+  renderDoNotStoreCount();
+});
+
+// R5: a print-ready report in a tab of its own; the browser's print dialog saves it as a PDF. Handed over in session
+// storage (in memory, gone when the browser closes), never in the address.
+pdfBtn?.addEventListener("click", async () => {
+  if (!found) return;
+  const [profile, got] = await Promise.all([getUserProfile(), chrome.storage.local.get(["teamMembership", "sellerCompanyName"])]);
+  const report = {
+    madeAt: Date.now(),
+    madeBy: got.teamMembership?.name || profile.name || "",
+    seller: got.sellerCompanyName || "",
+    query: found.query,
+    people: found.people.filter((p) => p.chosen),
+    discovered: found.discovered, notes: found.notes, conversations: found.conversations, logLines: found.logLines, sources: found.sources,
+  };
+  await chrome.storage.session.set({ personReport: report });
+  await chrome.tabs.create({ url: chrome.runtime.getURL("person-report.html") });
+});
+
+// ---- Do-not-store list: a count only, and "Allow this person again" (R4.4, R4.5) ----
+async function renderDoNotStoreCount() {
+  const el = document.getElementById("dns-count");
+  if (!el) return;
+  const n = await getDoNotStoreCount();
+  el.textContent = n ? `${plural(n, "person", "people")} on the do-not-store list.` : "No one is on the do-not-store list.";
+}
+
+document.getElementById("dns-allow-form")?.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const status = document.getElementById("dns-allow-status");
+  const input = document.getElementById("dns-allow-input");
+  if (await renderForgetRights()) { status.textContent = "Only the Team Lead or the deputy can do this."; return; }
+  const r = await allowPersonAgain(input.value);
+  if (!r.ok) { status.textContent = r.reason === "rights" ? "Only the Team Lead or the deputy can do this." : (QUERY_PROBLEM[r.reason] || "Not done."); return; }
+  if (!r.removed) { status.textContent = "No one with this name or link is on the do-not-store list."; return; }
+  input.value = "";
+  markSaved(status, `✓ ${plural(r.removed, "person", "people")} taken off the list. SalesTeam may store ${r.removed === 1 ? "this person" : "them"} again.`);
+  renderDoNotStoreCount();
+});
+
+window.addEventListener("hashchange", () => { if (location.hash === "#data-protection-section") { renderDoNotStoreCount(); renderForgetRights(); } });
+chrome.storage.onChanged.addListener((changes, area) => { if (area === "local" && "doNotStore" in changes) renderDoNotStoreCount(); });
+renderDoNotStoreCount();
+renderForgetRights();
 // 1.2.1 step 7 (design 3.12, R4.6): a setup finished before 1.2.1 never saw the seller research, so Settings offers
 // it once. "No thanks" is remembered (declinedInSettings); running the research ends the offer too (status leaves
 // "none"). Either way the action stays under User Profile > Open About you.

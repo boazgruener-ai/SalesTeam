@@ -11,7 +11,7 @@
 //     data/<category>.json the raw stored data, grouped by category, for restoring
 import { createZip, readZip, bytesToText } from "./backup-zip.js";
 import { workbookCsvFiles, leadsToCsv } from "./csv-export.js";
-import { withAccountWriteLock, migrateCompanyRelationshipsIfNeeded } from "./storage.js";
+import { withAccountWriteLock, migrateCompanyRelationshipsIfNeeded, getDoNotStore, purgeDoNotStore } from "./storage.js";
 
 // Never written to a backup file: the API key (a backup is plain text - re-enter it after a reinstall),
 // this feature's own bookkeeping, transient scan state, and a re-derivable cache. teamMembership (1.2.2) belongs with
@@ -87,7 +87,7 @@ export const BACKUP_CATEGORIES = [
   },
   {
     id: "activity", label: "Activity log",
-    detail: "The record of what you and the extension did (kept 90 days).",
+    detail: "The record of what you and the extension did (kept 12 months).",
     test: (key) => key === "activityLog" || key.startsWith("activityLog:") || key === "activityLogExportedDays",
   },
   {
@@ -275,6 +275,7 @@ export async function parseFullBackup(arrayBuffer) {
 // Writes the chosen categories back. `selected` = Set of category ids. Each selected category REPLACES the
 // current values of the keys it contains; keys in categories you did not select are not touched.
 export async function restoreFullBackup(parsed, selected) {
+  const listBefore = await getDoNotStore(); // 1.2.4.20: a backup never takes a person off the do-not-store list
   for (const id of selected) {
     const data = parsed.data[id];
     if (!data) continue;
@@ -290,4 +291,6 @@ export async function restoreFullBackup(parsed, selected) {
   // 1.2.3 (R3.5): a backup from before 1.2.3 still has its customers / partners on the exclusion list - moved the
   // same way as on the update. Idempotent: a newer backup has nothing to move.
   await migrateCompanyRelationshipsIfNeeded({ trigger: "restore" }).catch(() => null);
+  // 1.2.4.20 (R4.2): whatever the backup brought back of a person on the do-not-store list goes again.
+  await purgeDoNotStore({ where: "restore", backupList: listBefore }).catch(() => null);
 }

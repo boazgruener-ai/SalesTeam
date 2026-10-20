@@ -471,6 +471,7 @@ export function importSummaryText(counts) {
     part(c.kept, "difference kept as it is", "differences kept as they are"),
     part(c.decisions, "difference for Decisions", "differences for Decisions"),
     part(c.skipped, "row skipped", "rows skipped"),
+    part(c.doNotStore, "person not imported (on the do-not-store list)", "people not imported (on the do-not-store list)"),
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : "nothing new - everything in the file is already in SalesTeam";
 }

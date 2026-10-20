@@ -342,18 +342,29 @@ async function decide(choice) {
   const label = choicesOf(item).find(([v]) => v === choice)?.[1] || choice;
   const targets = [item, ...($("decision-similar-checkbox").checked ? similarTo(item) : [])];
 
+  // 1.2.4.31 (audit): removing or merging an account or contact needs a reason; it goes into the Activity Log.
+  const needsReason = choice === "remove" || choice === "merge";
+  let reason = null;
   if (targets.length > 1) {
     const names = targets.slice(0, 8).map((t) => `- ${t.company}`).join("\n");
     const more = targets.length > 8 ? `\n…and ${targets.length - 8} more` : "";
     const ok = await askConfirm(`"${label}" for all ${targets.length}:\n\n${names}${more}`, {
-      okLabel: `${label} (${targets.length})`, cancelLabel: "Cancel", danger: choice === "remove",
+      okLabel: `${label} (${targets.length})`, cancelLabel: "Cancel", danger: choice === "remove", reason: needsReason,
     });
     if (!ok) return;
+    if (needsReason) reason = ok;
   } else if (item.kind === "duplicate" && choice === "merge") {
-    const ok = await askConfirm(`Merge ${(item.payload.members || []).map((m) => `"${m.company}"`).join(" and ")} into "${item.payload.members[0].company}"?\n\nThis cannot be undone from the app.`, {
-      okLabel: "Merge", cancelLabel: "Cancel", danger: true,
+    reason = await askConfirm(`Merge ${(item.payload.members || []).map((m) => `"${m.company}"`).join(" and ")} into "${item.payload.members[0].company}"?\n\nThis cannot be undone from the app.`, {
+      okLabel: "Merge", cancelLabel: "Cancel", danger: true, reason: true,
     });
-    if (!ok) return;
+    if (!reason) return;
+  } else if (needsReason) {
+    const [keep, drop] = item.payload?.members || [];
+    const what = item.kind === "contact_duplicate" && keep && drop
+      ? `Merge "${drop.fullName}" into "${keep.fullName}" (${item.company})?`
+      : `${label}: "${item.company}"?`;
+    reason = await askConfirm(what, { okLabel: label, cancelLabel: "Cancel", danger: true, reason: true });
+    if (!reason) return;
   }
 
   setBusy(true);
@@ -362,7 +373,7 @@ async function decide(choice) {
   let lastLabel = "";
   try {
     for (const t of targets) {
-      lastLabel = await applyDecision(t, choice);
+      lastLabel = await applyDecision(t, choice, { reason });
       done++;
     }
     $("decisions-last").textContent = targets.length > 1 ? `Done for ${done}: ${label}.` : `Done: ${lastLabel}.`;

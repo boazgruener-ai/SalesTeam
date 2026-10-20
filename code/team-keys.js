@@ -40,6 +40,9 @@ export const TEAM_MAP_KEYS = [
   // kept. Filed under "account" - a colleague still on 1.2.3 stores the rows without showing them - with a prefix the
   // edit hold does not look at (team-claims.js accountKeyOfChange), so a note is never held back.
   { key: "notes", e: "account", prefix: "note:" },
+  // 1.2.4.20 data protection (R4.3): the do-not-store list - one row per person or post, hashes only. Written only by
+  // the Team Lead or deputy (team-merge.js GATED_PREFIXES), so a colleague's edit never takes an entry off.
+  { key: "doNotStore", e: "setting", prefix: "doNotStore:" },
 ];
 
 export const TEAM_WHOLE_KEYS = [
@@ -53,6 +56,8 @@ export const TEAM_WHOLE_KEYS = [
   "companyExclusionsLifted", "organizationTypeEligibility", "companyAliases",
   "negativeTopics", "prioritizationRuleOverrides", "postPrioritizationRules", "webFindingsArbitration",
   "revenueNormalization", "targetAccountScoreThreshold", "jobRulesMinConfidence", "keywordSearchLanguages",
+  // 1.2.4.18 data protection (R1.6): "Delete leads older than … months" - the Team Lead's, one value for the team
+  "leadRetentionMonths",
 ];
 
 // list - an array whose entries are known by their content (step 5b): one row per entry, so two members adding at the
@@ -90,6 +95,8 @@ export const TEAM_PERSONAL_KEYS = [
   // 1.2.4 Billing "Team usage": this member's monthly totals (shared as a sealed file of their own, not as rows), and
   // the copy the Team Lead / deputy last read. The usage count itself has always been personal.
   "teamUsageMonths", "teamUsageTable", "apiUsage", "costWarningUsd", "installId",
+  // 1.2.4.12 data protection: rows deleted permanently, waiting to go out as erase records (data-protection.js)
+  "teamPendingErasures", "leadRetentionLastRun",
 ];
 
 export function teamKeyKind(key) {
